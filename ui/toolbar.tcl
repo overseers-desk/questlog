@@ -113,10 +113,11 @@ oo::class create ::csm::ui::Toolbar {
         }
     }
 
-    method add_row {} {
+    method add_row {{initial ""}} {
         incr NextId
         set id $NextId
         my eval [list variable Pat$id ""]
+        if {$initial ne ""} { my eval [list set Pat$id $initial] }
         set row $RowsBox.r$id
         ttk::frame $row
         ttk::entry $row.e -textvariable [my varname Pat$id] -width 30
@@ -127,7 +128,7 @@ oo::class create ::csm::ui::Toolbar {
         pack $row -side top -fill x -pady 1 -before $RowsBox.add
         bind $row.e <KeyRelease> [list [self] on_regex_change]
         dict set Patterns $id ""
-        focus $row.e
+        if {$initial eq ""} { focus $row.e }
         my publish
     }
 

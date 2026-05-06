@@ -3,26 +3,35 @@ package require Tk
 
 # ::csm::ui::Results - the search-result pane.
 #
-# Hidden until the toolbar's regex becomes non-empty. Once visible, it
-# remains visible (even on zero matches) until the regex is cleared.
-# Each row is one match; the same session may produce many rows.
+# One read-only text widget rendering one card per session that has
+# matches. Each card is a header line (project, time, count) plus an
+# indented body with the matching snippets joined by " … " bridges.
+# Hits inside a snippet are tagged with hit-<i>, one tag per pattern in
+# the snapshot's regex list, so the user sees in place which substring
+# was caught by which pattern.
 #
-# resolve_folder is supplied as a callback (from app.tcl) so the pane
-# does not hold a direct reference to Scan.
+# Substrate choice: ttk::treeview was discarded because it truncates
+# cells, has no substring highlight, and renders many hits per session
+# as many visually equal rows. The text widget gives word wrap, tag-
+# range highlighting, click-bound regions, and a single scroll model.
+#
+# Public surface (called from app.tcl): clear, add_match, set_scope,
+# set_progress, set_done, cancel, set_query.
 
 oo::class create ::csm::ui::Results {
     variable Top
     variable StatusVar
     variable CancelCb
     variable ResolveFolder
-    variable Tv
-    variable RowIndex      ;# iid -> {path lineoff}
-    variable NextId
-    variable MatchCount
+    variable Text
     variable OnSelect
     variable OnOpen
     variable AllMatches    ;# arrival-ordered list of match dicts
     variable Scope         ;# {type none|folder|session  key <s>}
+    variable Query         ;# {regex <list>  nocase 0|1}
+    variable Cards         ;# path -> card dict (hmark emark count ctag project when first_lineno)
+    variable HitTags       ;# list of hit-<i> tag names for per-pattern colour
+    variable NextId        ;# monotonic id for unique mark and tag names
 
     constructor {parent resolve_cb cancel_cb on_select on_open} {
         set Top $parent
@@ -31,17 +40,18 @@ oo::class create ::csm::ui::Results {
         set OnSelect $on_select
         set OnOpen   $on_open
         set StatusVar "Idle"
-        set RowIndex [dict create]
-        set NextId 0
-        set MatchCount 0
         set AllMatches [list]
         set Scope [dict create type none key ""]
+        set Query [dict create regex [list] nocase 0]
+        set Cards [dict create]
+        set NextId 0
 
         my build
     }
 
     method build {} {
         ttk::frame $Top
+
         ttk::frame $Top.bar
         pack $Top.bar -side top -fill x
         ttk::label $Top.bar.status -textvariable [my varname StatusVar]
@@ -49,60 +59,85 @@ oo::class create ::csm::ui::Results {
         ttk::button $Top.bar.cancel -text "Cancel" -command [list [self] cancel]
         pack $Top.bar.cancel -side right -padx 4 -pady 2
 
-        set Tv $Top.tv
-        ttk::treeview $Tv -columns {project time snippet} -show {headings} \
-            -yscrollcommand [list $Top.sb set]
-        $Tv heading project -text "Project"
-        $Tv heading time    -text "When"
-        $Tv heading snippet -text "Match"
-        $Tv column  project -anchor w -width 220 -stretch 0
-        $Tv column  time    -anchor w -width 120 -stretch 0
-        $Tv column  snippet -anchor w -stretch 1
+        ttk::frame $Top.body
+        pack $Top.body -side top -fill both -expand 1
+        # text widget - no ttk equivalent.
+        text $Top.body.t -wrap word -state disabled \
+            -yscrollcommand [list $Top.body.sb set] \
+            -borderwidth 0 -highlightthickness 0 -padx 4 -pady 4
+        ttk::scrollbar $Top.body.sb -orient vertical \
+            -command [list $Top.body.t yview]
+        grid $Top.body.t  -row 0 -column 0 -sticky nsew
+        grid $Top.body.sb -row 0 -column 1 -sticky ns
+        grid columnconfigure $Top.body 0 -weight 1
+        grid rowconfigure    $Top.body 0 -weight 1
+        set Text $Top.body.t
 
-        ttk::scrollbar $Top.sb -orient vertical -command [list $Tv yview]
+        $Text tag configure card-header \
+            -font {-weight bold} -spacing1 8 -spacing3 2 -foreground "#444"
+        $Text tag configure card-body \
+            -lmargin1 16 -lmargin2 16 -spacing3 6
+        $Text tag configure bridge -foreground "#888"
+        # The clickable tag is a hover hint only; per-region tags carry
+        # the actual <Button-1> binding.
+        $Text tag configure clickable
+        $Text tag bind clickable <Enter> [list $Text configure -cursor hand2]
+        $Text tag bind clickable <Leave> [list $Text configure -cursor ""]
 
-        grid $Top.bar -row 0 -column 0 -columnspan 2 -sticky ew
-        grid $Tv      -row 1 -column 0 -sticky nsew
-        grid $Top.sb  -row 1 -column 1 -sticky ns
-        grid columnconfigure $Top 0 -weight 1
-        grid rowconfigure    $Top 1 -weight 1
-
-        bind $Tv <<TreeviewSelect>> [list [self] on_select]
-        bind $Tv <Double-Button-1>  [list [self] on_double]
+        set HitTags [list]
+        set hues {#fff59d #b3e5fc #f8bbd0 #c8e6c9}
+        for {set i 0} {$i < [llength $hues]} {incr i} {
+            set t hit-$i
+            $Text tag configure $t -background [lindex $hues $i]
+            lappend HitTags $t
+        }
     }
 
     method clear {} {
-        $Tv delete [$Tv children {}]
-        set RowIndex [dict create]
-        set NextId 0
-        set MatchCount 0
+        $Text configure -state normal
+        $Text delete 1.0 end
+        foreach t [$Text tag names] {
+            if {[string match "ck*" $t] || [string match "fr*" $t]} {
+                $Text tag delete $t
+            }
+        }
+        $Text configure -state disabled
         set AllMatches [list]
         set Scope [dict create type none key ""]
+        set Cards [dict create]
+        set NextId 0
         set StatusVar "Idle"
     }
 
+    method set_query {regex_list nocase} {
+        set Query [dict create regex $regex_list nocase $nocase]
+    }
+
     method add_match {is_first path lineoff ts snippet folder} {
-        incr MatchCount
         set entry [dict create \
             path $path lineoff $lineoff ts $ts \
             snippet $snippet folder $folder]
         lappend AllMatches $entry
         if {[my in_scope $path $folder]} {
-            my insert_row $entry
+            my render_entry $entry
         }
     }
 
-    # set_scope - rebuild visible rows from AllMatches under a new scope.
-    # type is one of {none folder session}; key is "" for none, the folder
-    # basename for folder, the session jsonl path for session.
+    # set_scope - rebuild visible cards from AllMatches under a new scope.
     method set_scope {type key} {
         set Scope [dict create type $type key $key]
-        $Tv delete [$Tv children {}]
-        set RowIndex [dict create]
-        set NextId 0
+        $Text configure -state normal
+        $Text delete 1.0 end
+        foreach t [$Text tag names] {
+            if {[string match "ck*" $t] || [string match "fr*" $t]} {
+                $Text tag delete $t
+            }
+        }
+        $Text configure -state disabled
+        set Cards [dict create]
         foreach entry $AllMatches {
             if {[my in_scope [dict get $entry path] [dict get $entry folder]]} {
-                my insert_row $entry
+                my render_entry $entry
             }
         }
     }
@@ -116,17 +151,149 @@ oo::class create ::csm::ui::Results {
         return 1
     }
 
-    method insert_row {entry} {
-        set iid R$NextId
-        incr NextId
-        set folder [dict get $entry folder]
-        set proj_label [::csm::path::pretty_home [{*}$ResolveFolder $folder]]
-        set when [my fmt_time [dict get $entry ts]]
-        $Tv insert {} end -id $iid -values \
-            [list $proj_label $when [dict get $entry snippet]]
-        dict set RowIndex $iid \
-            [list [dict get $entry path] [dict get $entry lineoff]]
+    method render_entry {entry} {
+        $Text configure -state normal
+        set path [dict get $entry path]
+        if {[dict exists $Cards $path]} {
+            my append_to_card $entry
+        } else {
+            my create_card $entry
+        }
+        $Text configure -state disabled
     }
+
+    method create_card {entry} {
+        set path    [dict get $entry path]
+        set folder  [dict get $entry folder]
+        set ts      [dict get $entry ts]
+        set snippet [dict get $entry snippet]
+        set lineoff [dict get $entry lineoff]
+
+        set proj  [::csm::path::pretty_home [{*}$ResolveFolder $folder]]
+        set when  [my fmt_time $ts]
+        set count 1
+
+        set ctag "ck[incr NextId]"
+        $Text tag configure $ctag
+        $Text tag bind $ctag <Button-1> \
+            [list [self] on_card_click $path]
+        $Text tag bind $ctag <Double-Button-1> \
+            [list [self] on_card_double $path]
+
+        # Header start mark (left gravity) so we can rewrite the header
+        # line in place when the count grows.
+        set hmark "h[incr NextId]"
+        $Text mark set $hmark "end-1c"
+        $Text mark gravity $hmark left
+
+        $Text insert end "[my format_header $proj $when $count]\n" \
+            [list card-header clickable $ctag]
+
+        my insert_snippet end $path $snippet $lineoff
+
+        # Trailing newline closes the card visually.
+        $Text insert end "\n" card-body
+
+        # End-of-card mark: just before the trailing newline, right
+        # gravity so subsequent inserts at the mark land before it and
+        # the mark moves forward.
+        set emark "e[incr NextId]"
+        $Text mark set $emark "end-2c"
+        $Text mark gravity $emark right
+
+        dict set Cards $path [dict create \
+            hmark $hmark emark $emark count $count ctag $ctag \
+            project $proj when $when first_lineno $lineoff]
+    }
+
+    method append_to_card {entry} {
+        set path    [dict get $entry path]
+        set snippet [dict get $entry snippet]
+        set lineoff [dict get $entry lineoff]
+        set card  [dict get $Cards $path]
+        set emark [dict get $card emark]
+        set count [expr {[dict get $card count] + 1}]
+        dict set Cards $path count $count
+
+        my redraw_header $path
+
+        $Text insert $emark " … " [list card-body bridge]
+        my insert_snippet $emark $path $snippet $lineoff
+    }
+
+    method redraw_header {path} {
+        set card  [dict get $Cards $path]
+        set hmark [dict get $card hmark]
+        set ctag  [dict get $card ctag]
+        set proj  [dict get $card project]
+        set when  [dict get $card when]
+        set count [dict get $card count]
+        $Text delete $hmark "$hmark lineend +1c"
+        $Text insert $hmark "[my format_header $proj $when $count]\n" \
+            [list card-header clickable $ctag]
+    }
+
+    method format_header {proj when count} {
+        set noun [expr {$count == 1 ? "match" : "matches"}]
+        return "$proj  ·  $when  ·  $count $noun"
+    }
+
+    method insert_snippet {pos path snippet lineoff} {
+        set ftag "fr[incr NextId]"
+        $Text tag configure $ftag
+        $Text tag bind $ftag <Button-1> \
+            [list [self] on_frag_click $path $lineoff]
+        $Text tag bind $ftag <Double-Button-1> \
+            [list [self] on_frag_double $path $lineoff]
+
+        set start [$Text index $pos]
+        $Text insert $pos $snippet [list card-body clickable $ftag]
+        set end [$Text index "$start + [string length $snippet]c"]
+        my tag_hits_in_range $start $end $snippet
+    }
+
+    method tag_hits_in_range {start end snippet} {
+        set patterns [dict get $Query regex]
+        if {[llength $patterns] == 0} return
+        set nocase [dict get $Query nocase]
+        set hue_count [llength $HitTags]
+        if {$hue_count == 0} return
+
+        set re_opts [list -indices -all -inline]
+        if {$nocase} { lappend re_opts -nocase }
+
+        set i 0
+        foreach pat $patterns {
+            if {$pat eq ""} { incr i; continue }
+            set tag [lindex $HitTags [expr {$i % $hue_count}]]
+            if {[catch {regexp {*}$re_opts -- $pat $snippet} hits]} {
+                incr i
+                continue
+            }
+            foreach span $hits {
+                lassign $span s e
+                set ts [$Text index "$start + ${s}c"]
+                set te [$Text index "$start + [expr {$e + 1}]c"]
+                $Text tag add $tag $ts $te
+            }
+            incr i
+        }
+    }
+
+    method on_card_click {path} {
+        if {![dict exists $Cards $path]} return
+        set lineno [dict get $Cards $path first_lineno]
+        {*}$OnSelect $path $lineno
+    }
+
+    method on_card_double {path} {
+        if {![dict exists $Cards $path]} return
+        set lineno [dict get $Cards $path first_lineno]
+        {*}$OnOpen $path $lineno
+    }
+
+    method on_frag_click  {path lineno} { {*}$OnSelect $path $lineno }
+    method on_frag_double {path lineno} { {*}$OnOpen   $path $lineno }
 
     method set_progress {done total matches} {
         set StatusVar "Searching … $done / $total sessions   matches: $matches"
@@ -137,38 +304,15 @@ oo::class create ::csm::ui::Results {
     }
 
     method cancel {} {
-        if {$CancelCb ne ""} {
-            {*}$CancelCb
-        }
+        if {$CancelCb ne ""} { {*}$CancelCb }
         set StatusVar "Cancelled."
-    }
-
-    method on_select {} {
-        set sel [$Tv selection]
-        if {[llength $sel] == 0} return
-        set iid [lindex $sel 0]
-        if {[dict exists $RowIndex $iid]} {
-            lassign [dict get $RowIndex $iid] path lineoff
-            {*}$OnSelect $path $lineoff
-        }
-    }
-
-    method on_double {} {
-        set sel [$Tv selection]
-        if {[llength $sel] == 0} return
-        set iid [lindex $sel 0]
-        if {[dict exists $RowIndex $iid]} {
-            lassign [dict get $RowIndex $iid] path lineoff
-            {*}$OnOpen $path $lineoff
-        }
     }
 
     method fmt_time {iso} {
         if {$iso eq ""} { return "" }
-        if {[catch {clock scan $iso -format "%Y-%m-%dT%H:%M:%S.%QZ" -gmt 1} e]} {
-            if {[catch {clock scan $iso -format "%Y-%m-%dT%H:%M:%SZ" -gmt 1} e]} {
-                return $iso
-            }
+        regsub {\.\d+Z$} $iso "Z" iso
+        if {[catch {clock scan $iso -format "%Y-%m-%dT%H:%M:%SZ" -gmt 1} e]} {
+            return $iso
         }
         return [clock format $e -format "%a %H:%M"]
     }

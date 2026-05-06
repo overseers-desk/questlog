@@ -17,4 +17,13 @@ source [file join $ROOT ui  results.tcl]
 source [file join $ROOT ui  viewer.tcl]
 source [file join $ROOT lib app.tcl]
 
-::csm::app::start $ROOT
+set initial_patterns [list]
+for {set i 0} {$i < [llength $argv]} {incr i} {
+    set a [lindex $argv $i]
+    if {$a eq "-regex" || $a eq "--regex"} {
+        incr i
+        lappend initial_patterns [lindex $argv $i]
+    }
+}
+
+::csm::app::start $ROOT $initial_patterns

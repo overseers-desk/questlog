@@ -18,7 +18,7 @@ namespace eval ::csm::app {
     variable Root
 }
 
-proc ::csm::app::start {root} {
+proc ::csm::app::start {root {initial_patterns {}}} {
     variable Scan
     variable Search
     variable Toolbar
@@ -81,6 +81,7 @@ proc ::csm::app::start {root} {
         [namespace code on_search_done]]
 
     $Toolbar subscribe [namespace code on_filter]
+    foreach pat $initial_patterns { $Toolbar add_row $pat }
     $Toolbar publish
 
     bind . <Control-q> [namespace code quit]
@@ -120,6 +121,8 @@ proc ::csm::app::on_filter {snapshot} {
 
     if {$has_regex} {
         $Results clear
+        $Results set_query \
+            [dict get $snapshot regex] [dict get $snapshot case]
         $Search start $snapshot
     } else {
         $Search cancel
