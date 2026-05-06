@@ -1,5 +1,6 @@
 package require Tcl 9
 package require TclOO
+package require json
 
 namespace eval ::csm::search {}
 
@@ -12,12 +13,74 @@ proc ::csm::search::dispatch {obj_cmd args} {
     }
 }
 
-# Body sourced into each worker thread. Mirrors run_search's per-file inner
-# loop and clean_preview/snippet_of helpers — duplicated rather than shared
-# because Tcl threads carry separate interpreters with no shared procs.
+# Whitespace-collapse and length-cap a content string for display.
+proc ::csm::search::clean_text {s {limit 300}} {
+    set s [regsub -all {[\s]+} $s " "]
+    set s [string trim $s]
+    if {[string length $s] > $limit} {
+        set s "[string range $s 0 [expr {$limit - 1}]]…"
+    }
+    return $s
+}
+
+# Render a tool_use block as "Name(key=value, ...)". Most informative key
+# first when the tool is one we know; otherwise dict insertion order.
+proc ::csm::search::format_tool_use {name input} {
+    if {[catch {dict size $input}]} { return "${name}()" }
+    set keys [dict keys $input]
+    if {[llength $keys] == 0} { return "${name}()" }
+    set ordered [::csm::search::_order_tool_keys $name $keys]
+    set parts [list]
+    foreach k $ordered {
+        set v [dict get $input $k]
+        # Tcl's value duck-typing means a parsed JSON string and a
+        # parsed JSON object are indistinguishable here; treat every
+        # value as a display string. Whitespace-collapse and cap.
+        set v [regsub -all {[\s]+} $v " "]
+        if {[string length $v] > 60} { set v "[string range $v 0 59]…" }
+        lappend parts "${k}=${v}"
+    }
+    set s "${name}([join $parts {, }])"
+    if {[string length $s] > 250} { set s "[string range $s 0 249]…" }
+    return $s
+}
+
+proc ::csm::search::_order_tool_keys {name keys} {
+    set preferred [dict create \
+        Bash       {command} \
+        Read       {file_path} \
+        Edit       {file_path old_string new_string} \
+        Write      {file_path content} \
+        Grep       {pattern path} \
+        Glob       {pattern path} \
+        Task       {subagent_type prompt} \
+        Agent      {subagent_type prompt} \
+        TaskCreate {subject description} \
+        TaskUpdate {taskId status}]
+    if {![dict exists $preferred $name]} { return $keys }
+    set out [list]
+    foreach k [dict get $preferred $name] {
+        if {$k in $keys} { lappend out $k }
+    }
+    foreach k $keys {
+        if {$k ni $out} { lappend out $k }
+    }
+    return $out
+}
+
+# Body sourced into each worker thread. Tcl threads carry separate
+# interpreters with no access to procs defined in the parent, so
+# extract_blocks, format_tool_use, clean_text and the jsonl helpers are
+# duplicated here. Both copies must stay in sync.
 set ::csm::search::WorkerScript {
     package require Tcl 9
     package require Thread
+    package require json
+
+    proc dict_get_or {d k default} {
+        if {[dict exists $d $k]} { return [dict get $d $k] }
+        return $default
+    }
 
     proc clean_preview {s} {
         set s [regsub -all {[\s]+} $s " "]
@@ -25,16 +88,136 @@ set ::csm::search::WorkerScript {
         if {[string length $s] > 80} { set s "[string range $s 0 79]…" }
         return [string trim $s]
     }
-    proc snippet_of {line} {
-        set t ""
-        if {[regexp {"content":"([^"]+)"} $line -> t]} {
-        } elseif {[regexp {"text":"([^"]+)"} $line -> t]} {
-        } elseif {[regexp {"lastPrompt":"([^"]+)"} $line -> t]} {
-        } else { set t $line }
-        set t [regsub -all {[\s]+} $t " "]
-        if {[string length $t] > 200} { set t "[string range $t 0 199]…" }
-        return [string trim $t]
+
+    proc clean_text {s {limit 300}} {
+        set s [regsub -all {[\s]+} $s " "]
+        set s [string trim $s]
+        if {[string length $s] > $limit} {
+            set s "[string range $s 0 [expr {$limit - 1}]]…"
+        }
+        return $s
     }
+
+    proc is_string_content {c} {
+        if {$c eq ""} { return 1 }
+        if {[catch {llength $c} n]} { return 1 }
+        if {$n == 0} { return 1 }
+        foreach el $c {
+            if {[catch {dict exists $el type} ok] || !$ok} { return 1 }
+        }
+        return 0
+    }
+
+    proc tool_result_text {blk} {
+        if {![dict exists $blk content]} { return "" }
+        set c [dict get $blk content]
+        if {[is_string_content $c]} { return $c }
+        set parts [list]
+        foreach inner $c {
+            set it [dict_get_or $inner type ""]
+            switch -- $it {
+                text            { lappend parts [dict_get_or $inner text ""] }
+                tool_reference  { lappend parts [dict_get_or $inner tool_name ""] }
+            }
+        }
+        return [join $parts " "]
+    }
+
+    proc _order_tool_keys {name keys} {
+        set preferred [dict create \
+            Bash       {command} \
+            Read       {file_path} \
+            Edit       {file_path old_string new_string} \
+            Write      {file_path content} \
+            Grep       {pattern path} \
+            Glob       {pattern path} \
+            Task       {subagent_type prompt} \
+            Agent      {subagent_type prompt} \
+            TaskCreate {subject description} \
+            TaskUpdate {taskId status}]
+        if {![dict exists $preferred $name]} { return $keys }
+        set out [list]
+        foreach k [dict get $preferred $name] {
+            if {$k in $keys} { lappend out $k }
+        }
+        foreach k $keys {
+            if {$k ni $out} { lappend out $k }
+        }
+        return $out
+    }
+
+    proc format_tool_use {name input} {
+        if {[catch {dict size $input}]} { return "${name}()" }
+        set keys [dict keys $input]
+        if {[llength $keys] == 0} { return "${name}()" }
+        set ordered [_order_tool_keys $name $keys]
+        set parts [list]
+        foreach k $ordered {
+            set v [dict get $input $k]
+            set v [regsub -all {[\s]+} $v " "]
+            if {[string length $v] > 60} { set v "[string range $v 0 59]…" }
+            lappend parts "${k}=${v}"
+        }
+        set s "${name}([join $parts {, }])"
+        if {[string length $s] > 250} { set s "[string range $s 0 249]…" }
+        return $s
+    }
+
+    proc extract_blocks {rec} {
+        set out [list]
+        set t [dict_get_or $rec type ""]
+        switch -- $t {
+            user {
+                if {![dict exists $rec message]} { return $out }
+                set msg [dict get $rec message]
+                if {![dict exists $msg content]} { return $out }
+                set c [dict get $msg content]
+                if {[is_string_content $c]} {
+                    lappend out user $c
+                } else {
+                    foreach blk $c {
+                        set bt [dict_get_or $blk type ""]
+                        if {$bt eq "tool_result"} {
+                            set bc [tool_result_text $blk]
+                            if {$bc ne ""} { lappend out tool_result $bc }
+                        } elseif {$bt eq "text"} {
+                            lappend out user [dict_get_or $blk text ""]
+                        }
+                    }
+                }
+            }
+            assistant {
+                if {![dict exists $rec message]} { return $out }
+                set msg [dict get $rec message]
+                if {![dict exists $msg content]} { return $out }
+                set c [dict get $msg content]
+                if {[is_string_content $c]} {
+                    lappend out assistant $c
+                } else {
+                    foreach blk $c {
+                        set bt [dict_get_or $blk type ""]
+                        if {$bt eq "text"} {
+                            lappend out assistant [dict_get_or $blk text ""]
+                        } elseif {$bt eq "tool_use"} {
+                            set nm [dict_get_or $blk name ""]
+                            set ip [dict_get_or $blk input [dict create]]
+                            lappend out tool_use [format_tool_use $nm $ip]
+                        }
+                    }
+                }
+            }
+            system - queue-operation {
+                set c [dict_get_or $rec content ""]
+                if {$c ne ""} { lappend out system $c }
+            }
+            last-prompt {
+                set c [dict_get_or $rec lastPrompt ""]
+                if {$c ne ""} { lappend out user $c }
+            }
+        }
+        return $out
+    }
+
     proc worker_run {main_tid obj_cmd epoch paths patterns re_opts} {
         set matches_in_slice 0
         foreach path $paths {
@@ -61,13 +244,22 @@ set ::csm::search::WorkerScript {
                     if {$pat eq ""} continue
                     if {![regexp {*}$re_opts -- $pat $line]} { set all_match 0; break }
                 }
-                if {$all_match} {
+                if {!$all_match} continue
+                if {[catch {::json::json2dict $line} rec]} continue
+                foreach {btype bcontent} [extract_blocks $rec] {
+                    set has_hit 0
+                    foreach pat $patterns {
+                        if {$pat eq ""} continue
+                        if {[regexp {*}$re_opts -- $pat $bcontent]} { set has_hit 1; break }
+                    }
+                    if {!$has_hit} continue
                     set is_first [expr {!$seen_match_in_file}]
                     set seen_match_in_file 1
-                    set snip [snippet_of $line]
+                    set bcontent [clean_text $bcontent 300]
                     thread::send -async $main_tid \
                         [list ::csm::search::dispatch $obj_cmd on_worker_match \
-                             $epoch $is_first $path $lineno $first_ts $snip $folder]
+                             $epoch $is_first $path $lineno $first_ts \
+                             $btype $bcontent $folder]
                     incr matches_in_slice
                 }
             }
@@ -94,18 +286,22 @@ set ::csm::search::WorkerScript {
     thread::wait
 }
 
-# ::csm::Search - coroutine-driven regex search across session logs.
+# ::csm::Search - regex search across session logs, coroutine by default,
+# threaded fan-out when CSM_SEARCH_THREADS is set.
 #
-# Replaces the bash-worker version. Iterates the same depth-2 glob as
-# Scan, line-streams each candidate, applies the user's regex per line.
-# Independent of Scan's Rows dict - never blocks waiting for a sibling
-# scan to complete. As a free side-effect of reading each file it
-# computes the same row data (multi-turn, first prompt, cwd_hint, first
-# timestamp) and publishes back to Scan via Scan.publish_row, so the
-# tree benefits from search work too.
+# Match flow per session line: pre-filter with the user's AND-combined
+# regex against the raw line, parse JSON only on lines that pass the
+# pre-filter, walk the record's content blocks, and emit one match event
+# per block whose cleaned content contains at least one of the patterns.
+# The block type (user/assistant/tool_use/tool_result/system) and the
+# cleaned content travel together so the renderer can show typed rows.
 #
-# Cancellation via the same epoch-token pattern as Scan: incr Epoch,
-# coroutine checks at every yield boundary and exits cleanly when stale.
+# Side effect: as a free byproduct of reading each file, the row data
+# (multi-turn predicate, first prompt, cwd_hint, first timestamp) is
+# published to Scan via Scan.publish_row, so the tree benefits.
+#
+# Cancellation: each start increments Epoch; in-flight async dispatches
+# carrying a stale epoch are dropped on arrival.
 
 oo::class create ::csm::Search {
     variable Scan
@@ -142,10 +338,6 @@ oo::class create ::csm::Search {
         }
     }
 
-    # start snapshot - cancel any in-flight, start new search coroutine.
-    # Empty pattern list is a no-op; caller publishes only when non-empty.
-    # When CSM_SEARCH_THREADS=N (N>0), fan out across N worker threads
-    # instead of running the single coroutine.
     method start {snapshot} {
         set N [my pick_thread_count]
         if {$N > 0} {
@@ -193,7 +385,6 @@ oo::class create ::csm::Search {
             set first_user ""
             set cwd_hint ""
             set first_ts ""
-            set first_match_done 0
             set lineno 0
             if {[catch {open $path r} fh]} {
                 incr count
@@ -214,7 +405,6 @@ oo::class create ::csm::Search {
                     incr users
                     if {$users == 1} { set first_user $uc }
                 }
-                # User-supplied regex match - line must satisfy every pattern (AND).
                 set all_match 1
                 foreach pat $patterns {
                     if {$pat eq ""} continue
@@ -224,12 +414,26 @@ oo::class create ::csm::Search {
                     }
                 }
                 if {$all_match} {
-                    set is_first [expr {![dict exists $MatchedSessions $path]}]
-                    dict set MatchedSessions $path 1
-                    set snippet [my snippet_of $line]
-                    set ts_for_match [expr {$first_ts ne "" ? $first_ts : ""}]
-                    {*}$OnMatch $is_first $path $lineno $ts_for_match $snippet $folder
-                    dict incr Counts matches
+                    if {![catch {::json::json2dict $line} rec]} {
+                        foreach {btype bcontent} [::csm::jsonl::extract_blocks $rec] {
+                            set has_hit 0
+                            foreach pat $patterns {
+                                if {$pat eq ""} continue
+                                if {[regexp {*}$re_opts -- $pat $bcontent]} {
+                                    set has_hit 1
+                                    break
+                                }
+                            }
+                            if {!$has_hit} continue
+                            set is_first [expr {![dict exists $MatchedSessions $path]}]
+                            dict set MatchedSessions $path 1
+                            set bcontent [::csm::search::clean_text $bcontent 300]
+                            set ts_for_match [expr {$first_ts ne "" ? $first_ts : ""}]
+                            {*}$OnMatch $is_first $path $lineno $ts_for_match \
+                                $btype $bcontent $folder
+                            dict incr Counts matches
+                        }
+                    }
                 }
                 # Yield mid-file so a cancel issued by a fresh keystroke
                 # lands without waiting for the rest of a large log.
@@ -270,35 +474,11 @@ oo::class create ::csm::Search {
         {*}$OnDone $total [dict get $Counts matches]
     }
 
-    # snippet_of line - extract the matched text content for display.
-    # The line is a JSON record; we want a readable substring around the
-    # match. Keep it short and let the result-pane truncate further.
-    method snippet_of {line} {
-        # Try to extract just the textual content of the record.
-        set t ""
-        if {[regexp {"content":"([^"]+)"} $line -> t]} {
-        } elseif {[regexp {"text":"([^"]+)"} $line -> t]} {
-        } elseif {[regexp {"lastPrompt":"([^"]+)"} $line -> t]} {
-        } else {
-            set t $line
-        }
-        set t [regsub -all {[\s]+} $t " "]
-        if {[string length $t] > 200} {
-            set t "[string range $t 0 199]…"
-        }
-        return [string trim $t]
-    }
-
     method dict_or {d k default} {
         if {[dict exists $d $k]} { return [dict get $d $k] }
         return $default
     }
 
-    # Threaded fan-out driver. Splits paths into N slices, spawns one
-    # worker thread per slice, and lets workers stream matches/rows back
-    # via thread::send -async. Stale messages (epoch mismatch) are
-    # dropped on arrival, so cancellation costs only the in-flight
-    # worker work — no shared cancellation state needed.
     method start_threaded {snapshot N} {
         package require Thread
         my cancel
@@ -343,14 +523,14 @@ oo::class create ::csm::Search {
         }
     }
 
-    # Receives a match from a worker. Re-derives is_first on the main
-    # side so the per-session-first-hit invariant is authoritative here
-    # rather than relying on disjoint slicing.
-    method on_worker_match {epoch worker_first path lineno ts snippet folder} {
+    # Receives a typed match from a worker. Re-derives is_first on the
+    # main side so the per-session-first-hit invariant is authoritative
+    # here rather than relying on disjoint slicing.
+    method on_worker_match {epoch worker_first path lineno ts btype content folder} {
         if {$epoch != $Epoch} return
         set is_first [expr {![dict exists $MatchedSessions $path]}]
         dict set MatchedSessions $path 1
-        {*}$OnMatch $is_first $path $lineno $ts $snippet $folder
+        {*}$OnMatch $is_first $path $lineno $ts $btype $content $folder
         dict incr Counts matches
     }
 

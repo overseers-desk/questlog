@@ -154,11 +154,11 @@ proc ::csm::app::on_scan_done {scanned} {
 
 # ---- search callbacks --------------------------------------------------
 
-proc ::csm::app::on_search_match {is_first path lineoff ts snippet folder} {
+proc ::csm::app::on_search_match {is_first path lineoff ts btype content folder} {
     variable Tree
     variable Results
-    $Tree update_match $is_first $path $lineoff $ts $snippet $folder
-    $Results add_match $is_first $path $lineoff $ts $snippet $folder
+    $Tree update_match $is_first $path $lineoff $ts $content $folder
+    $Results add_match $is_first $path $lineoff $ts $btype $content $folder
 }
 
 proc ::csm::app::on_search_progress {done total matches} {

@@ -2,7 +2,7 @@ package require Tcl 9
 package require json
 
 namespace eval ::csm::jsonl {
-    namespace export extract_text is_compact_boundary record_timestamp
+    namespace export extract_text extract_blocks is_compact_boundary record_timestamp
 }
 
 # Parse one JSONL line into a Tcl dict. Returns "" on parse failure.
@@ -75,6 +75,91 @@ proc ::csm::jsonl::extract_array_text {blocks} {
         }
     }
     return [join $out "\n"]
+}
+
+# Walk a record's content blocks and emit one {btype content} pair per
+# block worth showing. Pure function on a parsed record dict.
+#
+#   user (string content):                {user $string}
+#   user (array of tool_result blocks):   {tool_result <text>}* (one per block)
+#   user (array of text blocks):          {user <text>}*
+#   assistant (array of text blocks):     {assistant <text>}*
+#   assistant (array of tool_use blocks): {tool_use <NAME(args)>}*
+#   system / queue-operation (.content):  {system $content}
+#   last-prompt:                          {user $lastPrompt}
+#   anything else (attachment, file-history-snapshot, etc.): empty list.
+#
+# tool_use blocks pass through ::csm::search::format_tool_use, which lives
+# in the search namespace because the rendered form is a search-pane
+# concern, not a JSONL concern.
+proc ::csm::jsonl::extract_blocks {rec} {
+    set out [list]
+    set t [dict_get_or $rec type ""]
+    switch -- $t {
+        user {
+            if {![dict exists $rec message]} { return $out }
+            set msg [dict get $rec message]
+            if {![dict exists $msg content]} { return $out }
+            set c [dict get $msg content]
+            if {[is_string_content $c]} {
+                lappend out user $c
+            } else {
+                foreach blk $c {
+                    set bt [dict_get_or $blk type ""]
+                    if {$bt eq "tool_result"} {
+                        set bc [tool_result_text $blk]
+                        if {$bc ne ""} { lappend out tool_result $bc }
+                    } elseif {$bt eq "text"} {
+                        lappend out user [dict_get_or $blk text ""]
+                    }
+                }
+            }
+        }
+        assistant {
+            if {![dict exists $rec message]} { return $out }
+            set msg [dict get $rec message]
+            if {![dict exists $msg content]} { return $out }
+            set c [dict get $msg content]
+            if {[is_string_content $c]} {
+                lappend out assistant $c
+            } else {
+                foreach blk $c {
+                    set bt [dict_get_or $blk type ""]
+                    if {$bt eq "text"} {
+                        lappend out assistant [dict_get_or $blk text ""]
+                    } elseif {$bt eq "tool_use"} {
+                        set name  [dict_get_or $blk name ""]
+                        set input [dict_get_or $blk input [dict create]]
+                        lappend out tool_use [::csm::search::format_tool_use $name $input]
+                    }
+                }
+            }
+        }
+        system - queue-operation {
+            set c [dict_get_or $rec content ""]
+            if {$c ne ""} { lappend out system $c }
+        }
+        last-prompt {
+            set c [dict_get_or $rec lastPrompt ""]
+            if {$c ne ""} { lappend out user $c }
+        }
+    }
+    return $out
+}
+
+proc ::csm::jsonl::tool_result_text {blk} {
+    if {![dict exists $blk content]} { return "" }
+    set c [dict get $blk content]
+    if {[is_string_content $c]} { return $c }
+    set parts [list]
+    foreach inner $c {
+        set it [dict_get_or $inner type ""]
+        switch -- $it {
+            text            { lappend parts [dict_get_or $inner text ""] }
+            tool_reference  { lappend parts [dict_get_or $inner tool_name ""] }
+        }
+    }
+    return [join $parts " "]
 }
 
 # 1 iff this is a compaction boundary: type=system AND subtype=compact_boundary.

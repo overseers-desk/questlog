@@ -202,7 +202,7 @@ oo::class create ::csm::ui::Tree {
     # Streaming match update from Search. is_first means the session is
     # newly matched; subsequent matches in the same session add to the
     # result pane only.
-    method update_match {is_first path lineoff ts snippet folder} {
+    method update_match {is_first path lineoff ts content folder} {
         if {!$is_first} return
         if {[dict exists $MatchedSessions $path]} return
         dict set MatchedSessions $path 1

@@ -4,16 +4,12 @@ package require Tk
 # ::csm::ui::Results - the search-result pane.
 #
 # One read-only text widget rendering one card per session that has
-# matches. Each card is a header line (project, time, count) plus an
-# indented body with the matching snippets joined by " … " bridges.
-# Hits inside a snippet are tagged with hit-<i>, one tag per pattern in
-# the snapshot's regex list, so the user sees in place which substring
-# was caught by which pattern.
-#
-# Substrate choice: ttk::treeview was discarded because it truncates
-# cells, has no substring highlight, and renders many hits per session
-# as many visually equal rows. The text widget gives word wrap, tag-
-# range highlighting, click-bound regions, and a single scroll model.
+# matches. Each card is a header line (project, time, count) plus a
+# typed row per matching content block: type label in a left column
+# (user, assistant, tool_use, tool_result, system) followed by the
+# cleaned content with regex hits highlighted in place. The rendered
+# content is the message body extracted from the JSONL record by Search,
+# never a raw line.
 #
 # Public surface (called from app.tcl): clear, add_match, set_scope,
 # set_progress, set_done, cancel, set_query.
@@ -75,9 +71,24 @@ oo::class create ::csm::ui::Results {
 
         $Text tag configure card-header \
             -font {-weight bold} -spacing1 8 -spacing3 2 -foreground "#444"
-        $Text tag configure card-body \
-            -lmargin1 16 -lmargin2 16 -spacing3 6
-        $Text tag configure bridge -foreground "#888"
+        # Row paragraph: small left margin for the type label, content
+        # column begins where the tab stop lands. Wrapped continuations
+        # align under the content column via lmargin2.
+        set f [ttk::style lookup TkDefaultFont -font]
+        if {$f eq ""} { set f TkDefaultFont }
+        set lm 16
+        set tw [font measure $f "tool_result   "]
+        set content_col [expr {$lm + $tw}]
+        $Text configure -tabs [list $content_col left]
+        $Text tag configure row \
+            -lmargin1 $lm -lmargin2 $content_col -spacing1 6
+        # Type-label foregrounds. Mirrors ui/viewer.tcl:76-78 for the
+        # three primary types; muted greys for tool_result and system.
+        $Text tag configure type-user        -foreground "#06c" -font {-weight bold}
+        $Text tag configure type-assistant   -foreground "#222" -font {-weight bold}
+        $Text tag configure type-tool_use    -foreground "#a60" -font {-weight bold}
+        $Text tag configure type-tool_result -foreground "#666" -font {-weight bold}
+        $Text tag configure type-system      -foreground "#888" -font {-weight bold}
         # The clickable tag is a hover hint only; per-region tags carry
         # the actual <Button-1> binding.
         $Text tag configure clickable
@@ -113,10 +124,10 @@ oo::class create ::csm::ui::Results {
         set Query [dict create regex $regex_list nocase $nocase]
     }
 
-    method add_match {is_first path lineoff ts snippet folder} {
+    method add_match {is_first path lineoff ts btype content folder} {
         set entry [dict create \
             path $path lineoff $lineoff ts $ts \
-            snippet $snippet folder $folder]
+            btype $btype content $content folder $folder]
         lappend AllMatches $entry
         if {[my in_scope $path $folder]} {
             my render_entry $entry
@@ -166,7 +177,8 @@ oo::class create ::csm::ui::Results {
         set path    [dict get $entry path]
         set folder  [dict get $entry folder]
         set ts      [dict get $entry ts]
-        set snippet [dict get $entry snippet]
+        set btype   [dict get $entry btype]
+        set content [dict get $entry content]
         set lineoff [dict get $entry lineoff]
 
         set proj  [::csm::path::pretty_home [{*}$ResolveFolder $folder]]
@@ -189,10 +201,10 @@ oo::class create ::csm::ui::Results {
         $Text insert end "[my format_header $proj $when $count]\n" \
             [list card-header clickable $ctag]
 
-        my insert_snippet end $path $snippet $lineoff
+        my insert_row end $path $btype $content $lineoff
 
         # Trailing newline closes the card visually.
-        $Text insert end "\n" card-body
+        $Text insert end "\n"
 
         # End-of-card mark: just before the trailing newline, right
         # gravity so subsequent inserts at the mark land before it and
@@ -208,7 +220,8 @@ oo::class create ::csm::ui::Results {
 
     method append_to_card {entry} {
         set path    [dict get $entry path]
-        set snippet [dict get $entry snippet]
+        set btype   [dict get $entry btype]
+        set content [dict get $entry content]
         set lineoff [dict get $entry lineoff]
         set card  [dict get $Cards $path]
         set emark [dict get $card emark]
@@ -217,8 +230,7 @@ oo::class create ::csm::ui::Results {
 
         my redraw_header $path
 
-        $Text insert $emark " … " [list card-body bridge]
-        my insert_snippet $emark $path $snippet $lineoff
+        my insert_row $emark $path $btype $content $lineoff
     }
 
     method redraw_header {path} {
@@ -238,7 +250,7 @@ oo::class create ::csm::ui::Results {
         return "$proj  ·  $when  ·  $count $noun"
     }
 
-    method insert_snippet {pos path snippet lineoff} {
+    method insert_row {pos path btype content lineoff} {
         set ftag "fr[incr NextId]"
         $Text tag configure $ftag
         $Text tag bind $ftag <Button-1> \
@@ -246,10 +258,19 @@ oo::class create ::csm::ui::Results {
         $Text tag bind $ftag <Double-Button-1> \
             [list [self] on_frag_double $path $lineoff]
 
+        set type_tag type-$btype
+        # Fall back to a known type if Search emits something unexpected.
+        if {[lsearch -exact [$Text tag names] $type_tag] < 0} {
+            set type_tag type-system
+        }
+
+        $Text insert $pos $btype [list row $type_tag clickable $ftag]
+        $Text insert $pos "\t" [list row clickable $ftag]
         set start [$Text index $pos]
-        $Text insert $pos $snippet [list card-body clickable $ftag]
-        set end [$Text index "$start + [string length $snippet]c"]
-        my tag_hits_in_range $start $end $snippet
+        $Text insert $pos $content [list row clickable $ftag]
+        set end [$Text index "$start + [string length $content]c"]
+        $Text insert $pos "\n" row
+        my tag_hits_in_range $start $end $content
     }
 
     method tag_hits_in_range {start end snippet} {
