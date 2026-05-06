@@ -1,0 +1,20 @@
+#!/usr/bin/env wish9.0
+# Claude Session Manager - entry script.
+
+package require Tcl 9
+package require Tk
+
+set ROOT [file dirname [file normalize [info script]]]
+
+source [file join $ROOT lib path.tcl]
+source [file join $ROOT lib jsonl.tcl]
+source [file join $ROOT lib terminal.tcl]
+source [file join $ROOT lib scan.tcl]
+source [file join $ROOT lib search.tcl]
+source [file join $ROOT ui  toolbar.tcl]
+source [file join $ROOT ui  tree.tcl]
+source [file join $ROOT ui  results.tcl]
+source [file join $ROOT ui  viewer.tcl]
+source [file join $ROOT lib app.tcl]
+
+::csm::app::start $ROOT
