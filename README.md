@@ -1,12 +1,15 @@
 # Claude Session Manager
 
-A small ttk GUI for browsing and searching the session logs that Claude Code writes under `~/.claude/projects/`. It replaces two shell aliases (`cs-ls`, `cs-grep`) with a tree of every session grouped by project, a regex search that streams matches as they are found, and a viewer that segments long conversations by compaction events and idle gaps.
+A GUI for finding, reading, and reopening past Claude Code sessions stored under `~/.claude/projects/`. It replaces the shell aliases `cs-ls` and `cs-grep` with a session tree per project, a regex search that streams matches across all projects, a viewer that segments long conversations into collapsible sections, and right-click actions that reopen a session in its original working directory.
 
-## The problem
+## Why a session manager
 
-Claude Code writes one jsonl per session into `~/.claude/projects/<encoded-cwd>/<uuid>.jsonl`. After a few months of use these accumulate into thousands of files across dozens of project folders. Two questions recur. *"Which session did I have in this project last week?"* is browsing — chronological scan within or across folders. *"Which session was the one where we discussed X?"* is searching — regex across content, where the user does not know which folder it lives in. The shell aliases handle each at a basic level. `cs-ls` lists the current working directory's logs by mtime; `cs-grep` walks all logs and applies a regex to the extracted content. Neither presents results in a navigable form, neither connects with the other, and neither knows how to reopen a session.
+- A bug surfaces after the session that wrote it is gone.
+- You remember a session by when, not by what.
+- You need a fact from a past session, not to resume it.
+- Fork an old session without disturbing the original.
 
-## What the GUI does
+## Window layout
 
 The window has three regions and a status bar.
 
@@ -28,7 +31,7 @@ Right-clicking a session offers "Open in viewer", "Copy resume command", "Copy s
 
 **Memoise within a process, not across launches.** Once a file's row has been computed in this run it is reused for subsequent toolbar window changes. Shrinking the window filters in memory; growing it scans only the new files. The accumulated state lives for the lifetime of the GUI process and is discarded on quit. A user resuming a session in another terminal sees the change on the next launch, not via a watcher or a sync protocol.
 
-**Native Tcl over subprocesses where the work allows it.** The interpreter already has an event loop, a regex engine that is C-implemented, coroutines that yield cleanly to the event loop, and a JSON parser for the cases that need one. External commands carry process-startup latency and an extra serialisation boundary at every call. The two places this tool *does* shell out — `xdg-open` for a file manager and the user's terminal binary for "Resume in new tab" — are operations that can only be done by handing control to another program.
+**Native Tcl over subprocesses where the work allows it.** The interpreter already has an event loop, a regex engine that is C-implemented, coroutines that yield cleanly to the event loop, and a JSON parser for the cases that need one. External commands carry process-startup latency and an extra serialisation boundary at every call. The two places this tool *does* shell out (`xdg-open` for a file manager and the user's terminal binary for "Resume in new tab") are operations that can only be done by handing control to another program.
 
 **Coroutines drive long work and yield often.** A scan that touches several thousand files cannot run as a blocking call. The scanner is a coroutine that processes a small number of files, reschedules itself with `after 1`, and yields. The UI repaints between ticks; cancellation is a single integer increment that the coroutine notices at its next yield boundary. There is no thread, no shared mutex, no worker pipe.
 
@@ -41,10 +44,10 @@ csm                     entry script (wish9.0)
 lib/
   app.tcl               wires everything; constructs Scan, Toolbar, Tree,
                         Results, Search; subscribes them
-  scan.tcl              Scan class — coroutine-driven, mtime-keyed
+  scan.tcl              Scan class: coroutine-driven, mtime-keyed
                         in-process row dict, pre-sorted by mtime DESC,
                         epoch-token cancellation
-  search.tcl            Search class — own coroutine, iterates the same
+  search.tcl            Search class: own coroutine, iterates the same
                         path list, applies user regex, emits matches and
                         publishes row data back to Scan as a side effect
   path.tcl              folder-name encode/decode, projects-root path
@@ -88,4 +91,4 @@ grep -nE '\bexec\b'           lib/*.tcl ui/*.tcl   # only ui/tree.tcl (xdg-open)
                                                    # and lib/terminal.tcl (terminal launch)
 ```
 
-The first guards against TclOO methods named with a leading underscore — TclOO would treat them as unexported and fail dispatch through callbacks like Tk `-command`, `bind`, `after`, and `chan event`. The second ensures the only subprocesses are the two genuinely unavoidable ones; if a third appears, it should be challenged before being merged.
+The first guards against TclOO methods named with a leading underscore. TclOO treats those as unexported and fails dispatch through callbacks like Tk `-command`, `bind`, `after`, and `chan event`. The second ensures the only subprocesses are the two genuinely unavoidable ones; if a third appears, it should be challenged before being merged.
