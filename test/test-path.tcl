@@ -23,6 +23,13 @@ check decode_no_dash  "/home/weiwu/code/contact/graph" \
 # encode_cwd: simple inverse of slashes-to-dashes.
 check encode_simple   "-home-weiwu-code-foo"        [::csm::path::encode_cwd "/home/weiwu/code/foo"]
 
+# pretty_home: abbreviate $HOME, leave non-home paths alone.
+set ::env(HOME) /home/alice
+check pretty_under   "~/code/foo"        [::csm::path::pretty_home "/home/alice/code/foo"]
+check pretty_exact   "~"                 [::csm::path::pretty_home "/home/alice"]
+check pretty_other   "/tmp/x"            [::csm::path::pretty_home "/tmp/x"]
+check pretty_prefix  "/home/aliceland/x" [::csm::path::pretty_home "/home/aliceland/x"]
+
 if {$fails > 0} {
     puts "$fails failures"
     exit 1

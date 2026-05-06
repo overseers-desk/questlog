@@ -147,7 +147,7 @@ oo::class create ::csm::ui::Tree {
     method ensure_folder {folder} {
         set fiid F:$folder
         if {[$Tv exists $fiid]} return
-        set label [{*}$ResolveFolder $folder]
+        set label [::csm::path::pretty_home [{*}$ResolveFolder $folder]]
         $Tv insert {} end -id $fiid -text $label -values [list "" ""] -open 0
         dict set FolderCount $fiid 0
         dict set FolderBytes $fiid 0

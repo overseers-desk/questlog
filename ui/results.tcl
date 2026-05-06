@@ -120,7 +120,7 @@ oo::class create ::csm::ui::Results {
         set iid R$NextId
         incr NextId
         set folder [dict get $entry folder]
-        set proj_label [{*}$ResolveFolder $folder]
+        set proj_label [::csm::path::pretty_home [{*}$ResolveFolder $folder]]
         set when [my fmt_time [dict get $entry ts]]
         $Tv insert {} end -id $iid -values \
             [list $proj_label $when [dict get $entry snippet]]

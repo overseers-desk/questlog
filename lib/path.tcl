@@ -1,7 +1,17 @@
 package require Tcl 9
 
 namespace eval ::csm::path {
-    namespace export decode_folder encode_cwd projects_root
+    namespace export decode_folder encode_cwd projects_root pretty_home
+}
+
+# Display-only: abbreviate a leading $HOME to ~. The model keeps absolute
+# paths so encode_cwd, xdg-open and the resume command stay literal.
+proc ::csm::path::pretty_home {path} {
+    set home $::env(HOME)
+    if {$path eq $home || [string match "$home/*" $path]} {
+        return "~[string range $path [string length $home] end]"
+    }
+    return $path
 }
 
 # Root of the on-disk Claude session store.
