@@ -22,25 +22,35 @@ oo::class create ::csm::ui::Results {
     variable Text
     variable OnSelect
     variable OnOpen
+    variable OnMoveRequest
+    variable OnDropMove
+    variable DropTarget       ;# tree widget path used as drop surface
     variable AllMatches    ;# arrival-ordered list of match dicts
     variable Scope         ;# {type none|folder|session  key <s>}
     variable Query         ;# {regex <list>  nocase 0|1}
     variable Cards         ;# path -> card dict (hmark emark count ctag project when first_lineno)
     variable HitTags       ;# list of hit-<i> tag names for per-pattern colour
     variable NextId        ;# monotonic id for unique mark and tag names
+    variable Menu
+    variable MenuPath
 
-    constructor {parent resolve_cb cancel_cb on_select on_open} {
+    constructor {parent resolve_cb cancel_cb on_select on_open \
+                 on_move_request on_drop_move drop_target} {
         set Top $parent
         set ResolveFolder $resolve_cb
         set CancelCb $cancel_cb
         set OnSelect $on_select
         set OnOpen   $on_open
+        set OnMoveRequest $on_move_request
+        set OnDropMove $on_drop_move
+        set DropTarget $drop_target
         set StatusVar "Idle"
         set AllMatches [list]
         set Scope [dict create type none key ""]
         set Query [dict create regex [list] nocase 0]
         set Cards [dict create]
         set NextId 0
+        set MenuPath ""
 
         my build
     }
@@ -102,6 +112,17 @@ oo::class create ::csm::ui::Results {
             $Text tag configure $t -background [lindex $hues $i]
             lappend HitTags $t
         }
+
+        bind $Text <B1-Motion> [list ::csm::ui::drag::motion %X %Y]
+        bind $Text <Button-3>  [list [self] on_right %X %Y %x %y]
+
+        my build_menu
+    }
+
+    method build_menu {} {
+        set Menu $Top.cmenu
+        menu $Menu -tearoff 0
+        $Menu add command -label "Move to..." -command [list [self] menu_move]
     }
 
     method clear {} {
@@ -187,8 +208,10 @@ oo::class create ::csm::ui::Results {
 
         set ctag "ck[incr NextId]"
         $Text tag configure $ctag
-        $Text tag bind $ctag <Button-1> \
-            [list [self] on_card_click $path]
+        $Text tag bind $ctag <ButtonPress-1> \
+            [list [self] on_card_press $path %X %Y]
+        $Text tag bind $ctag <ButtonRelease-1> \
+            [list [self] on_card_release $path %X %Y]
         $Text tag bind $ctag <Double-Button-1> \
             [list [self] on_card_double $path]
 
@@ -253,8 +276,10 @@ oo::class create ::csm::ui::Results {
     method insert_row {pos path btype content lineoff} {
         set ftag "fr[incr NextId]"
         $Text tag configure $ftag
-        $Text tag bind $ftag <Button-1> \
-            [list [self] on_frag_click $path $lineoff]
+        $Text tag bind $ftag <ButtonPress-1> \
+            [list [self] on_frag_press $path $lineoff %X %Y]
+        $Text tag bind $ftag <ButtonRelease-1> \
+            [list [self] on_frag_release $path $lineoff %X %Y]
         $Text tag bind $ftag <Double-Button-1> \
             [list [self] on_frag_double $path $lineoff]
 
@@ -301,6 +326,30 @@ oo::class create ::csm::ui::Results {
         }
     }
 
+    method on_card_press {path X Y} {
+        ::csm::ui::drag::watch $Text $DropTarget $X $Y $path \
+            [list [self] handle_drop]
+    }
+
+    method on_card_release {path X Y} {
+        set was_drag [::csm::ui::drag::release $X $Y]
+        if {!$was_drag} { my on_card_click $path }
+    }
+
+    method on_frag_press {path lineno X Y} {
+        ::csm::ui::drag::watch $Text $DropTarget $X $Y $path \
+            [list [self] handle_drop]
+    }
+
+    method on_frag_release {path lineno X Y} {
+        set was_drag [::csm::ui::drag::release $X $Y]
+        if {!$was_drag} { my on_frag_click $path $lineno }
+    }
+
+    method handle_drop {path target_folder} {
+        {*}$OnDropMove $path $target_folder
+    }
+
     method on_card_click {path} {
         if {![dict exists $Cards $path]} return
         set lineno [dict get $Cards $path first_lineno]
@@ -315,6 +364,59 @@ oo::class create ::csm::ui::Results {
 
     method on_frag_click  {path lineno} { {*}$OnSelect $path $lineno }
     method on_frag_double {path lineno} { {*}$OnOpen   $path $lineno }
+
+    method on_right {X Y x y} {
+        # Resolve the click position to a card by looking for a ck* tag
+        # at the index. Tag names at the position include the card's
+        # ctag (which encodes nothing about path) plus card-header,
+        # clickable, and so on. We reverse-look it up via Cards.
+        set idx [$Text index @$x,$y]
+        set tags [$Text tag names $idx]
+        set hit ""
+        foreach t $tags {
+            if {[string match "ck*" $t]} { set hit $t; break }
+        }
+        if {$hit eq ""} return
+        dict for {p card} $Cards {
+            if {[dict get $card ctag] eq $hit} {
+                set MenuPath $p
+                tk_popup $Menu $X $Y
+                return
+            }
+        }
+    }
+
+    method menu_move {} {
+        if {$MenuPath ne ""} { {*}$OnMoveRequest $MenuPath }
+    }
+
+    # Re-key the in-memory match list and rebuild the card under the new
+    # path. Called after the underlying jsonl has been renamed.
+    method relocate_card {old_path new_path new_folder} {
+        set updated [list]
+        foreach entry $AllMatches {
+            if {[dict get $entry path] eq $old_path} {
+                dict set entry path $new_path
+                dict set entry folder $new_folder
+            }
+            lappend updated $entry
+        }
+        set AllMatches $updated
+        if {[dict exists $Cards $old_path]} {
+            set card [dict get $Cards $old_path]
+            set hmark [dict get $card hmark]
+            set emark [dict get $card emark]
+            $Text configure -state normal
+            $Text delete $hmark "$emark +1c"
+            $Text configure -state disabled
+            dict unset Cards $old_path
+        }
+        foreach entry $AllMatches {
+            if {[dict get $entry path] ne $new_path} continue
+            if {![my in_scope $new_path $new_folder]} continue
+            my render_entry $entry
+        }
+    }
 
     method set_progress {done total matches} {
         set StatusVar "Searching … $done / $total sessions   matches: $matches"

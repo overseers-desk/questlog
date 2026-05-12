@@ -27,18 +27,23 @@ oo::class create ::csm::ui::Tree {
     variable OnSelect
     variable OnOpen
     variable OnScopeChange    ;# cb: type key -> publish results-pane scope
+    variable OnMoveRequest    ;# cb: path -> open picker
+    variable OnDropMove       ;# cb: path folder -> direct move
     variable Menu
     variable MenuTarget
     variable FolderCount      ;# dict fiid -> int (number of inserted sessions)
     variable FolderBytes      ;# dict fiid -> int (sum of inserted sessions' sizes)
 
-    constructor {parent resolve_cb lookup_cb on_select on_open on_scope_change} {
+    constructor {parent resolve_cb lookup_cb on_select on_open on_scope_change \
+                 on_move_request on_drop_move} {
         set Top $parent
         set ResolveFolder $resolve_cb
         set LookupSession $lookup_cb
         set OnSelect $on_select
         set OnOpen   $on_open
         set OnScopeChange $on_scope_change
+        set OnMoveRequest $on_move_request
+        set OnDropMove $on_drop_move
         set Snapshot [dict create]
         set MatchedSessions [dict create]
         set RegexActive 0
@@ -76,6 +81,9 @@ oo::class create ::csm::ui::Tree {
         bind $Tv <<TreeviewSelect>> [list [self] on_select]
         bind $Tv <Double-Button-1>  [list [self] on_double]
         bind $Tv <Button-3>         [list [self] on_right %X %Y %x %y]
+        bind $Tv <ButtonPress-1>    [list [self] on_press   %X %Y %x %y]
+        bind $Tv <B1-Motion>        [list ::csm::ui::drag::motion %X %Y]
+        bind $Tv <ButtonRelease-1>  [list [self] on_release %X %Y]
 
         my build_menu
     }
@@ -96,6 +104,7 @@ oo::class create ::csm::ui::Tree {
             -command [list [self] menu_resume 0]
         $Menu add command -label "Resume forked"           -command [list [self] menu_resume 1]
         $Menu add separator
+        $Menu add command -label "Move to..."              -command [list [self] menu_move]
         $Menu add command -label "Reveal folder"           -command [list [self] menu_reveal]
     }
 
@@ -251,8 +260,7 @@ oo::class create ::csm::ui::Tree {
         if {$row eq ""} return
         set folder [dict get $row folder]
         set uuid   [dict get $row uuid]
-        set cwd_hint [dict get $row cwd_hint]
-        set cwd [expr {$cwd_hint ne "" ? $cwd_hint : [{*}$ResolveFolder $folder]}]
+        set cwd [{*}$ResolveFolder $folder]
         set MenuTarget [list path $path uuid $uuid cwd $cwd folder $folder]
         tk_popup $Menu $X $Y
     }
@@ -291,6 +299,56 @@ oo::class create ::csm::ui::Tree {
         }
     }
 
+    method menu_move {} {
+        {*}$OnMoveRequest [my menu_target_get path]
+    }
+
+    method on_press {X Y x y} {
+        set iid [$Tv identify item $x $y]
+        if {![string match "S:*" $iid]} return
+        set path [string range $iid 2 end]
+        ::csm::ui::drag::watch $Tv $Tv $X $Y $path \
+            [list [self] handle_drop]
+    }
+
+    method on_release {X Y} {
+        ::csm::ui::drag::release $X $Y
+    }
+
+    method handle_drop {path target_folder} {
+        {*}$OnDropMove $path $target_folder
+    }
+
+    # Re-key after a successful move. Removes the old S:* iid, decrements
+    # the source folder's counters (deleting the folder iid if empty),
+    # and rewrites the MatchedSessions key when regex mode is active so
+    # the subsequent on_scan_row reinsert passes the regex guard.
+    method relocate_session {old_path new_path} {
+        set old_siid S:$old_path
+        if {[$Tv exists $old_siid]} {
+            set old_fiid [$Tv parent $old_siid]
+            set bytes 0
+            set row [{*}$LookupSession $old_path]
+            if {$row ne ""} { set bytes [dict get $row size] }
+            $Tv delete $old_siid
+            if {$old_fiid ne "" && [dict exists $FolderCount $old_fiid]} {
+                dict incr FolderCount $old_fiid -1
+                dict incr FolderBytes $old_fiid [expr {-1 * $bytes}]
+                if {[dict get $FolderCount $old_fiid] <= 0} {
+                    $Tv delete $old_fiid
+                    dict unset FolderCount $old_fiid
+                    dict unset FolderBytes $old_fiid
+                } else {
+                    my render_folder $old_fiid
+                }
+            }
+        }
+        if {[dict exists $MatchedSessions $old_path]} {
+            dict unset MatchedSessions $old_path
+            dict set MatchedSessions $new_path 1
+        }
+    }
+
     method clipboard_set {s} {
         clipboard clear
         clipboard append $s
@@ -310,6 +368,10 @@ oo::class create ::csm::ui::Tree {
             $Tv focus $siid
         }
     }
+
+    # The internal tree widget path; used by the results pane to know
+    # where to drop sessions during a drag.
+    method tv_path {} { return $Tv }
 
     method dict_or {d k default} {
         if {[dict exists $d $k]} { return [dict get $d $k] }

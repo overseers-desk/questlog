@@ -53,7 +53,9 @@ proc ::csm::app::start {root {initial_patterns {}}} {
         [namespace code lookup_session] \
         [namespace code on_session_select] \
         [namespace code on_session_open] \
-        [namespace code on_scope_change]]
+        [namespace code on_scope_change] \
+        [namespace code on_move_request] \
+        [namespace code on_drop_move]]
     pack $tree_frame.t -side top -fill both -expand 1
     $PW add $tree_frame -weight 3
 
@@ -63,7 +65,10 @@ proc ::csm::app::start {root {initial_patterns {}}} {
         [namespace code resolve_folder] \
         [namespace code on_search_cancel] \
         [namespace code on_result_select] \
-        [namespace code on_result_open]]
+        [namespace code on_result_open] \
+        [namespace code on_move_request] \
+        [namespace code on_drop_move] \
+        [$Tree tv_path]]
     pack $res_frame.r -side top -fill both -expand 1
 
     ttk::label .top.status -textvariable [namespace which -variable StatusVar] \
@@ -201,6 +206,48 @@ proc ::csm::app::on_result_select {path lineoff} {
 
 proc ::csm::app::on_result_open {path lineoff} {
     ::csm::ui::Viewer new $path $lineoff
+}
+
+# ---- move callbacks ----------------------------------------------------
+
+proc ::csm::app::on_move_request {src_path} {
+    variable Scan
+    set row [$Scan lookup $src_path]
+    if {$row eq ""} return
+    set current_folder [dict get $row folder]
+    ::csm::ui::move_dialog::open . $src_path $current_folder \
+        [namespace code resolve_folder] \
+        [list [namespace current]::on_picker_done $src_path]
+}
+
+proc ::csm::app::on_picker_done {src_path dst_cwd} {
+    set dst_folder_path [::csm::path::ensure_project_folder $dst_cwd]
+    do_move $src_path $dst_folder_path
+}
+
+proc ::csm::app::on_drop_move {src_path target_folder_basename} {
+    set dst_folder_path [file join [::csm::path::projects_root] \
+        $target_folder_basename]
+    do_move $src_path $dst_folder_path
+}
+
+proc ::csm::app::do_move {src_path dst_folder_path} {
+    variable Tree
+    variable Results
+    variable Scan
+    if {[file normalize [file dirname $src_path]] eq \
+        [file normalize $dst_folder_path]} {
+        return
+    }
+    if {[catch {::csm::move::session $src_path $dst_folder_path} new_path]} {
+        tk_messageBox -icon error -title "Move session" \
+            -message "Move failed: $new_path"
+        return
+    }
+    set new_folder [file tail $dst_folder_path]
+    $Tree relocate_session $src_path $new_path
+    $Scan relocate_row $src_path $new_path
+    $Results relocate_card $src_path $new_path $new_folder
 }
 
 # ---- shared helpers exposed to UI components --------------------------

@@ -207,7 +207,17 @@ oo::class create ::csm::Scan {
         dict set Rows $path $row
         set folder [dict get $row folder]
         set cwd [dict get $row cwd_hint]
-        if {$cwd ne "" && ![dict exists $Folders $folder]} {
+        # cwd_hint is the cwd that the conversation ran in, read from the
+        # file. For an un-moved session that equals the folder's cwd
+        # (encode_cwd(cwd_hint) == folder). For a session that was moved
+        # into this folder the two disagree, and trusting cwd_hint would
+        # label the folder with the source project's name. Skip the seed
+        # in that case; ResolveFolder will fall back to decode_folder,
+        # which is exact for any folder whose components contain no
+        # hyphens (the common case) and lossy otherwise (the documented
+        # trade-off).
+        if {$cwd ne "" && ![dict exists $Folders $folder]
+            && [::csm::path::encode_cwd $cwd] eq $folder} {
             dict set Folders $folder $cwd
         }
         if {$OnRow ne ""} { {*}$OnRow $row }
@@ -249,6 +259,33 @@ oo::class create ::csm::Scan {
     method lookup {path} {
         if {[dict exists $Rows $path]} { return [dict get $Rows $path] }
         return ""
+    }
+
+    # Re-key a row after the underlying jsonl was renamed into a new
+    # project folder. The row's path and folder are updated; mtime/size
+    # are re-read because the rename preserves them but we want any
+    # subsequent extend pass to see a consistent state. OnRow fires so
+    # the tree can re-insert under the new folder. The caller is
+    # responsible for removing the old iid from the UI first - OnRow
+    # has no "forget" channel.
+    method relocate_row {old_path new_path} {
+        if {![dict exists $Rows $old_path]} { return }
+        set row [dict get $Rows $old_path]
+        dict set row path $new_path
+        dict set row folder [file tail [file dirname $new_path]]
+        if {[catch {file mtime $new_path} mtime]} { set mtime 0 }
+        if {[catch {file size  $new_path} size]}  { set size 0 }
+        dict set row mtime $mtime
+        dict set row size $size
+        dict unset Rows $old_path
+        dict set Rows $new_path $row
+        # Do not seed Folders[$new_folder] from the row's cwd_hint - the
+        # hint records where the conversation ran, not where the folder
+        # represents. After move those disagree; the resume command must
+        # follow the folder, so leave Folders alone and let ResolveFolder
+        # fall back to decode_folder when the new folder has no prior
+        # session.
+        if {$OnRow ne ""} { {*}$OnRow $row }
     }
 
     method dict_or {d k default} {
