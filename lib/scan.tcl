@@ -253,7 +253,42 @@ oo::class create ::csm::Scan {
 
     method resolve_folder {folder} {
         if {[dict exists $Folders $folder]} { return [dict get $Folders $folder] }
+        # Folders may be empty for this basename when no session in the
+        # current time window has been scanned yet (e.g. the move dialog
+        # lists every folder under ~/.claude/projects/ regardless of
+        # window). Peek any jsonl in the folder for an exact cwd before
+        # falling back to lossy decode_folder.
+        set cwd [my peek_folder_cwd $folder]
+        if {$cwd ne ""} {
+            dict set Folders $folder $cwd
+            return $cwd
+        }
         return [::csm::path::decode_folder $folder]
+    }
+
+    # Read the first "cwd":"..." occurrence in any jsonl under $folder.
+    # Returns the value only if encode_cwd of it agrees with $folder, so
+    # a session that was moved into the folder cannot mislabel it.
+    method peek_folder_cwd {folder} {
+        set dir [file join [::csm::path::projects_root] $folder]
+        if {![file isdirectory $dir]} { return "" }
+        foreach f [glob -nocomplain -directory $dir -- *.jsonl] {
+            if {[catch {open $f r} fh]} continue
+            chan configure $fh -encoding utf-8
+            set cwd ""
+            while {[chan gets $fh line] >= 0} {
+                if {$line eq ""} continue
+                if {[regexp {"cwd":"([^"]+)"} $line -> m]} {
+                    set cwd $m
+                    break
+                }
+            }
+            close $fh
+            if {$cwd ne "" && [::csm::path::encode_cwd $cwd] eq $folder} {
+                return $cwd
+            }
+        }
+        return ""
     }
 
     method lookup {path} {

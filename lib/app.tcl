@@ -216,7 +216,6 @@ proc ::csm::app::on_move_request {src_path} {
     if {$row eq ""} return
     set current_folder [dict get $row folder]
     ::csm::ui::move_dialog::open . $src_path $current_folder \
-        [namespace code resolve_folder] \
         [list [namespace current]::on_picker_done $src_path]
 }
 

@@ -16,27 +16,24 @@ namespace eval ::csm::ui::move_dialog {
     variable Tv ""
     variable EntryVar ""
     variable CurrentFolder ""
-    variable ResolveFolder ""
     variable OnDone ""
     variable RowToCwd [dict create]
 }
 
-proc ::csm::ui::move_dialog::open {parent src_path current_folder resolve_cb on_done} {
+proc ::csm::ui::move_dialog::open {parent src_path current_folder on_done} {
     variable Top
     variable Tv
     variable EntryVar
     variable CurrentFolder
-    variable ResolveFolder
     variable OnDone
     variable RowToCwd
 
     set CurrentFolder $current_folder
-    set ResolveFolder $resolve_cb
     set OnDone $on_done
     set EntryVar ""
     set RowToCwd [dict create]
 
-    set Top $parent.movedlg
+    set Top .csm_movedlg
     if {[winfo exists $Top]} { destroy $Top }
     toplevel $Top
     wm title $Top "Move session"
@@ -89,15 +86,24 @@ proc ::csm::ui::move_dialog::open {parent src_path current_folder resolve_cb on_
 proc ::csm::ui::move_dialog::populate {} {
     variable Tv
     variable CurrentFolder
-    variable ResolveFolder
     variable RowToCwd
+    # One row per real directory on disk that the folder basename could
+    # decode to. Folders whose original directory no longer exists (the
+    # "black hole" case) are skipped: moving into them would point a
+    # resume command at nothing. ResolveFolder is intentionally bypassed
+    # here; the dialog wants ground truth from the filesystem rather
+    # than a cache that may have been seeded by an honest scan in the
+    # current process.
+    set seq 0
     foreach folder [::csm::path::list_all_projects] {
         if {$folder eq $CurrentFolder} continue
-        set cwd [{*}$ResolveFolder $folder]
-        set label [::csm::path::pretty_home $cwd]
-        set iid F:$folder
-        $Tv insert {} end -id $iid -text $label
-        dict set RowToCwd $iid $cwd
+        set cwds [::csm::path::candidate_cwds_for $folder]
+        foreach cwd $cwds {
+            set iid [format "F:%d" [incr seq]]
+            set label [::csm::path::pretty_home $cwd]
+            $Tv insert {} end -id $iid -text $label
+            dict set RowToCwd $iid $cwd
+        }
     }
 }
 
