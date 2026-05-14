@@ -1,7 +1,7 @@
 package require Tcl 9
 
 namespace eval ::csm::path {
-    namespace export decode_folder encode_cwd projects_root pretty_home \
+    namespace export encode_cwd projects_root pretty_home display_label \
         list_all_projects ensure_project_folder candidate_cwds_for
 }
 
@@ -20,23 +20,23 @@ proc ::csm::path::projects_root {} {
     return [file join $::env(HOME) .claude projects]
 }
 
-# Lossy fallback: -home-weiwu-code-foo  ->  /home/weiwu/code/foo.
-# Only used when no jsonl record under the folder can be read for its .cwd.
-# Note: this cannot recover hyphens in original path components - that is what
-# cwd_from_record exists to fix.
-proc ::csm::path::decode_folder {basename} {
-    if {[string index $basename 0] eq "-"} {
-        set s [string range $basename 1 end]
-    } else {
-        set s $basename
-    }
-    return /[string map {- /} $s]
+# Encode an absolute path into the basename form Claude uses on disk:
+# every non-alphanumeric character collapses to '-'. This matches Claude
+# Code's own encoding, so it can be compared against on-disk basenames
+# and used to create the destination folder for a move. The inverse is
+# not algorithmic - see candidate_cwds_for, which walks the filesystem.
+proc ::csm::path::encode_cwd {cwd} {
+    return [regsub -all {[^A-Za-z0-9]} $cwd -]
 }
 
-# Encode an absolute path into the basename form Claude uses on disk.
-# Used by the "this cwd only" toolbar filter and by ensure_project_folder.
-proc ::csm::path::encode_cwd {cwd} {
-    return [string map {/ -} $cwd]
+# Pick the user-facing label for a project folder: the resolved cwd,
+# abbreviated, when the folder could be resolved; otherwise the raw
+# basename, which is honest about the failure rather than a fictional
+# path. $cwd is whatever the canonical resolver returned ("" if it
+# could not resolve the folder).
+proc ::csm::path::display_label {cwd folder_basename} {
+    if {$cwd eq ""} { return $folder_basename }
+    return [pretty_home $cwd]
 }
 
 # All project folder basenames currently on disk under ~/.claude/projects/.
@@ -93,7 +93,7 @@ proc ::csm::path::_walk {dir parts} {
     for {set k 1} {$k <= $n} {incr k} {
         set encoded [join [lrange $parts 0 [expr {$k-1}]] -]
         foreach entry $entries {
-            if {[_encode_segment $entry] eq $encoded} {
+            if {[encode_cwd $entry] eq $encoded} {
                 foreach r [_walk [file join $dir $entry] \
                                  [lrange $parts $k end]] {
                     lappend out $r
@@ -102,8 +102,4 @@ proc ::csm::path::_walk {dir parts} {
         }
     }
     return $out
-}
-
-proc ::csm::path::_encode_segment {name} {
-    return [regsub -all {[^A-Za-z0-9]} $name -]
 }

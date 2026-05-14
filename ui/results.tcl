@@ -202,7 +202,7 @@ oo::class create ::csm::ui::Results {
         set content [dict get $entry content]
         set lineoff [dict get $entry lineoff]
 
-        set proj  [::csm::path::pretty_home [{*}$ResolveFolder $folder]]
+        set proj  [::csm::path::display_label [{*}$ResolveFolder $folder] $folder]
         set when  [my fmt_time $ts]
         set count 1
 

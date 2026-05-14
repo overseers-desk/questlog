@@ -123,18 +123,11 @@ oo::class create ::csm::Scan {
             set hours [dict get {24h 24 7d 168 30d 720} $window]
             set cutoff [expr {[clock seconds] - $hours*3600}]
         }
-        set proc_prefix "$::env(HOME)/.claude-procedural/"
         set pairs [list]
         foreach folder [glob -nocomplain -directory $root -type d -- *] {
             foreach f [glob -nocomplain -directory $folder -- *.jsonl] {
                 set m [file mtime $f]
                 if {$m <= $cutoff} continue
-                # Procedural-path guard via the lossy decode of the
-                # folder basename. The procedural convention places
-                # such folders under ~/.claude-procedural/, which the
-                # lossy decode preserves.
-                set decoded [::csm::path::decode_folder [file tail $folder]]
-                if {[string match "${proc_prefix}*" $decoded]} continue
                 lappend pairs [list $f $m]
             }
         }
@@ -207,17 +200,16 @@ oo::class create ::csm::Scan {
         dict set Rows $path $row
         set folder [dict get $row folder]
         set cwd [dict get $row cwd_hint]
-        # cwd_hint is the cwd that the conversation ran in, read from the
-        # file. For an un-moved session that equals the folder's cwd
-        # (encode_cwd(cwd_hint) == folder). For a session that was moved
-        # into this folder the two disagree, and trusting cwd_hint would
-        # label the folder with the source project's name. Skip the seed
-        # in that case; ResolveFolder will fall back to decode_folder,
-        # which is exact for any folder whose components contain no
-        # hyphens (the common case) and lossy otherwise (the documented
-        # trade-off).
+        # cwd_hint is the cwd the conversation ran in, read from the file.
+        # For an un-moved session that equals the folder's own identity
+        # (encode_cwd(cwd_hint) == folder); for a session moved into this
+        # folder the two disagree and trusting cwd_hint would label the
+        # folder with the source project's name. Seed the Folders cache
+        # only when the hint is self-consistent AND still points at an
+        # extant directory, so the cache never holds a fictional path.
         if {$cwd ne "" && ![dict exists $Folders $folder]
-            && [::csm::path::encode_cwd $cwd] eq $folder} {
+            && [::csm::path::encode_cwd $cwd] eq $folder
+            && [file isdirectory $cwd]} {
             dict set Folders $folder $cwd
         }
         if {$OnRow ne ""} { {*}$OnRow $row }
@@ -251,39 +243,44 @@ oo::class create ::csm::Scan {
         return [lsort -decreasing -command ::csm::scan::cmp_mtime $out]
     }
 
+    # The single canonical folder-basename -> cwd resolver. Every label
+    # and every command that needs the project directory goes through
+    # here. Returns an extant absolute directory path, or "" when the
+    # folder cannot be resolved (its directory is gone, or the basename
+    # is genuinely ambiguous). Never returns a fictional path.
+    #
+    #   1. Folders cache - already resolved this process.
+    #   2. peek_folder_cwd - the cwd recorded inside an honest jsonl,
+    #      trusted only if it still names a real directory.
+    #   3. candidate_cwds_for - filesystem walk; trusted iff exactly one
+    #      directory matches the basename.
+    #   4. "" - unresolvable. Not cached: a directory created or restored
+    #      later in this process should get a fresh chance.
     method resolve_folder {folder} {
         if {[dict exists $Folders $folder]} { return [dict get $Folders $folder] }
-        # Folders may be empty for this basename when no session in the
-        # current time window has been scanned yet (e.g. the move dialog
-        # lists every folder under ~/.claude/projects/ regardless of
-        # window). Peek any jsonl in the folder for an exact cwd before
-        # falling back to lossy decode_folder.
         set cwd [my peek_folder_cwd $folder]
-        if {$cwd ne ""} {
+        if {$cwd ne "" && [file isdirectory $cwd]} {
             dict set Folders $folder $cwd
             return $cwd
         }
-        return [::csm::path::decode_folder $folder]
+        set cands [::csm::path::candidate_cwds_for $folder]
+        if {[llength $cands] == 1} {
+            set cwd [lindex $cands 0]
+            dict set Folders $folder $cwd
+            return $cwd
+        }
+        return ""
     }
 
-    # Read the first "cwd":"..." occurrence in any jsonl under $folder.
-    # Returns the value only if encode_cwd of it agrees with $folder, so
-    # a session that was moved into the folder cannot mislabel it.
+    # The first cwd recorded in any jsonl under $folder, returned only
+    # when encode_cwd of it agrees with $folder - so a session that was
+    # moved into the folder cannot mislabel it. The caller decides
+    # whether the path still exists.
     method peek_folder_cwd {folder} {
         set dir [file join [::csm::path::projects_root] $folder]
         if {![file isdirectory $dir]} { return "" }
         foreach f [glob -nocomplain -directory $dir -- *.jsonl] {
-            if {[catch {open $f r} fh]} continue
-            chan configure $fh -encoding utf-8
-            set cwd ""
-            while {[chan gets $fh line] >= 0} {
-                if {$line eq ""} continue
-                if {[regexp {"cwd":"([^"]+)"} $line -> m]} {
-                    set cwd $m
-                    break
-                }
-            }
-            close $fh
+            set cwd [::csm::jsonl::first_cwd $f]
             if {$cwd ne "" && [::csm::path::encode_cwd $cwd] eq $folder} {
                 return $cwd
             }
@@ -315,11 +312,10 @@ oo::class create ::csm::Scan {
         dict unset Rows $old_path
         dict set Rows $new_path $row
         # Do not seed Folders[$new_folder] from the row's cwd_hint - the
-        # hint records where the conversation ran, not where the folder
-        # represents. After move those disagree; the resume command must
-        # follow the folder, so leave Folders alone and let ResolveFolder
-        # fall back to decode_folder when the new folder has no prior
-        # session.
+        # hint records where the conversation ran, not what the folder
+        # represents. After a move those disagree. Leave Folders alone;
+        # resolve_folder will recover the new folder's identity from the
+        # filesystem (candidate_cwds_for) on first lookup.
         if {$OnRow ne ""} { {*}$OnRow $row }
     }
 

@@ -156,7 +156,7 @@ oo::class create ::csm::ui::Tree {
     method ensure_folder {folder} {
         set fiid F:$folder
         if {[$Tv exists $fiid]} return
-        set label [::csm::path::pretty_home [{*}$ResolveFolder $folder]]
+        set label [::csm::path::display_label [{*}$ResolveFolder $folder] $folder]
         $Tv insert {} end -id $fiid -text $label -values [list "" ""] -open 0
         dict set FolderCount $fiid 0
         dict set FolderBytes $fiid 0
@@ -262,6 +262,14 @@ oo::class create ::csm::ui::Tree {
         set uuid   [dict get $row uuid]
         set cwd [{*}$ResolveFolder $folder]
         set MenuTarget [list path $path uuid $uuid cwd $cwd folder $folder]
+        # The resume actions need a real project directory to cd into.
+        # When the folder cannot be resolved, disable them rather than
+        # emit a command that cd's nowhere.
+        set rstate [expr {$cwd eq "" ? "disabled" : "normal"}]
+        foreach lbl {"Copy resume command" "Resume in new terminal tab" \
+                     "Resume forked"} {
+            $Menu entryconfigure $lbl -state $rstate
+        }
         tk_popup $Menu $X $Y
     }
 

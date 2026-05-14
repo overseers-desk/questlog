@@ -2,7 +2,8 @@ package require Tcl 9
 package require json
 
 namespace eval ::csm::jsonl {
-    namespace export extract_text extract_blocks is_compact_boundary record_timestamp
+    namespace export extract_text extract_blocks is_compact_boundary \
+        record_timestamp first_cwd
 }
 
 # Parse one JSONL line into a Tcl dict. Returns "" on parse failure.
@@ -190,6 +191,25 @@ proc ::csm::jsonl::last_assistant_text {path} {
     }
     close $fh
     return $last
+}
+
+# First "cwd" value recorded in a session jsonl. Empty string if the
+# file cannot be opened or holds no record with a cwd. A line-level
+# regex, not a full parse: cwd appears on most record types and the
+# first hit is enough.
+proc ::csm::jsonl::first_cwd {path} {
+    if {[catch {open $path r} fh]} { return "" }
+    chan configure $fh -encoding utf-8
+    set cwd ""
+    while {[chan gets $fh line] >= 0} {
+        if {$line eq ""} continue
+        if {[regexp {"cwd":"([^"]+)"} $line -> m]} {
+            set cwd $m
+            break
+        }
+    }
+    close $fh
+    return $cwd
 }
 
 # dict get with default - Tcl 9's [dict getdef] would do this but is verbose.
