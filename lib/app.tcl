@@ -220,30 +220,42 @@ proc ::csm::app::on_move_request {src_path} {
 }
 
 proc ::csm::app::on_picker_done {src_path dst_cwd} {
-    set dst_folder_path [::csm::path::ensure_project_folder $dst_cwd]
-    do_move $src_path $dst_folder_path
+    do_move $src_path $dst_cwd
 }
 
+# Drop-move resolves the dropped-on folder basename to its real cwd via
+# the canonical resolver. A drop onto a folder that cannot be resolved
+# (its underlying project directory is gone or ambiguous) is refused
+# rather than silently moving into an orphan.
 proc ::csm::app::on_drop_move {src_path target_folder_basename} {
-    set dst_folder_path [file join [::csm::path::projects_root] \
-        $target_folder_basename]
-    do_move $src_path $dst_folder_path
+    variable Scan
+    set dst_cwd [$Scan resolve_folder $target_folder_basename]
+    if {$dst_cwd eq ""} {
+        tk_messageBox -icon error -title "Move session" \
+            -message "Cannot resolve destination folder: $target_folder_basename"
+        return
+    }
+    do_move $src_path $dst_cwd
 }
 
-proc ::csm::app::do_move {src_path dst_folder_path} {
+proc ::csm::app::do_move {src_path dst_cwd} {
     variable Tree
     variable Results
     variable Scan
-    if {[file normalize [file dirname $src_path]] eq \
-        [file normalize $dst_folder_path]} {
+    # Silent no-op when src is already in the destination's encoded
+    # folder - the only "succeed without effect" path. Everything else
+    # either succeeds with effects or fails with a messagebox.
+    set src_basename [file tail [file dirname $src_path]]
+    if {![catch {::csm::path::encode_cwd $dst_cwd} dst_basename]
+        && $dst_basename eq $src_basename} {
         return
     }
-    if {[catch {::csm::move::session $src_path $dst_folder_path} new_path]} {
+    if {[catch {::csm::path::move_session $src_path $dst_cwd} new_path]} {
         tk_messageBox -icon error -title "Move session" \
             -message "Move failed: $new_path"
         return
     }
-    set new_folder [file tail $dst_folder_path]
+    set new_folder [::csm::path::encode_cwd $dst_cwd]
     $Tree relocate_session $src_path $new_path
     $Scan relocate_row $src_path $new_path
     $Results relocate_card $src_path $new_path $new_folder

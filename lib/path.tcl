@@ -2,7 +2,33 @@ package require Tcl 9
 
 namespace eval ::csm::path {
     namespace export encode_cwd projects_root pretty_home display_label \
-        list_all_projects ensure_project_folder candidate_cwds_for
+        list_all_projects ensure_project_folder candidate_cwds_for \
+        move_session
+}
+
+# Architectural gate. Rename Tcl's `file` command and replace it with a
+# dispatcher that rejects the mutating subcommands. Anything outside
+# this file that tries to mkdir, rename, delete or copy a path will
+# fail loudly at the call site instead of silently producing an orphan
+# folder under ~/.claude/projects/. Read-only subcommands (isdirectory,
+# mtime, size, dirname, tail, join, normalize, exists, isfile, ...)
+# pass through untouched - the rest of the codebase uses them
+# constantly for legitimate non-mutating purposes.
+#
+# The original `file` is preserved as ::csm::path::_real_file and is
+# the only way the legitimate sinks in this module reach the
+# filesystem. Idempotent: a second source of this file is a no-op.
+if {[info commands ::csm::path::_real_file] eq ""} {
+    rename file ::csm::path::_real_file
+    proc file {subcmd args} {
+        if {$subcmd in {rename mkdir delete copy attributes link}} {
+            set caller "top-level"
+            catch {set caller [info level -1]}
+            return -code error \
+                "file $subcmd is restricted to ::csm::path::* (called from $caller): $args"
+        }
+        return [::csm::path::_real_file $subcmd {*}$args]
+    }
 }
 
 # Display-only: abbreviate a leading $HOME to ~. The model keeps absolute
@@ -20,13 +46,28 @@ proc ::csm::path::projects_root {} {
     return [file join $::env(HOME) .claude projects]
 }
 
-# Encode an absolute path into the basename form Claude uses on disk:
+# Encode an ABSOLUTE path into the basename form Claude uses on disk:
 # every non-alphanumeric character collapses to '-'. This matches Claude
 # Code's own encoding, so it can be compared against on-disk basenames
 # and used to create the destination folder for a move. The inverse is
 # not algorithmic - see candidate_cwds_for, which walks the filesystem.
+#
+# Normalises first so that callers that pass a trailing slash, doubled
+# slashes, '.', '..' or other un-canonical forms produce the same basename
+# Claude itself would have written for the canonical cwd. The input must
+# be an absolute path; for encoding a bare directory-entry name (single
+# component, no slashes) use _encode_segment.
 proc ::csm::path::encode_cwd {cwd} {
-    return [regsub -all {[^A-Za-z0-9]} $cwd -]
+    if {$cwd eq ""} { return "" }
+    return [_encode_segment [file normalize $cwd]]
+}
+
+# Pure regsub: every non-alphanumeric character to '-'. No normalisation,
+# no filesystem touch. The right tool for encoding a bare directory name
+# obtained from glob (e.g. inside _walk), where calling file normalize
+# would (mis-)resolve the bare name against the process cwd.
+proc ::csm::path::_encode_segment {name} {
+    return [regsub -all {[^A-Za-z0-9]} $name -]
 }
 
 # Pick the user-facing label for a project folder: the resolved cwd,
@@ -54,11 +95,48 @@ proc ::csm::path::list_all_projects {} {
 
 # Return the project-folder path for a cwd, creating it if absent.
 # Used when moving a session into a project that has no folder yet.
+# This is the single user-input -> filesystem gate: if the cwd does not
+# name a real directory, refuse rather than silently create an orphan
+# project folder from a typo'd path. The mkdir reaches through the
+# private _real_file because the public `file` is the trap from above.
 proc ::csm::path::ensure_project_folder {cwd} {
-    set folder [encode_cwd $cwd]
+    if {$cwd eq ""} { error "destination cwd is empty" }
+    set normalized [file normalize $cwd]
+    if {![file isdirectory $normalized]} {
+        error "no such directory: $normalized"
+    }
+    set folder [encode_cwd $normalized]
     set dir [file join [projects_root] $folder]
-    if {![file isdirectory $dir]} { file mkdir $dir }
+    if {![file isdirectory $dir]} { ::csm::path::_real_file mkdir $dir }
     return $dir
+}
+
+# Move a session jsonl into the project folder for $dst_cwd. The single
+# legitimate file-rename sink in the program. Validates twice: the
+# destination cwd must already name a real directory (defensive against
+# any future caller that skipped ensure_project_folder), and the
+# source file must exist. The actual rename goes through _real_file
+# because the public `file` is the trap.
+proc ::csm::path::move_session {src_path dst_cwd} {
+    if {![file isfile $src_path]} {
+        error "source not found: $src_path"
+    }
+    if {$dst_cwd eq ""} { error "destination cwd is empty" }
+    set normalized [file normalize $dst_cwd]
+    if {![file isdirectory $normalized]} {
+        error "no such directory: $normalized"
+    }
+    set dst_folder [ensure_project_folder $normalized]
+    set src_folder [file dirname $src_path]
+    if {[file normalize $src_folder] eq [file normalize $dst_folder]} {
+        error "source and destination are the same folder"
+    }
+    set new_path [file join $dst_folder [file tail $src_path]]
+    if {[file exists $new_path]} {
+        error "destination already exists: $new_path"
+    }
+    ::csm::path::_real_file rename -- $src_path $new_path
+    return $new_path
 }
 
 # Find every real directory on disk whose Claude-encoded basename equals
@@ -93,7 +171,7 @@ proc ::csm::path::_walk {dir parts} {
     for {set k 1} {$k <= $n} {incr k} {
         set encoded [join [lrange $parts 0 [expr {$k-1}]] -]
         foreach entry $entries {
-            if {[encode_cwd $entry] eq $encoded} {
+            if {[_encode_segment $entry] eq $encoded} {
                 foreach r [_walk [file join $dir $entry] \
                                  [lrange $parts $k end]] {
                     lappend out $r

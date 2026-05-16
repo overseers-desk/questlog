@@ -57,7 +57,7 @@ proc ::csm::ui::move_dialog::open {parent src_path current_folder on_done} {
     grid columnconfigure $Top.f.lf 0 -weight 1
     grid rowconfigure    $Top.f.lf 0 -weight 1
 
-    ttk::label $Top.f.elbl -text "Or type a cwd:"
+    ttk::label $Top.f.elbl -text "Or enter a directory:"
     pack $Top.f.elbl -side top -anchor w -pady {8 2}
     ttk::entry $Top.f.entry -textvariable ::csm::ui::move_dialog::EntryVar
     pack $Top.f.entry -side top -fill x
