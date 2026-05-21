@@ -60,6 +60,58 @@ check blocks_attachment_empty {}                                [::csm::jsonl::e
 check blocks_tool_result_array {tool_result {WebSearch WebFetch}} \
     [::csm::jsonl::extract_blocks $tool_result_arr]
 
+# record_tool_uses: structural tool/path extraction for read/write/edit
+# criteria. Assert name:path pairs; the rendered string is exercised by
+# the extract_blocks tests above. NotebookEdit carries notebook_path.
+proc np {rec} {
+    set out [list]
+    foreach t [::csm::jsonl::record_tool_uses $rec] {
+        lappend out "[dict get $t name]:[dict get $t path]"
+    }
+    return $out
+}
+set r_edit  [::csm::jsonl::parse_line {{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Edit","input":{"replace_all":false,"file_path":"/a/b.tcl","old_string":"x","new_string":"y"}}]}}}]
+set r_multi [::csm::jsonl::parse_line {{"type":"assistant","message":{"content":[{"type":"tool_use","name":"MultiEdit","input":{"file_path":"/a/c.tcl","edits":[]}}]}}}]
+set r_nb    [::csm::jsonl::parse_line {{"type":"assistant","message":{"content":[{"type":"tool_use","name":"NotebookEdit","input":{"notebook_path":"/a/n.ipynb","new_source":"z"}}]}}}]
+set r_write [::csm::jsonl::parse_line {{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Write","input":{"file_path":"/a/w.tcl","content":"c"}}]}}}]
+set r_read  [::csm::jsonl::parse_line {{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Read","input":{"file_path":"/a/r.tcl"}}]}}}]
+set r_mixed [::csm::jsonl::parse_line {{"type":"assistant","message":{"content":[{"type":"text","text":"first"},{"type":"tool_use","name":"Edit","input":{"file_path":"/a/b.tcl","old_string":"x","new_string":"y"}},{"type":"tool_use","name":"Read","input":{"file_path":"/a/r.tcl"}},{"type":"text","text":"second"}]}}}]
+
+check tools_edit         {Edit:/a/b.tcl}            [np $r_edit]
+check tools_multiedit    {MultiEdit:/a/c.tcl}       [np $r_multi]
+check tools_notebookedit {NotebookEdit:/a/n.ipynb}  [np $r_nb]
+check tools_write        {Write:/a/w.tcl}           [np $r_write]
+check tools_read         {Read:/a/r.tcl}            [np $r_read]
+check tools_mixed        {Edit:/a/b.tcl Read:/a/r.tcl} [np $r_mixed]
+check tools_user_empty   {}                         [np $user_str]
+
+# record_hits: per-record evidence for AND-scope criteria. Assert
+# idx:btype, the part the session-scope conjunction turns on.
+proc ib {rec criteria re_opts} {
+    set out [list]
+    foreach h [::csm::search::record_hits $rec $criteria $re_opts] {
+        lassign $h idx btype content
+        lappend out "$idx:$btype"
+    }
+    return $out
+}
+set crit [list \
+    {type edit value /a/b.tcl} \
+    {type read value /a/r.tcl} \
+    {type read value /a/b.tcl} \
+    {type regex value first}]
+check hits_mixed         {0:tool_use 1:tool_use 3:assistant} [ib $r_mixed $crit -nocase]
+check hits_edit_only     {0:tool_use} [ib $r_edit [list {type edit value /a/b.tcl}] -nocase]
+check hits_read_not_edit {}           [ib $r_read [list {type edit value /a/r.tcl}] -nocase]
+
+# Path criteria match by path suffix: a bare or partial filename matches
+# the file in any directory; a non-suffix fragment does not (ends-with,
+# not contains).
+set r_spar [::csm::jsonl::parse_line {{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Edit","input":{"file_path":"/a/spar-manager.spar-dispatcher-initcmd.tcl","old_string":"x","new_string":"y"}}]}}}]
+check hits_suffix_basename  {0:tool_use} [ib $r_edit [list {type edit value b.tcl}] -nocase]
+check hits_partial_basename {0:tool_use} [ib $r_spar [list {type edit value spar-dispatcher-initcmd.tcl}] -nocase]
+check hits_not_substring    {}           [ib $r_spar [list {type edit value spar-manager}] -nocase]
+
 if {$fails > 0} {
     puts "$fails failures"
     exit 1

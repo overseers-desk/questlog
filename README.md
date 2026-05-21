@@ -13,11 +13,11 @@ A GUI for finding, reading, and reopening past Claude Code sessions stored under
 
 The window has three regions and a status bar.
 
-The **toolbar** holds four controls: a time window (24 h / 7 d / 30 d / all), a regex entry, a case toggle, and a "this cwd only" filter that auto-detects whether the launch directory has a corresponding project folder.
+The **toolbar** holds a time window (24 h / 7 d / 30 d / all), a list of AND-joined search criteria with a case toggle, and a "this cwd only" filter that auto-detects whether the launch directory has a corresponding project folder. A criterion is typed: **regex** matches message content; **read** / **write** / **edit** match the file a built-in tool (Read, Write, Edit/MultiEdit/NotebookEdit) acted on, by path suffix, so a bare filename finds it in any directory and a full path matches exactly. The **+ Read / + Write / + Edit** buttons drop down the launch repo's working-tree changes (`git status`) alongside a path entry and a file chooser; **+ regex** adds a pattern row. A session is shown only when it satisfies every criterion somewhere in its log.
 
-The **tree** groups sessions by project. Each row carries the time of the first prompt, the file size, and a truncated preview of the first user message. Folders are inserted in mtime-descending order as rows arrive. When a regex is entered, only folders containing matches remain visible.
+The **tree** groups sessions by project. Each row carries the time of the first prompt, the file size, and a truncated preview of the first user message. Folders are inserted in mtime-descending order as rows arrive. When any criterion is active, only folders containing matching sessions remain visible.
 
-The **result pane** appears beneath a draggable sash once a regex is active. Each row is one matching line; the same session may produce many rows. Single-clicking a result selects the corresponding session in the tree; double-clicking opens the viewer scrolled to that line.
+The **result pane** appears beneath a draggable sash once any criterion is active. Each row is one piece of matching evidence, a content line for a regex criterion or a `tool_use` for a read/write/edit criterion; the same session may produce many rows. Single-clicking a result selects the corresponding session in the tree; double-clicking opens the viewer scrolled to that line.
 
 The **viewer** is a separate top-level window. It splits a long jsonl at compaction-boundary records and at idle gaps over ten minutes, presenting each segment as a collapsible section. `Ctrl-F` opens an inline find within the session.
 
@@ -47,20 +47,25 @@ lib/
   scan.tcl              Scan class: coroutine-driven, mtime-keyed
                         in-process row dict, pre-sorted by mtime DESC,
                         epoch-token cancellation
-  search.tcl            Search class: own coroutine, iterates the same
-                        path list, applies user regex, emits matches and
-                        publishes row data back to Scan as a side effect
+  search.tcl            Search class: own coroutine (threaded fan-out when
+                        CSM_SEARCH_THREADS is set), iterates the same path
+                        list, evaluates the AND-joined criteria, emits
+                        matches and publishes row data back to Scan
+  cli.tcl               parses a command-line criterion chain into criteria
+                        that pre-seed the GUI
   path.tcl              folder-name encode/decode, projects-root path
-  jsonl.tcl             record-level JSON helpers used by the viewer
+  jsonl.tcl             record-level JSON helpers; tool_use path extraction
   terminal.tcl          terminal detection and "Resume in new tab" launch
 ui/
-  toolbar.tcl           ttk widgets, snapshot publication, keystroke debounce
+  toolbar.tcl           ttk widgets, typed-criteria rows, git-status add
+                        dropdown, snapshot publication, keystroke debounce
   tree.tcl              ttk::treeview, on-demand folder insertion, right-click
   results.tcl           ttk::treeview as a flat match table
   viewer.tcl            top-level window, segmentation, in-session find
 test/
   test-path.tcl         folder name decoding
-  test-jsonl.tcl        record extraction and compaction-boundary detection
+  test-jsonl.tcl        record extraction, tool_use path/criterion
+                        matching, compaction-boundary detection
   test-scan.tcl         Scan: synthetic tree, memoisation, mtime
                         invalidation, subagent-folder exclusion, ordering,
                         replay-after-window-change
@@ -75,6 +80,9 @@ Both classes reach into the project tree with a depth-2 glob: `~/.claude/project
 
 ```
 ./csm                                  # launch the GUI
+./csm edit lib/scan.tcl                # launch pre-seeded with an edit criterion
+./csm edit foo.tcl regex "bar"         # several criteria, AND-joined
+./csm -regex "pattern"                 # prefill a single regex criterion
 tclsh9.0 test/test-path.tcl            # run individual tests
 tclsh9.0 test/test-jsonl.tcl
 tclsh9.0 test/test-scan.tcl
@@ -82,6 +90,8 @@ tclsh9.0 test/test-scan-coroutine.tcl
 ```
 
 `./csm` opens the main window immediately and streams rows in. The default seven-day window populates in under a second; switching to "all" extends incrementally with the tree growing as files are scanned. Scan progress is reported in the bottom status bar.
+
+A leading criterion type on the command line pre-seeds the GUI with a criteria chain: arguments pair as `<type> <value>`, where type is `regex`, `read`, `write`, or `edit`. `read` / `write` / `edit` match the recorded file path by suffix, `regex` matches content. The GUI then behaves normally, including the time-window control, so widen the window from the default 7 d when hunting an older edit. This launches `wish` like any GUI invocation and needs an X display. The older `-regex PATTERN` flag still prefills one regex criterion.
 
 ## Conventions enforced by pre-commit grep
 

@@ -27,7 +27,7 @@ oo::class create ::csm::ui::Tree {
     variable Top
     variable Tv
     variable Snapshot
-    variable RegexActive
+    variable CriteriaActive
     variable MatchedSessions
     variable ResolveFolder    ;# cb: folder -> display path
     variable LookupSession    ;# cb: path -> row dict
@@ -59,7 +59,7 @@ oo::class create ::csm::ui::Tree {
         set OnScanPath $on_scan_path
         set Snapshot [dict create]
         set MatchedSessions [dict create]
-        set RegexActive 0
+        set CriteriaActive 0
         set FolderCount [dict create]
         set FolderBytes [dict create]
         set RunningSet [dict create]
@@ -136,7 +136,7 @@ oo::class create ::csm::ui::Tree {
     # search is active).
     method apply_filter {snapshot} {
         set Snapshot $snapshot
-        set RegexActive [::csm::ui::any_pattern $snapshot]
+        set CriteriaActive [::csm::ui::any_criteria $snapshot]
         set MatchedSessions [dict create]
         set FolderCount [dict create]
         set FolderBytes [dict create]
@@ -145,8 +145,8 @@ oo::class create ::csm::ui::Tree {
 
     # on_scan_row row - called by app on every row Scan publishes. Insert
     # the session under its folder, creating the folder if not yet
-    # present. In regex-active mode, only insert sessions that have
-    # matched the user regex (tracked in MatchedSessions).
+    # present. When criteria are active, only insert sessions that have
+    # matched (tracked in MatchedSessions).
     method on_scan_row {row} {
         # Under running-only the reconciler is the sole authority for what
         # is displayed; suppress the streaming insert. Rows is still
@@ -156,7 +156,7 @@ oo::class create ::csm::ui::Tree {
         if {![my row_matches_snapshot $row]} return
         set path [dict get $row path]
         set folder [dict get $row folder]
-        if {$RegexActive && ![dict exists $MatchedSessions $path]} return
+        if {$CriteriaActive && ![dict exists $MatchedSessions $path]} return
         my ensure_folder $folder
         my insert_session $folder $row
     }
@@ -250,13 +250,15 @@ oo::class create ::csm::ui::Tree {
         return "[format %.1f [expr {$bytes / 1073741824.0}]] G"
     }
 
-    # Streaming match update from Search. is_first means the session is
-    # newly matched; subsequent matches in the same session add to the
-    # result pane only.
-    method update_match {is_first path lineoff ts content folder} {
-        if {!$is_first} return
+    # Match-record update from Search. is_first means the session is newly
+    # matched; subsequent rows of the same session add to the result pane
+    # only, so the tree acts on the first row alone.
+    method update_match {match} {
+        if {![dict get $match is_first]} return
+        set path [dict get $match path]
         if {[dict exists $MatchedSessions $path]} return
         dict set MatchedSessions $path 1
+        set folder [dict get $match folder]
         my ensure_folder $folder
         set siid S:$path
         if {[$Tv exists $siid]} return
@@ -379,8 +381,8 @@ oo::class create ::csm::ui::Tree {
 
     # Re-key after a successful move. Removes the old S:* iid, decrements
     # the source folder's counters (deleting the folder iid if empty),
-    # and rewrites the MatchedSessions key when regex mode is active so
-    # the subsequent on_scan_row reinsert passes the regex guard.
+    # and rewrites the MatchedSessions key when criteria mode is active so
+    # the subsequent on_scan_row reinsert passes the criteria guard.
     # Remove a session row and fix up its folder's counters, deleting the
     # folder when it becomes empty. The single removal path, shared by
     # relocate_session and reconcile_running so the counters never diverge.
@@ -432,17 +434,21 @@ oo::class create ::csm::ui::Tree {
         # Ensure every running session is on screen. Match by uuid (stable
         # across a move); a moved session is already displayed under its
         # new path, so the reconstructed registry path is used only for a
-        # genuinely-fresh insert.
-        dict for {uuid path} $running {
-            if {[dict exists $displayed $uuid]} continue
-            set row [{*}$LookupSession $path]
-            if {$row eq "" && [file isfile $path]} {
-                set row [{*}$OnScanPath $path]
+        # genuinely-fresh insert. While a criteria search is active the tree
+        # mirrors the matched sessions, so a running session that did not
+        # match is not force-shown (unless running-only mode asks for it).
+        if {$running_only || !$CriteriaActive} {
+            dict for {uuid path} $running {
+                if {[dict exists $displayed $uuid]} continue
+                set row [{*}$LookupSession $path]
+                if {$row eq "" && [file isfile $path]} {
+                    set row [{*}$OnScanPath $path]
+                }
+                if {$row eq "" || ![dict size $row]} continue
+                my ensure_folder [dict get $row folder]
+                my insert_session [dict get $row folder] $row
+                dict set displayed $uuid 1
             }
-            if {$row eq "" || ![dict size $row]} continue
-            my ensure_folder [dict get $row folder]
-            my insert_session [dict get $row folder] $row
-            dict set displayed $uuid 1
         }
 
         # Membership + decoration over a fresh snapshot of the rows (the
@@ -462,6 +468,10 @@ oo::class create ::csm::ui::Tree {
                 set keep $is_running
             } elseif {$bookmarked_only} {
                 set keep $bk
+            } elseif {$CriteriaActive} {
+                # A search is active: membership is the matched set, mirroring
+                # the results pane; running-ness and cwd_only do not add rows.
+                set keep [dict exists $MatchedSessions $path]
             } else {
                 set keep [expr {($row ne "" && [my row_matches_snapshot $row]) \
                                 || $is_running}]

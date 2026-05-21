@@ -2,8 +2,8 @@ package require Tcl 9
 package require json
 
 namespace eval ::csm::jsonl {
-    namespace export extract_text extract_blocks is_compact_boundary \
-        record_timestamp first_cwd
+    namespace export extract_text extract_blocks record_tool_uses \
+        is_compact_boundary record_timestamp first_cwd
 }
 
 # Parse one JSONL line into a Tcl dict. Returns "" on parse failure.
@@ -161,6 +161,38 @@ proc ::csm::jsonl::tool_result_text {blk} {
         }
     }
     return [join $parts " "]
+}
+
+# Walk an assistant record's tool_use blocks. Returns one dict per block:
+#   {name <tool>  path <file_path|notebook_path|"">  rendered <NAME(args)>}
+# Path is the file the built-in tool acted on, read off the parsed input
+# rather than the rendered string, so it carries the full untruncated path
+# and the NotebookEdit notebook_path. Used by Search to satisfy
+# read/write/edit criteria structurally. Empty for non-assistant records.
+proc ::csm::jsonl::record_tool_uses {rec} {
+    set out [list]
+    if {[dict_get_or $rec type ""] ne "assistant"} { return $out }
+    if {![dict exists $rec message]} { return $out }
+    set msg [dict get $rec message]
+    if {![dict exists $msg content]} { return $out }
+    set c [dict get $msg content]
+    if {[is_string_content $c]} { return $out }
+    foreach blk $c {
+        if {[dict_get_or $blk type ""] ne "tool_use"} continue
+        set name  [dict_get_or $blk name ""]
+        set input [dict_get_or $blk input [dict create]]
+        set path ""
+        if {![catch {dict size $input}]} {
+            if {[dict exists $input file_path]} {
+                set path [dict get $input file_path]
+            } elseif {[dict exists $input notebook_path]} {
+                set path [dict get $input notebook_path]
+            }
+        }
+        lappend out [dict create name $name path $path \
+                         rendered [::csm::search::format_tool_use $name $input]]
+    }
+    return $out
 }
 
 # 1 iff this is a compaction boundary: type=system AND subtype=compact_boundary.

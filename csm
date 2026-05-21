@@ -12,6 +12,7 @@ source [file join $ROOT lib terminal.tcl]
 source [file join $ROOT lib live.tcl]
 source [file join $ROOT lib scan.tcl]
 source [file join $ROOT lib search.tcl]
+source [file join $ROOT lib cli.tcl]
 source [file join $ROOT ui  drag.tcl]
 source [file join $ROOT ui  toolbar.tcl]
 source [file join $ROOT ui  tree.tcl]
@@ -20,13 +21,21 @@ source [file join $ROOT ui  viewer.tcl]
 source [file join $ROOT ui  move_dialog.tcl]
 source [file join $ROOT lib app.tcl]
 
-set initial_patterns [list]
-for {set i 0} {$i < [llength $argv]} {incr i} {
-    set a [lindex $argv $i]
-    if {$a eq "-regex" || $a eq "--regex"} {
-        incr i
-        lappend initial_patterns [lindex $argv $i]
+# A leading criterion-type token (regex|read|write|edit) launches the GUI
+# pre-seeded with that criteria chain; otherwise the -regex flag prefills a
+# regex criterion. Either way the GUI opens normally.
+if {[::csm::cli::is_cli $argv]} {
+    set initial_criteria [::csm::cli::parse $argv]
+} else {
+    set initial_criteria [list]
+    for {set i 0} {$i < [llength $argv]} {incr i} {
+        set a [lindex $argv $i]
+        if {$a eq "-regex" || $a eq "--regex"} {
+            incr i
+            lappend initial_criteria \
+                [dict create type regex value [lindex $argv $i]]
+        }
     }
 }
 
-::csm::app::start $ROOT $initial_patterns
+::csm::app::start $ROOT $initial_criteria

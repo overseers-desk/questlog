@@ -20,7 +20,7 @@ namespace eval ::csm::app {
     variable RunTimer      ;# after-id of the running-poll loop
 }
 
-proc ::csm::app::start {root {initial_patterns {}}} {
+proc ::csm::app::start {root {initial_criteria {}}} {
     variable Scan
     variable Search
     variable Toolbar
@@ -92,7 +92,13 @@ proc ::csm::app::start {root {initial_patterns {}}} {
         [namespace code on_search_done]]
 
     $Toolbar subscribe [namespace code on_filter]
-    foreach pat $initial_patterns { $Toolbar add_row $pat }
+    foreach c $initial_criteria {
+        if {[dict get $c type] eq "regex"} {
+            $Toolbar add_row [dict get $c value]
+        } else {
+            $Toolbar add_path_row [dict get $c type] [dict get $c value]
+        }
+    }
     $Toolbar publish
 
     bind . <Control-q> [namespace code quit]
@@ -125,11 +131,11 @@ proc ::csm::app::on_filter {snapshot} {
     variable ResultsVisible
     variable Running
 
-    set has_regex [::csm::ui::any_pattern $snapshot]
-    if {$has_regex && !$ResultsVisible} {
+    set has_criteria [::csm::ui::any_criteria $snapshot]
+    if {$has_criteria && !$ResultsVisible} {
         $PW add $PW.res -weight 2
         set ResultsVisible 1
-    } elseif {!$has_regex && $ResultsVisible} {
+    } elseif {!$has_criteria && $ResultsVisible} {
         $PW forget $PW.res
         $Results clear
         set ResultsVisible 0
@@ -157,10 +163,10 @@ proc ::csm::app::on_filter {snapshot} {
     # so there is no flash of the pre-reconcile state.
     $Tree reconcile_running $Running
 
-    if {$has_regex} {
+    if {$has_criteria} {
         $Results clear
         $Results set_query \
-            [dict get $snapshot regex] [dict get $snapshot case]
+            [::csm::ui::regex_values $snapshot] [dict get $snapshot case]
         $Search start $snapshot
     } else {
         $Search cancel
@@ -192,11 +198,11 @@ proc ::csm::app::on_scan_done {scanned} {
 
 # ---- search callbacks --------------------------------------------------
 
-proc ::csm::app::on_search_match {is_first path lineoff ts btype content folder} {
+proc ::csm::app::on_search_match {match} {
     variable Tree
     variable Results
-    $Tree update_match $is_first $path $lineoff $ts $content $folder
-    $Results add_match $is_first $path $lineoff $ts $btype $content $folder
+    $Tree update_match $match
+    $Results add_match $match
 }
 
 proc ::csm::app::on_search_progress {done total matches} {

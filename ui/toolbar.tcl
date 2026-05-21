@@ -6,21 +6,38 @@ package require Tk
 # Owns the filter variables. Subscribers receive the full snapshot
 # dict whenever any control changes:
 #   window     24h | 7d | 30d | all
-#   regex      list of pattern strings (empty list = no search; AND across all)
-#   case       0 | 1
+#   criteria   list of {type regex|read|write|edit  value <string>};
+#              empty = no search. AND across all, at session scope.
+#   case       0 | 1   (regex matching/highlighting only)
 #   cwd_only   0 | 1
 #   one_turn   0 | 1   (1 = exclude one-turn sessions, default on)
 #   cwd        $env(PWD) at startup; constant after.
 
 namespace eval ::csm::ui {}
 
-# any_pattern snapshot - true iff the snapshot carries at least one
-# non-empty regex pattern. Shared by app.tcl (results-pane visibility,
-# search start/cancel) and tree.tcl (RegexActive flag).
-proc ::csm::ui::any_pattern {snapshot} {
-    if {![dict exists $snapshot regex]} { return 0 }
-    foreach p [dict get $snapshot regex] { if {$p ne ""} { return 1 } }
+# any_criteria snapshot - true iff the snapshot carries at least one
+# criterion with a non-empty value. Shared by app.tcl (results-pane
+# visibility, search start/cancel) and tree.tcl (CriteriaActive flag).
+proc ::csm::ui::any_criteria {snapshot} {
+    if {![dict exists $snapshot criteria]} { return 0 }
+    foreach c [dict get $snapshot criteria] {
+        if {[dict get $c value] ne ""} { return 1 }
+    }
     return 0
+}
+
+# regex_values snapshot - the values of the regex-type criteria only, for
+# the result pane's in-place highlighter. Path criteria are not regex and
+# are not highlighted.
+proc ::csm::ui::regex_values {snapshot} {
+    set out [list]
+    if {![dict exists $snapshot criteria]} { return $out }
+    foreach c [dict get $snapshot criteria] {
+        if {[dict get $c type] eq "regex" && [dict get $c value] ne ""} {
+            lappend out [dict get $c value]
+        }
+    }
+    return $out
 }
 
 oo::class create ::csm::ui::Toolbar {
@@ -34,9 +51,10 @@ oo::class create ::csm::ui::Toolbar {
     variable Cwd
     variable Subscribers
     variable DebounceAfter
-    variable Patterns         ;# dict id -> "" (presence marker; values live in Pat$id ivars)
+    variable Patterns         ;# dict id -> type (regex|read|write|edit); values live in Pat$id ivars
     variable NextId
-    variable RowsBox          ;# inner frame holding pattern rows + the [+] button
+    variable RowsBox          ;# inner frame holding criterion rows + the add buttons
+    variable PopPath          ;# entry var for the path-criterion add dropdown
 
     constructor {parent cwd} {
         set Top $parent
@@ -79,23 +97,35 @@ oo::class create ::csm::ui::Toolbar {
             -command [list [self] publish]
         pack $Top.row1.cwd -side left
 
-        # Regex box: AND-combined list of patterns. Empty until user clicks +.
-        ttk::labelframe $Top.regexbox -text "Regex (AND)"
-        pack $Top.regexbox -side top -fill x -padx 4 -pady 2
+        # Criteria box: AND-combined list of typed criteria, at session
+        # scope. Empty until the user adds one. "Aa" governs regex case;
+        # a path criterion matches case-sensitively when the recorded path
+        # ends with the typed value (a bare filename matches any directory).
+        ttk::labelframe $Top.criteria -text "Criteria (AND)"
+        pack $Top.criteria -side top -fill x -padx 4 -pady 2
 
-        ttk::frame $Top.regexbox.hdr
-        pack $Top.regexbox.hdr -side top -fill x
-        ttk::checkbutton $Top.regexbox.hdr.case -text "Aa" \
+        ttk::frame $Top.criteria.hdr
+        pack $Top.criteria.hdr -side top -fill x
+        ttk::checkbutton $Top.criteria.hdr.case -text "Aa" \
             -variable [my varname CaseVar] \
             -command [list [self] publish]
-        pack $Top.regexbox.hdr.case -side right -padx 4
+        pack $Top.criteria.hdr.case -side right -padx 4
 
-        set RowsBox $Top.regexbox.rows
+        set RowsBox $Top.criteria.rows
         ttk::frame $RowsBox
         pack $RowsBox -side top -fill x
 
-        ttk::button $RowsBox.add -text "+" -width 2 \
+        ttk::frame $RowsBox.add
+        ttk::button $RowsBox.add.bregex -text "+ regex" \
             -command [list [self] add_row]
+        ttk::button $RowsBox.add.bread -text "+ Read" \
+            -command [list [self] open_path_dropdown read $RowsBox.add.bread]
+        ttk::button $RowsBox.add.bwrite -text "+ Write" \
+            -command [list [self] open_path_dropdown write $RowsBox.add.bwrite]
+        ttk::button $RowsBox.add.bedit -text "+ Edit" \
+            -command [list [self] open_path_dropdown edit $RowsBox.add.bedit]
+        pack $RowsBox.add.bregex $RowsBox.add.bread \
+             $RowsBox.add.bwrite $RowsBox.add.bedit -side left -padx {0 4}
         pack $RowsBox.add -side top -anchor w -pady 1
 
         # Row 2: secondary filter.
@@ -127,23 +157,120 @@ oo::class create ::csm::ui::Toolbar {
         }
     }
 
-    method add_row {{initial ""}} {
+    # Create a typed criterion row and register it. Returns the row id.
+    method new_row {type value} {
         incr NextId
         set id $NextId
         my eval [list variable Pat$id ""]
-        if {$initial ne ""} { my eval [list set Pat$id $initial] }
+        my eval [list set Pat$id $value]
         set row $RowsBox.r$id
         ttk::frame $row
+        ttk::label $row.t -text $type -width 6 -anchor w
         ttk::entry $row.e -textvariable [my varname Pat$id] -width 30
         ttk::button $row.x -text "−" -width 2 \
             -command [list [self] remove_row $id]
+        pack $row.t -side left -padx {0 4}
         pack $row.e -side left -fill x -expand 1
         pack $row.x -side left -padx {4 0}
         pack $row -side top -fill x -pady 1 -before $RowsBox.add
-        bind $row.e <KeyRelease> [list [self] on_regex_change]
-        dict set Patterns $id ""
-        if {$initial eq ""} { focus $row.e }
+        bind $row.e <KeyRelease> [list [self] on_value_change]
+        dict set Patterns $id $type
+        return $id
+    }
+
+    method add_row {{initial ""}} {
+        set id [my new_row regex $initial]
+        if {$initial eq ""} { focus $RowsBox.r$id.e }
         my publish
+    }
+
+    method add_path_row {type value} {
+        my new_row $type $value
+        my publish
+    }
+
+    # A dropdown under the +Read/+Write/+Edit button. Write and Edit list
+    # the launch repo's working-tree changes to pick from; all three offer
+    # a manual entry and a file chooser. Choosing adds a row, which is then
+    # edit-or-remove only - there is no in-place file swap on the row.
+    method open_path_dropdown {type btn} {
+        set host [winfo toplevel $Top]
+        set pop [expr {$host eq "." ? ".criteriapop" : "$host.criteriapop"}]
+        destroy $pop
+        ttk::frame $pop -relief solid -borderwidth 1 -padding 4
+        set PopPath ""
+        if {$type in {write edit}} {
+            set files [my git_modified_files]
+            if {[llength $files] > 0} {
+                set lb $pop.lb
+                set n [llength $files]
+                listbox $lb -height [expr {$n < 8 ? $n : 8}] -width 48 \
+                    -activestyle none
+                foreach f $files { $lb insert end $f }
+                pack $lb -side top -fill x
+                bind $lb <<ListboxSelect>> \
+                    [list [self] dropdown_pick_list $type $lb $pop]
+                ttk::separator $pop.sep -orient horizontal
+                pack $pop.sep -side top -fill x -pady 4
+            }
+        }
+        ttk::frame $pop.row
+        ttk::entry $pop.row.e -textvariable [my varname PopPath] -width 40
+        ttk::button $pop.row.open -text "open…" \
+            -command [list [self] pick_file $type $pop]
+        ttk::button $pop.row.add -text "add" \
+            -command [list [self] dropdown_add_entry $type $pop]
+        pack $pop.row.e -side left -fill x -expand 1
+        pack $pop.row.open -side left -padx {4 0}
+        pack $pop.row.add -side left -padx {4 0}
+        pack $pop.row -side top -fill x
+        bind $pop.row.e <Return> [list [self] dropdown_add_entry $type $pop]
+        bind $pop <Escape> [list destroy $pop]
+        set rx [expr {[winfo rootx $btn] - [winfo rootx $host]}]
+        set ry [expr {[winfo rooty $btn] - [winfo rooty $host] \
+                      + [winfo height $btn]}]
+        place $pop -x $rx -y $ry
+        raise $pop
+        focus $pop.row.e
+    }
+
+    method dropdown_pick_list {type lb pop} {
+        set sel [$lb curselection]
+        if {[llength $sel] == 0} return
+        set val [$lb get [lindex $sel 0]]
+        destroy $pop
+        my add_path_row $type $val
+    }
+
+    method dropdown_add_entry {type pop} {
+        set val [string trim $PopPath]
+        destroy $pop
+        if {$val ne ""} { my add_path_row $type $val }
+    }
+
+    method pick_file {type pop} {
+        set f [tk_getOpenFile -initialdir $Cwd]
+        if {$f eq ""} return
+        destroy $pop
+        my add_path_row $type $f
+    }
+
+    # Absolute paths of the launch repo's working-tree changes (modified,
+    # added, untracked). Empty when the launch cwd is not a git repo.
+    method git_modified_files {} {
+        if {[catch {exec git -C $Cwd rev-parse --show-toplevel} root]} {
+            return [list]
+        }
+        set root [string trim $root]
+        if {[catch {exec git -C $Cwd status --porcelain} out]} { return [list] }
+        set files [list]
+        foreach line [split $out \n] {
+            if {$line eq ""} continue
+            set rest [string range $line 3 end]
+            if {[regexp {.* -> (.*)} $rest -> renamed]} { set rest $renamed }
+            lappend files [file join $root $rest]
+        }
+        return $files
     }
 
     method remove_row {id} {
@@ -157,25 +284,28 @@ oo::class create ::csm::ui::Toolbar {
             set last [lindex $remaining end]
             focus $RowsBox.r$last.e
         } else {
-            focus $RowsBox.add
+            focus $RowsBox.add.bregex
         }
         my publish
     }
 
-    method on_regex_change {} {
+    method on_value_change {} {
         if {$DebounceAfter ne ""} { after cancel $DebounceAfter }
         set DebounceAfter [after 200 [list [self] publish]]
     }
 
     method snapshot {} {
-        set patterns [list]
+        set criteria [list]
         foreach id [dict keys $Patterns] {
             set v [my eval [list set Pat$id]]
-            if {$v ne ""} { lappend patterns $v }
+            if {$v ne ""} {
+                lappend criteria \
+                    [dict create type [dict get $Patterns $id] value $v]
+            }
         }
         return [dict create \
             window   $WindowVar \
-            regex    $patterns \
+            criteria $criteria \
             case     $CaseVar \
             cwd_only $CwdOnlyVar \
             one_turn $OneTurnVar \

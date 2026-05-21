@@ -37,7 +37,10 @@ proc ::csm::search::format_tool_use {name input} {
         # parsed JSON object are indistinguishable here; treat every
         # value as a display string. Whitespace-collapse and cap.
         set v [regsub -all {[\s]+} $v " "]
-        if {[string length $v] > 60} { set v "[string range $v 0 59]…" }
+        # Paths render whole; only bulky fields are capped.
+        if {$k ni {file_path notebook_path} && [string length $v] > 60} {
+            set v "[string range $v 0 59]…"
+        }
         lappend parts "${k}=${v}"
     }
     set s "${name}([join $parts {, }])"
@@ -66,6 +69,56 @@ proc ::csm::search::_order_tool_keys {name keys} {
         if {$k ni $out} { lappend out $k }
     }
     return $out
+}
+
+# record_hits rec criteria re_opts - the evidence a parsed record gives for
+# each criterion. Returns a flat list of {idx btype content} triples, idx
+# being the criterion's position in $criteria. A regex criterion matches
+# block text; a read/write/edit criterion matches a tool_use whose tool
+# name is in the type's set and whose file path ends with the criterion
+# value, so a bare or partial filename matches that file in any directory
+# and a full path matches exactly. Content is cleaned for display. The
+# worker thread carries its own copy of this proc; the two must stay in sync.
+proc ::csm::search::record_hits {rec criteria re_opts} {
+    set toolsets {read Read write Write edit {Edit MultiEdit NotebookEdit}}
+    set hits [list]
+    set have_blocks 0; set blocks {}
+    set have_tools 0;  set tools {}
+    set idx -1
+    foreach c $criteria {
+        incr idx
+        set type [dict get $c type]
+        set val  [dict get $c value]
+        if {$val eq ""} continue
+        if {$type eq "regex"} {
+            if {!$have_blocks} {
+                set blocks [::csm::jsonl::extract_blocks $rec]
+                set have_blocks 1
+            }
+            foreach {btype content} $blocks {
+                if {[regexp {*}$re_opts -- $val $content]} {
+                    lappend hits [list $idx $btype \
+                        [::csm::search::clean_text $content 300]]
+                }
+            }
+        } else {
+            if {!$have_tools} {
+                set tools [::csm::jsonl::record_tool_uses $rec]
+                set have_tools 1
+            }
+            set toolset [dict get $toolsets $type]
+            foreach t $tools {
+                set tp [dict get $t path]
+                set off [expr {[string length $tp] - [string length $val]}]
+                if {[dict get $t name] in $toolset && $off >= 0
+                    && [string range $tp $off end] eq $val} {
+                    lappend hits [list $idx tool_use \
+                        [::csm::search::clean_text [dict get $t rendered] 300]]
+                }
+            }
+        }
+    }
+    return $hits
 }
 
 # Body sourced into each worker thread. Tcl threads carry separate
@@ -155,7 +208,9 @@ set ::csm::search::WorkerScript {
         foreach k $ordered {
             set v [dict get $input $k]
             set v [regsub -all {[\s]+} $v " "]
-            if {[string length $v] > 60} { set v "[string range $v 0 59]…" }
+            if {$k ni {file_path notebook_path} && [string length $v] > 60} {
+                set v "[string range $v 0 59]…"
+            }
             lappend parts "${k}=${v}"
         }
         set s "${name}([join $parts {, }])"
@@ -218,7 +273,68 @@ set ::csm::search::WorkerScript {
         return $out
     }
 
-    proc worker_run {main_tid obj_cmd epoch paths patterns re_opts} {
+    proc record_tool_uses {rec} {
+        set out [list]
+        if {[dict_get_or $rec type ""] ne "assistant"} { return $out }
+        if {![dict exists $rec message]} { return $out }
+        set msg [dict get $rec message]
+        if {![dict exists $msg content]} { return $out }
+        set c [dict get $msg content]
+        if {[is_string_content $c]} { return $out }
+        foreach blk $c {
+            if {[dict_get_or $blk type ""] ne "tool_use"} continue
+            set name  [dict_get_or $blk name ""]
+            set input [dict_get_or $blk input [dict create]]
+            set path ""
+            if {![catch {dict size $input}]} {
+                if {[dict exists $input file_path]} {
+                    set path [dict get $input file_path]
+                } elseif {[dict exists $input notebook_path]} {
+                    set path [dict get $input notebook_path]
+                }
+            }
+            lappend out [dict create name $name path $path \
+                             rendered [format_tool_use $name $input]]
+        }
+        return $out
+    }
+
+    # Worker copy of ::csm::search::record_hits; keep in sync.
+    proc record_hits {rec criteria re_opts} {
+        set toolsets {read Read write Write edit {Edit MultiEdit NotebookEdit}}
+        set hits [list]
+        set have_blocks 0; set blocks {}
+        set have_tools 0;  set tools {}
+        set idx -1
+        foreach c $criteria {
+            incr idx
+            set type [dict get $c type]
+            set val  [dict get $c value]
+            if {$val eq ""} continue
+            if {$type eq "regex"} {
+                if {!$have_blocks} { set blocks [extract_blocks $rec]; set have_blocks 1 }
+                foreach {btype content} $blocks {
+                    if {[regexp {*}$re_opts -- $val $content]} {
+                        lappend hits [list $idx $btype [clean_text $content 300]]
+                    }
+                }
+            } else {
+                if {!$have_tools} { set tools [record_tool_uses $rec]; set have_tools 1 }
+                set toolset [dict get $toolsets $type]
+                foreach t $tools {
+                    set tp [dict get $t path]
+                    set off [expr {[string length $tp] - [string length $val]}]
+                    if {[dict get $t name] in $toolset && $off >= 0 \
+                        && [string range $tp $off end] eq $val} {
+                        lappend hits [list $idx tool_use [clean_text [dict get $t rendered] 300]]
+                    }
+                }
+            }
+        }
+        return $hits
+    }
+
+    proc worker_run {main_tid obj_cmd epoch paths criteria re_opts} {
         set matches_in_slice 0
         foreach path $paths {
             set folder [file tail [file dirname $path]]
@@ -227,7 +343,10 @@ set ::csm::search::WorkerScript {
             set cwd_hint ""
             set first_ts ""
             set lineno 0
-            set seen_match_in_file 0
+            set ncrit [llength $criteria]
+            set sat [lrepeat $ncrit 0]
+            set buffer [list]
+            set seen [dict create]
             if {[catch {open $path r} fh]} { continue }
             chan configure $fh -encoding utf-8
             while {[chan gets $fh line] >= 0} {
@@ -239,28 +358,25 @@ set ::csm::search::WorkerScript {
                     incr users
                     if {$users == 1} { set first_user $uc }
                 }
-                set all_match 1
-                foreach pat $patterns {
-                    if {$pat eq ""} continue
-                    if {![regexp {*}$re_opts -- $pat $line]} { set all_match 0; break }
-                }
-                if {!$all_match} continue
-                if {[catch {::json::json2dict $line} rec]} continue
-                foreach {btype bcontent} [extract_blocks $rec] {
-                    set has_hit 0
-                    foreach pat $patterns {
-                        if {$pat eq ""} continue
-                        if {[regexp {*}$re_opts -- $pat $bcontent]} { set has_hit 1; break }
+                set candidate 0
+                foreach c $criteria {
+                    set val [dict get $c value]
+                    if {$val eq ""} continue
+                    if {[dict get $c type] eq "regex"} {
+                        if {[regexp {*}$re_opts -- $val $line]} { set candidate 1; break }
+                    } elseif {[string first $val $line] >= 0} {
+                        set candidate 1; break
                     }
-                    if {!$has_hit} continue
-                    set is_first [expr {!$seen_match_in_file}]
-                    set seen_match_in_file 1
-                    set bcontent [clean_text $bcontent 300]
-                    thread::send -async $main_tid \
-                        [list ::csm::search::dispatch $obj_cmd on_worker_match \
-                             $epoch $is_first $path $lineno $first_ts \
-                             $btype $bcontent $folder]
-                    incr matches_in_slice
+                }
+                if {!$candidate} continue
+                if {[catch {::json::json2dict $line} rec]} continue
+                foreach hit [record_hits $rec $criteria $re_opts] {
+                    lassign $hit idx btype content
+                    set sat [lreplace $sat $idx $idx 1]
+                    set key "$lineno $btype $content"
+                    if {[dict exists $seen $key]} continue
+                    dict set seen $key 1
+                    lappend buffer [list $lineno $btype $content]
                 }
             }
             close $fh
@@ -279,6 +395,19 @@ set ::csm::search::WorkerScript {
                 cwd_hint $cwd_hint]
             thread::send -async $main_tid \
                 [list ::csm::search::dispatch $obj_cmd on_worker_row $epoch $row]
+            set all 1
+            foreach s $sat { if {!$s} { set all 0; break } }
+            if {$all && [llength $buffer] > 0} {
+                foreach ev $buffer {
+                    lassign $ev evlineno evbtype evcontent
+                    set matchcore [dict create path $path lineoff $evlineno \
+                        ts $first_ts btype $evbtype content $evcontent folder $folder]
+                    thread::send -async $main_tid \
+                        [list ::csm::search::dispatch $obj_cmd on_worker_match \
+                             $epoch $matchcore]
+                    incr matches_in_slice
+                }
+            }
         }
         thread::send -async $main_tid \
             [list ::csm::search::dispatch $obj_cmd on_worker_done \
@@ -287,15 +416,24 @@ set ::csm::search::WorkerScript {
     thread::wait
 }
 
-# ::csm::Search - regex search across session logs, coroutine by default,
-# threaded fan-out when CSM_SEARCH_THREADS is set.
+# ::csm::Search - typed-criteria search across session logs, coroutine by
+# default, threaded fan-out when CSM_SEARCH_THREADS is set.
 #
-# Match flow per session line: pre-filter with the user's AND-combined
-# regex against the raw line, parse JSON only on lines that pass the
-# pre-filter, walk the record's content blocks, and emit one match event
-# per block whose cleaned content contains at least one of the patterns.
-# The block type (user/assistant/tool_use/tool_result/system) and the
-# cleaned content travel together so the renderer can show typed rows.
+# A search is a list of criteria, each {type regex|read|write|edit value}.
+# A session qualifies when every criterion is satisfied somewhere in it
+# (AND at session scope). A regex criterion is satisfied by a content
+# block matching its pattern; a read/write/edit criterion by a tool_use
+# whose tool name is in the type's set and whose file path ends with the
+# value, so a bare filename matches that file in any directory.
+#
+# Per file: pre-filter each raw line by any criterion's literal (the
+# pattern for regex, the path substring for a path type) so the JSON parse
+# is skipped on lines that cannot contribute; on a candidate line, parse
+# once and collect the record's hits via record_hits, marking criteria
+# satisfied and buffering evidence rows. At end of file, if every
+# criterion is satisfied, flush the buffered rows in line order through
+# OnMatch as match-record dicts {is_first path lineoff ts btype content
+# folder}; the first row of a session carries is_first 1.
 #
 # Side effect: as a free byproduct of reading each file, the row data
 # (multi-turn predicate, first prompt, cwd_hint, first timestamp) is
@@ -346,14 +484,24 @@ oo::class create ::csm::Search {
             return
         }
         my cancel
-        set patterns [my dict_or $snapshot regex {}]
-        if {[llength $patterns] == 0} return
+        set criteria [my active_criteria $snapshot]
+        if {[llength $criteria] == 0} return
         set my_epoch [incr Epoch]
         set Active 1
         set MatchedSessions [dict create]
         set Counts [dict create done 0 total 0 matches 0]
         set co ::csm::search::coro_$my_epoch
         coroutine $co [namespace which my] run_search $my_epoch $snapshot
+    }
+
+    # The snapshot's criteria with empty values dropped. A criterion is
+    # {type regex|read|write|edit  value <string>}.
+    method active_criteria {snapshot} {
+        set out [list]
+        foreach c [my dict_or $snapshot criteria {}] {
+            if {[dict get $c value] ne ""} { lappend out $c }
+        }
+        return $out
     }
 
     method pick_thread_count {} {
@@ -371,7 +519,7 @@ oo::class create ::csm::Search {
         yield
         if {$my_epoch != $Epoch} return
 
-        set patterns [my dict_or $snapshot regex {}]
+        set criteria [my active_criteria $snapshot]
         set case     [my dict_or $snapshot case 0]
         set re_opts  [expr {$case ? "" : "-nocase"}]
 
@@ -387,6 +535,10 @@ oo::class create ::csm::Search {
             set cwd_hint ""
             set first_ts ""
             set lineno 0
+            set ncrit [llength $criteria]
+            set sat [lrepeat $ncrit 0]
+            set buffer [list]
+            set seen [dict create]
             if {[catch {open $path r} fh]} {
                 incr count
                 continue
@@ -406,34 +558,24 @@ oo::class create ::csm::Search {
                     incr users
                     if {$users == 1} { set first_user $uc }
                 }
-                set all_match 1
-                foreach pat $patterns {
-                    if {$pat eq ""} continue
-                    if {![regexp {*}$re_opts -- $pat $line]} {
-                        set all_match 0
-                        break
+                set candidate 0
+                foreach c $criteria {
+                    set val [dict get $c value]
+                    if {$val eq ""} continue
+                    if {[dict get $c type] eq "regex"} {
+                        if {[regexp {*}$re_opts -- $val $line]} { set candidate 1; break }
+                    } elseif {[string first $val $line] >= 0} {
+                        set candidate 1; break
                     }
                 }
-                if {$all_match} {
-                    if {![catch {::json::json2dict $line} rec]} {
-                        foreach {btype bcontent} [::csm::jsonl::extract_blocks $rec] {
-                            set has_hit 0
-                            foreach pat $patterns {
-                                if {$pat eq ""} continue
-                                if {[regexp {*}$re_opts -- $pat $bcontent]} {
-                                    set has_hit 1
-                                    break
-                                }
-                            }
-                            if {!$has_hit} continue
-                            set is_first [expr {![dict exists $MatchedSessions $path]}]
-                            dict set MatchedSessions $path 1
-                            set bcontent [::csm::search::clean_text $bcontent 300]
-                            set ts_for_match [expr {$first_ts ne "" ? $first_ts : ""}]
-                            {*}$OnMatch $is_first $path $lineno $ts_for_match \
-                                $btype $bcontent $folder
-                            dict incr Counts matches
-                        }
+                if {$candidate && ![catch {::json::json2dict $line} rec]} {
+                    foreach hit [::csm::search::record_hits $rec $criteria $re_opts] {
+                        lassign $hit idx btype content
+                        set sat [lreplace $sat $idx $idx 1]
+                        set key "$lineno $btype $content"
+                        if {[dict exists $seen $key]} continue
+                        dict set seen $key 1
+                        lappend buffer [list $lineno $btype $content]
                     }
                 }
                 # Yield mid-file so a cancel issued by a fresh keystroke
@@ -462,6 +604,22 @@ oo::class create ::csm::Search {
                 bookmarked [file executable $path] \
                 cwd_hint $cwd_hint]
             $Scan publish_row $row
+            # A session qualifies only when every criterion is satisfied
+            # somewhere in it; then flush its buffered evidence in line
+            # order, the first row marking the session for the consumers.
+            set all 1
+            foreach s $sat { if {!$s} { set all 0; break } }
+            if {$all && [llength $buffer] > 0} {
+                foreach ev $buffer {
+                    lassign $ev evlineno evbtype evcontent
+                    set is_first [expr {![dict exists $MatchedSessions $path]}]
+                    dict set MatchedSessions $path 1
+                    {*}$OnMatch [dict create is_first $is_first path $path \
+                        lineoff $evlineno ts $first_ts btype $evbtype \
+                        content $evcontent folder $folder]
+                    dict incr Counts matches
+                }
+            }
             incr count
             dict set Counts done $count
             if {$count % 50 == 0} {
@@ -484,8 +642,8 @@ oo::class create ::csm::Search {
     method start_threaded {snapshot N} {
         package require Thread
         my cancel
-        set patterns [my dict_or $snapshot regex {}]
-        if {[llength $patterns] == 0} return
+        set criteria [my active_criteria $snapshot]
+        if {[llength $criteria] == 0} return
         set my_epoch [incr Epoch]
         set Active 1
         set MatchedSessions [dict create]
@@ -521,18 +679,20 @@ oo::class create ::csm::Search {
             set tid [thread::create $::csm::search::WorkerScript]
             lappend Workers $tid
             thread::send -async $tid \
-                [list worker_run $main_tid $obj_cmd $my_epoch $slice $patterns $re_opts]
+                [list worker_run $main_tid $obj_cmd $my_epoch $slice $criteria $re_opts]
         }
     }
 
     # Receives a typed match from a worker. Re-derives is_first on the
     # main side so the per-session-first-hit invariant is authoritative
     # here rather than relying on disjoint slicing.
-    method on_worker_match {epoch worker_first path lineno ts btype content folder} {
+    method on_worker_match {epoch matchcore} {
         if {$epoch != $Epoch} return
+        set path [dict get $matchcore path]
         set is_first [expr {![dict exists $MatchedSessions $path]}]
         dict set MatchedSessions $path 1
-        {*}$OnMatch $is_first $path $lineno $ts $btype $content $folder
+        dict set matchcore is_first $is_first
+        {*}$OnMatch $matchcore
         dict incr Counts matches
     }
 

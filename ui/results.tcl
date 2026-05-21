@@ -145,12 +145,16 @@ oo::class create ::csm::ui::Results {
         set Query [dict create regex $regex_list nocase $nocase]
     }
 
-    method add_match {is_first path lineoff ts btype content folder} {
+    method add_match {match} {
         set entry [dict create \
-            path $path lineoff $lineoff ts $ts \
-            btype $btype content $content folder $folder]
+            path    [dict get $match path] \
+            lineoff [dict get $match lineoff] \
+            ts      [dict get $match ts] \
+            btype   [dict get $match btype] \
+            content [dict get $match content] \
+            folder  [dict get $match folder]]
         lappend AllMatches $entry
-        if {[my in_scope $path $folder]} {
+        if {[my in_scope [dict get $entry path] [dict get $entry folder]]} {
             my render_entry $entry
         }
     }
