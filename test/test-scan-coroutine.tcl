@@ -20,8 +20,8 @@ proc check {name expected actual} {
 }
 
 # Build a 300-file synthetic tree (exceeds the 200-record yield boundary).
-file delete -force /tmp/csm-test-coro
-file mkdir /tmp/csm-test-coro/-home-test-code-many
+::csm::path::_real_file delete -force /tmp/csm-test-coro
+::csm::path::_real_file mkdir /tmp/csm-test-coro/-home-test-code-many
 for {set i 0} {$i < 300} {incr i} {
     set fh [open [format /tmp/csm-test-coro/-home-test-code-many/sess-%04d.jsonl $i] w]
     puts $fh "{\"type\":\"user\",\"message\":{\"content\":\"prompt $i\"},\"cwd\":\"/home/test/code/many\",\"timestamp\":\"2026-04-25T10:00:00.000Z\"}"
@@ -43,7 +43,7 @@ check coro_scanned_all 300 $::row_count
 
 # Test 2: epoch cancellation. Mid-flight extend cancels the previous coro.
 # Build another 200 files in a second folder to lengthen the path list.
-file mkdir /tmp/csm-test-coro/-home-test-code-second
+::csm::path::_real_file mkdir /tmp/csm-test-coro/-home-test-code-second
 for {set i 0} {$i < 200} {incr i} {
     set fh [open [format /tmp/csm-test-coro/-home-test-code-second/sess-%04d.jsonl $i] w]
     puts $fh "{\"type\":\"user\",\"message\":{\"content\":\"second prompt $i\"},\"cwd\":\"/home/test/code/second\"}"
@@ -53,7 +53,7 @@ for {set i 0} {$i < 200} {incr i} {
 
 # Test 2: epoch cancellation. Mid-flight extend cancels the previous coro.
 # The invariant we test is that after rapid back-to-back extends, the dict
-# still ends up consistent — every path globbed by the final extend is
+# still ends up consistent - every path globbed by the final extend is
 # either already memoised or scanned. The intermediate cancellation must
 # not leak a partial state.
 set ::done 0
@@ -70,7 +70,7 @@ check first_folder_visible 1 \
     [expr {[$s lookup /tmp/csm-test-coro/-home-test-code-many/sess-0000.jsonl] ne ""}]
 
 $s destroy
-file delete -force /tmp/csm-test-coro
+::csm::path::_real_file delete -force /tmp/csm-test-coro
 
 if {$fails > 0} {
     puts "$fails failures"

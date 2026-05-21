@@ -1,6 +1,13 @@
 package require Tcl 9
 package require Tk
 
+# Glyphs for the status column. The single home for both markers; the
+# toolbar toggles are plain text, so these characters live only here.
+namespace eval ::csm::ui {
+    variable GLYPH_RUNNING  ●
+    variable GLYPH_BOOKMARK ★
+}
+
 # ::csm::ui::Tree - the project / session tree pane.
 #
 # Two levels: project folders, sessions. Folders are inserted on demand
@@ -33,9 +40,13 @@ oo::class create ::csm::ui::Tree {
     variable MenuTarget
     variable FolderCount      ;# dict fiid -> int (number of inserted sessions)
     variable FolderBytes      ;# dict fiid -> int (sum of inserted sessions' sizes)
+    variable RunningSet       ;# dict uuid -> 1, replaced wholesale each tick
+    variable OnBookmarkToggle ;# cb: path -> flip the +x bookmark bit
+    variable OnScanPath       ;# cb: path -> row (synchronous single-file scan)
+    variable BookmarkMenuIndex
 
     constructor {parent resolve_cb lookup_cb on_select on_open on_scope_change \
-                 on_move_request on_drop_move} {
+                 on_move_request on_drop_move on_bookmark_toggle on_scan_path} {
         set Top $parent
         set ResolveFolder $resolve_cb
         set LookupSession $lookup_cb
@@ -44,11 +55,14 @@ oo::class create ::csm::ui::Tree {
         set OnScopeChange $on_scope_change
         set OnMoveRequest $on_move_request
         set OnDropMove $on_drop_move
+        set OnBookmarkToggle $on_bookmark_toggle
+        set OnScanPath $on_scan_path
         set Snapshot [dict create]
         set MatchedSessions [dict create]
         set RegexActive 0
         set FolderCount [dict create]
         set FolderBytes [dict create]
+        set RunningSet [dict create]
 
         my build
     }
@@ -56,18 +70,22 @@ oo::class create ::csm::ui::Tree {
     method build {} {
         ttk::frame $Top
         set Tv $Top.tv
-        ttk::treeview $Tv -columns {when size} -show {tree headings} \
+        ttk::treeview $Tv -columns {flags when size} -show {tree headings} \
             -yscrollcommand [list $Top.sb set]
-        $Tv heading #0   -text "Sessions"
-        $Tv heading when -text "When"
-        $Tv heading size -text "Size"
-        $Tv column  #0   -anchor w -stretch 1
-        $Tv column  when -anchor w -stretch 0 -width 130
+        $Tv heading #0    -text "Sessions"
+        $Tv heading flags -text "⚑"
+        $Tv heading when  -text "When"
+        $Tv heading size  -text "Size"
+        $Tv column  #0    -anchor w -stretch 1
+        set f [ttk::style lookup Treeview -font]
+        if {$f eq ""} { set f TkDefaultFont }
+        # Status column: both glyphs plus padding, never clipped.
+        set gw [expr {[font measure $f "  ●★  "]}]
+        $Tv column  flags -anchor center -stretch 0 -width $gw -minwidth $gw
+        $Tv column  when  -anchor w -stretch 0 -width 130
         # Size column wide enough to always show the widest formatted value
         # (e.g. "999.9 G") with cell padding - avoids silent clipping that
         # leaves the user staring at a stray "8" with no unit.
-        set f [ttk::style lookup Treeview -font]
-        if {$f eq ""} { set f TkDefaultFont }
         set sw [expr {[font measure $f "  999.9 G  "]}]
         $Tv column  size -anchor e -stretch 0 -width $sw -minwidth $sw
 
@@ -106,6 +124,11 @@ oo::class create ::csm::ui::Tree {
         $Menu add separator
         $Menu add command -label "Move to..."              -command [list [self] menu_move]
         $Menu add command -label "Reveal folder"           -command [list [self] menu_reveal]
+        $Menu add separator
+        # Label is rewritten per-target in on_right (Add/Remove bookmark),
+        # so it is addressed by stored index, not by its (changing) label.
+        $Menu add command -label "Bookmark" -command [list [self] menu_bookmark]
+        set BookmarkMenuIndex [$Menu index end]
     }
 
     # apply_filter snapshot - clear the tree, set state for the new
@@ -125,6 +148,10 @@ oo::class create ::csm::ui::Tree {
     # present. In regex-active mode, only insert sessions that have
     # matched the user regex (tracked in MatchedSessions).
     method on_scan_row {row} {
+        # Under running-only the reconciler is the sole authority for what
+        # is displayed; suppress the streaming insert. Rows is still
+        # populated (publish_row ran before this callback fired).
+        if {[my dict_or $Snapshot running_only 0]} return
         # Apply current snapshot filters.
         if {![my row_matches_snapshot $row]} return
         set path [dict get $row path]
@@ -139,12 +166,16 @@ oo::class create ::csm::ui::Tree {
         set one_turn [my dict_or $Snapshot one_turn 1]
         set cwd_only [my dict_or $Snapshot cwd_only 0]
         set cwd      [my dict_or $Snapshot cwd ""]
+        set bookmarked_only [my dict_or $Snapshot bookmarked_only 0]
+        set bk [my dict_or $row bookmarked 0]
+        if {$bookmarked_only && !$bk} { return 0 }
         set cutoff 0
         if {$window ne "all"} {
             set hours [dict get {24h 24 7d 168 30d 720} $window]
             set cutoff [expr {[clock seconds] - $hours*3600}]
         }
-        if {[dict get $row mtime] <= $cutoff} { return 0 }
+        # A bookmark pins the row past the time window.
+        if {[dict get $row mtime] <= $cutoff && !$bk} { return 0 }
         if {$one_turn && ![dict get $row is_multi]} { return 0 }
         if {$cwd_only && $cwd ne ""} {
             set cwd_folder [::csm::path::encode_cwd $cwd]
@@ -157,7 +188,7 @@ oo::class create ::csm::ui::Tree {
         set fiid F:$folder
         if {[$Tv exists $fiid]} return
         set label [::csm::path::display_label [{*}$ResolveFolder $folder] $folder]
-        $Tv insert {} end -id $fiid -text $label -values [list "" ""] -open 0
+        $Tv insert {} end -id $fiid -text $label -values [list "" "" ""] -open 0
         dict set FolderCount $fiid 0
         dict set FolderBytes $fiid 0
     }
@@ -166,9 +197,9 @@ oo::class create ::csm::ui::Tree {
         set n [dict get $FolderCount $fiid]
         set b [dict get $FolderBytes $fiid]
         if {$n > 0} {
-            $Tv item $fiid -values [list "($n)" [my fmt_size $b]]
+            $Tv item $fiid -values [list "" "($n)" [my fmt_size $b]]
         } else {
-            $Tv item $fiid -values [list "" ""]
+            $Tv item $fiid -values [list "" "" ""]
         }
     }
 
@@ -179,8 +210,10 @@ oo::class create ::csm::ui::Tree {
         set label [my session_label $row]
         set when  [my fmt_time [dict get $row mtime]]
         set bytes [dict get $row size]
+        set flags [my glyph_cell [dict exists $RunningSet [dict get $row uuid]] \
+                       [my dict_or $row bookmarked 0]]
         $Tv insert F:$folder end -id $siid -text $label \
-            -values [list $when [my fmt_size $bytes]]
+            -values [list $flags $when [my fmt_size $bytes]]
         set fiid F:$folder
         dict incr FolderCount $fiid 1
         dict incr FolderBytes $fiid $bytes
@@ -193,6 +226,15 @@ oo::class create ::csm::ui::Tree {
             set body [dict get $row uuid]
         }
         return $body
+    }
+
+    # The status-column string for a row: a pure function of the two
+    # flags, never derived by stripping a previous cell value.
+    method glyph_cell {running bookmarked} {
+        set s ""
+        if {$running}    { append s $::csm::ui::GLYPH_RUNNING }
+        if {$bookmarked} { append s $::csm::ui::GLYPH_BOOKMARK }
+        return $s
     }
 
     method fmt_time {epoch} {
@@ -270,6 +312,10 @@ oo::class create ::csm::ui::Tree {
                      "Resume forked"} {
             $Menu entryconfigure $lbl -state $rstate
         }
+        # Read the bit fresh so the label matches reality even if it
+        # changed out of band.
+        $Menu entryconfigure $BookmarkMenuIndex \
+            -label [expr {[file executable $path] ? "Remove bookmark" : "Add bookmark"}]
         tk_popup $Menu $X $Y
     }
 
@@ -311,6 +357,10 @@ oo::class create ::csm::ui::Tree {
         {*}$OnMoveRequest [my menu_target_get path]
     }
 
+    method menu_bookmark {} {
+        {*}$OnBookmarkToggle [my menu_target_get path]
+    }
+
     method on_press {X Y x y} {
         set iid [$Tv identify item $x $y]
         if {![string match "S:*" $iid]} return
@@ -331,30 +381,121 @@ oo::class create ::csm::ui::Tree {
     # the source folder's counters (deleting the folder iid if empty),
     # and rewrites the MatchedSessions key when regex mode is active so
     # the subsequent on_scan_row reinsert passes the regex guard.
-    method relocate_session {old_path new_path} {
-        set old_siid S:$old_path
-        if {[$Tv exists $old_siid]} {
-            set old_fiid [$Tv parent $old_siid]
-            set bytes 0
-            set row [{*}$LookupSession $old_path]
-            if {$row ne ""} { set bytes [dict get $row size] }
-            $Tv delete $old_siid
-            if {$old_fiid ne "" && [dict exists $FolderCount $old_fiid]} {
-                dict incr FolderCount $old_fiid -1
-                dict incr FolderBytes $old_fiid [expr {-1 * $bytes}]
-                if {[dict get $FolderCount $old_fiid] <= 0} {
-                    $Tv delete $old_fiid
-                    dict unset FolderCount $old_fiid
-                    dict unset FolderBytes $old_fiid
-                } else {
-                    my render_folder $old_fiid
-                }
+    # Remove a session row and fix up its folder's counters, deleting the
+    # folder when it becomes empty. The single removal path, shared by
+    # relocate_session and reconcile_running so the counters never diverge.
+    method forget_session {siid} {
+        if {![$Tv exists $siid]} return
+        set path [string range $siid 2 end]
+        set fiid [$Tv parent $siid]
+        set bytes 0
+        set row [{*}$LookupSession $path]
+        if {$row ne ""} { set bytes [dict get $row size] }
+        $Tv delete $siid
+        if {$fiid ne "" && [dict exists $FolderCount $fiid]} {
+            dict incr FolderCount $fiid -1
+            dict incr FolderBytes $fiid [expr {-1 * $bytes}]
+            if {[dict get $FolderCount $fiid] <= 0} {
+                $Tv delete $fiid
+                dict unset FolderCount $fiid
+                dict unset FolderBytes $fiid
+            } else {
+                my render_folder $fiid
             }
         }
+    }
+
+    method relocate_session {old_path new_path} {
+        my forget_session S:$old_path
         if {[dict exists $MatchedSessions $old_path]} {
             dict unset MatchedSessions $old_path
             dict set MatchedSessions $new_path 1
         }
+    }
+
+    # Re-derive the running glyph (and membership, when a filter is active)
+    # for every visible row from the fresh running set. Idempotent: it
+    # diffs the set against the tree's own S:* children, never a shadow, so
+    # running it twice is a no-op and a missed tick self-corrects on the
+    # next. Called every poll and after on_filter rebuilds the tree.
+    method reconcile_running {running} {
+        set RunningSet $running
+        set running_only    [my dict_or $Snapshot running_only 0]
+        set bookmarked_only [my dict_or $Snapshot bookmarked_only 0]
+
+        # uuid -> 1 for currently-displayed rows (the display truth).
+        set displayed [dict create]
+        foreach siid [my all_session_iids] {
+            dict set displayed [my iid_uuid $siid] 1
+        }
+
+        # Ensure every running session is on screen. Match by uuid (stable
+        # across a move); a moved session is already displayed under its
+        # new path, so the reconstructed registry path is used only for a
+        # genuinely-fresh insert.
+        dict for {uuid path} $running {
+            if {[dict exists $displayed $uuid]} continue
+            set row [{*}$LookupSession $path]
+            if {$row eq "" && [file isfile $path]} {
+                set row [{*}$OnScanPath $path]
+            }
+            if {$row eq "" || ![dict size $row]} continue
+            my ensure_folder [dict get $row folder]
+            my insert_session [dict get $row folder] $row
+            dict set displayed $uuid 1
+        }
+
+        # Membership + decoration over a fresh snapshot of the rows (the
+        # ensure step may have inserted some). forget_session may delete a
+        # folder, so guard each iid with an existence check.
+        foreach siid [my all_session_iids] {
+            if {![$Tv exists $siid]} continue
+            set path [string range $siid 2 end]
+            set uuid [my iid_uuid $siid]
+            set is_running [dict exists $running $uuid]
+            set row [{*}$LookupSession $path]
+            set bk 0
+            if {$row ne ""} { set bk [my dict_or $row bookmarked 0] }
+            if {$running_only && $bookmarked_only} {
+                set keep [expr {$is_running && $bk}]
+            } elseif {$running_only} {
+                set keep $is_running
+            } elseif {$bookmarked_only} {
+                set keep $bk
+            } else {
+                set keep [expr {($row ne "" && [my row_matches_snapshot $row]) \
+                                || $is_running}]
+            }
+            if {!$keep} { my forget_session $siid; continue }
+            set want [my glyph_cell $is_running $bk]
+            if {[$Tv set $siid flags] ne $want} { $Tv set $siid flags $want }
+        }
+    }
+
+    # Refresh a single row's status cell from current truth. Used for
+    # immediate feedback after a bookmark toggle, without waiting a tick.
+    method reconcile_one {path} {
+        set siid S:$path
+        if {![$Tv exists $siid]} return
+        set is_running [dict exists $RunningSet [my iid_uuid $siid]]
+        set row [{*}$LookupSession $path]
+        set bk 0
+        if {$row ne ""} { set bk [my dict_or $row bookmarked 0] }
+        set want [my glyph_cell $is_running $bk]
+        if {[$Tv set $siid flags] ne $want} { $Tv set $siid flags $want }
+    }
+
+    # Flat snapshot of every session iid currently in the tree.
+    method all_session_iids {} {
+        set out [list]
+        foreach fiid [$Tv children {}] {
+            foreach siid [$Tv children $fiid] { lappend out $siid }
+        }
+        return $out
+    }
+
+    method iid_uuid {siid} {
+        return [file rootname [file tail [string range $siid 2 end]]]
     }
 
     method clipboard_set {s} {

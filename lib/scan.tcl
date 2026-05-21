@@ -127,7 +127,9 @@ oo::class create ::csm::Scan {
         foreach folder [glob -nocomplain -directory $root -type d -- *] {
             foreach f [glob -nocomplain -directory $folder -- *.jsonl] {
                 set m [file mtime $f]
-                if {$m <= $cutoff} continue
+                # A bookmarked (+x) file is kept regardless of the window
+                # so it always enters Rows and can be surfaced as a pin.
+                if {$m <= $cutoff && ![file executable $f]} continue
                 lappend pairs [list $f $m]
             }
         }
@@ -179,6 +181,7 @@ oo::class create ::csm::Scan {
             first_ts $first_ts \
             is_multi [expr {$users >= 2}] \
             first_user $first_clean \
+            bookmarked [file executable $path] \
             cwd_hint $cwd]
     }
 
@@ -222,6 +225,7 @@ oo::class create ::csm::Scan {
         set one_turn [my dict_or $snapshot one_turn 1]
         set cwd_only [my dict_or $snapshot cwd_only 0]
         set cwd      [my dict_or $snapshot cwd ""]
+        set bookmarked_only [my dict_or $snapshot bookmarked_only 0]
         set cutoff 0
         if {$window ne "all"} {
             set hours [dict get {24h 24 7d 168 30d 720} $window]
@@ -233,7 +237,11 @@ oo::class create ::csm::Scan {
         }
         set out [list]
         dict for {path row} $Rows {
-            if {[dict get $row mtime] <= $cutoff} continue
+            set bk [my dict_or $row bookmarked 0]
+            if {$bookmarked_only && !$bk} continue
+            # A bookmark pins the row past the time window; running is the
+            # reconciler's job, not the query's.
+            if {[dict get $row mtime] <= $cutoff && !$bk} continue
             if {$one_turn && ![dict get $row is_multi]} continue
             set f [dict get $row folder]
             if {$folder ne "" && $f ne $folder} continue
@@ -293,6 +301,27 @@ oo::class create ::csm::Scan {
         return ""
     }
 
+    # Scan a single file synchronously and publish it. Used by the running
+    # reconciler to bring a freshly-started (or out-of-window but live)
+    # session into Rows on demand. Returns the row, or {} if unreadable.
+    method scan_path {path} {
+        set row [my scan_one $path]
+        if {[dict size $row] > 0} { my publish_row $row }
+        return $row
+    }
+
+    # Re-derive a row's bookmarked flag from disk truth after a toggle.
+    # The +x bit is authoritative; this only refreshes the cached field so
+    # query/filter see it. The visible glyph is refreshed separately by
+    # the tree (reconcile_one). Routed through Scan to keep Rows mutation
+    # in one place (no caller pokes Rows directly).
+    method set_bookmark_field {path} {
+        if {![dict exists $Rows $path]} return
+        set row [dict get $Rows $path]
+        dict set row bookmarked [file executable $path]
+        dict set Rows $path $row
+    }
+
     # Re-key a row after the underlying jsonl was renamed into a new
     # project folder. The row's path and folder are updated; mtime/size
     # are re-read because the rename preserves them but we want any
@@ -309,6 +338,9 @@ oo::class create ::csm::Scan {
         if {[catch {file size  $new_path} size]}  { set size 0 }
         dict set row mtime $mtime
         dict set row size $size
+        # The +x bit is preserved by rename; re-read so the cached field
+        # stays honest even if it changed out of band.
+        dict set row bookmarked [file executable $new_path]
         dict unset Rows $old_path
         dict set Rows $new_path $row
         # Do not seed Folders[$new_folder] from the row's cwd_hint - the

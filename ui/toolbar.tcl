@@ -29,6 +29,8 @@ oo::class create ::csm::ui::Toolbar {
     variable CaseVar
     variable CwdOnlyVar
     variable OneTurnVar
+    variable RunningOnlyVar
+    variable BookmarkedOnlyVar
     variable Cwd
     variable Subscribers
     variable DebounceAfter
@@ -43,6 +45,8 @@ oo::class create ::csm::ui::Toolbar {
         set CaseVar    0
         set CwdOnlyVar 0
         set OneTurnVar 1
+        set RunningOnlyVar    0
+        set BookmarkedOnlyVar 0
         set Subscribers [list]
         set DebounceAfter ""
         set Patterns [dict create]
@@ -101,6 +105,16 @@ oo::class create ::csm::ui::Toolbar {
             -variable [my varname OneTurnVar] \
             -command [list [self] publish]
         pack $Top.row2.oneturn -side left
+
+        ttk::checkbutton $Top.row2.running -text "running only" \
+            -variable [my varname RunningOnlyVar] \
+            -command [list [self] publish]
+        pack $Top.row2.running -side left -padx {16 0}
+
+        ttk::checkbutton $Top.row2.booked -text "bookmarked only" \
+            -variable [my varname BookmarkedOnlyVar] \
+            -command [list [self] publish]
+        pack $Top.row2.booked -side left -padx {16 0}
 
         # If the launch cwd has no matching project folder on disk, dim
         # "this cwd only" so the user is not misled.
@@ -165,6 +179,8 @@ oo::class create ::csm::ui::Toolbar {
             case     $CaseVar \
             cwd_only $CwdOnlyVar \
             one_turn $OneTurnVar \
+            running_only    $RunningOnlyVar \
+            bookmarked_only $BookmarkedOnlyVar \
             cwd      $Cwd]
     }
 

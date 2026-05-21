@@ -3,7 +3,7 @@ package require Tcl 9
 namespace eval ::csm::path {
     namespace export encode_cwd projects_root pretty_home display_label \
         list_all_projects ensure_project_folder candidate_cwds_for \
-        move_session
+        move_session set_bookmark clear_bookmark
 }
 
 # Architectural gate. Rename Tcl's `file` command and replace it with a
@@ -137,6 +137,25 @@ proc ::csm::path::move_session {src_path dst_cwd} {
     }
     ::csm::path::_real_file rename -- $src_path $new_path
     return $new_path
+}
+
+# Bookmark a session by setting the owner-execute bit on its jsonl, and
+# clear it by removing that bit. The +x bit is the whole bookmark store -
+# no sidecar, no database - and a rename preserves it, so a bookmark
+# follows a moved session for free. These are the only legitimate callers
+# of the trapped `file attributes`; like move_session they reach the
+# filesystem through _real_file. The symbolic u+x / u-x form touches only
+# the owner-execute bit, leaving read/write bits untouched (0644 <-> 0744).
+proc ::csm::path::set_bookmark {path} {
+    if {![file isfile $path]} { error "session not found: $path" }
+    ::csm::path::_real_file attributes $path -permissions u+x
+    return 1
+}
+
+proc ::csm::path::clear_bookmark {path} {
+    if {![file isfile $path]} { error "session not found: $path" }
+    ::csm::path::_real_file attributes $path -permissions u-x
+    return 1
 }
 
 # Find every real directory on disk whose Claude-encoded basename equals

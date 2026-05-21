@@ -275,6 +275,7 @@ set ::csm::search::WorkerScript {
                 first_ts $first_ts \
                 is_multi [expr {$users >= 2}] \
                 first_user [clean_preview $first_user] \
+                bookmarked [file executable $path] \
                 cwd_hint $cwd_hint]
             thread::send -async $main_tid \
                 [list ::csm::search::dispatch $obj_cmd on_worker_row $epoch $row]
@@ -458,6 +459,7 @@ oo::class create ::csm::Search {
                 first_ts $first_ts \
                 is_multi [expr {$users >= 2}] \
                 first_user [$Scan clean_preview $first_user] \
+                bookmarked [file executable $path] \
                 cwd_hint $cwd_hint]
             $Scan publish_row $row
             incr count
