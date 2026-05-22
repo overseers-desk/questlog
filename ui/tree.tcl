@@ -38,11 +38,16 @@ oo::class create ::csm::ui::Tree {
     variable OnDropMove       ;# cb: path folder -> direct move
     variable Menu
     variable MenuTarget
+    variable MenuPaths        ;# list of selected session paths the menu acts on
+    variable PressIid         ;# session iid pressed; resolves a suppressed click
+    variable PressBroke       ;# 1 when on_press suppressed the class selection
     variable FolderCount      ;# dict fiid -> int (number of inserted sessions)
     variable FolderBytes      ;# dict fiid -> int (sum of inserted sessions' sizes)
     variable RunningSet       ;# dict uuid -> 1, replaced wholesale each tick
     variable OnBookmarkToggle ;# cb: path -> flip the +x bookmark bit
     variable OnScanPath       ;# cb: path -> row (synchronous single-file scan)
+    variable OpenMenuIndex
+    variable MoveMenuIndex
     variable BookmarkMenuIndex
 
     constructor {parent resolve_cb lookup_cb on_select on_open on_scope_change \
@@ -63,6 +68,9 @@ oo::class create ::csm::ui::Tree {
         set FolderCount [dict create]
         set FolderBytes [dict create]
         set RunningSet [dict create]
+        set MenuPaths [list]
+        set PressBroke 0
+        set PressIid ""
 
         my build
     }
@@ -71,7 +79,7 @@ oo::class create ::csm::ui::Tree {
         ttk::frame $Top
         set Tv $Top.tv
         ttk::treeview $Tv -columns {flags when size} -show {tree headings} \
-            -yscrollcommand [list $Top.sb set]
+            -selectmode extended -yscrollcommand [list $Top.sb set]
         $Tv heading #0    -text "Sessions"
         $Tv heading flags -text "⚑"
         $Tv heading when  -text "When"
@@ -99,7 +107,7 @@ oo::class create ::csm::ui::Tree {
         bind $Tv <<TreeviewSelect>> [list [self] on_select]
         bind $Tv <Double-Button-1>  [list [self] on_double]
         bind $Tv <Button-3>         [list [self] on_right %X %Y %x %y]
-        bind $Tv <ButtonPress-1>    [list [self] on_press   %X %Y %x %y]
+        bind $Tv <ButtonPress-1>    [list [self] on_press %s %X %Y %x %y]
         bind $Tv <B1-Motion>        [list ::csm::ui::drag::motion %X %Y]
         bind $Tv <ButtonRelease-1>  [list [self] on_release %X %Y]
 
@@ -110,7 +118,11 @@ oo::class create ::csm::ui::Tree {
         set Menu $Top.menu
         # tk::menu has no ttk equivalent.
         menu $Menu -tearoff 0
+        # Open and Move carry the selection count in their label when a
+        # group is selected, so they are addressed by stored index (the
+        # label is not stable across popups), as the bookmark entry is.
         $Menu add command -label "Open in viewer"          -command [list [self] menu_open]
+        set OpenMenuIndex [$Menu index end]
         $Menu add separator
         $Menu add command -label "Copy resume command"     -command [list [self] menu_copy_resume]
         $Menu add command -label "Copy session id"         -command [list [self] menu_copy_uuid]
@@ -123,6 +135,7 @@ oo::class create ::csm::ui::Tree {
         $Menu add command -label "Resume forked"           -command [list [self] menu_resume 1]
         $Menu add separator
         $Menu add command -label "Move to..."              -command [list [self] menu_move]
+        set MoveMenuIndex [$Menu index end]
         $Menu add command -label "Reveal folder"           -command [list [self] menu_reveal]
         $Menu add separator
         # Label is rewritten per-target in on_right (Add/Remove bookmark),
@@ -273,6 +286,12 @@ oo::class create ::csm::ui::Tree {
             {*}$OnScopeChange none ""
             return
         }
+        set sessions [my selected_session_iids]
+        if {[llength $sessions] > 1} {
+            {*}$OnSelect "[llength $sessions] sessions selected"
+            {*}$OnScopeChange none ""
+            return
+        }
         set iid [lindex $sel 0]
         if {[string match "S:*" $iid]} {
             set path [string range $iid 2 end]
@@ -282,6 +301,17 @@ oo::class create ::csm::ui::Tree {
             set folder [string range $iid 2 end]
             {*}$OnScopeChange folder $folder
         }
+    }
+
+    # Session iids (S:*) in the current selection, in tree order. Folder
+    # rows the user may have caught in an extended selection are dropped;
+    # every group operation works on sessions only.
+    method selected_session_iids {} {
+        set out [list]
+        foreach iid [$Tv selection] {
+            if {[string match "S:*" $iid]} { lappend out $iid }
+        }
+        return $out
     }
 
     method on_double {} {
@@ -297,8 +327,21 @@ oo::class create ::csm::ui::Tree {
     method on_right {X Y x y} {
         set iid [$Tv identify item $x $y]
         if {$iid eq "" || ![string match "S:*" $iid]} return
-        $Tv selection set $iid
-        $Tv focus $iid
+        # Right-clicking a row outside the selection replaces it with that
+        # one row; right-clicking a row already in a multi-selection keeps
+        # the whole group so the menu acts on it.
+        if {[lsearch -exact [my selected_session_iids] $iid] < 0} {
+            $Tv selection set $iid
+            $Tv focus $iid
+        }
+        set MenuPaths [list]
+        foreach siid [my selected_session_iids] {
+            lappend MenuPaths [string range $siid 2 end]
+        }
+        set n [llength $MenuPaths]
+
+        # MenuTarget holds the clicked row's metadata for the single-only
+        # actions (resume, reveal, copy-resume, copy-last-assistant).
         set path [string range $iid 2 end]
         set row [{*}$LookupSession $path]
         if {$row eq ""} return
@@ -306,25 +349,45 @@ oo::class create ::csm::ui::Tree {
         set uuid   [dict get $row uuid]
         set cwd [{*}$ResolveFolder $folder]
         set MenuTarget [list path $path uuid $uuid cwd $cwd folder $folder]
-        # The resume actions need a real project directory to cd into.
-        # When the folder cannot be resolved, disable them rather than
-        # emit a command that cd's nowhere.
-        set rstate [expr {$cwd eq "" ? "disabled" : "normal"}]
+
+        # Single-only entries: meaningless or unwieldy over a group, so
+        # disabled while several sessions are selected.
+        set single [expr {$n == 1 ? "normal" : "disabled"}]
+        foreach lbl {"Copy last assistant output" "Reveal folder"} {
+            $Menu entryconfigure $lbl -state $single
+        }
+        # The resume actions are single-only AND need a real project
+        # directory to cd into; disable when the folder cannot be resolved.
+        set rstate [expr {($n == 1 && $cwd ne "") ? "normal" : "disabled"}]
         foreach lbl {"Copy resume command" "Resume in new terminal tab" \
                      "Resume forked"} {
             $Menu entryconfigure $lbl -state $rstate
         }
-        # Read the bit fresh so the label matches reality even if it
-        # changed out of band.
+
+        # Count-bearing labels signal the group size.
+        $Menu entryconfigure $OpenMenuIndex -label \
+            [expr {$n > 1 ? "Open $n sessions in viewer" : "Open in viewer"}]
+        $Menu entryconfigure $MoveMenuIndex -label \
+            [expr {$n > 1 ? "Move $n sessions to..." : "Move to..."}]
+
+        # Bookmark drives the whole group to one state. The bits are read
+        # fresh so the label matches reality even if it changed out of band.
         $Menu entryconfigure $BookmarkMenuIndex \
-            -label [expr {[file executable $path] ? "Remove bookmark" : "Add bookmark"}]
+            -label [expr {[my all_bookmarked $MenuPaths] \
+                              ? "Remove bookmark" : "Add bookmark"}]
         tk_popup $Menu $X $Y
+    }
+
+    # 1 when every path is currently bookmarked (the +x bit is set).
+    method all_bookmarked {paths} {
+        foreach p $paths { if {![file executable $p]} { return 0 } }
+        return 1
     }
 
     method menu_target_get {key} { return [dict get $MenuTarget $key] }
 
     method menu_open {} {
-        {*}$OnOpen [my menu_target_get path]
+        foreach p $MenuPaths { {*}$OnOpen $p }
     }
 
     method menu_copy_resume {} {
@@ -332,8 +395,18 @@ oo::class create ::csm::ui::Tree {
             [my menu_target_get cwd] [my menu_target_get uuid]]
     }
 
-    method menu_copy_uuid {} { my clipboard_set [my menu_target_get uuid] }
-    method menu_copy_path {} { my clipboard_set [my menu_target_get path] }
+    method menu_copy_uuid {} {
+        set out [list]
+        foreach p $MenuPaths { lappend out [my path_uuid $p] }
+        my clipboard_set [join $out \n]
+    }
+    method menu_copy_path {} { my clipboard_set [join $MenuPaths \n] }
+
+    method path_uuid {path} {
+        set row [{*}$LookupSession $path]
+        if {$row ne "" && [dict exists $row uuid]} { return [dict get $row uuid] }
+        return [file rootname [file tail $path]]
+    }
 
     method menu_copy_last_assistant {} {
         my clipboard_set [::csm::jsonl::last_assistant_text \
@@ -356,27 +429,58 @@ oo::class create ::csm::ui::Tree {
     }
 
     method menu_move {} {
-        {*}$OnMoveRequest [my menu_target_get path]
+        {*}$OnMoveRequest $MenuPaths
     }
 
+    # Drive the whole group to one bookmark state: clear all when all are
+    # set, otherwise set all. Only rows whose bit differs from the target
+    # are toggled, so the per-path toggle callback reaches the target
+    # without flipping already-correct rows. For one selection this is the
+    # plain toggle.
     method menu_bookmark {} {
-        {*}$OnBookmarkToggle [my menu_target_get path]
+        set target [expr {![my all_bookmarked $MenuPaths]}]
+        foreach p $MenuPaths {
+            if {[file executable $p] != $target} { {*}$OnBookmarkToggle $p }
+        }
     }
 
-    method on_press {X Y x y} {
+    method on_press {state X Y x y} {
         set iid [$Tv identify item $x $y]
         if {![string match "S:*" $iid]} return
-        set path [string range $iid 2 end]
-        ::csm::ui::drag::watch $Tv $Tv $X $Y $path \
+        # A modified click (Shift 0x1, Control 0x4) is a selection gesture,
+        # not a drag: leave it to the class bindings to extend or toggle.
+        if {($state & 0x1) || ($state & 0x4)} return
+        set PressBroke 0
+        set PressIid ""
+        set presel [my selected_session_iids]
+        if {[lsearch -exact $presel $iid] >= 0 && [llength $presel] > 1} {
+            # Pressing a member of a multi-selection starts a group drag.
+            # Suppress the class binding that would collapse the selection
+            # to this one row; resolve the click-to-single in on_release if
+            # no drag follows.
+            set PressBroke 1
+            set PressIid $iid
+            set paths [list]
+            foreach siid $presel { lappend paths [string range $siid 2 end] }
+            ::csm::ui::drag::watch $Tv $Tv $X $Y $paths [list [self] handle_drop]
+            return -code break
+        }
+        ::csm::ui::drag::watch $Tv $Tv $X $Y [list [string range $iid 2 end]] \
             [list [self] handle_drop]
     }
 
     method on_release {X Y} {
-        ::csm::ui::drag::release $X $Y
+        set was_drag [::csm::ui::drag::release $X $Y]
+        if {!$was_drag && $PressBroke} {
+            $Tv selection set $PressIid
+            $Tv focus $PressIid
+        }
+        set PressBroke 0
+        set PressIid ""
     }
 
-    method handle_drop {path target_folder} {
-        {*}$OnDropMove $path $target_folder
+    method handle_drop {paths target_folder} {
+        {*}$OnDropMove $paths $target_folder
     }
 
     # Re-key after a successful move. Removes the old S:* iid, decrements

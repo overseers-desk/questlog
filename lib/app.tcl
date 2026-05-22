@@ -249,24 +249,30 @@ proc ::csm::app::on_result_open {path lineoff} {
 
 # ---- move callbacks ----------------------------------------------------
 
-proc ::csm::app::on_move_request {src_path} {
+# paths is a list of session paths to move to a single destination. The
+# dialog excludes the source's own folder only when exactly one session is
+# moved; a group may span folders, so no folder is excluded then.
+proc ::csm::app::on_move_request {paths} {
     variable Scan
-    set row [$Scan lookup $src_path]
-    if {$row eq ""} return
-    set current_folder [dict get $row folder]
-    ::csm::ui::move_dialog::open . $src_path $current_folder \
-        [list [namespace current]::on_picker_done $src_path]
+    set current_folder ""
+    if {[llength $paths] == 1} {
+        set row [$Scan lookup [lindex $paths 0]]
+        if {$row eq ""} return
+        set current_folder [dict get $row folder]
+    }
+    ::csm::ui::move_dialog::open . [llength $paths] $current_folder \
+        [list [namespace current]::on_picker_done $paths]
 }
 
-proc ::csm::app::on_picker_done {src_path dst_cwd} {
-    do_move $src_path $dst_cwd
+proc ::csm::app::on_picker_done {paths dst_cwd} {
+    do_move_batch $paths $dst_cwd
 }
 
 # Drop-move resolves the dropped-on folder basename to its real cwd via
 # the canonical resolver. A drop onto a folder that cannot be resolved
 # (its underlying project directory is gone or ambiguous) is refused
 # rather than silently moving into an orphan.
-proc ::csm::app::on_drop_move {src_path target_folder_basename} {
+proc ::csm::app::on_drop_move {paths target_folder_basename} {
     variable Scan
     set dst_cwd [$Scan resolve_folder $target_folder_basename]
     if {$dst_cwd eq ""} {
@@ -274,26 +280,39 @@ proc ::csm::app::on_drop_move {src_path target_folder_basename} {
             -message "Cannot resolve destination folder: $target_folder_basename"
         return
     }
-    do_move $src_path $dst_cwd
+    do_move_batch $paths $dst_cwd
 }
 
-proc ::csm::app::do_move {src_path dst_cwd} {
+# Move every path to dst_cwd, then report any failures in one dialog so a
+# batch does not spray a messagebox per session. Successful moves have
+# already updated the three UI components.
+proc ::csm::app::do_move_batch {paths dst_cwd} {
+    set failures [list]
+    foreach src_path $paths {
+        if {[catch {move_one $src_path $dst_cwd} err]} {
+            lappend failures "[file tail $src_path]: $err"
+        }
+    }
+    if {[llength $failures] > 0} {
+        tk_messageBox -icon error -title "Move session" \
+            -message "Move failed:\n[join $failures \n]"
+    }
+}
+
+# Move one session into dst_cwd and relocate it across the three UI
+# components. A session already in the destination's encoded folder is a
+# silent no-op - the only "succeed without effect" path. A filesystem
+# failure throws (the error reaches do_move_batch).
+proc ::csm::app::move_one {src_path dst_cwd} {
     variable Tree
     variable Results
     variable Scan
-    # Silent no-op when src is already in the destination's encoded
-    # folder - the only "succeed without effect" path. Everything else
-    # either succeeds with effects or fails with a messagebox.
     set src_basename [file tail [file dirname $src_path]]
     if {![catch {::csm::path::encode_cwd $dst_cwd} dst_basename]
         && $dst_basename eq $src_basename} {
         return
     }
-    if {[catch {::csm::path::move_session $src_path $dst_cwd} new_path]} {
-        tk_messageBox -icon error -title "Move session" \
-            -message "Move failed: $new_path"
-        return
-    }
+    set new_path [::csm::path::move_session $src_path $dst_cwd]
     set new_folder [::csm::path::encode_cwd $dst_cwd]
     $Tree relocate_session $src_path $new_path
     $Scan relocate_row $src_path $new_path

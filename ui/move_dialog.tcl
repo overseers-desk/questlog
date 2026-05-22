@@ -20,7 +20,7 @@ namespace eval ::csm::ui::move_dialog {
     variable RowToCwd [dict create]
 }
 
-proc ::csm::ui::move_dialog::open {parent src_path current_folder on_done} {
+proc ::csm::ui::move_dialog::open {parent count current_folder on_done} {
     variable Top
     variable Tv
     variable EntryVar
@@ -42,7 +42,8 @@ proc ::csm::ui::move_dialog::open {parent src_path current_folder on_done} {
     ttk::frame $Top.f -padding 10
     pack $Top.f -fill both -expand 1
 
-    ttk::label $Top.f.src -text "Move [file tail $src_path] to:"
+    set noun [expr {$count == 1 ? "session" : "sessions"}]
+    ttk::label $Top.f.src -text "Move $count $noun to:"
     pack $Top.f.src -side top -anchor w -pady {0 6}
 
     ttk::frame $Top.f.lf

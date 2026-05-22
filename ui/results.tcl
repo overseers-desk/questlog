@@ -351,7 +351,7 @@ oo::class create ::csm::ui::Results {
     }
 
     method handle_drop {path target_folder} {
-        {*}$OnDropMove $path $target_folder
+        {*}$OnDropMove [list $path] $target_folder
     }
 
     method on_card_click {path} {
@@ -391,7 +391,7 @@ oo::class create ::csm::ui::Results {
     }
 
     method menu_move {} {
-        if {$MenuPath ne ""} { {*}$OnMoveRequest $MenuPath }
+        if {$MenuPath ne ""} { {*}$OnMoveRequest [list $MenuPath] }
     }
 
     # Re-key the in-memory match list and rebuild the card under the new
