@@ -632,10 +632,6 @@ oo::class create ::csm::ui::Tree {
         }
     }
 
-    # The internal tree widget path; used by the results pane to know
-    # where to drop sessions during a drag.
-    method tv_path {} { return $Tv }
-
     method dict_or {d k default} {
         if {[dict exists $d $k]} { return [dict get $d $k] }
         return $default

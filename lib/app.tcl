@@ -72,9 +72,7 @@ proc ::csm::app::start {root {initial_criteria {}}} {
         [namespace code on_search_cancel] \
         [namespace code on_result_select] \
         [namespace code on_result_open] \
-        [namespace code on_move_request] \
-        [namespace code on_drop_move] \
-        [$Tree tv_path]]
+        [namespace code on_move_request]]
     pack $res_frame.r -side top -fill both -expand 1
 
     ttk::label .top.status -textvariable [namespace which -variable StatusVar] \

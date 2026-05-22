@@ -23,8 +23,6 @@ oo::class create ::csm::ui::Results {
     variable OnSelect
     variable OnOpen
     variable OnMoveRequest
-    variable OnDropMove
-    variable DropTarget       ;# tree widget path used as drop surface
     variable AllMatches    ;# arrival-ordered list of match dicts
     variable Scope         ;# {type none|folder|session  key <s>}
     variable Query         ;# {regex <list>  nocase 0|1}
@@ -35,15 +33,13 @@ oo::class create ::csm::ui::Results {
     variable MenuPath
 
     constructor {parent resolve_cb cancel_cb on_select on_open \
-                 on_move_request on_drop_move drop_target} {
+                 on_move_request} {
         set Top $parent
         set ResolveFolder $resolve_cb
         set CancelCb $cancel_cb
         set OnSelect $on_select
         set OnOpen   $on_open
         set OnMoveRequest $on_move_request
-        set OnDropMove $on_drop_move
-        set DropTarget $drop_target
         set StatusVar "Idle"
         set AllMatches [list]
         set Scope [dict create type none key ""]
@@ -68,7 +64,7 @@ oo::class create ::csm::ui::Results {
         ttk::frame $Top.body
         pack $Top.body -side top -fill both -expand 1
         # text widget - no ttk equivalent.
-        text $Top.body.t -wrap word -state disabled \
+        text $Top.body.t -wrap word -state disabled -exportselection 0 \
             -yscrollcommand [list $Top.body.sb set] \
             -borderwidth 0 -highlightthickness 0 -padx 4 -pady 4
         ttk::scrollbar $Top.body.sb -orient vertical \
@@ -113,7 +109,6 @@ oo::class create ::csm::ui::Results {
             lappend HitTags $t
         }
 
-        bind $Text <B1-Motion> [list ::csm::ui::drag::motion %X %Y]
         bind $Text <Button-3>  [list [self] on_right %X %Y %x %y]
 
         my build_menu
@@ -212,10 +207,8 @@ oo::class create ::csm::ui::Results {
 
         set ctag "ck[incr NextId]"
         $Text tag configure $ctag
-        $Text tag bind $ctag <ButtonPress-1> \
-            [list [self] on_card_press $path %X %Y]
         $Text tag bind $ctag <ButtonRelease-1> \
-            [list [self] on_card_release $path %X %Y]
+            [list [self] on_card_click $path]
         $Text tag bind $ctag <Double-Button-1> \
             [list [self] on_card_double $path]
 
@@ -280,10 +273,8 @@ oo::class create ::csm::ui::Results {
     method insert_row {pos path btype content lineoff} {
         set ftag "fr[incr NextId]"
         $Text tag configure $ftag
-        $Text tag bind $ftag <ButtonPress-1> \
-            [list [self] on_frag_press $path $lineoff %X %Y]
         $Text tag bind $ftag <ButtonRelease-1> \
-            [list [self] on_frag_release $path $lineoff %X %Y]
+            [list [self] on_frag_click $path $lineoff]
         $Text tag bind $ftag <Double-Button-1> \
             [list [self] on_frag_double $path $lineoff]
 
@@ -328,30 +319,6 @@ oo::class create ::csm::ui::Results {
             }
             incr i
         }
-    }
-
-    method on_card_press {path X Y} {
-        ::csm::ui::drag::watch $Text $DropTarget $X $Y $path \
-            [list [self] handle_drop]
-    }
-
-    method on_card_release {path X Y} {
-        set was_drag [::csm::ui::drag::release $X $Y]
-        if {!$was_drag} { my on_card_click $path }
-    }
-
-    method on_frag_press {path lineno X Y} {
-        ::csm::ui::drag::watch $Text $DropTarget $X $Y $path \
-            [list [self] handle_drop]
-    }
-
-    method on_frag_release {path lineno X Y} {
-        set was_drag [::csm::ui::drag::release $X $Y]
-        if {!$was_drag} { my on_frag_click $path $lineno }
-    }
-
-    method handle_drop {path target_folder} {
-        {*}$OnDropMove [list $path] $target_folder
     }
 
     method on_card_click {path} {
