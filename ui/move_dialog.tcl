@@ -60,8 +60,13 @@ proc ::csm::ui::move_dialog::open {parent count current_folder on_done} {
 
     ttk::label $Top.f.elbl -text "Or enter a directory:"
     pack $Top.f.elbl -side top -anchor w -pady {8 2}
-    ttk::entry $Top.f.entry -textvariable ::csm::ui::move_dialog::EntryVar
-    pack $Top.f.entry -side top -fill x
+    ttk::frame $Top.f.erow
+    pack $Top.f.erow -side top -fill x
+    ttk::entry $Top.f.erow.entry -textvariable ::csm::ui::move_dialog::EntryVar
+    ttk::button $Top.f.erow.browse -text "Browse..." \
+        -command ::csm::ui::move_dialog::browse
+    pack $Top.f.erow.browse -side right -padx {6 0}
+    pack $Top.f.erow.entry -side left -fill x -expand 1
 
     ttk::frame $Top.f.btn
     pack $Top.f.btn -side top -fill x -pady {10 0}
@@ -74,7 +79,7 @@ proc ::csm::ui::move_dialog::open {parent count current_folder on_done} {
 
     bind $Tv <Double-Button-1>      ::csm::ui::move_dialog::confirm
     bind $Tv <<TreeviewSelect>>     ::csm::ui::move_dialog::on_select
-    bind $Top.f.entry <Return>      ::csm::ui::move_dialog::confirm
+    bind $Top.f.erow.entry <Return> ::csm::ui::move_dialog::confirm
     bind $Top <Escape>              ::csm::ui::move_dialog::cancel
     wm protocol $Top WM_DELETE_WINDOW ::csm::ui::move_dialog::cancel
 
@@ -106,6 +111,20 @@ proc ::csm::ui::move_dialog::populate {} {
             dict set RowToCwd $iid $cwd
         }
     }
+}
+
+# Pick a destination directory through the system folder chooser and
+# prefill the entry with it. The chooser opens at the currently-entered
+# directory when that is a real one (e.g. a list row was selected), else
+# at the home directory.
+proc ::csm::ui::move_dialog::browse {} {
+    variable Top
+    variable EntryVar
+    set start [string trim $EntryVar]
+    if {![file isdirectory $start]} { set start $::env(HOME) }
+    set dir [tk_chooseDirectory -parent $Top -mustexist 1 \
+                 -title "Choose destination directory" -initialdir $start]
+    if {$dir ne ""} { set EntryVar $dir }
 }
 
 proc ::csm::ui::move_dialog::on_select {} {
