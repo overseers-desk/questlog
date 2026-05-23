@@ -159,6 +159,9 @@ oo::class create ::csm::ui::SessionList {
         $Text tag configure type-tool_use    -foreground "#a60" -font {-weight bold}
         $Text tag configure type-tool_result -foreground "#666" -font {-weight bold}
         $Text tag configure type-system      -foreground "#888" -font {-weight bold}
+        # Metadata prefix: a fixed-width font so the time and size columns at
+        # the front of each session line align down the list without tab math.
+        $Text tag configure meta -font TkFixedFont -foreground "#777"
 
         set HitTags [list]
         set hues {#fff59d #b3e5fc #f8bbd0 #c8e6c9}
@@ -328,18 +331,22 @@ oo::class create ::csm::ui::SessionList {
         set fdata [dict get $Folders $folder]
         set femark [dict get $fdata femark]
 
+        set fbtag [dict get $fdata fbtag]
         set label [my session_label $path $row]
         set when  [my fmt_time [my dict_or $row mtime 0]]
+        set size  [my dict_or $row size 0]
         set uuid  [my dict_or $row uuid [file rootname [file tail $path]]]
         set stag  "s#[incr NextId]"
         dict set Sessions $path [dict create \
-            folder $folder label $label when $when uuid $uuid \
+            folder $folder label $label when $when size $size uuid $uuid \
             count 0 first_lineno $first_lineno snippets [list] \
             stag $stag smark "" semark ""]
 
         set sstart [$Text index $femark]
-        $Text insert $femark "[my session_header_text $path]\n" \
-            [list sessionhead $stag]
+        set meta [my session_meta_text $path]
+        $Text insert $femark "$meta[my session_title_text $path]\n" \
+            [list sessionhead $stag $fbtag]
+        $Text tag add meta $sstart "$sstart + [string length $meta]c"
         set smark "sm[incr NextId]"
         $Text mark set $smark $sstart
         $Text mark gravity $smark left
@@ -363,6 +370,7 @@ oo::class create ::csm::ui::SessionList {
             [list [self] on_session_right $path %X %Y]
 
         dict lappend SessionsByFolder $folder $path
+        my bump_folder_count $folder 1
     }
 
     method add_snippet {path btype content lineoff} {
@@ -379,6 +387,10 @@ oo::class create ::csm::ui::SessionList {
 
         set semark [dict get $s semark]
         set ntag "n#[incr NextId]"
+        set fbtag ""
+        if {[dict exists $Folders [dict get $s folder]]} {
+            set fbtag [dict get [dict get $Folders [dict get $s folder]] fbtag]
+        }
         set type_tag type-$btype
         if {[lsearch -exact [$Text tag names] $type_tag] < 0} {
             set type_tag type-system
@@ -388,12 +400,12 @@ oo::class create ::csm::ui::SessionList {
         set tmp tmpsnip
         $Text mark set $tmp [$Text index $semark]
         $Text mark gravity $tmp right
-        $Text insert $tmp $btype [list snippet $type_tag $ntag]
-        $Text insert $tmp "\t" [list snippet $ntag]
+        $Text insert $tmp $btype [list snippet $type_tag $ntag $fbtag]
+        $Text insert $tmp "\t" [list snippet $ntag $fbtag]
         set cstart [$Text index $tmp]
-        $Text insert $tmp $content [list snippet $ntag]
+        $Text insert $tmp $content [list snippet $ntag $fbtag]
         set cend [$Text index $tmp]
-        $Text insert $tmp "\n" [list snippet $ntag]
+        $Text insert $tmp "\n" [list snippet $ntag $fbtag]
         my tag_hits_in_range $cstart $cend $content
         $Text tag bind $ntag <ButtonRelease-1> \
             [list [self] on_snippet_click $path]
@@ -416,7 +428,18 @@ oo::class create ::csm::ui::SessionList {
         return $body
     }
 
-    method session_header_text {path} {
+    # The fixed-width metadata prefix (monospace tag): time then size, each in
+    # a constant character column so they align down the list.
+    method session_meta_text {path} {
+        set s [dict get $Sessions $path]
+        set when [dict get $s when]
+        set size [my fmt_size [dict get $s size]]
+        return [format "%-16s %7s   " $when $size]
+    }
+
+    # The proportional-font title: glyphs, the first-prompt preview, and the
+    # match count when searching. Follows the metadata prefix on the line.
+    method session_title_text {path} {
         set s [dict get $Sessions $path]
         set running [dict exists $RunningSet [dict get $s uuid]]
         set bk [my session_bookmarked $path]
@@ -424,14 +447,10 @@ oo::class create ::csm::ui::SessionList {
         set line ""
         if {$g ne ""} { append line "$g " }
         append line [dict get $s label]
-        set meta [list]
-        set when [dict get $s when]
-        if {$when ne ""} { lappend meta $when }
         set count [dict get $s count]
         if {$count > 0} {
-            lappend meta "$count [expr {$count == 1 ? {match} : {matches}}]"
+            append line "   ·   $count [expr {$count == 1 ? {match} : {matches}}]"
         }
-        if {[llength $meta]} { append line "   ·   [join $meta {   ·   }]" }
         return $line
     }
 
@@ -448,28 +467,80 @@ oo::class create ::csm::ui::SessionList {
         set s [dict get $Sessions $path]
         set smark [dict get $s smark]
         set stag  [dict get $s stag]
-        set tags [list sessionhead $stag]
+        set fbtag ""
+        if {[dict exists $Folders [dict get $s folder]]} {
+            set fbtag [dict get [dict get $Folders [dict get $s folder]] fbtag]
+        }
+        set tags [list sessionhead $stag $fbtag]
         if {$Selected eq $path} { lappend tags selected }
+        set meta [my session_meta_text $path]
         $Text delete $smark "$smark lineend"
-        $Text insert $smark [my session_header_text $path] $tags
+        $Text insert $smark "$meta[my session_title_text $path]" $tags
+        $Text tag add meta $smark "$smark + [string length $meta]c"
     }
 
     method ensure_folder {folder} {
         if {[dict exists $Folders $folder]} return
         set label [::csm::path::display_label [{*}$ResolveFolder $folder] $folder]
-        set htag "f#[incr NextId]"
+        set htag  "f#[incr NextId]"
+        # Body tag carried by every session and snippet line of this folder;
+        # toggling its -elide collapses or expands the whole group. Browsing
+        # opens collapsed (an overview of projects); a search opens expanded
+        # so the matches under each folder are visible.
+        set fbtag "fb[incr NextId]"
+        set expanded [expr {$CriteriaActive ? 1 : 0}]
+        $Text tag configure $fbtag -elide [expr {!$expanded}]
+        set fmark  "fm[incr NextId]"
+        set femark "fe[incr NextId]"
+        dict set Folders $folder [dict create fmark $fmark femark $femark \
+            htag $htag fbtag $fbtag label $label count 0 expanded $expanded]
         set fstart [$Text index TailMark]
-        $Text insert TailMark "$label\n" [list folderhead $htag]
-        set fmark "fm[incr NextId]"
+        $Text insert TailMark "[my folder_heading_text $folder]\n" \
+            [list folderhead $htag]
         $Text mark set $fmark $fstart
         $Text mark gravity $fmark left
-        set femark "fe[incr NextId]"
         $Text mark set $femark [$Text index TailMark]
         $Text mark gravity $femark left
-        dict set Folders $folder [dict create fmark $fmark femark $femark htag $htag]
         dict set HtagFolder $htag $folder
         dict set SessionsByFolder $folder [list]
         lappend FolderOrder $folder
+        $Text tag bind $htag <Button-1> [list [self] toggle_folder $folder]
+    }
+
+    method folder_heading_text {folder} {
+        set f [dict get $Folders $folder]
+        set marker [expr {[dict get $f expanded] ? "▾" : "▸"}]
+        set line "$marker [dict get $f label]"
+        set n [dict get $f count]
+        if {$n > 0} { append line "  ($n)" }
+        return $line
+    }
+
+    method redraw_folder_heading {folder} {
+        if {![dict exists $Folders $folder]} return
+        set f [dict get $Folders $folder]
+        set fmark [dict get $f fmark]
+        $Text delete $fmark "$fmark lineend"
+        $Text insert $fmark [my folder_heading_text $folder] \
+            [list folderhead [dict get $f htag]]
+    }
+
+    method toggle_folder {folder} {
+        if {![dict exists $Folders $folder]} return
+        set exp [expr {![dict get [dict get $Folders $folder] expanded]}]
+        dict set Folders $folder expanded $exp
+        $Text tag configure [dict get [dict get $Folders $folder] fbtag] \
+            -elide [expr {!$exp}]
+        $Text configure -state normal
+        my redraw_folder_heading $folder
+        $Text configure -state disabled
+    }
+
+    method bump_folder_count {folder delta} {
+        if {![dict exists $Folders $folder]} return
+        dict set Folders $folder count \
+            [expr {[dict get [dict get $Folders $folder] count] + $delta}]
+        my redraw_folder_heading $folder
     }
 
     method glyph_cell {running bookmarked} {
@@ -718,6 +789,8 @@ oo::class create ::csm::ui::SessionList {
         if {$i >= 0} { dict set SessionsByFolder $folder [lreplace $lst $i $i] }
         if {[llength [my dict_or $SessionsByFolder $folder {}]] == 0} {
             my forget_folder $folder
+        } else {
+            my bump_folder_count $folder -1
         }
     }
 
@@ -780,6 +853,7 @@ oo::class create ::csm::ui::SessionList {
                 my add_session $path \
                     [dict create folder [dict get $s folder] \
                          uuid [dict get $s uuid] mtime 0 \
+                         size [dict get $s size] \
                          first_user [dict get $s label]] \
                     [dict get $s first_lineno]
                 # Restore label/when/count verbatim, then replay snippets.
@@ -820,6 +894,14 @@ oo::class create ::csm::ui::SessionList {
     method fmt_time {epoch} {
         if {$epoch eq "" || $epoch == 0} { return "" }
         return [clock format $epoch -format "%a %d %b %H:%M"]
+    }
+
+    method fmt_size {bytes} {
+        if {$bytes eq "" || $bytes == 0} { return "" }
+        if {$bytes < 1024}        { return "${bytes} B" }
+        if {$bytes < 1048576}     { return "[expr {$bytes / 1024}] K" }
+        if {$bytes < 1073741824}  { return "[format %.1f [expr {$bytes / 1048576.0}]] M" }
+        return "[format %.1f [expr {$bytes / 1073741824.0}]] G"
     }
 
     method dict_or {d k default} {
