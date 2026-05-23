@@ -91,11 +91,7 @@ proc ::csm::app::start {root {initial_criteria {}}} {
 
     $Toolbar subscribe [namespace code on_filter]
     foreach c $initial_criteria {
-        if {[dict get $c type] eq "regex"} {
-            $Toolbar add_row [dict get $c value]
-        } else {
-            $Toolbar add_path_row [dict get $c type] [dict get $c value]
-        }
+        $Toolbar add_criterion_row [dict get $c type] [dict get $c value]
     }
     $Toolbar publish
 

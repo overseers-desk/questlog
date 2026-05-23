@@ -54,7 +54,7 @@ oo::class create ::csm::ui::Toolbar {
     variable Patterns         ;# dict id -> type (regex|read|write|edit); values live in Pat$id ivars
     variable NextId
     variable RowsBox          ;# inner frame holding criterion rows + the add buttons
-    variable PopPath          ;# entry var for the path-criterion add dropdown
+    variable PopValue         ;# entry var for the criterion add dropdown
 
     constructor {parent cwd} {
         set Top $parent
@@ -117,13 +117,13 @@ oo::class create ::csm::ui::Toolbar {
 
         ttk::frame $RowsBox.add
         ttk::button $RowsBox.add.bregex -text "+ regex" \
-            -command [list [self] add_row]
+            -command [list [self] open_add_dropdown regex $RowsBox.add.bregex]
         ttk::button $RowsBox.add.bread -text "+ Read" \
-            -command [list [self] open_path_dropdown read $RowsBox.add.bread]
+            -command [list [self] open_add_dropdown read $RowsBox.add.bread]
         ttk::button $RowsBox.add.bwrite -text "+ Write" \
-            -command [list [self] open_path_dropdown write $RowsBox.add.bwrite]
+            -command [list [self] open_add_dropdown write $RowsBox.add.bwrite]
         ttk::button $RowsBox.add.bedit -text "+ Edit" \
-            -command [list [self] open_path_dropdown edit $RowsBox.add.bedit]
+            -command [list [self] open_add_dropdown edit $RowsBox.add.bedit]
         pack $RowsBox.add.bregex $RowsBox.add.bread \
              $RowsBox.add.bwrite $RowsBox.add.bedit -side left -padx {0 4}
         pack $RowsBox.add -side top -anchor w -pady 1
@@ -178,27 +178,23 @@ oo::class create ::csm::ui::Toolbar {
         return $id
     }
 
-    method add_row {{initial ""}} {
-        set id [my new_row regex $initial]
-        if {$initial eq ""} { focus $RowsBox.r$id.e }
-        my publish
-    }
-
-    method add_path_row {type value} {
+    method add_criterion_row {type value} {
         my new_row $type $value
         my publish
     }
 
-    # A dropdown under the +Read/+Write/+Edit button. Write and Edit list
-    # the launch repo's working-tree changes to pick from; all three offer
-    # a manual entry and a file chooser. Choosing adds a row, which is then
-    # edit-or-remove only - there is no in-place file swap on the row.
-    method open_path_dropdown {type btn} {
+    # A dropdown under a + button, anchored to it. For regex it is a single
+    # pattern entry. For Read/Write/Edit, Write and Edit also list the launch
+    # repo's working-tree changes to pick from, and all three add a file
+    # chooser. Every type shares the manual entry and the "add" action;
+    # confirming creates the row, which is then edit-or-remove only. Typing
+    # happens here, not in a live row, so no search runs per keystroke.
+    method open_add_dropdown {type btn} {
         set host [winfo toplevel $Top]
         set pop [expr {$host eq "." ? ".criteriapop" : "$host.criteriapop"}]
         destroy $pop
         ttk::frame $pop -relief solid -borderwidth 1 -padding 4
-        set PopPath ""
+        set PopValue ""
         if {$type in {write edit}} {
             set files [my git_modified_files]
             if {[llength $files] > 0} {
@@ -215,13 +211,15 @@ oo::class create ::csm::ui::Toolbar {
             }
         }
         ttk::frame $pop.row
-        ttk::entry $pop.row.e -textvariable [my varname PopPath] -width 40
-        ttk::button $pop.row.open -text "open…" \
-            -command [list [self] pick_file $type $pop]
+        ttk::entry $pop.row.e -textvariable [my varname PopValue] -width 40
         ttk::button $pop.row.add -text "add" \
             -command [list [self] dropdown_add_entry $type $pop]
         pack $pop.row.e -side left -fill x -expand 1
-        pack $pop.row.open -side left -padx {4 0}
+        if {$type ne "regex"} {
+            ttk::button $pop.row.open -text "open…" \
+                -command [list [self] pick_file $type $pop]
+            pack $pop.row.open -side left -padx {4 0}
+        }
         pack $pop.row.add -side left -padx {4 0}
         pack $pop.row -side top -fill x
         bind $pop.row.e <Return> [list [self] dropdown_add_entry $type $pop]
@@ -239,20 +237,20 @@ oo::class create ::csm::ui::Toolbar {
         if {[llength $sel] == 0} return
         set val [$lb get [lindex $sel 0]]
         destroy $pop
-        my add_path_row $type $val
+        my add_criterion_row $type $val
     }
 
     method dropdown_add_entry {type pop} {
-        set val [string trim $PopPath]
+        set val [string trim $PopValue]
         destroy $pop
-        if {$val ne ""} { my add_path_row $type $val }
+        if {$val ne ""} { my add_criterion_row $type $val }
     }
 
     method pick_file {type pop} {
         set f [tk_getOpenFile -initialdir $Cwd]
         if {$f eq ""} return
         destroy $pop
-        my add_path_row $type $f
+        my add_criterion_row $type $f
     }
 
     # Absolute paths of the launch repo's working-tree changes (modified,
