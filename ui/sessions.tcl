@@ -59,7 +59,7 @@ oo::class create ::csm::ui::SessionList {
     variable Folders          ;# folder -> {fmark femark htag}
     variable FolderOrder      ;# folders in arrival (mtime-desc) order
     variable SessionsByFolder ;# folder -> ordered list of paths
-    variable Sessions         ;# path -> session dict (see add_session)
+    variable Sessions         ;# path -> session dict (see model_add_session)
     variable HtagFolder       ;# htag -> folder, for drop hit-testing
     variable Selected         ;# currently selected session path, or ""
     variable NextId
@@ -121,6 +121,12 @@ oo::class create ::csm::ui::SessionList {
         grid columnconfigure $Top.body 0 -weight 1
         grid rowconfigure    $Top.body 0 -weight 1
         set Text $Top.body.t
+        # This is a list, not editable text: make the click-drag text selection
+        # invisible (it otherwise paints rows grey, active and inactive) and
+        # hide the insert cursor.
+        $Text configure -insertwidth 0 -inactiveselectbackground "" \
+            -selectbackground [$Text cget -background] \
+            -selectforeground [$Text cget -foreground]
 
         $Text mark set TailMark "end-1c"
         $Text mark gravity TailMark right
@@ -136,11 +142,11 @@ oo::class create ::csm::ui::SessionList {
         $Text tag configure folderhead \
             -font {-weight bold} -foreground "#555" -spacing1 14 -spacing3 3
         # Session header: one line, the block's "title" (like a search result
-        # heading). A light band plus a gap above it separates one block from
-        # the next, so the blocks are countable even when every line is a
-        # header (browsing). Its matches, if any, sit indented beneath.
+        # heading), indented under its folder. Rows are separated by the gap
+        # above each and the bold title colour; no background band. The
+        # selected row gets a highlight for click feedback.
         $Text tag configure sessionhead -lmargin1 12 -lmargin2 28 \
-            -spacing1 6 -spacing3 2 -background "#e9e9e9" -foreground "#143d8a"
+            -spacing1 6 -spacing3 2 -foreground "#143d8a"
         $Text tag configure selected -background "#aecbff"
         $Text tag configure drop-candidate -background "#cce5ff"
 
@@ -299,7 +305,8 @@ oo::class create ::csm::ui::SessionList {
         if {[dict exists $Sessions $path]} return
         $Text configure -state normal
         my anchor_save
-        my add_session $path $row
+        my model_add_session $path $row
+        if {[my folder_expanded [dict get $row folder]]} { my render_session $path }
         my anchor_restore
         $Text configure -state disabled
     }
@@ -316,36 +323,52 @@ oo::class create ::csm::ui::SessionList {
         if {![dict exists $Sessions $path]} {
             set row [{*}$LookupSession $path]
             if {$row eq ""} { set row [dict create folder [dict get $match folder]] }
-            my add_session $path $row $lineoff
+            my model_add_session $path $row $lineoff
+        }
+        # Search folders are expanded, so render the session if it is not yet.
+        if {[my folder_expanded [dict get $Sessions $path folder]] \
+            && ![dict get $Sessions $path rendered]} {
+            my render_session $path
         }
         my add_snippet $path $btype $content $lineoff
         my anchor_restore
         $Text configure -state disabled
     }
 
-    # Create a session card (folder heading on demand, then the header line).
-    # first_lineno is where a header click opens the viewer; 0 means top.
-    method add_session {path row {first_lineno 0}} {
+    method folder_expanded {folder} {
+        if {![dict exists $Folders $folder]} { return 0 }
+        return [dict get [dict get $Folders $folder] expanded]
+    }
+
+    # Record a session in the model without drawing it. A collapsed folder
+    # holds its sessions here only; they are drawn lazily on expand. This is
+    # what keeps a folded list cheap and free of hidden (elided) lines.
+    method model_add_session {path row {first_lineno 0}} {
         set folder [dict get $row folder]
         my ensure_folder $folder
-        set fdata [dict get $Folders $folder]
-        set femark [dict get $fdata femark]
-
-        set fbtag [dict get $fdata fbtag]
         set label [my session_label $path $row]
         set when  [my fmt_time [my dict_or $row mtime 0]]
         set size  [my dict_or $row size 0]
         set uuid  [my dict_or $row uuid [file rootname [file tail $path]]]
-        set stag  "s#[incr NextId]"
         dict set Sessions $path [dict create \
             folder $folder label $label when $when size $size uuid $uuid \
             count 0 first_lineno $first_lineno snippets [list] \
-            stag $stag smark "" semark ""]
+            stag "" smark "" semark "" rendered 0]
+        dict lappend SessionsByFolder $folder $path
+        my bump_folder_count $folder 1
+    }
 
+    # Draw a session that the model already knows, inserting its header (and
+    # any stored snippets) at the folder's append point. Idempotent.
+    method render_session {path} {
+        if {[dict get $Sessions $path rendered]} return
+        set folder [dict get $Sessions $path folder]
+        set femark [dict get [dict get $Folders $folder] femark]
+        set stag "s#[incr NextId]"
         set sstart [$Text index $femark]
         set meta [my session_meta_text $path]
         $Text insert $femark "$meta[my session_title_text $path]\n" \
-            [list sessionhead $stag $fbtag]
+            [list sessionhead $stag]
         $Text tag add meta $sstart "$sstart + [string length $meta]c"
         set smark "sm[incr NextId]"
         $Text mark set $smark $sstart
@@ -354,12 +377,11 @@ oo::class create ::csm::ui::SessionList {
         set semark "se[incr NextId]"
         $Text mark set $semark $send
         $Text mark gravity $semark left
-        # The folder's append point (left gravity, advanced by hand) now sits
-        # at this session's end, so the next session in the folder lands here.
         $Text mark set $femark $send
+        dict set Sessions $path stag $stag
         dict set Sessions $path smark $smark
         dict set Sessions $path semark $semark
-
+        dict set Sessions $path rendered 1
         $Text tag bind $stag <ButtonPress-1> \
             [list [self] on_session_press $path %X %Y]
         $Text tag bind $stag <ButtonRelease-1> \
@@ -368,29 +390,32 @@ oo::class create ::csm::ui::SessionList {
             [list [self] on_session_open $path]
         $Text tag bind $stag <Button-3> \
             [list [self] on_session_right $path %X %Y]
-
-        dict lappend SessionsByFolder $folder $path
-        my bump_folder_count $folder 1
+        foreach snip [dict get $Sessions $path snippets] {
+            lassign $snip btype content lineoff
+            my render_snippet $path $btype $content $lineoff
+        }
+        if {$Selected eq $path} {
+            $Text tag add selected $smark "$smark lineend"
+        }
     }
 
+    # Accumulate a match in the model (count, capped snippet list) and draw
+    # the snippet row when the session is on screen.
     method add_snippet {path btype content lineoff} {
-        set s [dict get $Sessions $path]
-        set count [expr {[dict get $s count] + 1}]
-        dict set Sessions $path count $count
+        dict set Sessions $path count [expr {[dict get $Sessions $path count] + 1}]
         my redraw_header $path
-        # Keep at most three snippet rows on screen; the header count still
-        # reports the true total.
         if {[llength [dict get $Sessions $path snippets]] >= 3} return
         set sn [dict get $Sessions $path snippets]
         lappend sn [list $btype $content $lineoff]
         dict set Sessions $path snippets $sn
-
-        set semark [dict get $s semark]
-        set ntag "n#[incr NextId]"
-        set fbtag ""
-        if {[dict exists $Folders [dict get $s folder]]} {
-            set fbtag [dict get [dict get $Folders [dict get $s folder]] fbtag]
+        if {[dict get $Sessions $path rendered]} {
+            my render_snippet $path $btype $content $lineoff
         }
+    }
+
+    method render_snippet {path btype content lineoff} {
+        set semark [dict get $Sessions $path semark]
+        set ntag "n#[incr NextId]"
         set type_tag type-$btype
         if {[lsearch -exact [$Text tag names] $type_tag] < 0} {
             set type_tag type-system
@@ -400,12 +425,12 @@ oo::class create ::csm::ui::SessionList {
         set tmp tmpsnip
         $Text mark set $tmp [$Text index $semark]
         $Text mark gravity $tmp right
-        $Text insert $tmp $btype [list snippet $type_tag $ntag $fbtag]
-        $Text insert $tmp "\t" [list snippet $ntag $fbtag]
+        $Text insert $tmp $btype [list snippet $type_tag $ntag]
+        $Text insert $tmp "\t" [list snippet $ntag]
         set cstart [$Text index $tmp]
-        $Text insert $tmp $content [list snippet $ntag $fbtag]
+        $Text insert $tmp $content [list snippet $ntag]
         set cend [$Text index $tmp]
-        $Text insert $tmp "\n" [list snippet $ntag $fbtag]
+        $Text insert $tmp "\n" [list snippet $ntag]
         my tag_hits_in_range $cstart $cend $content
         $Text tag bind $ntag <ButtonRelease-1> \
             [list [self] on_snippet_click $path]
@@ -415,7 +440,7 @@ oo::class create ::csm::ui::SessionList {
         # snippet (the session receiving snippets is always its folder's last).
         $Text mark set $semark [$Text index $tmp]
         $Text mark unset $tmp
-        set folder [dict get $s folder]
+        set folder [dict get $Sessions $path folder]
         if {[dict exists $Folders $folder]} {
             $Text mark set [dict get [dict get $Folders $folder] femark] \
                 [$Text index $semark]
@@ -465,13 +490,10 @@ oo::class create ::csm::ui::SessionList {
     # the view.
     method redraw_header {path} {
         set s [dict get $Sessions $path]
+        if {![dict get $s rendered]} return
         set smark [dict get $s smark]
         set stag  [dict get $s stag]
-        set fbtag ""
-        if {[dict exists $Folders [dict get $s folder]]} {
-            set fbtag [dict get [dict get $Folders [dict get $s folder]] fbtag]
-        }
-        set tags [list sessionhead $stag $fbtag]
+        set tags [list sessionhead $stag]
         if {$Selected eq $path} { lappend tags selected }
         set meta [my session_meta_text $path]
         $Text delete $smark "$smark lineend"
@@ -483,17 +505,15 @@ oo::class create ::csm::ui::SessionList {
         if {[dict exists $Folders $folder]} return
         set label [::csm::path::display_label [{*}$ResolveFolder $folder] $folder]
         set htag  "f#[incr NextId]"
-        # Body tag carried by every session and snippet line of this folder;
-        # toggling its -elide collapses or expands the whole group. Browsing
-        # opens collapsed (an overview of projects); a search opens expanded
-        # so the matches under each folder are visible.
-        set fbtag "fb[incr NextId]"
+        # Browsing opens folders collapsed (an overview of projects); a search
+        # opens them expanded so the matches under each folder are visible. A
+        # collapsed folder draws only its heading - its sessions live in the
+        # model and are rendered lazily on expand, so there are no hidden lines.
         set expanded [expr {$CriteriaActive ? 1 : 0}]
-        $Text tag configure $fbtag -elide [expr {!$expanded}]
         set fmark  "fm[incr NextId]"
         set femark "fe[incr NextId]"
         dict set Folders $folder [dict create fmark $fmark femark $femark \
-            htag $htag fbtag $fbtag label $label count 0 expanded $expanded]
+            htag $htag label $label count 0 expanded $expanded]
         set fstart [$Text index TailMark]
         $Text insert TailMark "[my folder_heading_text $folder]\n" \
             [list folderhead $htag]
@@ -529,11 +549,45 @@ oo::class create ::csm::ui::SessionList {
         if {![dict exists $Folders $folder]} return
         set exp [expr {![dict get [dict get $Folders $folder] expanded]}]
         dict set Folders $folder expanded $exp
-        $Text tag configure [dict get [dict get $Folders $folder] fbtag] \
-            -elide [expr {!$exp}]
         $Text configure -state normal
+        if {$exp} { my expand_folder $folder } else { my collapse_folder $folder }
         my redraw_folder_heading $folder
         $Text configure -state disabled
+    }
+
+    method expand_folder {folder} {
+        foreach path [my dict_or $SessionsByFolder $folder {}] {
+            my render_session $path
+        }
+    }
+
+    # Delete every rendered line of the folder's body and drop the per-session
+    # render marks; the sessions remain in the model and redraw on the next
+    # expand. No hidden text is left behind.
+    method collapse_folder {folder} {
+        set f [dict get $Folders $folder]
+        set fmark [dict get $f fmark]
+        set femark [dict get $f femark]
+        set bodystart [$Text index "$fmark lineend +1c"]
+        $Text delete $bodystart $femark
+        $Text mark set $femark $bodystart
+        foreach path [my dict_or $SessionsByFolder $folder {}] {
+            if {![dict exists $Sessions $path]} continue
+            if {![dict get $Sessions $path rendered]} continue
+            catch {$Text mark unset [dict get $Sessions $path smark] \
+                                    [dict get $Sessions $path semark]}
+            dict set Sessions $path rendered 0
+            dict set Sessions $path stag ""
+            dict set Sessions $path smark ""
+            dict set Sessions $path semark ""
+        }
+        # Drop the now-empty per-session / per-snippet tags left by the delete.
+        foreach tg [$Text tag names] {
+            if {([string match "s#*" $tg] || [string match "n#*" $tg]) \
+                && [llength [$Text tag ranges $tg]] == 0} {
+                $Text tag delete $tg
+            }
+        }
     }
 
     method bump_folder_count {folder delta} {
@@ -729,7 +783,10 @@ oo::class create ::csm::ui::SessionList {
                     set row [{*}$OnScanPath $path]
                 }
                 if {$row eq "" || ![dict size $row]} continue
-                my add_session $path $row
+                my model_add_session $path $row
+                if {[my folder_expanded [dict get $row folder]]} {
+                    my render_session $path
+                }
             }
         }
         foreach path [my all_session_paths] {
@@ -778,10 +835,10 @@ oo::class create ::csm::ui::SessionList {
         if {![dict exists $Sessions $path]} return
         set s [dict get $Sessions $path]
         set folder [dict get $s folder]
-        set smark [dict get $s smark]
-        set semark [dict get $s semark]
-        $Text delete $smark $semark
-        catch {$Text mark unset $smark $semark}
+        if {[dict get $s rendered]} {
+            $Text delete [dict get $s smark] [dict get $s semark]
+            catch {$Text mark unset [dict get $s smark] [dict get $s semark]}
+        }
         dict unset Sessions $path
         if {$Selected eq $path} { set Selected "" }
         set lst [my dict_or $SessionsByFolder $folder {}]
@@ -837,10 +894,13 @@ oo::class create ::csm::ui::SessionList {
         my purge_tags_and_marks
         $Text mark set TailMark "end-1c"
         $Text mark gravity TailMark right
-        # Snapshot the model, then rebuild it through the normal insert paths.
+        # Snapshot the model, remember each folder's expanded state, then
+        # rebuild the model and re-render only the expanded folders' bodies.
         set saved $Sessions
         set order $FolderOrder
         set byfolder $SessionsByFolder
+        set wasexp [dict create]
+        dict for {f fd} $Folders { dict set wasexp $f [dict get $fd expanded] }
         set Folders [dict create]
         set FolderOrder [list]
         set SessionsByFolder [dict create]
@@ -850,25 +910,31 @@ oo::class create ::csm::ui::SessionList {
             foreach path [my dict_or $byfolder $folder {}] {
                 if {![dict exists $saved $path]} continue
                 set s [dict get $saved $path]
-                my add_session $path \
+                my model_add_session $path \
                     [dict create folder [dict get $s folder] \
                          uuid [dict get $s uuid] mtime 0 \
                          size [dict get $s size] \
                          first_user [dict get $s label]] \
                     [dict get $s first_lineno]
-                # Restore label/when/count verbatim, then replay snippets.
                 dict set Sessions $path label [dict get $s label]
                 dict set Sessions $path when [dict get $s when]
-                foreach snip [dict get $s snippets] {
-                    lassign $snip btype content lineoff
-                    my add_snippet $path $btype $content $lineoff
-                }
-                # add_snippet bumped count per replayed snippet; restore truth.
+                dict set Sessions $path snippets [dict get $s snippets]
                 dict set Sessions $path count [dict get $s count]
-                my redraw_header $path
+            }
+            if {[dict exists $wasexp $folder] && [dict exists $Folders $folder]} {
+                dict set Folders $folder expanded [dict get $wasexp $folder]
             }
         }
-        if {$Selected ne "" && [dict exists $Sessions $Selected]} {
+        foreach folder $FolderOrder {
+            if {[dict get [dict get $Folders $folder] expanded]} {
+                foreach path [my dict_or $SessionsByFolder $folder {}] {
+                    my render_session $path
+                }
+            }
+            my redraw_folder_heading $folder
+        }
+        if {$Selected ne "" && [dict exists $Sessions $Selected] \
+            && [dict get $Sessions $Selected rendered]} {
             set sm [dict get [dict get $Sessions $Selected] smark]
             $Text tag add selected $sm "$sm lineend"
         }
