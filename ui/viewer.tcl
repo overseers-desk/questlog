@@ -79,6 +79,16 @@ oo::class create ::csm::ui::Viewer {
         grid rowconfigure    $Top.body 0 -weight 1
         set Text $Top.body.t
 
+        # A read-only reading view. Keep <Button-1> (focus, for Ctrl-F) but
+        # block the drag-select gestures: tk::TextSelectTo / tk::TextAutoScan
+        # would otherwise run a self-scrolling drag-select, painting the whole
+        # view grey. -exportselection 0 keeps it off the X PRIMARY clipboard.
+        $Text configure -exportselection 0 -inactiveselectbackground ""
+        foreach ev {<B1-Motion> <Double-Button-1> <Triple-Button-1> \
+                    <B1-Leave> <B1-Enter>} {
+            bind $Text $ev break
+        }
+
         # Tags.
         $Text tag configure section-header -font {-weight bold -size 11} \
             -spacing1 8 -spacing3 4 -foreground "#444"

@@ -132,7 +132,17 @@ oo::class create ::csm::ui::SessionList {
         $Text mark gravity TailMark right
 
         my configure_tags
-        bind $Text <B1-Motion> [list ::csm::ui::drag::motion %X %Y]
+        # This is an object list, not editable text. Block the Text class's
+        # selection gestures so a click never starts a text selection (which
+        # would grab the X PRIMARY clipboard and, via tk::TextAutoScan, run a
+        # self-scrolling drag-select). The per-tag click/drag bindings fire
+        # first; these widget-level breaks stop the class bindings that follow.
+        # B1-Motion still drives drag-to-move, then breaks the class handler.
+        bind $Text <B1-Motion> {::csm::ui::drag::motion %X %Y; break}
+        foreach ev {<Button-1> <Double-Button-1> <Triple-Button-1> \
+                    <Shift-Button-1> <Control-Button-1> <B1-Leave>} {
+            bind $Text $ev break
+        }
         my build_menu
     }
 
@@ -493,12 +503,14 @@ oo::class create ::csm::ui::SessionList {
         if {![dict get $s rendered]} return
         set smark [dict get $s smark]
         set stag  [dict get $s stag]
-        set tags [list sessionhead $stag]
-        if {$Selected eq $path} { lappend tags selected }
         set meta [my session_meta_text $path]
         $Text delete $smark "$smark lineend"
-        $Text insert $smark "$meta[my session_title_text $path]" $tags
+        $Text insert $smark "$meta[my session_title_text $path]" \
+            [list sessionhead $stag]
         $Text tag add meta $smark "$smark + [string length $meta]c"
+        if {$Selected eq $path} {
+            $Text tag add selected $smark [dict get $s semark]
+        }
     }
 
     method ensure_folder {folder} {
@@ -629,16 +641,18 @@ oo::class create ::csm::ui::SessionList {
 
     # ---- selection / open --------------------------------------------
 
+    # Select the whole session object - its header and any snippets - as one
+    # highlighted block (the full-width region, not a text run).
     method select {path} {
-        if {$Selected ne "" && [dict exists $Sessions $Selected]} {
+        if {$Selected ne "" && [dict exists $Sessions $Selected] \
+            && [dict get $Sessions $Selected rendered]} {
             set os [dict get $Sessions $Selected]
-            set osm [dict get $os smark]
-            catch {$Text tag remove selected $osm "$osm lineend"}
+            catch {$Text tag remove selected [dict get $os smark] [dict get $os semark]}
         }
         set Selected $path
-        if {[dict exists $Sessions $path]} {
-            set sm [dict get [dict get $Sessions $path] smark]
-            $Text tag add selected $sm "$sm lineend"
+        if {[dict exists $Sessions $path] && [dict get $Sessions $path rendered]} {
+            set s [dict get $Sessions $path]
+            $Text tag add selected [dict get $s smark] [dict get $s semark]
         }
     }
 
