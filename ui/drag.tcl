@@ -1,14 +1,16 @@
 package require Tcl 9
 package require Tk
 
-# ::csm::ui::drag - shared press-motion-release machinery used by the
-# tree and results panes to drag a session onto a target folder row in
-# the tree. The drop target is a ttk::treeview; an F:* iid under the
-# pointer is the candidate. Press-and-release without motion is a click
-# and the caller is told so via the return value of release.
+# ::csm::ui::drag - shared press-motion-release machinery for dragging a
+# session onto a target folder. The widget that owns the drag supplies two
+# callbacks so this module needs no knowledge of how targets are drawn:
+#   hit   X Y      -> an opaque candidate id under the pointer, or "" for none
+#   paint old new  -> clear the old candidate's highlight, mark the new one
+# A press-and-release without motion is a click; the caller learns this from
+# the return value of release and runs its own click handler.
 #
-# State is a single namespace dict; one drag at a time. No class
-# because there is no joint state across operations.
+# State is a single namespace dict; one drag at a time. No class because
+# there is no joint state across operations.
 
 namespace eval ::csm::ui::drag {
     variable State [dict create]
@@ -17,23 +19,20 @@ namespace eval ::csm::ui::drag {
 }
 
 # Begin tracking a potential drag.
-# source: widget where the press occurred (used for grab + cursor).
-# target: the ttk::treeview we drop onto.
-# press_x, press_y: %X %Y root coords from the press event.
-# payload: opaque value handed back to on_drop.
-# on_drop: cmd prefix; called as `{*}$on_drop $payload $target_folder`
-# when release lands on an F:* row.
-proc ::csm::ui::drag::watch {source target press_x press_y payload on_drop} {
+#   source: widget where the press occurred (grab, cursor, autoscroll target).
+#   press_x, press_y: %X %Y root coords from the press event.
+#   payload: opaque value handed back to on_drop (e.g. the session paths).
+#   on_drop: cmd prefix; called {*}$on_drop $payload $candidate on a release
+#            over a candidate.
+#   hit, paint: the target-resolution callbacks described above.
+proc ::csm::ui::drag::watch {source press_x press_y payload on_drop hit paint} {
     variable State
     set State [dict create \
-        source $source target $target \
+        source $source \
         x0 $press_x y0 $press_y \
         active 0 candidate "" \
         autoscroll "" \
-        payload $payload on_drop $on_drop]
-    if {[lsearch -exact [$target tag names] drop-candidate] < 0} {
-        $target tag configure drop-candidate -background "#cce5ff"
-    }
+        payload $payload on_drop $on_drop hit $hit paint $paint]
 }
 
 proc ::csm::ui::drag::motion {X Y} {
@@ -49,16 +48,14 @@ proc ::csm::ui::drag::motion {X Y} {
         grab set $src
         $src configure -cursor fleur
     }
-    set tgt [dict get $State target]
-    set under [winfo containing $X $Y]
+    set src [dict get $State source]
     set old_candidate [dict get $State candidate]
     set new_candidate ""
-    if {$under eq $tgt} {
-        set tx [expr {$X - [winfo rootx $tgt]}]
-        set ty [expr {$Y - [winfo rooty $tgt]}]
-        set iid [$tgt identify item $tx $ty]
-        if {[string match "F:*" $iid]} { set new_candidate $iid }
-        set h [winfo height $tgt]
+    set under [winfo containing $X $Y]
+    if {$under eq $src} {
+        set new_candidate [{*}[dict get $State hit] $X $Y]
+        set ty [expr {$Y - [winfo rooty $src]}]
+        set h  [winfo height $src]
         if {$ty < 16} {
             schedule_scroll -1
         } elseif {$ty > $h - 16} {
@@ -70,37 +67,33 @@ proc ::csm::ui::drag::motion {X Y} {
         cancel_scroll
     }
     if {$new_candidate ne $old_candidate} {
-        if {$old_candidate ne ""} { $tgt tag remove drop-candidate $old_candidate }
-        if {$new_candidate ne ""} { $tgt tag add    drop-candidate $new_candidate }
+        {*}[dict get $State paint] $old_candidate $new_candidate
         dict set State candidate $new_candidate
     }
 }
 
-# Finish a drag. Returns 1 if a drag was active (drop handler dispatched
-# if the cursor was over a folder row; suppressed otherwise). Returns 0
-# if motion never crossed the threshold, in which case the caller should
-# run its normal click handler.
+# Finish a drag. Returns 1 if a drag was active (the drop handler is
+# dispatched when the cursor was over a candidate, suppressed otherwise).
+# Returns 0 if motion never crossed the threshold, telling the caller to run
+# its normal click handler.
 proc ::csm::ui::drag::release {X Y} {
     variable State
     if {[dict size $State] == 0} { return 0 }
     set src [dict get $State source]
-    set tgt [dict get $State target]
     set was_active [dict get $State active]
     set candidate [dict get $State candidate]
     set payload [dict get $State payload]
     set on_drop [dict get $State on_drop]
+    set paint [dict get $State paint]
     cancel_scroll
     if {$was_active} {
         grab release $src
         $src configure -cursor ""
     }
-    if {$candidate ne ""} {
-        $tgt tag remove drop-candidate $candidate
-    }
+    if {$candidate ne ""} { {*}$paint $candidate "" }
     set State [dict create]
     if {$was_active && $candidate ne ""} {
-        set folder [string range $candidate 2 end]
-        {*}$on_drop $payload $folder
+        {*}$on_drop $payload $candidate
     }
     return $was_active
 }
@@ -120,8 +113,8 @@ proc ::csm::ui::drag::scroll_tick {direction} {
     variable ScrollMs
     if {[dict size $State] == 0} return
     if {![dict get $State active]} return
-    set tgt [dict get $State target]
-    $tgt yview scroll $direction units
+    set src [dict get $State source]
+    $src yview scroll $direction units
     set id [after $ScrollMs [list ::csm::ui::drag::scroll_tick $direction]]
     dict set State autoscroll $id
 }

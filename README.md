@@ -1,6 +1,6 @@
 # Claude Session Manager
 
-A GUI for finding, reading, and reopening past Claude Code sessions stored under `~/.claude/projects/`. It replaces the shell aliases `cs-ls` and `cs-grep` with a session tree per project, a regex search that streams matches across all projects, a viewer that segments long conversations into collapsible sections, and right-click actions that reopen a session in its original working directory.
+A GUI for finding, reading, and reopening past Claude Code sessions stored under `~/.claude/projects/`. It replaces the shell aliases `cs-ls` and `cs-grep` with a session list grouped by project, a typed search that streams matches across all projects as snippets under each session, a docked viewer that segments long conversations into sections, and right-click actions that reopen a session in its original working directory.
 
 ## Why a session manager
 
@@ -11,17 +11,15 @@ A GUI for finding, reading, and reopening past Claude Code sessions stored under
 
 ## Window layout
 
-The window has three regions and a status bar.
+The window opens as a single **session list** with a toolbar on top and a status bar at the bottom. The **reading view** appears to its right the first time a session or snippet is clicked, splitting the window in two; until then the list has the whole width and no search is running.
 
 The **toolbar** holds a time window (24 h / 7 d / 30 d / all), a list of AND-joined search criteria with a case toggle, and a "this cwd only" filter that auto-detects whether the launch directory has a corresponding project folder. A criterion is typed: **regex** matches message content; **read** / **write** / **edit** match the file a built-in tool (Read, Write, Edit/MultiEdit/NotebookEdit) acted on, by path suffix, so a bare filename finds it in any directory and a full path matches exactly. Every **+** button opens a small dropdown that asks for the criterion's value before the row appears, so typing never drives a live search. **+ Read / + Write / + Edit** drop down the launch repo's working-tree changes (`git status`) alongside a path entry and a file chooser; **+ regex** drops down a single pattern entry. A session is shown only when it satisfies every criterion somewhere in its log.
 
-The **tree** groups sessions by project. Each row carries the time of the first prompt, the file size, and a truncated preview of the first user message. Folders are inserted in mtime-descending order as rows arrive. When any criterion is active, only folders containing matching sessions remain visible.
+The **session list** is one widget doing two jobs. With no criteria active it browses: every session in the time window appears as a header line grouped under its project folder, carrying the time of the first prompt, a preview of the first user message, a ● marker while the session is running, and a ★ when it is bookmarked. Folders are inserted in mtime-descending order as rows arrive. When any criterion is active it becomes the result index: only matching sessions remain, each with up to three snippet rows beneath its header. A snippet is one piece of evidence (a content line for a regex criterion, a `tool_use` for read/write/edit), shown as a short window centred on the hit with the matched term in bold, and the header carries the total match count. Inserts never scroll the list out from under you while results stream in.
 
-The **result pane** appears beneath a draggable sash once any criterion is active. Each row is one piece of matching evidence, a content line for a regex criterion or a `tool_use` for a read/write/edit criterion; the same session may produce many rows. Single-clicking a result selects the corresponding session in the tree; double-clicking opens the viewer scrolled to that line.
+The **reading view** is docked on the right, revealed by the first click. A single click on a session header or a snippet renders the whole jsonl, then anchors it to the relevant line, so the view never grows or jumps as it loads. It splits a long jsonl at compaction-boundary records and at idle gaps over ten minutes, presenting each segment as a section. `Ctrl-F` opens an inline find within the session.
 
-The **viewer** is a separate top-level window. It splits a long jsonl at compaction-boundary records and at idle gaps over ten minutes, presenting each segment as a collapsible section. `Ctrl-F` opens an inline find within the session.
-
-Right-clicking a session offers "Open in viewer", "Copy resume command", "Copy session id", "Copy session path", "Resume in new terminal tab", "Resume forked", and "Reveal folder". The terminal launcher detects `gnome-terminal` / `konsole` / `ptyxis` / `xterm` and uses the right `--tab`-style invocation.
+Right-clicking a session offers "Open in viewer", "Copy resume command", "Copy session id", "Copy session path", "Copy last assistant output", "Resume in new terminal tab", "Resume forked", "Move to...", "Reveal folder", and "Add/Remove bookmark". A session can also be moved by dragging it onto another folder heading. The terminal launcher detects `gnome-terminal` / `konsole` / `ptyxis` / `xterm` and uses the right `--tab`-style invocation.
 
 ## Design principles
 
@@ -42,8 +40,8 @@ Right-clicking a session offers "Open in viewer", "Copy resume command", "Copy s
 ```
 csm                     entry script (wish9.0)
 lib/
-  app.tcl               wires everything; constructs Scan, Toolbar, Tree,
-                        Results, Search; subscribes them
+  app.tcl               wires everything; constructs Scan, Toolbar,
+                        SessionList, Viewer, Search; subscribes them
   scan.tcl              Scan class: coroutine-driven, mtime-keyed
                         in-process row dict, pre-sorted by mtime DESC,
                         epoch-token cancellation
@@ -59,9 +57,12 @@ lib/
 ui/
   toolbar.tcl           ttk widgets, typed-criteria rows, git-status add
                         dropdown, snapshot publication, keystroke debounce
-  tree.tcl              ttk::treeview, on-demand folder insertion, right-click
-  results.tcl           ttk::treeview as a flat match table
-  viewer.tcl            top-level window, segmentation, in-session find
+  sessions.tcl          SessionList: the left pane, a text widget that browses
+                        and indexes; folder grouping, glyphs, hit-centred
+                        snippets, right-click actions, drag-to-move
+  drag.tcl              shared press-motion-release drag machinery
+  viewer.tcl            docked reading view, segmentation, in-session find
+  move_dialog.tcl       folder picker for "Move to..."
 test/
   test-path.tcl         folder name decoding
   test-jsonl.tcl        record extraction, tool_use path/criterion
@@ -74,7 +75,7 @@ test/
 
 The Scan and Search classes share two structural choices. Cancellation is by epoch token: an integer that the orchestrator increments and the coroutine compares against its own captured copy after every yield. Each coroutine yields once at the very top before doing any work, so callers using `vwait` see callbacks that fire after the wait is established rather than during the synchronous setup.
 
-Both classes reach into the project tree with a depth-2 glob: `~/.claude/projects/*/[uuid].jsonl`. Deeper paths under `<folder>/<uuid>/subagents/` hold internal subagent records, not user-visible sessions, and must not appear in the tree.
+Both classes reach into the project tree with a depth-2 glob: `~/.claude/projects/*/[uuid].jsonl`. Deeper paths under `<folder>/<uuid>/subagents/` hold internal subagent records, not user-visible sessions, and must not appear in the list.
 
 ## Running and testing
 
@@ -97,8 +98,9 @@ A leading criterion type on the command line pre-seeds the GUI with a criteria c
 
 ```
 grep -nE 'method[[:space:]]+_' lib/*.tcl ui/*.tcl   # must be empty
-grep -nE '\bexec\b'           lib/*.tcl ui/*.tcl   # only ui/tree.tcl (xdg-open)
-                                                   # and lib/terminal.tcl (terminal launch)
+grep -nE '\bexec\b'           lib/*.tcl ui/*.tcl   # only ui/sessions.tcl (xdg-open),
+                                                   # lib/terminal.tcl (terminal launch),
+                                                   # and ui/toolbar.tcl (git status)
 ```
 
 The first guards against TclOO methods named with a leading underscore. TclOO treats those as unexported and fails dispatch through callbacks like Tk `-command`, `bind`, `after`, and `chan event`. The second ensures the only subprocesses are the two genuinely unavoidable ones; if a third appears, it should be challenged before being merged.

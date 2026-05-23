@@ -16,8 +16,8 @@ package require Tk
 namespace eval ::csm::ui {}
 
 # any_criteria snapshot - true iff the snapshot carries at least one
-# criterion with a non-empty value. Shared by app.tcl (results-pane
-# visibility, search start/cancel) and tree.tcl (CriteriaActive flag).
+# criterion with a non-empty value. Shared by app.tcl (search start/cancel)
+# and sessions.tcl (CriteriaActive flag: browse versus result-index mode).
 proc ::csm::ui::any_criteria {snapshot} {
     if {![dict exists $snapshot criteria]} { return 0 }
     foreach c [dict get $snapshot criteria] {

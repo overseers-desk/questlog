@@ -1,0 +1,829 @@
+package require Tcl 9
+package require Tk
+
+# Glyphs for the status markers. The single home for both; the toolbar
+# toggles are plain text, so these characters live only here.
+namespace eval ::csm::ui {
+    variable GLYPH_RUNNING  ●
+    variable GLYPH_BOOKMARK ★
+}
+
+# ::csm::ui::SessionList - the left pane: one read-only text widget that is
+# both the session browser and the search-result index in a single list.
+#
+# Layout, top to bottom, as tagged regions in the one text widget:
+#   folder heading   - the project label, a drop target for moves
+#   session header   - glyphs, label, time, and (when searching) a match count
+#   snippet rows     - up to three per session: a block-type label and a
+#                      hit-centred snippet with the matched term in bold
+#
+# Two display states share the widget. With no criteria it browses: every
+# session that passes the snapshot filter appears as a header, grouped by
+# folder. With criteria it indexes: only matching sessions appear, each with
+# its snippets. A single click opens the session in the docked viewer and
+# anchors it to the relevant line.
+#
+# A text widget is the list; position is tracked with text marks:
+#   TailMark   right-gravity, always just before the implicit final newline.
+#   <folder>   fmark left-gravity at the heading start; femark right-gravity
+#              at the end of the folder's session group (new sessions land
+#              here); htag, a per-folder tag on the heading line for drop
+#              hit-testing.
+#   <session>  smark left-gravity at the header start; semark right-gravity
+#              at the session's end (new snippets land here); stag, a
+#              per-session tag carrying the click/drag bindings.
+# Gravity makes a mid-document insert push every mark to its right along
+# with it, so folder grouping streams without bespoke shuffling.
+#
+# Anti-self-scroll: every streaming insert is bracketed by anchor_save /
+# anchor_restore, which pins the top visible line back to the top, so a late
+# match inserted above the viewport never shifts what the reader is on.
+
+oo::class create ::csm::ui::SessionList {
+    variable Top
+    variable Text
+    variable StatusVar
+    variable CancelCb
+    variable ResolveFolder    ;# cb: folder -> display cwd
+    variable LookupSession    ;# cb: path -> row dict
+    variable OnOpen           ;# cb: path lineno -> open + anchor in viewer
+    variable OnMoveRequest    ;# cb: paths -> open move picker
+    variable OnDropMove       ;# cb: paths folder -> direct move
+    variable OnBookmarkToggle ;# cb: path -> flip the +x bookmark bit
+    variable OnScanPath       ;# cb: path -> row (synchronous single-file scan)
+    variable Snapshot
+    variable CriteriaActive
+    variable RunningSet       ;# dict uuid -> 1, replaced wholesale each tick
+    variable Query            ;# {regex <list> nocase 0|1} for hit highlighting
+    variable HitTags
+    variable Folders          ;# folder -> {fmark femark htag}
+    variable FolderOrder      ;# folders in arrival (mtime-desc) order
+    variable SessionsByFolder ;# folder -> ordered list of paths
+    variable Sessions         ;# path -> session dict (see add_session)
+    variable HtagFolder       ;# htag -> folder, for drop hit-testing
+    variable Selected         ;# currently selected session path, or ""
+    variable NextId
+    variable Menu
+    variable MenuPath
+    variable MenuTarget
+
+    constructor {parent resolve_cb lookup_cb on_open on_move_request \
+                 on_drop_move on_bookmark_toggle on_scan_path cancel_cb} {
+        set Top $parent
+        set ResolveFolder $resolve_cb
+        set LookupSession $lookup_cb
+        set OnOpen $on_open
+        set OnMoveRequest $on_move_request
+        set OnDropMove $on_drop_move
+        set OnBookmarkToggle $on_bookmark_toggle
+        set OnScanPath $on_scan_path
+        set CancelCb $cancel_cb
+        set StatusVar "Idle"
+        set Snapshot [dict create]
+        set CriteriaActive 0
+        set RunningSet [dict create]
+        set Query [dict create regex [list] nocase 0]
+        set Selected ""
+        set NextId 0
+        my reset_model
+        my build
+    }
+
+    method reset_model {} {
+        set Folders [dict create]
+        set FolderOrder [list]
+        set SessionsByFolder [dict create]
+        set Sessions [dict create]
+        set HtagFolder [dict create]
+        set Selected ""
+    }
+
+    method build {} {
+        ttk::frame $Top
+
+        ttk::frame $Top.bar
+        pack $Top.bar -side top -fill x
+        ttk::label $Top.bar.status -textvariable [my varname StatusVar]
+        pack $Top.bar.status -side left -padx 4 -pady 2
+        ttk::button $Top.bar.cancel -text "Cancel" -command [list [self] cancel]
+        pack $Top.bar.cancel -side right -padx 4 -pady 2
+
+        ttk::frame $Top.body
+        pack $Top.body -side top -fill both -expand 1
+        text $Top.body.t -wrap word -state disabled -exportselection 0 \
+            -yscrollcommand [list $Top.body.sb set] \
+            -borderwidth 0 -highlightthickness 0 -padx 4 -pady 4 -cursor arrow \
+            -takefocus 0
+        ttk::scrollbar $Top.body.sb -orient vertical \
+            -command [list $Top.body.t yview]
+        grid $Top.body.t  -row 0 -column 0 -sticky nsew
+        grid $Top.body.sb -row 0 -column 1 -sticky ns
+        grid columnconfigure $Top.body 0 -weight 1
+        grid rowconfigure    $Top.body 0 -weight 1
+        set Text $Top.body.t
+
+        $Text mark set TailMark "end-1c"
+        $Text mark gravity TailMark right
+
+        my configure_tags
+        bind $Text <B1-Motion> [list ::csm::ui::drag::motion %X %Y]
+        my build_menu
+    }
+
+    method configure_tags {} {
+        # Folder heading: the outermost level, bold, with a wide gap above so
+        # each project group reads as a section.
+        $Text tag configure folderhead \
+            -font {-weight bold} -foreground "#555" -spacing1 14 -spacing3 3
+        # Session header: one line, the block's "title" (like a search result
+        # heading). A light band plus a gap above it separates one block from
+        # the next, so the blocks are countable even when every line is a
+        # header (browsing). Its matches, if any, sit indented beneath.
+        $Text tag configure sessionhead -lmargin1 12 -lmargin2 28 \
+            -spacing1 6 -spacing3 2 -background "#e9e9e9" -foreground "#143d8a"
+        $Text tag configure selected -background "#aecbff"
+        $Text tag configure drop-candidate -background "#cce5ff"
+
+        # Snippet rows: type label in a left column, content wrapping under it.
+        # Indented past the header so each block reads title-then-evidence.
+        set f [ttk::style lookup TkDefaultFont -font]
+        if {$f eq ""} { set f TkDefaultFont }
+        set lm 36
+        set tw [font measure $f "tool_result   "]
+        set content_col [expr {$lm + $tw}]
+        $Text configure -tabs [list $content_col left]
+        $Text tag configure snippet -lmargin1 $lm -lmargin2 $content_col \
+            -foreground "#333" -spacing3 1
+        $Text tag configure type-user        -foreground "#06c" -font {-weight bold}
+        $Text tag configure type-assistant   -foreground "#222" -font {-weight bold}
+        $Text tag configure type-tool_use    -foreground "#a60" -font {-weight bold}
+        $Text tag configure type-tool_result -foreground "#666" -font {-weight bold}
+        $Text tag configure type-system      -foreground "#888" -font {-weight bold}
+
+        set HitTags [list]
+        set hues {#fff59d #b3e5fc #f8bbd0 #c8e6c9}
+        for {set i 0} {$i < [llength $hues]} {incr i} {
+            set t hit-$i
+            $Text tag configure $t -background [lindex $hues $i] -font {-weight bold}
+            lappend HitTags $t
+        }
+    }
+
+    method build_menu {} {
+        set Menu $Top.cmenu
+        menu $Menu -tearoff 0
+        $Menu add command -label "Open in viewer" -command [list [self] menu_open]
+        $Menu add separator
+        $Menu add command -label "Copy resume command" \
+            -command [list [self] menu_copy_resume]
+        $Menu add command -label "Copy session id" \
+            -command [list [self] menu_copy_uuid]
+        $Menu add command -label "Copy session path" \
+            -command [list [self] menu_copy_path]
+        $Menu add command -label "Copy last assistant output" \
+            -command [list [self] menu_copy_last_assistant]
+        $Menu add separator
+        $Menu add command -label "Resume in new terminal tab" \
+            -command [list [self] menu_resume 0]
+        $Menu add command -label "Resume forked" -command [list [self] menu_resume 1]
+        $Menu add separator
+        $Menu add command -label "Move to..." -command [list [self] menu_move]
+        $Menu add command -label "Reveal folder" -command [list [self] menu_reveal]
+        $Menu add separator
+        $Menu add command -label "Bookmark" -command [list [self] menu_bookmark]
+        set MenuTarget [dict create]
+        set MenuPath ""
+    }
+
+    # ---- view-anchoring around streaming inserts ----------------------
+    #
+    # A streaming insert must not shift what the reader is looking at. Two
+    # cases: if the reader is at the very top (the default while browsing or
+    # watching results arrive), keep them pinned to the absolute top so the
+    # newest content and the folder heading stay in view; if they have
+    # scrolled into the list, pin the character that was at the top so an
+    # insert above it scrolls to compensate and their line does not move.
+
+    variable AtTop
+    method anchor_save {} {
+        set AtTop [expr {[lindex [$Text yview] 0] <= 0.0001}]
+        $Text mark set AnchorTop @0,0
+        $Text mark gravity AnchorTop left
+    }
+    method anchor_restore {} {
+        if {[info exists AtTop] && $AtTop} {
+            $Text yview moveto 0
+        } else {
+            catch {$Text yview AnchorTop}
+        }
+        catch {$Text mark unset AnchorTop}
+    }
+
+    # ---- filter / clear ----------------------------------------------
+
+    method clear {} {
+        $Text configure -state normal
+        $Text delete 1.0 end
+        my purge_tags_and_marks
+        $Text mark set TailMark "end-1c"
+        $Text mark gravity TailMark right
+        $Text configure -state disabled
+        my reset_model
+        set StatusVar "Idle"
+    }
+
+    # Drop the per-region tags and position marks left behind by a cleared
+    # body, so neither accumulates across filter changes.
+    method purge_tags_and_marks {} {
+        foreach t [$Text tag names] {
+            if {[string match "s#*" $t] || [string match "f#*" $t] \
+                || [string match "n#*" $t]} {
+                $Text tag delete $t
+            }
+        }
+        foreach m [$Text mark names] {
+            if {[string match "sm*" $m] || [string match "se*" $m] \
+                || [string match "fm*" $m] || [string match "fe*" $m]} {
+                $Text mark unset $m
+            }
+        }
+    }
+
+    method apply_filter {snapshot} {
+        set Snapshot $snapshot
+        set CriteriaActive [::csm::ui::any_criteria $snapshot]
+        my clear
+    }
+
+    method set_query {regex_list nocase} {
+        set Query [dict create regex $regex_list nocase $nocase]
+    }
+
+    # ---- snapshot membership -----------------------------------------
+
+    method row_matches_snapshot {row} {
+        set window [my dict_or $Snapshot window 7d]
+        set one_turn [my dict_or $Snapshot one_turn 1]
+        set cwd_only [my dict_or $Snapshot cwd_only 0]
+        set cwd      [my dict_or $Snapshot cwd ""]
+        set bookmarked_only [my dict_or $Snapshot bookmarked_only 0]
+        set bk [my dict_or $row bookmarked 0]
+        if {$bookmarked_only && !$bk} { return 0 }
+        set cutoff 0
+        if {$window ne "all"} {
+            set hours [dict get {24h 24 7d 168 30d 720} $window]
+            set cutoff [expr {[clock seconds] - $hours*3600}]
+        }
+        if {[dict get $row mtime] <= $cutoff && !$bk} { return 0 }
+        if {$one_turn && ![dict get $row is_multi]} { return 0 }
+        if {$cwd_only && $cwd ne ""} {
+            set cwd_folder [::csm::path::encode_cwd $cwd]
+            if {[dict get $row folder] ne $cwd_folder} { return 0 }
+        }
+        return 1
+    }
+
+    # ---- streaming inserts -------------------------------------------
+
+    # Browse-mode row from Scan. Skipped under running-only (the reconciler
+    # owns the display then) and when criteria are active (the result index
+    # is built from matches, not the scan stream).
+    method on_scan_row {row} {
+        if {[my dict_or $Snapshot running_only 0]} return
+        if {$CriteriaActive} return
+        if {![my row_matches_snapshot $row]} return
+        set path [dict get $row path]
+        if {[dict exists $Sessions $path]} return
+        $Text configure -state normal
+        my anchor_save
+        my add_session $path $row
+        my anchor_restore
+        $Text configure -state disabled
+    }
+
+    # Match record from Search. The first match for a session creates its
+    # card; later matches bump the count and add a snippet (capped at three).
+    method add_match {match} {
+        set path [dict get $match path]
+        set btype [dict get $match btype]
+        set content [dict get $match content]
+        set lineoff [dict get $match lineoff]
+        $Text configure -state normal
+        my anchor_save
+        if {![dict exists $Sessions $path]} {
+            set row [{*}$LookupSession $path]
+            if {$row eq ""} { set row [dict create folder [dict get $match folder]] }
+            my add_session $path $row $lineoff
+        }
+        my add_snippet $path $btype $content $lineoff
+        my anchor_restore
+        $Text configure -state disabled
+    }
+
+    # Create a session card (folder heading on demand, then the header line).
+    # first_lineno is where a header click opens the viewer; 0 means top.
+    method add_session {path row {first_lineno 0}} {
+        set folder [dict get $row folder]
+        my ensure_folder $folder
+        set fdata [dict get $Folders $folder]
+        set femark [dict get $fdata femark]
+
+        set label [my session_label $path $row]
+        set when  [my fmt_time [my dict_or $row mtime 0]]
+        set uuid  [my dict_or $row uuid [file rootname [file tail $path]]]
+        set stag  "s#[incr NextId]"
+        dict set Sessions $path [dict create \
+            folder $folder label $label when $when uuid $uuid \
+            count 0 first_lineno $first_lineno snippets [list] \
+            stag $stag smark "" semark ""]
+
+        set sstart [$Text index $femark]
+        $Text insert $femark "[my session_header_text $path]\n" \
+            [list sessionhead $stag]
+        set smark "sm[incr NextId]"
+        $Text mark set $smark $sstart
+        $Text mark gravity $smark left
+        set send [$Text index "$smark lineend +1c"]
+        set semark "se[incr NextId]"
+        $Text mark set $semark $send
+        $Text mark gravity $semark left
+        # The folder's append point (left gravity, advanced by hand) now sits
+        # at this session's end, so the next session in the folder lands here.
+        $Text mark set $femark $send
+        dict set Sessions $path smark $smark
+        dict set Sessions $path semark $semark
+
+        $Text tag bind $stag <ButtonPress-1> \
+            [list [self] on_session_press $path %X %Y]
+        $Text tag bind $stag <ButtonRelease-1> \
+            [list [self] on_session_release $path %X %Y]
+        $Text tag bind $stag <Double-Button-1> \
+            [list [self] on_session_open $path]
+        $Text tag bind $stag <Button-3> \
+            [list [self] on_session_right $path %X %Y]
+
+        dict lappend SessionsByFolder $folder $path
+    }
+
+    method add_snippet {path btype content lineoff} {
+        set s [dict get $Sessions $path]
+        set count [expr {[dict get $s count] + 1}]
+        dict set Sessions $path count $count
+        my redraw_header $path
+        # Keep at most three snippet rows on screen; the header count still
+        # reports the true total.
+        if {[llength [dict get $Sessions $path snippets]] >= 3} return
+        set sn [dict get $Sessions $path snippets]
+        lappend sn [list $btype $content $lineoff]
+        dict set Sessions $path snippets $sn
+
+        set semark [dict get $s semark]
+        set ntag "n#[incr NextId]"
+        set type_tag type-$btype
+        if {[lsearch -exact [$Text tag names] $type_tag] < 0} {
+            set type_tag type-system
+        }
+        # Build at a temporary right-gravity mark so the pieces land in order;
+        # semark is left gravity and would otherwise reverse successive inserts.
+        set tmp tmpsnip
+        $Text mark set $tmp [$Text index $semark]
+        $Text mark gravity $tmp right
+        $Text insert $tmp $btype [list snippet $type_tag $ntag]
+        $Text insert $tmp "\t" [list snippet $ntag]
+        set cstart [$Text index $tmp]
+        $Text insert $tmp $content [list snippet $ntag]
+        set cend [$Text index $tmp]
+        $Text insert $tmp "\n" [list snippet $ntag]
+        my tag_hits_in_range $cstart $cend $content
+        $Text tag bind $ntag <ButtonRelease-1> \
+            [list [self] on_snippet_click $path]
+        $Text tag bind $ntag <Double-Button-1> \
+            [list [self] on_snippet_open $path $lineoff]
+        # Advance this session's end and the folder's append point past the
+        # snippet (the session receiving snippets is always its folder's last).
+        $Text mark set $semark [$Text index $tmp]
+        $Text mark unset $tmp
+        set folder [dict get $s folder]
+        if {[dict exists $Folders $folder]} {
+            $Text mark set [dict get [dict get $Folders $folder] femark] \
+                [$Text index $semark]
+        }
+    }
+
+    method session_label {path row} {
+        set body [my dict_or $row first_user ""]
+        if {$body eq ""} { set body [my dict_or $row uuid [file rootname [file tail $path]]] }
+        return $body
+    }
+
+    method session_header_text {path} {
+        set s [dict get $Sessions $path]
+        set running [dict exists $RunningSet [dict get $s uuid]]
+        set bk [my session_bookmarked $path]
+        set g [my glyph_cell $running $bk]
+        set line ""
+        if {$g ne ""} { append line "$g " }
+        append line [dict get $s label]
+        set meta [list]
+        set when [dict get $s when]
+        if {$when ne ""} { lappend meta $when }
+        set count [dict get $s count]
+        if {$count > 0} {
+            lappend meta "$count [expr {$count == 1 ? {match} : {matches}}]"
+        }
+        if {[llength $meta]} { append line "   ·   [join $meta {   ·   }]" }
+        return $line
+    }
+
+    method session_bookmarked {path} {
+        set row [{*}$LookupSession $path]
+        if {$row ne ""} { return [my dict_or $row bookmarked 0] }
+        return [file executable $path]
+    }
+
+    # Rewrite a session header line in place (glyphs, count). Leaves the
+    # surrounding lines untouched, so a per-tick glyph refresh never shifts
+    # the view.
+    method redraw_header {path} {
+        set s [dict get $Sessions $path]
+        set smark [dict get $s smark]
+        set stag  [dict get $s stag]
+        set tags [list sessionhead $stag]
+        if {$Selected eq $path} { lappend tags selected }
+        $Text delete $smark "$smark lineend"
+        $Text insert $smark [my session_header_text $path] $tags
+    }
+
+    method ensure_folder {folder} {
+        if {[dict exists $Folders $folder]} return
+        set label [::csm::path::display_label [{*}$ResolveFolder $folder] $folder]
+        set htag "f#[incr NextId]"
+        set fstart [$Text index TailMark]
+        $Text insert TailMark "$label\n" [list folderhead $htag]
+        set fmark "fm[incr NextId]"
+        $Text mark set $fmark $fstart
+        $Text mark gravity $fmark left
+        set femark "fe[incr NextId]"
+        $Text mark set $femark [$Text index TailMark]
+        $Text mark gravity $femark left
+        dict set Folders $folder [dict create fmark $fmark femark $femark htag $htag]
+        dict set HtagFolder $htag $folder
+        dict set SessionsByFolder $folder [list]
+        lappend FolderOrder $folder
+    }
+
+    method glyph_cell {running bookmarked} {
+        set s ""
+        if {$running}    { append s $::csm::ui::GLYPH_RUNNING }
+        if {$bookmarked} { append s $::csm::ui::GLYPH_BOOKMARK }
+        return $s
+    }
+
+    method tag_hits_in_range {start end snippet} {
+        set patterns [dict get $Query regex]
+        if {[llength $patterns] == 0} return
+        set nocase [dict get $Query nocase]
+        set hue_count [llength $HitTags]
+        if {$hue_count == 0} return
+        set re_opts [list -indices -all -inline]
+        if {$nocase} { lappend re_opts -nocase }
+        set i 0
+        foreach pat $patterns {
+            if {$pat eq ""} { incr i; continue }
+            set tag [lindex $HitTags [expr {$i % $hue_count}]]
+            if {[catch {regexp {*}$re_opts -- $pat $snippet} hits]} { incr i; continue }
+            foreach span $hits {
+                lassign $span s e
+                set ts [$Text index "$start + ${s}c"]
+                set te [$Text index "$start + [expr {$e + 1}]c"]
+                $Text tag add $tag $ts $te
+            }
+            incr i
+        }
+    }
+
+    # ---- selection / open --------------------------------------------
+
+    method select {path} {
+        if {$Selected ne "" && [dict exists $Sessions $Selected]} {
+            set os [dict get $Sessions $Selected]
+            set osm [dict get $os smark]
+            catch {$Text tag remove selected $osm "$osm lineend"}
+        }
+        set Selected $path
+        if {[dict exists $Sessions $path]} {
+            set sm [dict get [dict get $Sessions $path] smark]
+            $Text tag add selected $sm "$sm lineend"
+        }
+    }
+
+    method open_session {path {lineno -1}} {
+        if {$lineno < 0} {
+            set lineno 0
+            if {[dict exists $Sessions $path]} {
+                set lineno [dict get [dict get $Sessions $path] first_lineno]
+            }
+        }
+        {*}$OnOpen $path $lineno
+    }
+
+    # A plain click selects (and, having armed a drag on press, lets a drag
+    # win if the pointer moved). Opening the viewer is a double-click, so a
+    # single click can begin a drag without also loading the reading view.
+    method on_session_release {path X Y} {
+        set was_drag [::csm::ui::drag::release $X $Y]
+        if {$was_drag} return
+        my select $path
+    }
+
+    method on_session_open {path} {
+        my select $path
+        my open_session $path
+    }
+
+    method on_snippet_click {path} { my select $path }
+
+    method on_snippet_open {path lineno} {
+        my select $path
+        my open_session $path $lineno
+    }
+
+    # ---- drag-to-move -------------------------------------------------
+
+    method on_session_press {path X Y} {
+        ::csm::ui::drag::watch $Text $X $Y [list $path] \
+            [list [self] handle_drop] \
+            [list [self] drag_hit] [list [self] drag_paint]
+    }
+
+    method drag_hit {X Y} {
+        set lx [expr {$X - [winfo rootx $Text]}]
+        set ly [expr {$Y - [winfo rooty $Text]}]
+        set idx [$Text index @$lx,$ly]
+        foreach t [$Text tag names $idx] {
+            if {[dict exists $HtagFolder $t]} { return [dict get $HtagFolder $t] }
+        }
+        return ""
+    }
+
+    method drag_paint {old new} {
+        if {$old ne "" && [dict exists $Folders $old]} {
+            set fm [dict get [dict get $Folders $old] fmark]
+            catch {$Text tag remove drop-candidate $fm "$fm lineend"}
+        }
+        if {$new ne "" && [dict exists $Folders $new]} {
+            set fm [dict get [dict get $Folders $new] fmark]
+            $Text tag add drop-candidate $fm "$fm lineend"
+        }
+    }
+
+    method handle_drop {paths target_folder} {
+        {*}$OnDropMove $paths $target_folder
+    }
+
+    # ---- right-click menu --------------------------------------------
+
+    method on_session_right {path X Y} {
+        set row [{*}$LookupSession $path]
+        set uuid [file rootname [file tail $path]]
+        set folder ""
+        set cwd ""
+        if {$row ne ""} {
+            set folder [my dict_or $row folder ""]
+            set uuid [my dict_or $row uuid $uuid]
+        }
+        if {$folder eq "" && [dict exists $Sessions $path]} {
+            set folder [dict get [dict get $Sessions $path] folder]
+        }
+        if {$folder ne ""} { set cwd [{*}$ResolveFolder $folder] }
+        set MenuPath $path
+        set MenuTarget [dict create path $path uuid $uuid cwd $cwd folder $folder]
+
+        set rstate [expr {$cwd ne "" ? "normal" : "disabled"}]
+        foreach lbl {"Copy resume command" "Resume in new terminal tab" \
+                     "Resume forked"} {
+            $Menu entryconfigure $lbl -state $rstate
+        }
+        $Menu entryconfigure "Reveal folder" \
+            -state [expr {$folder ne "" ? "normal" : "disabled"}]
+        $Menu entryconfigure "Bookmark" \
+            -label [expr {[file executable $path] ? "Remove bookmark" : "Add bookmark"}]
+        tk_popup $Menu $X $Y
+    }
+
+    method menu_target_get {key} { return [dict get $MenuTarget $key] }
+    method menu_open {} { my open_session $MenuPath }
+    method menu_copy_resume {} {
+        my clipboard_set [::csm::terminal::resume_command \
+            [my menu_target_get cwd] [my menu_target_get uuid]]
+    }
+    method menu_copy_uuid {} { my clipboard_set [my menu_target_get uuid] }
+    method menu_copy_path {} { my clipboard_set $MenuPath }
+    method menu_copy_last_assistant {} {
+        my clipboard_set [::csm::jsonl::last_assistant_text [my menu_target_get path]]
+    }
+    method menu_resume {fork} {
+        ::csm::terminal::launch_tab [my menu_target_get cwd] \
+            [my menu_target_get uuid] $fork
+    }
+    method menu_reveal {} {
+        set dir [file join [::csm::path::projects_root] [my menu_target_get folder]]
+        if {[catch {exec xdg-open $dir &} err]} {
+            puts stderr "csm: xdg-open failed: $err"
+        }
+    }
+    method menu_move {} { {*}$OnMoveRequest [list $MenuPath] }
+    method menu_bookmark {} { {*}$OnBookmarkToggle $MenuPath }
+    method clipboard_set {s} { clipboard clear; clipboard append $s }
+
+    # ---- running / bookmark reconciliation ---------------------------
+
+    # Re-derive the running glyph for every shown session from a fresh
+    # running set, surfacing running sessions that are not yet shown and
+    # dropping rows that no longer pass a running-only / bookmarked-only
+    # filter. Idempotent: running it twice is a no-op, and a missed tick
+    # self-corrects on the next.
+    method reconcile_running {running} {
+        set RunningSet $running
+        set running_only    [my dict_or $Snapshot running_only 0]
+        set bookmarked_only [my dict_or $Snapshot bookmarked_only 0]
+
+        $Text configure -state normal
+        my anchor_save
+        if {$running_only || !$CriteriaActive} {
+            dict for {uuid path} $running {
+                if {[dict exists $Sessions $path]} continue
+                set row [{*}$LookupSession $path]
+                if {$row eq "" && [file isfile $path]} {
+                    set row [{*}$OnScanPath $path]
+                }
+                if {$row eq "" || ![dict size $row]} continue
+                my add_session $path $row
+            }
+        }
+        foreach path [my all_session_paths] {
+            if {![dict exists $Sessions $path]} continue
+            set uuid [dict get [dict get $Sessions $path] uuid]
+            set is_running [dict exists $running $uuid]
+            set row [{*}$LookupSession $path]
+            set bk 0
+            if {$row ne ""} { set bk [my dict_or $row bookmarked 0] }
+            if {$running_only && $bookmarked_only} {
+                set keep [expr {$is_running && $bk}]
+            } elseif {$running_only} {
+                set keep $is_running
+            } elseif {$bookmarked_only} {
+                set keep $bk
+            } elseif {$CriteriaActive} {
+                set keep 1
+            } else {
+                set keep [expr {($row ne "" && [my row_matches_snapshot $row]) || $is_running}]
+            }
+            if {!$keep} { my forget_session $path; continue }
+            my redraw_header $path
+        }
+        my anchor_restore
+        $Text configure -state disabled
+    }
+
+    method reconcile_one {path} {
+        if {![dict exists $Sessions $path]} return
+        $Text configure -state normal
+        my redraw_header $path
+        $Text configure -state disabled
+    }
+
+    method all_session_paths {} {
+        set out [list]
+        foreach folder $FolderOrder {
+            foreach path [my dict_or $SessionsByFolder $folder {}] { lappend out $path }
+        }
+        return $out
+    }
+
+    # ---- removal / relocation ----------------------------------------
+
+    method forget_session {path} {
+        if {![dict exists $Sessions $path]} return
+        set s [dict get $Sessions $path]
+        set folder [dict get $s folder]
+        set smark [dict get $s smark]
+        set semark [dict get $s semark]
+        $Text delete $smark $semark
+        catch {$Text mark unset $smark $semark}
+        dict unset Sessions $path
+        if {$Selected eq $path} { set Selected "" }
+        set lst [my dict_or $SessionsByFolder $folder {}]
+        set i [lsearch -exact $lst $path]
+        if {$i >= 0} { dict set SessionsByFolder $folder [lreplace $lst $i $i] }
+        if {[llength [my dict_or $SessionsByFolder $folder {}]] == 0} {
+            my forget_folder $folder
+        }
+    }
+
+    method forget_folder {folder} {
+        if {![dict exists $Folders $folder]} return
+        set f [dict get $Folders $folder]
+        set fmark [dict get $f fmark]
+        set femark [dict get $f femark]
+        $Text delete $fmark $femark
+        catch {$Text mark unset $fmark $femark}
+        dict unset HtagFolder [dict get $f htag]
+        dict unset Folders $folder
+        dict unset SessionsByFolder $folder
+        set i [lsearch -exact $FolderOrder $folder]
+        if {$i >= 0} { set FolderOrder [lreplace $FolderOrder $i $i] }
+    }
+
+    # After a move renames the file, re-key the model and rebuild the view
+    # so the session appears under its new folder. A full rebuild keeps the
+    # mark scheme consistent; moves are rare, so the cost is not on a hot path.
+    method relocate_card {old_path new_path new_folder} {
+        if {![dict exists $Sessions $old_path]} return
+        set s [dict get $Sessions $old_path]
+        set old_folder [dict get $s folder]
+        dict set s folder $new_folder
+        dict unset Sessions $old_path
+        dict set Sessions $new_path $s
+        set lst [my dict_or $SessionsByFolder $old_folder {}]
+        set i [lsearch -exact $lst $old_path]
+        if {$i >= 0} { dict set SessionsByFolder $old_folder [lreplace $lst $i $i] }
+        if {![dict exists $SessionsByFolder $new_folder]} {
+            dict set SessionsByFolder $new_folder [list]
+            lappend FolderOrder $new_folder
+        }
+        dict lappend SessionsByFolder $new_folder $new_path
+        if {$Selected eq $old_path} { set Selected $new_path }
+        my redraw_all
+    }
+
+    method redraw_all {} {
+        $Text configure -state normal
+        my anchor_save
+        $Text delete 1.0 end
+        my purge_tags_and_marks
+        $Text mark set TailMark "end-1c"
+        $Text mark gravity TailMark right
+        # Snapshot the model, then rebuild it through the normal insert paths.
+        set saved $Sessions
+        set order $FolderOrder
+        set byfolder $SessionsByFolder
+        set Folders [dict create]
+        set FolderOrder [list]
+        set SessionsByFolder [dict create]
+        set HtagFolder [dict create]
+        set Sessions [dict create]
+        foreach folder $order {
+            foreach path [my dict_or $byfolder $folder {}] {
+                if {![dict exists $saved $path]} continue
+                set s [dict get $saved $path]
+                my add_session $path \
+                    [dict create folder [dict get $s folder] \
+                         uuid [dict get $s uuid] mtime 0 \
+                         first_user [dict get $s label]] \
+                    [dict get $s first_lineno]
+                # Restore label/when/count verbatim, then replay snippets.
+                dict set Sessions $path label [dict get $s label]
+                dict set Sessions $path when [dict get $s when]
+                foreach snip [dict get $s snippets] {
+                    lassign $snip btype content lineoff
+                    my add_snippet $path $btype $content $lineoff
+                }
+                # add_snippet bumped count per replayed snippet; restore truth.
+                dict set Sessions $path count [dict get $s count]
+                my redraw_header $path
+            }
+        }
+        if {$Selected ne "" && [dict exists $Sessions $Selected]} {
+            set sm [dict get [dict get $Sessions $Selected] smark]
+            $Text tag add selected $sm "$sm lineend"
+        }
+        my anchor_restore
+        $Text configure -state disabled
+    }
+
+    # ---- status ------------------------------------------------------
+
+    method set_progress {done total matches} {
+        set StatusVar "Searching … $done / $total sessions   matches: $matches"
+    }
+    method set_done {total matches} {
+        set StatusVar "Done. $total sessions, $matches matches."
+    }
+    method cancel {} {
+        if {$CancelCb ne ""} { {*}$CancelCb }
+        set StatusVar "Cancelled."
+    }
+
+    # ---- formatting helpers ------------------------------------------
+
+    method fmt_time {epoch} {
+        if {$epoch eq "" || $epoch == 0} { return "" }
+        return [clock format $epoch -format "%a %d %b %H:%M"]
+    }
+
+    method dict_or {d k default} {
+        if {[dict exists $d $k]} { return [dict get $d $k] }
+        return $default
+    }
+}

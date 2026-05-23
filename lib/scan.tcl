@@ -218,8 +218,8 @@ oo::class create ::csm::Scan {
         if {$OnRow ne ""} { {*}$OnRow $row }
     }
 
-    # Filter rows by a snapshot. Used by Tree/Results/Search to read the
-    # current memoised view. Returns a list of row dicts, mtime DESC.
+    # Filter rows by a snapshot. Used by the session list and Search to read
+    # the current memoised view. Returns a list of row dicts, mtime DESC.
     method query {snapshot {folder ""}} {
         set window [my dict_or $snapshot window 7d]
         set one_turn [my dict_or $snapshot one_turn 1]
@@ -313,8 +313,8 @@ oo::class create ::csm::Scan {
     # Re-derive a row's bookmarked flag from disk truth after a toggle.
     # The +x bit is authoritative; this only refreshes the cached field so
     # query/filter see it. The visible glyph is refreshed separately by
-    # the tree (reconcile_one). Routed through Scan to keep Rows mutation
-    # in one place (no caller pokes Rows directly).
+    # the session list (reconcile_one). Routed through Scan to keep Rows
+    # mutation in one place (no caller pokes Rows directly).
     method set_bookmark_field {path} {
         if {![dict exists $Rows $path]} return
         set row [dict get $Rows $path]
@@ -326,8 +326,8 @@ oo::class create ::csm::Scan {
     # project folder. The row's path and folder are updated; mtime/size
     # are re-read because the rename preserves them but we want any
     # subsequent extend pass to see a consistent state. OnRow fires so
-    # the tree can re-insert under the new folder. The caller is
-    # responsible for removing the old iid from the UI first - OnRow
+    # the session list can re-insert under the new folder. The caller is
+    # responsible for removing the old entry from the UI first - OnRow
     # has no "forget" channel.
     method relocate_row {old_path new_path} {
         if {![dict exists $Rows $old_path]} { return }
