@@ -801,6 +801,13 @@ oo::class create ::csm::ui::SessionList {
                     set row [{*}$OnScanPath $path]
                 }
                 if {$row eq "" || ![dict size $row]} continue
+                # OnScanPath above is not a pure read: scan_path -> publish_row
+                # fires OnRow, which in browse mode is on_scan_row, which has
+                # already added (and rendered) this session. Re-check so we do
+                # not add it a second time. A running session that on_scan_row
+                # filtered out (out of window / one-turn) is still absent here
+                # and is added below, so running sessions always surface.
+                if {[dict exists $Sessions $path]} continue
                 my model_add_session $path $row
                 if {[my folder_expanded [dict get $row folder]]} {
                     my render_session $path
@@ -811,6 +818,15 @@ oo::class create ::csm::ui::SessionList {
             if {![dict exists $Sessions $path]} continue
             set uuid [dict get [dict get $Sessions $path] uuid]
             set is_running [dict exists $running $uuid]
+            # A session that is not running and whose backing jsonl is gone is
+            # a phantom in every mode - a Resume-forked session quit before any
+            # input leaves no file, but its cached Rows row outlives the file
+            # and would otherwise keep it (and its folder count) forever. A
+            # still-running session is exempt: its file may be mid-creation.
+            if {!$is_running && ![file isfile $path]} {
+                my forget_session $path
+                continue
+            }
             set row [{*}$LookupSession $path]
             set bk 0
             if {$row ne ""} { set bk [my dict_or $row bookmarked 0] }

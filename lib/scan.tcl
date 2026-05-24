@@ -296,6 +296,11 @@ oo::class create ::csm::Scan {
         return ""
     }
 
+    # Rows is memoised and never pruned when a file is deleted, so a returned
+    # row may describe a jsonl that no longer exists on disk (e.g. a Resume-
+    # forked session quit before any input, which Claude leaves no file for).
+    # Callers that decide visibility must existence-check the path themselves
+    # rather than trust a non-empty row here - see reconcile_running.
     method lookup {path} {
         if {[dict exists $Rows $path]} { return [dict get $Rows $path] }
         return ""
