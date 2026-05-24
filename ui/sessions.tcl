@@ -66,6 +66,7 @@ oo::class create ::csm::ui::SessionList {
     variable Menu
     variable MenuPath
     variable MenuTarget
+    variable BookmarkIndex    ;# menu index of the Bookmark entry (its label mutates)
 
     constructor {parent resolve_cb lookup_cb on_open on_move_request \
                  on_drop_move on_bookmark_toggle on_scan_path cancel_cb} {
@@ -210,6 +211,9 @@ oo::class create ::csm::ui::SessionList {
         $Menu add command -label "Reveal folder" -command [list [self] menu_reveal]
         $Menu add separator
         $Menu add command -label "Bookmark" -command [list [self] menu_bookmark]
+        # Addressed by index, not label: on_session_right rewrites this label
+        # to Add/Remove bookmark, so a label lookup would fail on the next open.
+        set BookmarkIndex [$Menu index end]
         set MenuTarget [dict create]
         set MenuPath ""
     }
@@ -745,7 +749,7 @@ oo::class create ::csm::ui::SessionList {
         }
         $Menu entryconfigure "Reveal folder" \
             -state [expr {$folder ne "" ? "normal" : "disabled"}]
-        $Menu entryconfigure "Bookmark" \
+        $Menu entryconfigure $BookmarkIndex \
             -label [expr {[file executable $path] ? "Remove bookmark" : "Add bookmark"}]
         tk_popup $Menu $X $Y
     }
