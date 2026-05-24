@@ -1,21 +1,25 @@
 package require Tcl 9
 package require Tk
 
-# ::csm::app - startup wiring. Constructs Scan, Toolbar, Tree, Results,
-# Search. No splash: the empty UI renders immediately and rows stream in
-# via the Scan coroutine. Status-bar shows scanning progress while in
-# flight.
+# ::csm::app - startup wiring. Constructs Scan, Toolbar, SessionList, Viewer,
+# Search. No splash: the empty UI renders immediately and rows stream in via
+# the Scan coroutine. Status-bar shows scanning progress while in flight.
+#
+# Layout is a fixed horizontal split: the session list on the left (browser
+# and search-result index in one), the reading view docked on the right. A
+# single click in the list opens the session in the viewer, anchored.
 
 namespace eval ::csm::app {
     variable Scan
     variable Search
     variable Toolbar
-    variable Tree
-    variable Results
+    variable SessionList
+    variable Viewer
     variable StatusVar
-    variable PW
-    variable ResultsVisible
     variable Root
+    variable PW            ;# the horizontal paned window
+    variable ViewFrame     ;# the viewer's container, added to PW on first open
+    variable ViewerShown   ;# 0 until the reading view is first revealed
     variable Running       ;# last polled uuid -> path running set
     variable RunTimer      ;# after-id of the running-poll loop
 }
@@ -24,17 +28,18 @@ proc ::csm::app::start {root {initial_criteria {}}} {
     variable Scan
     variable Search
     variable Toolbar
-    variable Tree
-    variable Results
+    variable SessionList
+    variable Viewer
     variable StatusVar
-    variable PW
-    variable ResultsVisible
     variable Root
+    variable PW
+    variable ViewFrame
+    variable ViewerShown
     variable Running
 
     set Root $root
-    set ResultsVisible 0
     set StatusVar ""
+    set ViewerShown 0
     set Running [dict create]
 
     wm title . "Claude Session Manager"
@@ -47,35 +52,29 @@ proc ::csm::app::start {root {initial_criteria {}}} {
     pack .top.tb -side top -fill x
 
     set PW .top.pw
-    ttk::panedwindow $PW -orient vertical
+    ttk::panedwindow $PW -orient horizontal
     pack $PW -side top -fill both -expand 1
 
-    set tree_frame $PW.tree
-    ttk::frame $tree_frame
-    set Tree [::csm::ui::Tree new $tree_frame.t \
+    set list_frame $PW.list
+    ttk::frame $list_frame
+    set SessionList [::csm::ui::SessionList new $list_frame.s \
         [namespace code resolve_folder] \
         [namespace code lookup_session] \
-        [namespace code on_session_select] \
-        [namespace code on_session_open] \
-        [namespace code on_scope_change] \
+        [namespace code on_open] \
         [namespace code on_move_request] \
         [namespace code on_drop_move] \
         [namespace code on_bookmark_toggle] \
-        [namespace code on_scan_path]]
-    pack $tree_frame.t -side top -fill both -expand 1
-    $PW add $tree_frame -weight 3
+        [namespace code on_scan_path] \
+        [namespace code on_search_cancel]]
+    pack $list_frame.s -side top -fill both -expand 1
+    $PW add $list_frame -weight 2
 
-    set res_frame $PW.res
-    ttk::frame $res_frame
-    set Results [::csm::ui::Results new $res_frame.r \
-        [namespace code resolve_folder] \
-        [namespace code on_search_cancel] \
-        [namespace code on_result_select] \
-        [namespace code on_result_open] \
-        [namespace code on_move_request] \
-        [namespace code on_drop_move] \
-        [$Tree tv_path]]
-    pack $res_frame.r -side top -fill both -expand 1
+    # The reading view is built now but stays out of the paned window until a
+    # session or snippet is clicked, so the window opens as just the list.
+    set ViewFrame $PW.view
+    ttk::frame $ViewFrame
+    set Viewer [::csm::ui::Viewer new $ViewFrame.v]
+    pack $ViewFrame.v -side top -fill both -expand 1
 
     ttk::label .top.status -textvariable [namespace which -variable StatusVar] \
         -anchor w -relief sunken
@@ -93,11 +92,7 @@ proc ::csm::app::start {root {initial_criteria {}}} {
 
     $Toolbar subscribe [namespace code on_filter]
     foreach c $initial_criteria {
-        if {[dict get $c type] eq "regex"} {
-            $Toolbar add_row [dict get $c value]
-        } else {
-            $Toolbar add_path_row [dict get $c type] [dict get $c value]
-        }
+        $Toolbar add_criterion_row [dict get $c type] [dict get $c value]
     }
     $Toolbar publish
 
@@ -112,11 +107,11 @@ proc ::csm::app::start {root {initial_criteria {}}} {
 # state, then re-arm. 2s keeps the markers current without busy-polling;
 # the cost is O(running sessions), independent of the on-disk corpus.
 proc ::csm::app::run_tick {} {
-    variable Tree
+    variable SessionList
     variable Running
     variable RunTimer
     set Running [::csm::live::running_uuids]
-    $Tree reconcile_running $Running
+    $SessionList reconcile_running $Running
     set RunTimer [after 2000 [namespace code run_tick]]
 }
 
@@ -125,47 +120,36 @@ proc ::csm::app::run_tick {} {
 proc ::csm::app::on_filter {snapshot} {
     variable Scan
     variable Search
-    variable Tree
-    variable Results
-    variable PW
-    variable ResultsVisible
+    variable SessionList
     variable Running
 
     set has_criteria [::csm::ui::any_criteria $snapshot]
-    if {$has_criteria && !$ResultsVisible} {
-        $PW add $PW.res -weight 2
-        set ResultsVisible 1
-    } elseif {!$has_criteria && $ResultsVisible} {
-        $PW forget $PW.res
-        $Results clear
-        set ResultsVisible 0
-    }
 
-    $Tree apply_filter $snapshot
+    $SessionList apply_filter $snapshot
 
     # Under running-only the reconciler builds the view straight from the
     # live registry (it scans any running file it needs on demand), so the
-    # windowed replay/extend is skipped. Otherwise replay the memoised
-    # rows that match the new snapshot - Scan's coroutine skips memoised
-    # paths, so without this the tree stays empty whenever the snapshot was
-    # previously seen (e.g. 24h to 7d) - then extend for newly-windowed
-    # files.
+    # windowed replay/extend is skipped. Otherwise replay the memoised rows
+    # that match the new snapshot - Scan's coroutine skips memoised paths, so
+    # without this the list stays empty whenever the snapshot was previously
+    # seen (e.g. 24h to 7d) - then extend for newly-windowed files. With
+    # criteria active the list is built from matches, but the scan still runs
+    # so Search has a corpus and lookup_session resolves rows.
     set running_only [expr {[dict exists $snapshot running_only]
                             ? [dict get $snapshot running_only] : 0}]
     if {!$running_only} {
         foreach row [$Scan query $snapshot] {
-            $Tree on_scan_row $row
+            $SessionList on_scan_row $row
         }
         $Scan extend $snapshot
     }
 
-    # Seed running markers and membership now, in the same event-loop turn,
-    # so there is no flash of the pre-reconcile state.
-    $Tree reconcile_running $Running
+    # Seed running markers now, in the same event-loop turn, so there is no
+    # flash of the pre-reconcile state.
+    $SessionList reconcile_running $Running
 
     if {$has_criteria} {
-        $Results clear
-        $Results set_query \
+        $SessionList set_query \
             [::csm::ui::regex_values $snapshot] [dict get $snapshot case]
         $Search start $snapshot
     } else {
@@ -176,8 +160,8 @@ proc ::csm::app::on_filter {snapshot} {
 # ---- scan callbacks ----------------------------------------------------
 
 proc ::csm::app::on_scan_row {row} {
-    variable Tree
-    $Tree on_scan_row $row
+    variable SessionList
+    $SessionList on_scan_row $row
 }
 
 proc ::csm::app::on_scan_progress {done total} {
@@ -199,20 +183,18 @@ proc ::csm::app::on_scan_done {scanned} {
 # ---- search callbacks --------------------------------------------------
 
 proc ::csm::app::on_search_match {match} {
-    variable Tree
-    variable Results
-    $Tree update_match $match
-    $Results add_match $match
+    variable SessionList
+    $SessionList add_match $match
 }
 
 proc ::csm::app::on_search_progress {done total matches} {
-    variable Results
-    $Results set_progress $done $total $matches
+    variable SessionList
+    $SessionList set_progress $done $total $matches
 }
 
 proc ::csm::app::on_search_done {total matches} {
-    variable Results
-    $Results set_done $total $matches
+    variable SessionList
+    $SessionList set_done $total $matches
 }
 
 proc ::csm::app::on_search_cancel {} {
@@ -220,31 +202,26 @@ proc ::csm::app::on_search_cancel {} {
     $Search cancel
 }
 
-# ---- tree / results callbacks ------------------------------------------
+# ---- open in the docked viewer -----------------------------------------
 
-proc ::csm::app::on_session_select {path} {
+# A single click in the list lands here: render the whole session on the
+# right and anchor it to lineno (0 = top).
+proc ::csm::app::on_open {path lineno} {
+    variable Viewer
     variable StatusVar
-    set StatusVar $path
-}
-
-proc ::csm::app::on_session_open {path} {
-    ::csm::ui::Viewer new $path 0
-}
-
-proc ::csm::app::on_scope_change {type key} {
-    variable Results
-    $Results set_scope $type $key
-}
-
-proc ::csm::app::on_result_select {path lineoff} {
-    variable Tree
-    variable StatusVar
-    $Tree select_path $path
-    set StatusVar "$path  (line $lineoff)"
-}
-
-proc ::csm::app::on_result_open {path lineoff} {
-    ::csm::ui::Viewer new $path $lineoff
+    variable PW
+    variable ViewFrame
+    variable ViewerShown
+    if {!$ViewerShown} {
+        $PW add $ViewFrame -weight 3
+        set ViewerShown 1
+    }
+    $Viewer show $path $lineno
+    if {$lineno > 0} {
+        set StatusVar "$path  (line $lineno)"
+    } else {
+        set StatusVar $path
+    }
 }
 
 # ---- move callbacks ----------------------------------------------------
@@ -268,10 +245,10 @@ proc ::csm::app::on_picker_done {paths dst_cwd} {
     do_move_batch $paths $dst_cwd
 }
 
-# Drop-move resolves the dropped-on folder basename to its real cwd via
-# the canonical resolver. A drop onto a folder that cannot be resolved
-# (its underlying project directory is gone or ambiguous) is refused
-# rather than silently moving into an orphan.
+# Drop-move resolves the dropped-on folder basename to its real cwd via the
+# canonical resolver. A drop onto a folder that cannot be resolved (its
+# underlying project directory is gone or ambiguous) is refused rather than
+# silently moving into an orphan.
 proc ::csm::app::on_drop_move {paths target_folder_basename} {
     variable Scan
     set dst_cwd [$Scan resolve_folder $target_folder_basename]
@@ -285,7 +262,7 @@ proc ::csm::app::on_drop_move {paths target_folder_basename} {
 
 # Move every path to dst_cwd, then report any failures in one dialog so a
 # batch does not spray a messagebox per session. Successful moves have
-# already updated the three UI components.
+# already updated the list.
 proc ::csm::app::do_move_batch {paths dst_cwd} {
     set failures [list]
     foreach src_path $paths {
@@ -299,13 +276,12 @@ proc ::csm::app::do_move_batch {paths dst_cwd} {
     }
 }
 
-# Move one session into dst_cwd and relocate it across the three UI
-# components. A session already in the destination's encoded folder is a
-# silent no-op - the only "succeed without effect" path. A filesystem
-# failure throws (the error reaches do_move_batch).
+# Move one session into dst_cwd and relocate it in the list. A session
+# already in the destination's encoded folder is a silent no-op - the only
+# "succeed without effect" path. A filesystem failure throws (the error
+# reaches do_move_batch).
 proc ::csm::app::move_one {src_path dst_cwd} {
-    variable Tree
-    variable Results
+    variable SessionList
     variable Scan
     set src_basename [file tail [file dirname $src_path]]
     if {![catch {::csm::path::encode_cwd $dst_cwd} dst_basename]
@@ -314,21 +290,20 @@ proc ::csm::app::move_one {src_path dst_cwd} {
     }
     set new_path [::csm::path::move_session $src_path $dst_cwd]
     set new_folder [::csm::path::encode_cwd $dst_cwd]
-    $Tree relocate_session $src_path $new_path
     $Scan relocate_row $src_path $new_path
-    $Results relocate_card $src_path $new_path $new_folder
+    $SessionList relocate_card $src_path $new_path $new_folder
 }
 
 # ---- bookmark callbacks ------------------------------------------------
 
-# Toggle the +x bookmark bit on the session file. Path comes fresh from
-# the clicked iid, so it is current; a moved/deleted file fails the sink
-# guard and is reported rather than crashing (mirrors do_move). The bit is
-# the truth: flip it, refresh the cached field, then re-derive that one
-# row's marker immediately so the user sees it without waiting for a tick.
+# Toggle the +x bookmark bit on the session file. Path comes fresh from the
+# clicked session, so it is current; a moved/deleted file fails the sink
+# guard and is reported rather than crashing. The bit is the truth: flip it,
+# refresh the cached field, then re-derive that one row's marker immediately
+# so the user sees it without waiting for a tick.
 proc ::csm::app::on_bookmark_toggle {path} {
     variable Scan
-    variable Tree
+    variable SessionList
     if {[file executable $path]} {
         set rc [catch {::csm::path::clear_bookmark $path} err]
     } else {
@@ -340,7 +315,7 @@ proc ::csm::app::on_bookmark_toggle {path} {
         return
     }
     $Scan set_bookmark_field $path
-    $Tree reconcile_one $path
+    $SessionList reconcile_one $path
 }
 
 # Synchronously scan one file into Rows, for the reconciler to surface a

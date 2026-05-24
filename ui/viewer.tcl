@@ -3,9 +3,11 @@ package require Tk
 
 # ::csm::ui::Viewer - read-only segmented session viewer.
 #
-# A separate top-level window. Multi-instance - the user can hold several
-# open at once. Renders one jsonl as a flat sequence of turns broken into
-# sections by:
+# A single instance docked in the right pane. `show path lineno` loads a
+# session and anchors to a line; calling it again replaces the content.
+# Rendering the whole file before scrolling is what keeps the view still, so
+# it never grows or jumps under the reader. Renders one jsonl as a flat
+# sequence of turns broken into sections by:
 #   primary:   compact_boundary records.
 #   secondary: idle gaps over IdleGap minutes.
 # Recap markers (long assistant turn after an idle gap) are tertiary cues
@@ -19,6 +21,7 @@ oo::class create ::csm::ui::Viewer {
     variable Records
     variable Sections        ;# list of dicts: {kind label start_idx end_idx}
     variable Text             ;# the text widget
+    variable PathLabel        ;# header label showing the loaded path
     variable Find             ;# find overlay frame
     variable FindVar
     variable FindMatches      ;# list of indices of all current matches
@@ -26,8 +29,9 @@ oo::class create ::csm::ui::Viewer {
     variable IdleGap          ;# minutes
     variable LineMap          ;# dict: jsonl line offset (1-based) -> text index
 
-    constructor {jsonl_path {scroll_to_line 0}} {
-        set Path $jsonl_path
+    constructor {parent} {
+        set Top $parent
+        set Path ""
         set IdleGap 10
         set FindVar ""
         set FindMatches [list]
@@ -35,24 +39,33 @@ oo::class create ::csm::ui::Viewer {
         set Records [list]
         set Sections [list]
         set LineMap [dict create]
-
         my build
+    }
+
+    # Load a session and anchor to a line (1-based; 0 means top). Replaces
+    # whatever was shown before.
+    method show {jsonl_path {scroll_to_line 0}} {
+        set Path $jsonl_path
+        set Records [list]
+        set LineMap [dict create]
+        $PathLabel configure -text $Path
+        my find_hide
         my load
         my render
-        if {$scroll_to_line > 0} { my scroll_to_line $scroll_to_line }
+        if {$scroll_to_line > 0} {
+            my scroll_to_line $scroll_to_line
+        } else {
+            $Text see 1.0
+        }
     }
 
     method build {} {
-        # tk::toplevel - there is no ttk equivalent.
-        set Top .viewer[clock microseconds]
-        toplevel $Top
-        wm title $Top "csm: viewer  ([file tail $Path])"
-        wm protocol $Top WM_DELETE_WINDOW [list catch [list [self] destroy]]
-
+        ttk::frame $Top
         ttk::frame $Top.head
         pack $Top.head -side top -fill x
-        ttk::label $Top.head.path -text $Path
+        ttk::label $Top.head.path -text ""
         pack $Top.head.path -side left -padx 4 -pady 2
+        set PathLabel $Top.head.path
 
         ttk::frame $Top.body
         pack $Top.body -side top -fill both -expand 1
@@ -65,6 +78,16 @@ oo::class create ::csm::ui::Viewer {
         grid columnconfigure $Top.body 0 -weight 1
         grid rowconfigure    $Top.body 0 -weight 1
         set Text $Top.body.t
+
+        # A read-only reading view. Keep <Button-1> (focus, for Ctrl-F) but
+        # block the drag-select gestures: tk::TextSelectTo / tk::TextAutoScan
+        # would otherwise run a self-scrolling drag-select, painting the whole
+        # view grey. -exportselection 0 keeps it off the X PRIMARY clipboard.
+        $Text configure -exportselection 0 -inactiveselectbackground ""
+        foreach ev {<B1-Motion> <Double-Button-1> <Triple-Button-1> \
+                    <B1-Leave> <B1-Enter>} {
+            bind $Text $ev break
+        }
 
         # Tags.
         $Text tag configure section-header -font {-weight bold -size 11} \
@@ -91,9 +114,12 @@ oo::class create ::csm::ui::Viewer {
         pack $Find.next  -side left -padx 2
         pack $Find.close -side left -padx 2
 
-        bind $Top <Control-f>  [list [self] find_show]
-        bind $Top <Escape>     [list [self] find_hide]
-        bind $Find.e <Return>  [list [self] find_next]
+        # The text widget takes focus when clicked, so bind the find keys
+        # there rather than on the (focus-less) container frame.
+        bind $Text <Control-f>  [list [self] find_show]
+        bind $Text <Escape>     [list [self] find_hide]
+        bind $Find.e <Escape>   [list [self] find_hide]
+        bind $Find.e <Return>   [list [self] find_next]
     }
 
     method load {} {
@@ -256,9 +282,4 @@ oo::class create ::csm::ui::Viewer {
     variable LastFindVar
     method last_find_var {}    { return [expr {[info exists LastFindVar] ? $LastFindVar : ""}] }
     method mark_find_var {v}   { set LastFindVar $v }
-
-    method destroy {} {
-        if {[winfo exists $Top]} { wm withdraw $Top; ::destroy $Top }
-        next
-    }
 }

@@ -23,6 +23,29 @@ proc ::csm::search::clean_text {s {limit 300}} {
     return $s
 }
 
+# A short window of $s centred on the first match of $pat, with leading and
+# trailing "…" where text is elided. re_opts carries the search flags (e.g.
+# -nocase) the caller already uses for matching. The whole matched span is
+# always inside the window so the display can re-find and embolden it. If the
+# pattern does not match (it should, since the caller only calls this on a
+# hit) the head-capped clean_text is returned as a safe fallback.
+proc ::csm::search::snippet_window {s pat re_opts {radius 80}} {
+    set s [string trim [regsub -all {[\s]+} $s " "]]
+    if {[catch {regexp -indices {*}$re_opts -- $pat $s m} ok] || !$ok} {
+        return [::csm::search::clean_text $s 300]
+    }
+    lassign $m a b
+    set len [string length $s]
+    set start [expr {$a - $radius}]
+    set end   [expr {$b + $radius}]
+    if {$start < 0}        { set start 0 }
+    if {$end > $len - 1}   { set end [expr {$len - 1}] }
+    set win [string range $s $start $end]
+    if {$start > 0}        { set win "…$win" }
+    if {$end < $len - 1}   { set win "$win…" }
+    return $win
+}
+
 # Render a tool_use block as "Name(key=value, ...)". Most informative key
 # first when the tool is one we know; otherwise dict insertion order.
 proc ::csm::search::format_tool_use {name input} {
@@ -98,7 +121,7 @@ proc ::csm::search::record_hits {rec criteria re_opts} {
             foreach {btype content} $blocks {
                 if {[regexp {*}$re_opts -- $val $content]} {
                     lappend hits [list $idx $btype \
-                        [::csm::search::clean_text $content 300]]
+                        [::csm::search::snippet_window $content $val $re_opts]]
                 }
             }
         } else {
@@ -149,6 +172,24 @@ set ::csm::search::WorkerScript {
             set s "[string range $s 0 [expr {$limit - 1}]]…"
         }
         return $s
+    }
+
+    # Worker copy of ::csm::search::snippet_window; keep in sync.
+    proc snippet_window {s pat re_opts {radius 80}} {
+        set s [string trim [regsub -all {[\s]+} $s " "]]
+        if {[catch {regexp -indices {*}$re_opts -- $pat $s m} ok] || !$ok} {
+            return [clean_text $s 300]
+        }
+        lassign $m a b
+        set len [string length $s]
+        set start [expr {$a - $radius}]
+        set end   [expr {$b + $radius}]
+        if {$start < 0}        { set start 0 }
+        if {$end > $len - 1}   { set end [expr {$len - 1}] }
+        set win [string range $s $start $end]
+        if {$start > 0}        { set win "…$win" }
+        if {$end < $len - 1}   { set win "$win…" }
+        return $win
     }
 
     proc is_string_content {c} {
@@ -315,7 +356,7 @@ set ::csm::search::WorkerScript {
                 if {!$have_blocks} { set blocks [extract_blocks $rec]; set have_blocks 1 }
                 foreach {btype content} $blocks {
                     if {[regexp {*}$re_opts -- $val $content]} {
-                        lappend hits [list $idx $btype [clean_text $content 300]]
+                        lappend hits [list $idx $btype [snippet_window $content $val $re_opts]]
                     }
                 }
             } else {
