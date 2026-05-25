@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Find My Session
+Comment=Find, read, and reopen past Claude Code sessions
+Exec=fms
+Terminal=false
+Categories=Development;Utility;

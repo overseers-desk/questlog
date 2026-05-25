@@ -1,0 +1,7 @@
+# Debian build artifacts
+/debian/find-my-session/
+/debian/files
+/debian/debhelper-build-stamp
+/debian/.debhelper/
+/debian/*.substvars
+/debian/*.debhelper

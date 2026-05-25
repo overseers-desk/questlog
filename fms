@@ -4,6 +4,12 @@
 package require Tcl 9
 package require Tk
 
+set FMS_VERSION 1.0.0
+if {[lindex $argv 0] in {--version -v}} {
+    puts "find-my-session $FMS_VERSION"
+    exit 0
+}
+
 set ROOT [file dirname [file normalize [info script]]]
 
 source [file join $ROOT lib path.tcl]
