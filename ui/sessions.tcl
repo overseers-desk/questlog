@@ -546,7 +546,9 @@ oo::class create ::csm::ui::SessionList {
     method folder_heading_text {folder} {
         set f [dict get $Folders $folder]
         set marker [expr {[dict get $f expanded] ? "▾" : "▸"}]
-        set line "$marker [dict get $f label]"
+        # Bind the marker to the label with a non-breaking space so -wrap word
+        # cannot strand the triangle alone on a line when the path is long.
+        set line "$marker\u00A0[dict get $f label]"
         set n [dict get $f count]
         if {$n > 0} { append line "  ($n)" }
         return $line
