@@ -16,30 +16,30 @@ proc check {name expected actual} {
 }
 
 # encode_cwd: simple inverse of slashes-to-dashes.
-check encode_simple   "-home-weiwu-code-foo"        [::csm::path::encode_cwd "/home/weiwu/code/foo"]
+check encode_simple   "-home-weiwu-code-foo"        [::fms::path::encode_cwd "/home/weiwu/code/foo"]
 
 # pretty_home: abbreviate $HOME, leave non-home paths alone.
 set ::env(HOME) /home/alice
-check pretty_under   "~/code/foo"        [::csm::path::pretty_home "/home/alice/code/foo"]
-check pretty_exact   "~"                 [::csm::path::pretty_home "/home/alice"]
-check pretty_other   "/tmp/x"            [::csm::path::pretty_home "/tmp/x"]
-check pretty_prefix  "/home/aliceland/x" [::csm::path::pretty_home "/home/aliceland/x"]
+check pretty_under   "~/code/foo"        [::fms::path::pretty_home "/home/alice/code/foo"]
+check pretty_exact   "~"                 [::fms::path::pretty_home "/home/alice"]
+check pretty_other   "/tmp/x"            [::fms::path::pretty_home "/tmp/x"]
+check pretty_prefix  "/home/aliceland/x" [::fms::path::pretty_home "/home/aliceland/x"]
 
 # set_bookmark / clear_bookmark: the +x bit toggles, other mode bits are
 # preserved, and a missing path errors.
-set bf /tmp/csm-test-bookmark.jsonl
+set bf /tmp/fms-test-bookmark.jsonl
 set fh [open $bf w]; puts $fh "{}"; close $fh
-::csm::path::_real_file attributes $bf -permissions 0o644
+::fms::path::_real_file attributes $bf -permissions 0o644
 check book_initial_exec 0 [file executable $bf]
-set m0 [::csm::path::_real_file attributes $bf -permissions]
-::csm::path::set_bookmark $bf
+set m0 [::fms::path::_real_file attributes $bf -permissions]
+::fms::path::set_bookmark $bf
 check book_set_exec 1 [file executable $bf]
-set m1 [::csm::path::_real_file attributes $bf -permissions]
+set m1 [::fms::path::_real_file attributes $bf -permissions]
 check book_only_x_changed [expr {$m0 & ~0o100}] [expr {$m1 & ~0o100}]
-::csm::path::clear_bookmark $bf
+::fms::path::clear_bookmark $bf
 check book_clear_exec 0 [file executable $bf]
-::csm::path::_real_file delete $bf
-check book_missing_errors 1 [catch {::csm::path::set_bookmark /tmp/csm-no-such-session.jsonl}]
+::fms::path::_real_file delete $bf
+check book_missing_errors 1 [catch {::fms::path::set_bookmark /tmp/fms-no-such-session.jsonl}]
 
 if {$fails > 0} {
     puts "$fails failures"

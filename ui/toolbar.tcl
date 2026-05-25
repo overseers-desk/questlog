@@ -1,7 +1,7 @@
 package require Tcl 9
 package require Tk
 
-# ::csm::ui::Toolbar - the top-of-window controls.
+# ::fms::ui::Toolbar - the top-of-window controls.
 #
 # Owns the filter variables. Subscribers receive the full snapshot
 # dict whenever any control changes:
@@ -13,12 +13,12 @@ package require Tk
 #   one_turn   0 | 1   (1 = exclude one-turn sessions, default on)
 #   cwd        $env(PWD) at startup; constant after.
 
-namespace eval ::csm::ui {}
+namespace eval ::fms::ui {}
 
 # any_criteria snapshot - true iff the snapshot carries at least one
 # criterion with a non-empty value. Shared by app.tcl (search start/cancel)
 # and sessions.tcl (CriteriaActive flag: browse versus result-index mode).
-proc ::csm::ui::any_criteria {snapshot} {
+proc ::fms::ui::any_criteria {snapshot} {
     if {![dict exists $snapshot criteria]} { return 0 }
     foreach c [dict get $snapshot criteria] {
         if {[dict get $c value] ne ""} { return 1 }
@@ -29,7 +29,7 @@ proc ::csm::ui::any_criteria {snapshot} {
 # regex_values snapshot - the values of the regex-type criteria only, for
 # the result pane's in-place highlighter. Path criteria are not regex and
 # are not highlighted.
-proc ::csm::ui::regex_values {snapshot} {
+proc ::fms::ui::regex_values {snapshot} {
     set out [list]
     if {![dict exists $snapshot criteria]} { return $out }
     foreach c [dict get $snapshot criteria] {
@@ -40,7 +40,7 @@ proc ::csm::ui::regex_values {snapshot} {
     return $out
 }
 
-oo::class create ::csm::ui::Toolbar {
+oo::class create ::fms::ui::Toolbar {
     variable Top              ;# parent frame path
     variable WindowVar
     variable CaseVar
@@ -148,8 +148,8 @@ oo::class create ::csm::ui::Toolbar {
 
         # If the launch cwd has no matching project folder on disk, dim
         # "this cwd only" so the user is not misled.
-        set folder [::csm::path::encode_cwd $Cwd]
-        set on_disk [file isdirectory [file join [::csm::path::projects_root] $folder]]
+        set folder [::fms::path::encode_cwd $Cwd]
+        set on_disk [file isdirectory [file join [::fms::path::projects_root] $folder]]
         if {$on_disk} {
             set CwdOnlyVar 1
         } else {
@@ -320,7 +320,7 @@ oo::class create ::csm::ui::Toolbar {
         set snap [my snapshot]
         foreach cb $Subscribers {
             if {[catch {{*}$cb $snap} err]} {
-                puts stderr "csm: toolbar subscriber failed: $err"
+                puts stderr "fms: toolbar subscriber failed: $err"
             }
         }
     }

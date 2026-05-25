@@ -6,8 +6,8 @@ source [file join $ROOT lib path.tcl]
 source [file join $ROOT lib jsonl.tcl]
 source [file join $ROOT lib scan.tcl]
 
-# Synthetic projects tree under /tmp/csm-test-projects.
-proc ::csm::path::projects_root {} { return /tmp/csm-test-projects }
+# Synthetic projects tree under /tmp/fms-test-projects.
+proc ::fms::path::projects_root {} { return /tmp/fms-test-projects }
 
 set fails 0
 proc check {name expected actual} {
@@ -21,30 +21,30 @@ proc check {name expected actual} {
 
 # ---- fixture --------------------------------------------------------
 
-::csm::path::_real_file delete -force /tmp/csm-test-projects
-::csm::path::_real_file mkdir /tmp/csm-test-projects/-home-test-code-foo
-::csm::path::_real_file mkdir /tmp/csm-test-projects/-home-test-code-bar-baz
+::fms::path::_real_file delete -force /tmp/fms-test-projects
+::fms::path::_real_file mkdir /tmp/fms-test-projects/-home-test-code-foo
+::fms::path::_real_file mkdir /tmp/fms-test-projects/-home-test-code-bar-baz
 # Subagent path that MUST be ignored.
-::csm::path::_real_file mkdir /tmp/csm-test-projects/-home-test-code-foo/[set u 11111111-1111-1111-1111-111111111111]/subagents
+::fms::path::_real_file mkdir /tmp/fms-test-projects/-home-test-code-foo/[set u 11111111-1111-1111-1111-111111111111]/subagents
 
-set fh [open /tmp/csm-test-projects/-home-test-code-foo/aaa-1.jsonl w]
+set fh [open /tmp/fms-test-projects/-home-test-code-foo/aaa-1.jsonl w]
 puts $fh {{"type":"user","message":{"content":"first prompt about foo"},"cwd":"/home/test/code/foo","timestamp":"2026-04-25T10:00:00.000Z"}}
 puts $fh {{"type":"assistant","message":{"content":"reply"},"timestamp":"2026-04-25T10:00:05.000Z"}}
 puts $fh {{"type":"user","message":{"content":"second prompt"},"timestamp":"2026-04-25T10:00:30.000Z"}}
 close $fh
 
-set fh [open /tmp/csm-test-projects/-home-test-code-foo/bbb-2.jsonl w]
+set fh [open /tmp/fms-test-projects/-home-test-code-foo/bbb-2.jsonl w]
 puts $fh {{"type":"user","message":{"content":"only one turn here"},"cwd":"/home/test/code/foo","timestamp":"2026-04-25T11:00:00.000Z"}}
 close $fh
 
-set fh [open /tmp/csm-test-projects/-home-test-code-bar-baz/ccc-3.jsonl w]
+set fh [open /tmp/fms-test-projects/-home-test-code-bar-baz/ccc-3.jsonl w]
 puts $fh {{"type":"user","message":{"content":"prompt in bar/baz"},"cwd":"/home/test/code/bar/baz","timestamp":"2026-04-25T12:00:00.000Z"}}
 puts $fh {{"type":"assistant","message":{"content":"reply"}}}
 puts $fh {{"type":"user","message":{"content":"another"}}}
 close $fh
 
 # Subagent fixture - must NOT appear in Rows.
-set fh [open /tmp/csm-test-projects/-home-test-code-foo/$u/subagents/x.jsonl w]
+set fh [open /tmp/fms-test-projects/-home-test-code-foo/$u/subagents/x.jsonl w]
 puts $fh {{"type":"user","message":{"content":"subagent should be ignored"}}}
 puts $fh {{"type":"user","message":{"content":"second subagent line"}}}
 close $fh
@@ -56,7 +56,7 @@ set ::rows [list]
 proc on_row {row} { lappend ::rows $row }
 proc on_done {scanned} { set ::scan_done 1 }
 
-set s [::csm::Scan new on_row on_done]
+set s [::fms::Scan new on_row on_done]
 $s extend [dict create window all one_turn 0]
 vwait ::scan_done
 
@@ -65,7 +65,7 @@ vwait ::scan_done
 check rows_count 3 [llength $::rows]
 
 # Subagent regression: that file's path must not be in Rows.
-set subagent_path "/tmp/csm-test-projects/-home-test-code-foo/$u/subagents/x.jsonl"
+set subagent_path "/tmp/fms-test-projects/-home-test-code-foo/$u/subagents/x.jsonl"
 set in_rows 0
 foreach r $::rows { if {[dict get $r path] eq $subagent_path} { set in_rows 1 } }
 check subagent_excluded 0 $in_rows
@@ -74,18 +74,18 @@ check subagent_excluded 0 $in_rows
 # and returns a cwd only when the directory exists, so this uses a real
 # temp dir as the session's cwd (the synthetic /home/test/... paths used
 # elsewhere in this fixture deliberately resolve to "").
-set realcwd /tmp/csm-test-realcwd
-::csm::path::_real_file mkdir $realcwd
-set rf [::csm::path::encode_cwd $realcwd]
-::csm::path::_real_file mkdir [file join /tmp/csm-test-projects $rf]
-set fh [open [file join /tmp/csm-test-projects $rf real-1.jsonl] w]
+set realcwd /tmp/fms-test-realcwd
+::fms::path::_real_file mkdir $realcwd
+set rf [::fms::path::encode_cwd $realcwd]
+::fms::path::_real_file mkdir [file join /tmp/fms-test-projects $rf]
+set fh [open [file join /tmp/fms-test-projects $rf real-1.jsonl] w]
 puts $fh "{\"type\":\"user\",\"message\":{\"content\":\"a\"},\"cwd\":\"$realcwd\"}"
 puts $fh "{\"type\":\"user\",\"message\":{\"content\":\"b\"}}"
 close $fh
 check resolve_real_dir $realcwd [$s resolve_folder $rf]
 check resolve_absent_dir "" [$s resolve_folder "-no-such-folder-xyz"]
-::csm::path::_real_file delete -force $realcwd
-::csm::path::_real_file delete -force [file join /tmp/csm-test-projects $rf]
+::fms::path::_real_file delete -force $realcwd
+::fms::path::_real_file delete -force [file join /tmp/fms-test-projects $rf]
 
 # query with one_turn=1 drops the single-turn bbb-2 file.
 set qrows [$s query [dict create window all one_turn 1]]
@@ -101,18 +101,18 @@ check memo_re_scanned_count 0 [llength $::rows]
 # mtime invalidation: bumping a file's mtime forces a re-scan of just that path.
 # Tcl's `file mtime` setter takes an explicit epoch - bypasses 1-second
 # resolution issues from `exec touch`.
-file mtime /tmp/csm-test-projects/-home-test-code-foo/aaa-1.jsonl [expr {[clock seconds] + 60}]
+file mtime /tmp/fms-test-projects/-home-test-code-foo/aaa-1.jsonl [expr {[clock seconds] + 60}]
 set ::scan_done 0
 set ::rows [list]
 $s extend [dict create window all one_turn 0]
 vwait ::scan_done
 check mtime_invalidation_count 1 [llength $::rows]
-check mtime_invalidation_path /tmp/csm-test-projects/-home-test-code-foo/aaa-1.jsonl [dict get [lindex $::rows 0] path]
+check mtime_invalidation_path /tmp/fms-test-projects/-home-test-code-foo/aaa-1.jsonl [dict get [lindex $::rows 0] path]
 
 # Ordering: query result is mtime-DESC. The just-touched aaa-1 should be first.
 set qall [$s query [dict create window all one_turn 0]]
 set first_path [dict get [lindex $qall 0] path]
-check ordering_first_is_touched /tmp/csm-test-projects/-home-test-code-foo/aaa-1.jsonl $first_path
+check ordering_first_is_touched /tmp/fms-test-projects/-home-test-code-foo/aaa-1.jsonl $first_path
 
 # Regression: query against a previously-seen window must return the
 # memoised rows. App's on_filter relies on this to repopulate the tree
@@ -132,15 +132,15 @@ $s destroy
 # (no memoised mtimes) then proves: scan_one reads the +x bit; the old
 # bookmarked file survives both enumeration and query despite the window;
 # the old non-bookmarked file does not.
-set bbb /tmp/csm-test-projects/-home-test-code-foo/bbb-2.jsonl
-set ccc /tmp/csm-test-projects/-home-test-code-bar-baz/ccc-3.jsonl
-::csm::path::set_bookmark $bbb
+set bbb /tmp/fms-test-projects/-home-test-code-foo/bbb-2.jsonl
+set ccc /tmp/fms-test-projects/-home-test-code-bar-baz/ccc-3.jsonl
+::fms::path::set_bookmark $bbb
 file mtime $bbb [expr {[clock seconds] - 40*24*3600}]
 file mtime $ccc [expr {[clock seconds] - 40*24*3600}]
 
 set ::scan_done 0
 set ::rows [list]
-set s2 [::csm::Scan new on_row on_done]
+set s2 [::fms::Scan new on_row on_done]
 $s2 extend [dict create window all one_turn 0]
 vwait ::scan_done
 
@@ -162,7 +162,7 @@ set qb [$s2 query [dict create window all one_turn 0 bookmarked_only 1]]
 check query_bookmarked_only 1 [llength $qb]
 
 $s2 destroy
-::csm::path::_real_file delete -force /tmp/csm-test-projects
+::fms::path::_real_file delete -force /tmp/fms-test-projects
 
 if {$fails > 0} {
     puts "$fails failures"

@@ -1,13 +1,24 @@
-# Claude Session Manager
+# find-my-session
 
-A GUI for finding, reading, and reopening past Claude Code sessions stored under `~/.claude/projects/`. It replaces the shell aliases `cs-ls` and `cs-grep` with a session list grouped by project, a typed search that streams matches across all projects as snippets under each session, a docked viewer that segments long conversations into sections, and right-click actions that reopen a session in its original working directory.
+A native Linux GUI for finding, reading, and reopening past Claude Code sessions stored under `~/.claude/projects/`. It replaces the shell aliases `cs-ls` and `cs-grep` with a session list grouped by project, a typed search that streams matches across all projects as snippets under each session, a docked viewer that segments long conversations into sections, and right-click actions that reopen a session in its original working directory.
 
-## Why a session manager
+## Typical problems it solves
 
-- A bug surfaces after the session that wrote it is gone.
-- You remember a session by when, not by what.
-- You need a fact from a past session, not to resume it.
-- Fork an old session without disturbing the original.
+The tool exists for the moments you go back to a session after it is finished, above all the returns you could not have prevented by writing notes at the time.
+
+- You quit a session and days later realise you never acted on its result, the email unsent, the commit unmade, which was the point of running it. The finished session is the only record of what was decided.
+- A figure or conclusion from a session is challenged later, and you need to go back and check its source and reasoning.
+- You cannot recall which project a conversation lived in, and grep-by-memory fails because what you typed was "ok now do the thing". The pile has grown past where `ls -lt` and scrolling still work.
+- You want the session that last touched a particular file, and the reasoning around the change.
+- You need a past session read as a conversation, not as a wall of thousand-character JSONL lines.
+- You renamed a project folder and its sessions vanished from `/resume`, or you simply want them grouped and moved without loss.
+- You run several sessions across terminals and cannot tell which is working and which is waiting for you.
+
+## Scope
+
+A single-user desktop tool that reads the local JSONL Claude Code already writes, and nothing more. It runs natively on Linux with Tk, with no Electron and no embedded web view, which is the gap the official Desktop app leaves on Linux. It reads files on the local machine only, and Claude Code sessions only, not other agents.
+
+Deliberately out of scope, because separate tools already serve them: token and cost analytics, exposing session history to the running agent over MCP, orchestrating parallel sessions, and unifying history across devices or across the CLI, Desktop, and web clients. find-my-session is a way back into a finished session, not a dashboard and not an orchestrator.
 
 ## Window layout
 
@@ -38,7 +49,7 @@ Right-clicking a session offers "Open in viewer", "Copy resume command", "Copy s
 ## Implementation map
 
 ```
-csm                     entry script (wish9.0)
+fms                     entry script (wish9.0)
 lib/
   app.tcl               wires everything; constructs Scan, Toolbar,
                         SessionList, Viewer, Search; subscribes them
@@ -46,7 +57,7 @@ lib/
                         in-process row dict, pre-sorted by mtime DESC,
                         epoch-token cancellation
   search.tcl            Search class: own coroutine (threaded fan-out when
-                        CSM_SEARCH_THREADS is set), iterates the same path
+                        FMS_SEARCH_THREADS is set), iterates the same path
                         list, evaluates the AND-joined criteria, emits
                         matches and publishes row data back to Scan
   cli.tcl               parses a command-line criterion chain into criteria
@@ -80,17 +91,17 @@ Both classes reach into the project tree with a depth-2 glob: `~/.claude/project
 ## Running and testing
 
 ```
-./csm                                  # launch the GUI
-./csm edit lib/scan.tcl                # launch pre-seeded with an edit criterion
-./csm edit foo.tcl regex "bar"         # several criteria, AND-joined
-./csm -regex "pattern"                 # prefill a single regex criterion
-tclsh9.0 test/test-path.tcl            # run individual tests
+./fms                                        # launch the GUI
+./fms edit lib/scan.tcl                      # launch pre-seeded with an edit criterion
+./fms edit foo.tcl regex "bar"               # several criteria, AND-joined
+./fms -regex "pattern"                       # prefill a single regex criterion
+tclsh9.0 test/test-path.tcl                  # run individual tests
 tclsh9.0 test/test-jsonl.tcl
 tclsh9.0 test/test-scan.tcl
 tclsh9.0 test/test-scan-coroutine.tcl
 ```
 
-`./csm` opens the main window immediately and streams rows in. The default seven-day window populates in under a second; switching to "all" extends incrementally with the tree growing as files are scanned. Scan progress is reported in the bottom status bar.
+`./fms` opens the main window immediately and streams rows in. The default seven-day window populates in under a second; switching to "all" extends incrementally with the tree growing as files are scanned. Scan progress is reported in the bottom status bar.
 
 A leading criterion type on the command line pre-seeds the GUI with a criteria chain: arguments pair as `<type> <value>`, where type is `regex`, `read`, `write`, or `edit`. `read` / `write` / `edit` match the recorded file path by suffix, `regex` matches content. The GUI then behaves normally, including the time-window control, so widen the window from the default 7 d when hunting an older edit. This launches `wish` like any GUI invocation and needs an X display. The older `-regex PATTERN` flag still prefills one regex criterion.
 

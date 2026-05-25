@@ -1,7 +1,7 @@
 package require Tcl 9
 package require TclOO
 
-# ::csm::Scan - in-memory, coroutine-driven, memoised session scanner.
+# ::fms::Scan - in-memory, coroutine-driven, memoised session scanner.
 #
 # Replaces the previous sqlite-cached design. Each launch builds the row
 # table fresh by line-streaming each jsonl with Tcl regex (no jq, no
@@ -19,10 +19,10 @@ package require TclOO
 # in-flight coroutine; the coroutine compares its captured epoch after
 # every yield and exits cleanly when stale. No `rename`, no race.
 
-namespace eval ::csm::scan {}
+namespace eval ::fms::scan {}
 
 # Comparator for lsort -command. Sorts row-dict elements by mtime.
-proc ::csm::scan::cmp_mtime {a b} {
+proc ::fms::scan::cmp_mtime {a b} {
     set ma [dict get $a mtime]
     set mb [dict get $b mtime]
     if {$ma < $mb} { return -1 }
@@ -30,7 +30,7 @@ proc ::csm::scan::cmp_mtime {a b} {
     return 0
 }
 
-oo::class create ::csm::Scan {
+oo::class create ::fms::Scan {
     variable Rows         ;# dict: path -> row dict
     variable Folders      ;# dict: folder basename -> resolved display path
     variable Epoch        ;# generation counter; inc to cancel
@@ -65,7 +65,7 @@ oo::class create ::csm::Scan {
         set Snapshot $snapshot
         set my_epoch [incr Epoch]
         set Active 1
-        set co ::csm::scan::coro_$my_epoch
+        set co ::fms::scan::coro_$my_epoch
         coroutine $co [namespace which my] run_scan $my_epoch
     }
 
@@ -115,7 +115,7 @@ oo::class create ::csm::Scan {
     # which holds internal subagent records (not user sessions).
     # Pre-sorted by mtime DESC so consumers see rows in display order.
     method list_paths_for {snapshot} {
-        set root [::csm::path::projects_root]
+        set root [::fms::path::projects_root]
         if {![file isdirectory $root]} { return [list] }
         set window [my dict_or $snapshot window 7d]
         set cutoff 0
@@ -211,7 +211,7 @@ oo::class create ::csm::Scan {
         # only when the hint is self-consistent AND still points at an
         # extant directory, so the cache never holds a fictional path.
         if {$cwd ne "" && ![dict exists $Folders $folder]
-            && [::csm::path::encode_cwd $cwd] eq $folder
+            && [::fms::path::encode_cwd $cwd] eq $folder
             && [file isdirectory $cwd]} {
             dict set Folders $folder $cwd
         }
@@ -233,7 +233,7 @@ oo::class create ::csm::Scan {
         }
         set cwd_folder ""
         if {$cwd_only && $cwd ne ""} {
-            set cwd_folder [::csm::path::encode_cwd $cwd]
+            set cwd_folder [::fms::path::encode_cwd $cwd]
         }
         set out [list]
         dict for {path row} $Rows {
@@ -248,7 +248,7 @@ oo::class create ::csm::Scan {
             if {$cwd_folder ne "" && $f ne $cwd_folder} continue
             lappend out $row
         }
-        return [lsort -decreasing -command ::csm::scan::cmp_mtime $out]
+        return [lsort -decreasing -command ::fms::scan::cmp_mtime $out]
     }
 
     # The single canonical folder-basename -> cwd resolver. Every label
@@ -271,7 +271,7 @@ oo::class create ::csm::Scan {
             dict set Folders $folder $cwd
             return $cwd
         }
-        set cands [::csm::path::candidate_cwds_for $folder]
+        set cands [::fms::path::candidate_cwds_for $folder]
         if {[llength $cands] == 1} {
             set cwd [lindex $cands 0]
             dict set Folders $folder $cwd
@@ -285,11 +285,11 @@ oo::class create ::csm::Scan {
     # moved into the folder cannot mislabel it. The caller decides
     # whether the path still exists.
     method peek_folder_cwd {folder} {
-        set dir [file join [::csm::path::projects_root] $folder]
+        set dir [file join [::fms::path::projects_root] $folder]
         if {![file isdirectory $dir]} { return "" }
         foreach f [glob -nocomplain -directory $dir -- *.jsonl] {
-            set cwd [::csm::jsonl::first_cwd $f]
-            if {$cwd ne "" && [::csm::path::encode_cwd $cwd] eq $folder} {
+            set cwd [::fms::jsonl::first_cwd $f]
+            if {$cwd ne "" && [::fms::path::encode_cwd $cwd] eq $folder} {
                 return $cwd
             }
         }

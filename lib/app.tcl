@@ -1,7 +1,7 @@
 package require Tcl 9
 package require Tk
 
-# ::csm::app - startup wiring. Constructs Scan, Toolbar, SessionList, Viewer,
+# ::fms::app - startup wiring. Constructs Scan, Toolbar, SessionList, Viewer,
 # Search. No splash: the empty UI renders immediately and rows stream in via
 # the Scan coroutine. Status-bar shows scanning progress while in flight.
 #
@@ -9,7 +9,7 @@ package require Tk
 # and search-result index in one), the reading view docked on the right. A
 # single click in the list opens the session in the viewer, anchored.
 
-namespace eval ::csm::app {
+namespace eval ::fms::app {
     variable Scan
     variable Search
     variable Toolbar
@@ -24,7 +24,7 @@ namespace eval ::csm::app {
     variable RunTimer      ;# after-id of the running-poll loop
 }
 
-proc ::csm::app::start {root {initial_criteria {}}} {
+proc ::fms::app::start {root {initial_criteria {}}} {
     variable Scan
     variable Search
     variable Toolbar
@@ -42,13 +42,13 @@ proc ::csm::app::start {root {initial_criteria {}}} {
     set ViewerShown 0
     set Running [dict create]
 
-    wm title . "Claude Session Manager"
+    wm title . "find-my-session"
     wm protocol . WM_DELETE_WINDOW [namespace code quit]
 
     ttk::frame .top
     pack .top -side top -fill both -expand 1
 
-    set Toolbar [::csm::ui::Toolbar new .top.tb $::env(PWD)]
+    set Toolbar [::fms::ui::Toolbar new .top.tb $::env(PWD)]
     pack .top.tb -side top -fill x
 
     set PW .top.pw
@@ -57,7 +57,7 @@ proc ::csm::app::start {root {initial_criteria {}}} {
 
     set list_frame $PW.list
     ttk::frame $list_frame
-    set SessionList [::csm::ui::SessionList new $list_frame.s \
+    set SessionList [::fms::ui::SessionList new $list_frame.s \
         [namespace code resolve_folder] \
         [namespace code lookup_session] \
         [namespace code on_open] \
@@ -73,19 +73,19 @@ proc ::csm::app::start {root {initial_criteria {}}} {
     # session or snippet is clicked, so the window opens as just the list.
     set ViewFrame $PW.view
     ttk::frame $ViewFrame
-    set Viewer [::csm::ui::Viewer new $ViewFrame.v]
+    set Viewer [::fms::ui::Viewer new $ViewFrame.v]
     pack $ViewFrame.v -side top -fill both -expand 1
 
     ttk::label .top.status -textvariable [namespace which -variable StatusVar] \
         -anchor w -relief sunken
     pack .top.status -side bottom -fill x
 
-    set Scan [::csm::Scan new \
+    set Scan [::fms::Scan new \
         [namespace code on_scan_row] \
         [namespace code on_scan_done] \
         [namespace code on_scan_progress]]
 
-    set Search [::csm::Search new $Scan \
+    set Search [::fms::Search new $Scan \
         [namespace code on_search_match] \
         [namespace code on_search_progress] \
         [namespace code on_search_done]]
@@ -106,24 +106,24 @@ proc ::csm::app::start {root {initial_criteria {}}} {
 # Re-read the live-session registry and re-derive every row's running
 # state, then re-arm. 2s keeps the markers current without busy-polling;
 # the cost is O(running sessions), independent of the on-disk corpus.
-proc ::csm::app::run_tick {} {
+proc ::fms::app::run_tick {} {
     variable SessionList
     variable Running
     variable RunTimer
-    set Running [::csm::live::running_uuids]
+    set Running [::fms::live::running_uuids]
     $SessionList reconcile_running $Running
     set RunTimer [after 2000 [namespace code run_tick]]
 }
 
 # ---- toolbar callback --------------------------------------------------
 
-proc ::csm::app::on_filter {snapshot} {
+proc ::fms::app::on_filter {snapshot} {
     variable Scan
     variable Search
     variable SessionList
     variable Running
 
-    set has_criteria [::csm::ui::any_criteria $snapshot]
+    set has_criteria [::fms::ui::any_criteria $snapshot]
 
     $SessionList apply_filter $snapshot
 
@@ -150,7 +150,7 @@ proc ::csm::app::on_filter {snapshot} {
 
     if {$has_criteria} {
         $SessionList set_query \
-            [::csm::ui::regex_values $snapshot] [dict get $snapshot case]
+            [::fms::ui::regex_values $snapshot] [dict get $snapshot case]
         $Search start $snapshot
     } else {
         $Search cancel
@@ -159,19 +159,19 @@ proc ::csm::app::on_filter {snapshot} {
 
 # ---- scan callbacks ----------------------------------------------------
 
-proc ::csm::app::on_scan_row {row} {
+proc ::fms::app::on_scan_row {row} {
     variable SessionList
     $SessionList on_scan_row $row
 }
 
-proc ::csm::app::on_scan_progress {done total} {
+proc ::fms::app::on_scan_progress {done total} {
     variable StatusVar
     if {$done < $total} {
         set StatusVar "Scanning $done / $total…"
     }
 }
 
-proc ::csm::app::on_scan_done {scanned} {
+proc ::fms::app::on_scan_done {scanned} {
     variable StatusVar
     if {$scanned == 0} {
         set StatusVar ""
@@ -182,22 +182,22 @@ proc ::csm::app::on_scan_done {scanned} {
 
 # ---- search callbacks --------------------------------------------------
 
-proc ::csm::app::on_search_match {match} {
+proc ::fms::app::on_search_match {match} {
     variable SessionList
     $SessionList add_match $match
 }
 
-proc ::csm::app::on_search_progress {done total matches} {
+proc ::fms::app::on_search_progress {done total matches} {
     variable SessionList
     $SessionList set_progress $done $total $matches
 }
 
-proc ::csm::app::on_search_done {total matches} {
+proc ::fms::app::on_search_done {total matches} {
     variable SessionList
     $SessionList set_done $total $matches
 }
 
-proc ::csm::app::on_search_cancel {} {
+proc ::fms::app::on_search_cancel {} {
     variable Search
     $Search cancel
 }
@@ -206,7 +206,7 @@ proc ::csm::app::on_search_cancel {} {
 
 # A single click in the list lands here: render the whole session on the
 # right and anchor it to lineno (0 = top).
-proc ::csm::app::on_open {path lineno} {
+proc ::fms::app::on_open {path lineno} {
     variable Viewer
     variable StatusVar
     variable PW
@@ -229,7 +229,7 @@ proc ::csm::app::on_open {path lineno} {
 # paths is a list of session paths to move to a single destination. The
 # dialog excludes the source's own folder only when exactly one session is
 # moved; a group may span folders, so no folder is excluded then.
-proc ::csm::app::on_move_request {paths} {
+proc ::fms::app::on_move_request {paths} {
     variable Scan
     set current_folder ""
     if {[llength $paths] == 1} {
@@ -237,11 +237,11 @@ proc ::csm::app::on_move_request {paths} {
         if {$row eq ""} return
         set current_folder [dict get $row folder]
     }
-    ::csm::ui::move_dialog::open . [llength $paths] $current_folder \
+    ::fms::ui::move_dialog::open . [llength $paths] $current_folder \
         [list [namespace current]::on_picker_done $paths]
 }
 
-proc ::csm::app::on_picker_done {paths dst_cwd} {
+proc ::fms::app::on_picker_done {paths dst_cwd} {
     do_move_batch $paths $dst_cwd
 }
 
@@ -249,7 +249,7 @@ proc ::csm::app::on_picker_done {paths dst_cwd} {
 # canonical resolver. A drop onto a folder that cannot be resolved (its
 # underlying project directory is gone or ambiguous) is refused rather than
 # silently moving into an orphan.
-proc ::csm::app::on_drop_move {paths target_folder_basename} {
+proc ::fms::app::on_drop_move {paths target_folder_basename} {
     variable Scan
     set dst_cwd [$Scan resolve_folder $target_folder_basename]
     if {$dst_cwd eq ""} {
@@ -263,7 +263,7 @@ proc ::csm::app::on_drop_move {paths target_folder_basename} {
 # Move every path to dst_cwd, then report any failures in one dialog so a
 # batch does not spray a messagebox per session. Successful moves have
 # already updated the list.
-proc ::csm::app::do_move_batch {paths dst_cwd} {
+proc ::fms::app::do_move_batch {paths dst_cwd} {
     set failures [list]
     foreach src_path $paths {
         if {[catch {move_one $src_path $dst_cwd} err]} {
@@ -280,16 +280,16 @@ proc ::csm::app::do_move_batch {paths dst_cwd} {
 # already in the destination's encoded folder is a silent no-op - the only
 # "succeed without effect" path. A filesystem failure throws (the error
 # reaches do_move_batch).
-proc ::csm::app::move_one {src_path dst_cwd} {
+proc ::fms::app::move_one {src_path dst_cwd} {
     variable SessionList
     variable Scan
     set src_basename [file tail [file dirname $src_path]]
-    if {![catch {::csm::path::encode_cwd $dst_cwd} dst_basename]
+    if {![catch {::fms::path::encode_cwd $dst_cwd} dst_basename]
         && $dst_basename eq $src_basename} {
         return
     }
-    set new_path [::csm::path::move_session $src_path $dst_cwd]
-    set new_folder [::csm::path::encode_cwd $dst_cwd]
+    set new_path [::fms::path::move_session $src_path $dst_cwd]
+    set new_folder [::fms::path::encode_cwd $dst_cwd]
     $Scan relocate_row $src_path $new_path
     $SessionList relocate_card $src_path $new_path $new_folder
 }
@@ -301,13 +301,13 @@ proc ::csm::app::move_one {src_path dst_cwd} {
 # guard and is reported rather than crashing. The bit is the truth: flip it,
 # refresh the cached field, then re-derive that one row's marker immediately
 # so the user sees it without waiting for a tick.
-proc ::csm::app::on_bookmark_toggle {path} {
+proc ::fms::app::on_bookmark_toggle {path} {
     variable Scan
     variable SessionList
     if {[file executable $path]} {
-        set rc [catch {::csm::path::clear_bookmark $path} err]
+        set rc [catch {::fms::path::clear_bookmark $path} err]
     } else {
-        set rc [catch {::csm::path::set_bookmark $path} err]
+        set rc [catch {::fms::path::set_bookmark $path} err]
     }
     if {$rc} {
         tk_messageBox -icon error -title "Bookmark" \
@@ -320,24 +320,24 @@ proc ::csm::app::on_bookmark_toggle {path} {
 
 # Synchronously scan one file into Rows, for the reconciler to surface a
 # running session that the windowed scan has not reached.
-proc ::csm::app::on_scan_path {path} {
+proc ::fms::app::on_scan_path {path} {
     variable Scan
     return [$Scan scan_path $path]
 }
 
 # ---- shared helpers exposed to UI components --------------------------
 
-proc ::csm::app::resolve_folder {folder} {
+proc ::fms::app::resolve_folder {folder} {
     variable Scan
     return [$Scan resolve_folder $folder]
 }
 
-proc ::csm::app::lookup_session {path} {
+proc ::fms::app::lookup_session {path} {
     variable Scan
     return [$Scan lookup $path]
 }
 
-proc ::csm::app::quit {} {
+proc ::fms::app::quit {} {
     variable Search
     variable Scan
     variable RunTimer

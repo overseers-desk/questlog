@@ -3,12 +3,12 @@ package require Tk
 
 # Glyphs for the status markers. The single home for both; the toolbar
 # toggles are plain text, so these characters live only here.
-namespace eval ::csm::ui {
+namespace eval ::fms::ui {
     variable GLYPH_RUNNING  ●
     variable GLYPH_BOOKMARK ★
 }
 
-# ::csm::ui::SessionList - the left pane: one read-only text widget that is
+# ::fms::ui::SessionList - the left pane: one read-only text widget that is
 # both the session browser and the search-result index in a single list.
 #
 # Layout, top to bottom, as tagged regions in the one text widget:
@@ -39,7 +39,7 @@ namespace eval ::csm::ui {
 # anchor_restore, which pins the top visible line back to the top, so a late
 # match inserted above the viewport never shifts what the reader is on.
 
-oo::class create ::csm::ui::SessionList {
+oo::class create ::fms::ui::SessionList {
     variable Top
     variable Text
     variable StatusVar
@@ -139,7 +139,7 @@ oo::class create ::csm::ui::SessionList {
         # self-scrolling drag-select). The per-tag click/drag bindings fire
         # first; these widget-level breaks stop the class bindings that follow.
         # B1-Motion still drives drag-to-move, then breaks the class handler.
-        bind $Text <B1-Motion> {::csm::ui::drag::motion %X %Y; break}
+        bind $Text <B1-Motion> {::fms::ui::drag::motion %X %Y; break}
         foreach ev {<Button-1> <Double-Button-1> <Triple-Button-1> \
                     <Shift-Button-1> <Control-Button-1> <B1-Leave>} {
             bind $Text $ev break
@@ -274,7 +274,7 @@ oo::class create ::csm::ui::SessionList {
 
     method apply_filter {snapshot} {
         set Snapshot $snapshot
-        set CriteriaActive [::csm::ui::any_criteria $snapshot]
+        set CriteriaActive [::fms::ui::any_criteria $snapshot]
         my clear
     }
 
@@ -300,7 +300,7 @@ oo::class create ::csm::ui::SessionList {
         if {[dict get $row mtime] <= $cutoff && !$bk} { return 0 }
         if {$one_turn && ![dict get $row is_multi]} { return 0 }
         if {$cwd_only && $cwd ne ""} {
-            set cwd_folder [::csm::path::encode_cwd $cwd]
+            set cwd_folder [::fms::path::encode_cwd $cwd]
             if {[dict get $row folder] ne $cwd_folder} { return 0 }
         }
         return 1
@@ -519,7 +519,7 @@ oo::class create ::csm::ui::SessionList {
 
     method ensure_folder {folder} {
         if {[dict exists $Folders $folder]} return
-        set label [::csm::path::display_label [{*}$ResolveFolder $folder] $folder]
+        set label [::fms::path::display_label [{*}$ResolveFolder $folder] $folder]
         set htag  "f#[incr NextId]"
         # Browsing opens folders collapsed (an overview of projects); a search
         # opens them expanded so the matches under each folder are visible. A
@@ -617,8 +617,8 @@ oo::class create ::csm::ui::SessionList {
 
     method glyph_cell {running bookmarked} {
         set s ""
-        if {$running}    { append s $::csm::ui::GLYPH_RUNNING }
-        if {$bookmarked} { append s $::csm::ui::GLYPH_BOOKMARK }
+        if {$running}    { append s $::fms::ui::GLYPH_RUNNING }
+        if {$bookmarked} { append s $::fms::ui::GLYPH_BOOKMARK }
         return $s
     }
 
@@ -676,7 +676,7 @@ oo::class create ::csm::ui::SessionList {
     # win if the pointer moved). Opening the viewer is a double-click, so a
     # single click can begin a drag without also loading the reading view.
     method on_session_release {path X Y} {
-        set was_drag [::csm::ui::drag::release $X $Y]
+        set was_drag [::fms::ui::drag::release $X $Y]
         if {$was_drag} return
         my select $path
     }
@@ -696,7 +696,7 @@ oo::class create ::csm::ui::SessionList {
     # ---- drag-to-move -------------------------------------------------
 
     method on_session_press {path X Y} {
-        ::csm::ui::drag::watch $Text $X $Y [list $path] \
+        ::fms::ui::drag::watch $Text $X $Y [list $path] \
             [list [self] handle_drop] \
             [list [self] drag_hit] [list [self] drag_paint]
     }
@@ -759,22 +759,22 @@ oo::class create ::csm::ui::SessionList {
     method menu_target_get {key} { return [dict get $MenuTarget $key] }
     method menu_open {} { my open_session $MenuPath }
     method menu_copy_resume {} {
-        my clipboard_set [::csm::terminal::resume_command \
+        my clipboard_set [::fms::terminal::resume_command \
             [my menu_target_get cwd] [my menu_target_get uuid]]
     }
     method menu_copy_uuid {} { my clipboard_set [my menu_target_get uuid] }
     method menu_copy_path {} { my clipboard_set $MenuPath }
     method menu_copy_last_assistant {} {
-        my clipboard_set [::csm::jsonl::last_assistant_text [my menu_target_get path]]
+        my clipboard_set [::fms::jsonl::last_assistant_text [my menu_target_get path]]
     }
     method menu_resume {fork} {
-        ::csm::terminal::launch_tab [my menu_target_get cwd] \
+        ::fms::terminal::launch_tab [my menu_target_get cwd] \
             [my menu_target_get uuid] $fork
     }
     method menu_reveal {} {
-        set dir [file join [::csm::path::projects_root] [my menu_target_get folder]]
+        set dir [file join [::fms::path::projects_root] [my menu_target_get folder]]
         if {[catch {exec xdg-open $dir &} err]} {
-            puts stderr "csm: xdg-open failed: $err"
+            puts stderr "fms: xdg-open failed: $err"
         }
     }
     method menu_move {} { {*}$OnMoveRequest [list $MenuPath] }

@@ -1,17 +1,17 @@
 package require Tcl 9
 package require Tk
 
-# ::csm::ui::move_dialog - modal picker for the "Move session to another
+# ::fms::ui::move_dialog - modal picker for the "Move session to another
 # project" operation. Lists every folder under ~/.claude/projects/, plus
 # a free-text entry for a cwd that has no project folder yet. The single
 # entry point `open` takes a callback; the caller routes the chosen cwd
-# through ::csm::path::ensure_project_folder and ::csm::move::session.
+# through ::fms::path::ensure_project_folder and ::fms::move::session.
 #
 # Single-instance: only one move dialog is open at a time (modal). Held
 # in namespace vars rather than a class because there is no joint
 # state across operations and no long-lived identity to track.
 
-namespace eval ::csm::ui::move_dialog {
+namespace eval ::fms::ui::move_dialog {
     variable Top ""
     variable Tv ""
     variable EntryVar ""
@@ -20,7 +20,7 @@ namespace eval ::csm::ui::move_dialog {
     variable RowToCwd [dict create]
 }
 
-proc ::csm::ui::move_dialog::open {parent count current_folder on_done} {
+proc ::fms::ui::move_dialog::open {parent count current_folder on_done} {
     variable Top
     variable Tv
     variable EntryVar
@@ -33,7 +33,7 @@ proc ::csm::ui::move_dialog::open {parent count current_folder on_done} {
     set EntryVar ""
     set RowToCwd [dict create]
 
-    set Top .csm_movedlg
+    set Top .fms_movedlg
     if {[winfo exists $Top]} { destroy $Top }
     toplevel $Top
     wm title $Top "Move session"
@@ -62,26 +62,26 @@ proc ::csm::ui::move_dialog::open {parent count current_folder on_done} {
     pack $Top.f.elbl -side top -anchor w -pady {8 2}
     ttk::frame $Top.f.erow
     pack $Top.f.erow -side top -fill x
-    ttk::entry $Top.f.erow.entry -textvariable ::csm::ui::move_dialog::EntryVar
+    ttk::entry $Top.f.erow.entry -textvariable ::fms::ui::move_dialog::EntryVar
     ttk::button $Top.f.erow.browse -text "Browse..." \
-        -command ::csm::ui::move_dialog::browse
+        -command ::fms::ui::move_dialog::browse
     pack $Top.f.erow.browse -side right -padx {6 0}
     pack $Top.f.erow.entry -side left -fill x -expand 1
 
     ttk::frame $Top.f.btn
     pack $Top.f.btn -side top -fill x -pady {10 0}
     ttk::button $Top.f.btn.cancel -text "Cancel" \
-        -command ::csm::ui::move_dialog::cancel
+        -command ::fms::ui::move_dialog::cancel
     ttk::button $Top.f.btn.ok -text "Move" \
-        -command ::csm::ui::move_dialog::confirm
+        -command ::fms::ui::move_dialog::confirm
     pack $Top.f.btn.ok     -side right
     pack $Top.f.btn.cancel -side right -padx {0 6}
 
-    bind $Tv <Double-Button-1>      ::csm::ui::move_dialog::confirm
-    bind $Tv <<TreeviewSelect>>     ::csm::ui::move_dialog::on_select
-    bind $Top.f.erow.entry <Return> ::csm::ui::move_dialog::confirm
-    bind $Top <Escape>              ::csm::ui::move_dialog::cancel
-    wm protocol $Top WM_DELETE_WINDOW ::csm::ui::move_dialog::cancel
+    bind $Tv <Double-Button-1>      ::fms::ui::move_dialog::confirm
+    bind $Tv <<TreeviewSelect>>     ::fms::ui::move_dialog::on_select
+    bind $Top.f.erow.entry <Return> ::fms::ui::move_dialog::confirm
+    bind $Top <Escape>              ::fms::ui::move_dialog::cancel
+    wm protocol $Top WM_DELETE_WINDOW ::fms::ui::move_dialog::cancel
 
     populate
 
@@ -89,7 +89,7 @@ proc ::csm::ui::move_dialog::open {parent count current_folder on_done} {
     focus $Tv
 }
 
-proc ::csm::ui::move_dialog::populate {} {
+proc ::fms::ui::move_dialog::populate {} {
     variable Tv
     variable CurrentFolder
     variable RowToCwd
@@ -101,12 +101,12 @@ proc ::csm::ui::move_dialog::populate {} {
     # than a cache that may have been seeded by an honest scan in the
     # current process.
     set seq 0
-    foreach folder [::csm::path::list_all_projects] {
+    foreach folder [::fms::path::list_all_projects] {
         if {$folder eq $CurrentFolder} continue
-        set cwds [::csm::path::candidate_cwds_for $folder]
+        set cwds [::fms::path::candidate_cwds_for $folder]
         foreach cwd $cwds {
             set iid [format "F:%d" [incr seq]]
-            set label [::csm::path::pretty_home $cwd]
+            set label [::fms::path::pretty_home $cwd]
             $Tv insert {} end -id $iid -text $label
             dict set RowToCwd $iid $cwd
         }
@@ -117,7 +117,7 @@ proc ::csm::ui::move_dialog::populate {} {
 # prefill the entry with it. The chooser opens at the currently-entered
 # directory when that is a real one (e.g. a list row was selected), else
 # at the home directory.
-proc ::csm::ui::move_dialog::browse {} {
+proc ::fms::ui::move_dialog::browse {} {
     variable Top
     variable EntryVar
     set start [string trim $EntryVar]
@@ -127,7 +127,7 @@ proc ::csm::ui::move_dialog::browse {} {
     if {$dir ne ""} { set EntryVar $dir }
 }
 
-proc ::csm::ui::move_dialog::on_select {} {
+proc ::fms::ui::move_dialog::on_select {} {
     variable Tv
     variable EntryVar
     variable RowToCwd
@@ -139,7 +139,7 @@ proc ::csm::ui::move_dialog::on_select {} {
     }
 }
 
-proc ::csm::ui::move_dialog::confirm {} {
+proc ::fms::ui::move_dialog::confirm {} {
     variable Top
     variable Tv
     variable EntryVar
@@ -161,11 +161,11 @@ proc ::csm::ui::move_dialog::confirm {} {
     {*}$cb $cwd
 }
 
-proc ::csm::ui::move_dialog::cancel {} {
+proc ::fms::ui::move_dialog::cancel {} {
     close_dialog
 }
 
-proc ::csm::ui::move_dialog::close_dialog {} {
+proc ::fms::ui::move_dialog::close_dialog {} {
     variable Top
     if {$Top ne "" && [winfo exists $Top]} {
         grab release $Top

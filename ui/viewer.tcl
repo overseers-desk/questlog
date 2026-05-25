@@ -1,7 +1,7 @@
 package require Tcl 9
 package require Tk
 
-# ::csm::ui::Viewer - read-only segmented session viewer.
+# ::fms::ui::Viewer - read-only segmented session viewer.
 #
 # A single instance docked in the right pane. `show path lineno` loads a
 # session and anchors to a line; calling it again replaces the content.
@@ -15,7 +15,7 @@ package require Tk
 #
 # Search-within: Ctrl-F focuses an entry; Return advances to the next match.
 
-oo::class create ::csm::ui::Viewer {
+oo::class create ::fms::ui::Viewer {
     variable Top
     variable Path
     variable Records
@@ -128,7 +128,7 @@ oo::class create ::csm::ui::Viewer {
         while {[chan gets $fh line] >= 0} {
             incr lineno
             if {$line eq ""} continue
-            set rec [::csm::jsonl::parse_line $line]
+            set rec [::fms::jsonl::parse_line $line]
             if {$rec eq ""} continue
             dict set rec _line $lineno
             lappend Records $rec
@@ -143,13 +143,13 @@ oo::class create ::csm::ui::Viewer {
         set last_ts 0
         set in_section 0
         foreach rec $Records {
-            set t [::csm::jsonl::dict_get_or $rec type ""]
-            set ts_iso [::csm::jsonl::record_timestamp $rec]
+            set t [::fms::jsonl::dict_get_or $rec type ""]
+            set ts_iso [::fms::jsonl::record_timestamp $rec]
             set ts_epoch [my parse_iso $ts_iso]
             set lineno [dict get $rec _line]
 
             # Compact boundary primary divider.
-            if {[::csm::jsonl::is_compact_boundary $rec]} {
+            if {[::fms::jsonl::is_compact_boundary $rec]} {
                 $Text insert end "─── /compact ───\n" compact-divider
                 set in_section 0
                 set last_ts 0
@@ -175,7 +175,7 @@ oo::class create ::csm::ui::Viewer {
             set start_idx [$Text index "end-1l linestart"]
             dict set LineMap $lineno $start_idx
 
-            set body [::csm::jsonl::extract_text $rec]
+            set body [::fms::jsonl::extract_text $rec]
             if {$body eq ""} {
                 # Skip records that contribute no text body.
                 if {$ts_epoch > 0} { set last_ts $ts_epoch }

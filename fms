@@ -1,5 +1,5 @@
 #!/usr/bin/env wish9.0
-# Claude Session Manager - entry script.
+# find-my-session - entry script.
 
 package require Tcl 9
 package require Tk
@@ -23,8 +23,8 @@ source [file join $ROOT lib app.tcl]
 # A leading criterion-type token (regex|read|write|edit) launches the GUI
 # pre-seeded with that criteria chain; otherwise the -regex flag prefills a
 # regex criterion. Either way the GUI opens normally.
-if {[::csm::cli::is_cli $argv]} {
-    set initial_criteria [::csm::cli::parse $argv]
+if {[::fms::cli::is_cli $argv]} {
+    set initial_criteria [::fms::cli::parse $argv]
 } else {
     set initial_criteria [list]
     for {set i 0} {$i < [llength $argv]} {incr i} {
@@ -37,4 +37,4 @@ if {[::csm::cli::is_cli $argv]} {
     }
 }
 
-::csm::app::start $ROOT $initial_criteria
+::fms::app::start $ROOT $initial_criteria

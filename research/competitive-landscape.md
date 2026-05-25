@@ -10,7 +10,7 @@ Cells: Yes / No / Partial / unconfirmed, with a short note.
 
 | Tool | Platform / UI | Cross-session search (#9) | Tool-use path search (#1) | Resume / fork (#3) | Bookmark (#4) | Live status (#8) | Compaction + idle segmentation (#6) | Move / organise (#10) |
 |---|---|---|---|---|---|---|---|---|
-| **csm** (SmartLayer) | Tcl/Tk native Linux GUI | Yes (regex, streaming snippets) | Yes (Read/Write/Edit filter + git-status picker) | Yes (resume, fork, new tab) | Yes (no sidecar DB) | Yes (process-table, any terminal) | Yes (compaction boundary + 10-min idle) | Yes (move / drag between folders) |
+| **fms** (SmartLayer) | Tcl/Tk native Linux GUI | Yes (regex, streaming snippets) | Yes (Read/Write/Edit filter + git-status picker) | Yes (resume, fork, new tab) | Yes (no sidecar DB) | Yes (process-table, any terminal) | Yes (compaction boundary + 10-min idle) | Yes (move / drag between folders) |
 | Claude Code CLI built-in | Node.js terminal picker | Partial (name/summary filter) | No | Yes (`--resume`, `--fork-session`, `/branch`) | No | No | No (compaction is silent) | No |
 | Claude Code Desktop | Electron (macOS/Windows) | Partial (sidebar summary) | No | Yes | No | Yes (sidebar live status) | No | No |
 | Chronicle (claude-history-manager) | macOS native | Yes (full-text index) | No | Yes (one-click, restores cwd) | Partial (pin / tag) | No | No | No |
@@ -37,51 +37,51 @@ Tool links: SmartLayer/claude-session-manager; code.claude.com/docs/en/sessions 
 
 ## Per-USP differentiation verdict
 
-**USP #1, tool-use path search. Rare.** flex queries file edits and tool calls over a SQL index, and searchat plus claude-code-tools expose session history to the agent via MCP for the "what did I do to this file last time" lookup. Those answer the same question from the agent side. A VS Code extension (nypaavsalt) does surface "find the past conversation that edited this file" directly in a human UI, the closest analog to csm's filter, but at negligible traction (single-digit score). csm is the only one keyed to a git-status picker (see USP #2), which turns the query from typing a path into clicking a changed file.
+**USP #1, tool-use path search. Rare.** flex queries file edits and tool calls over a SQL index, and searchat plus claude-code-tools expose session history to the agent via MCP for the "what did I do to this file last time" lookup. Those answer the same question from the agent side. A VS Code extension (nypaavsalt) does surface "find the past conversation that edited this file" directly in a human UI, the closest analog to fms's filter, but at negligible traction (single-digit score). fms is the only one keyed to a git-status picker (see USP #2), which turns the query from typing a path into clicking a changed file.
 
 **USP #2, git-status file picker in search criteria. Unique.** No tool turns the current repo's `git status` into selectable session-search criteria. This is the part of the file-level search story that no competitor touches.
 
-**USP #3, resume and fork. Common.** Table-stakes: the built-in CLI, Chronicle, claude-history, Agent Deck, opcode, search-sessions and others resume; fork exists in the CLI (`--fork-session`, `/branch`), claude-history, and Agent Deck. Chronicle additionally restores the working directory, the specific friction users name. csm's three modes in one right-click menu is convenience, not a capability gap.
+**USP #3, resume and fork. Common.** Table-stakes: the built-in CLI, Chronicle, claude-history, Agent Deck, opcode, search-sessions and others resume; fork exists in the CLI (`--fork-session`, `/branch`), claude-history, and Agent Deck. Chronicle additionally restores the working directory, the specific friction users name. fms's three modes in one right-click menu is convenience, not a capability gap.
 
-**USP #4, bookmark important sessions. Rare.** Chronicle's pin/tag is the only competitor with any bookmark concept, so the differentiator is offering bookmarking at all, not how it is stored. csm encodes the mark in the file's `u+x` bit (no sidecar, scriptable, survives a move and a copy to another machine); that is an implementation property, not a competitive edge, since a DB-backed pin survives moves too.
+**USP #4, bookmark important sessions. Rare.** Chronicle's pin/tag is the only competitor with any bookmark concept, so the differentiator is offering bookmarking at all, not how it is stored. fms encodes the mark in the file's `u+x` bit (no sidecar, scriptable, survives a move and a copy to another machine); that is an implementation property, not a competitive edge, since a DB-backed pin survives moves too.
 
-**USP #5, hit-centred streaming snippets with non-scrolling insert. Rare.** Many tools show results; the no-autoscroll anchor as hits stream in is documented only in csm.
+**USP #5, hit-centred streaming snippets with non-scrolling insert. Rare.** Many tools show results; the no-autoscroll anchor as hits stream in is documented only in fms.
 
 **USP #6, viewer segmenting by compaction boundary and 10-min idle gap. Rare.** claude-compaction-viewer surfaces compaction boundaries in a TUI; opcode shows a timeline that is not compaction-aware. No other tool segments a session into readable chapters by both signals inside a reading pane. Note the ceiling: `/compact` runs server-side and is not written back to the JSONL, so a local reader segments around boundaries rather than recovering compacted content.
 
 **USP #7, "this cwd only" auto-detection. Common.** The built-in picker defaults to the current worktree; flow and others scope per project. Expected behaviour.
 
-**USP #8, live status of running sessions. Common feature, distinct angle.** Live status is now one of the most-built features: Agent Deck, Claude Control, Maestro, ccmanager, claude-squad, the d-kimuson viewer, and the Desktop sidebar all show it. In every case "live" means a session that tool launched or supervises. csm detects live processes from the process table, so it sees sessions started in any terminal, read-only, on Linux. That angle is unduplicated.
+**USP #8, live status of running sessions. Common feature, distinct angle.** Live status is now one of the most-built features: Agent Deck, Claude Control, Maestro, ccmanager, claude-squad, the d-kimuson viewer, and the Desktop sidebar all show it. In every case "live" means a session that tool launched or supervises. fms detects live processes from the process table, so it sees sessions started in any terminal, read-only, on Linux. That angle is unduplicated.
 
 **USP #9, cross-session full-text search. Common.** The crowded centre of the field: Chronicle, Agent Sessions, claude-history, search-sessions, flex, searchat, claude-code-tools, opcode, claude-code-viewer all search across sessions. Regex specifically is less universal (many use fuzzy, FTS, or semantic), but the capability is table-stakes.
 
-**USP #10, move / drag between project folders. Rare.** flow and Agent Deck group sessions; CCM relocates on a move. Actual GUI drag-to-move of the session file between project folders, preserving the bookmark, is csm's. Reframing-on-move is the recurring unsolved pain (folder rename loses sessions).
+**USP #10, move / drag between project folders. Rare.** flow and Agent Deck group sessions; CCM relocates on a move. Actual GUI drag-to-move of the session file between project folders, preserving the bookmark, is fms's. Reframing-on-move is the recurring unsolved pain (folder rename loses sessions).
 
 **USP #11, coroutine responsiveness. Implementation detail.** No tool markets its concurrency model.
 
-**USP #12, native Tk, no Electron, no web view. Rare and demanded.** Chronicle, Agent Sessions, and Claude Control are macOS-native; opcode and the Tauri viewers embed a WebView; the official Desktop is Electron and macOS/Windows only, leaving Linux on the CLI. csm is the only first-class Linux native desktop tool in the survey with no web engine. The demand is voiced ("not supported on Linux yet", and a standing dislike of Electron memory weight), against a counter-segment that wants no GUI at all.
+**USP #12, native Tk, no Electron, no web view. Rare and demanded.** Chronicle, Agent Sessions, and Claude Control are macOS-native; opcode and the Tauri viewers embed a WebView; the official Desktop is Electron and macOS/Windows only, leaving Linux on the CLI. fms is the only first-class Linux native desktop tool in the survey with no web engine. The demand is voiced ("not supported on Linux yet", and a standing dislike of Electron memory weight), against a counter-segment that wants no GUI at all.
 
 ## Top moats
 
-1. **GUI tool-use path search with the git-status picker (USP #1 + #2).** The file-level "which session touched X" query is now contested from the agent side by flex and searchat, but the human-GUI form, and the git-status picker that makes it a click, are csm's alone.
-2. **Native Linux desktop (USP #12) with read-only, any-terminal live detection (USP #8).** Native GUIs here are macOS-first; live monitors only see sessions they launched. csm is the only tool that is both native on Linux and able to see any running session by process inspection.
+1. **GUI tool-use path search with the git-status picker (USP #1 + #2).** The file-level "which session touched X" query is now contested from the agent side by flex and searchat, but the human-GUI form, and the git-status picker that makes it a click, are fms's alone.
+2. **Native Linux desktop (USP #12) with read-only, any-terminal live detection (USP #8).** Native GUIs here are macOS-first; live monitors only see sessions they launched. fms is the only tool that is both native on Linux and able to see any running session by process inspection.
 3. **Move / drag-to-move (USP #10) with bookmarking (USP #4).** Organising the session tree, with a bookmark that survives the move, against the loud folder-rename-loses-sessions pain that no competitor and not the core address.
 
 ## Top table-stakes
 
 1. **Cross-session search (USP #9):** the crowded centre of the field.
 2. **Resume / fork (USP #3):** every serious tool has it.
-3. **Live status (USP #8) as a feature:** common, though csm's read-only any-terminal angle is not.
+3. **Live status (USP #8) as a feature:** common, though fms's read-only any-terminal angle is not.
 
-## Features competitors have that csm lacks
+## Features competitors have that fms lacks
 
-- **Token / cost analytics.** A whole cluster reads the same JSONL for spend: ccusage, Claud-ometer, cc-lens, budi, Claudest, claude-code-conversation-analyzer. csm shows no cost.
-- **MCP-surfaced session history for the agent itself.** flex, searchat, and claude-code-tools let the running agent query its own past sessions mid-task. csm is a human-facing GUI, not an MCP server.
-- **Cross-agent support.** Agent Sessions, searchat, and claude-history read Codex CLI and other agents' logs; csm is Claude Code only.
-- **Multi-session orchestration.** Agent Deck, Maestro, Claude Control, ccmanager, claude-squad launch and supervise parallel worktree sessions; csm is a passive browser and launcher.
-- **Windows and macOS desktop, and mobile/remote.** csm is Linux desktop only.
-- **Semantic search, checkpoints, diffs.** claude-history (semantic), opcode (checkpoint restore, diffs) have these; csm does not.
-- **In-place session rename.** The built-in picker renames; csm does not.
+- **Token / cost analytics.** A whole cluster reads the same JSONL for spend: ccusage, Claud-ometer, cc-lens, budi, Claudest, claude-code-conversation-analyzer. fms shows no cost.
+- **MCP-surfaced session history for the agent itself.** flex, searchat, and claude-code-tools let the running agent query its own past sessions mid-task. fms is a human-facing GUI, not an MCP server.
+- **Cross-agent support.** Agent Sessions, searchat, and claude-history read Codex CLI and other agents' logs; fms is Claude Code only.
+- **Multi-session orchestration.** Agent Deck, Maestro, Claude Control, ccmanager, claude-squad launch and supervise parallel worktree sessions; fms is a passive browser and launcher.
+- **Windows and macOS desktop, and mobile/remote.** fms is Linux desktop only.
+- **Semantic search, checkpoints, diffs.** claude-history (semantic), opcode (checkpoint restore, diffs) have these; fms does not.
+- **In-place session rename.** The built-in picker renames; fms does not.
 
 ## What no competitor positions around
 

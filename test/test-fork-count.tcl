@@ -36,16 +36,16 @@ proc write_multi {path} {
 
 set F [file join $PROJDIR ffff.jsonl]
 set uF ffff
-set FP [file join [::csm::path::projects_root] $FOLDER $uF.jsonl]
+set FP [file join [::fms::path::projects_root] $FOLDER $uF.jsonl]
 write_multi $F
 
 # Wire Scan <-> SessionList as app.tcl does.
 set SL ""
-set ::Scan [::csm::Scan new [list apply {{r} { $::SL on_scan_row $r }}] noop]
+set ::Scan [::fms::Scan new [list apply {{r} { $::SL on_scan_row $r }}] noop]
 proc lookup {path}   { return [$::Scan lookup $path] }
 proc scanpath {path} { return [$::Scan scan_path $path] }
 proc resolvef {f}    { return "/tmp/proj" }
-set SL [::csm::ui::SessionList new .s resolvef lookup noop noop noop noop scanpath noop]
+set SL [::fms::ui::SessionList new .s resolvef lookup noop noop noop noop scanpath noop]
 pack .s -fill both -expand 1
 $SL apply_filter [dict create window 7d one_turn 1]
 
@@ -73,10 +73,10 @@ $SL reconcile_running [dict create $uF $FP]
 check "running fork (not in Rows)" 1
 
 # Bug 2: it quits and its file is removed -> must be forgotten.
-::csm::path::_real_file delete $F
+::fms::path::_real_file delete $F
 $SL reconcile_running [dict create]
 check "fork quit, file gone" 0
 
-::csm::path::_real_file delete -force $SAND
+::fms::path::_real_file delete -force $SAND
 puts [expr {$fails ? "FAILED ($fails)" : "PASS"}]
 exit $fails

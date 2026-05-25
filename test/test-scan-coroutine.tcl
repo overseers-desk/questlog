@@ -7,7 +7,7 @@ set ROOT [file dirname [file dirname [file normalize [info script]]]]
 source [file join $ROOT lib path.tcl]
 source [file join $ROOT lib scan.tcl]
 
-proc ::csm::path::projects_root {} { return /tmp/csm-test-coro }
+proc ::fms::path::projects_root {} { return /tmp/fms-test-coro }
 
 set fails 0
 proc check {name expected actual} {
@@ -20,10 +20,10 @@ proc check {name expected actual} {
 }
 
 # Build a 300-file synthetic tree (exceeds the 200-record yield boundary).
-::csm::path::_real_file delete -force /tmp/csm-test-coro
-::csm::path::_real_file mkdir /tmp/csm-test-coro/-home-test-code-many
+::fms::path::_real_file delete -force /tmp/fms-test-coro
+::fms::path::_real_file mkdir /tmp/fms-test-coro/-home-test-code-many
 for {set i 0} {$i < 300} {incr i} {
-    set fh [open [format /tmp/csm-test-coro/-home-test-code-many/sess-%04d.jsonl $i] w]
+    set fh [open [format /tmp/fms-test-coro/-home-test-code-many/sess-%04d.jsonl $i] w]
     puts $fh "{\"type\":\"user\",\"message\":{\"content\":\"prompt $i\"},\"cwd\":\"/home/test/code/many\",\"timestamp\":\"2026-04-25T10:00:00.000Z\"}"
     puts $fh "{\"type\":\"assistant\",\"message\":{\"content\":\"reply $i\"}}"
     puts $fh "{\"type\":\"user\",\"message\":{\"content\":\"again $i\"}}"
@@ -36,16 +36,16 @@ set ::row_count 0
 proc on_row {row}      { incr ::row_count }
 proc on_done {scanned} { set ::done 1 }
 
-set s [::csm::Scan new on_row on_done]
+set s [::fms::Scan new on_row on_done]
 $s extend [dict create window all one_turn 0]
 vwait ::done
 check coro_scanned_all 300 $::row_count
 
 # Test 2: epoch cancellation. Mid-flight extend cancels the previous coro.
 # Build another 200 files in a second folder to lengthen the path list.
-::csm::path::_real_file mkdir /tmp/csm-test-coro/-home-test-code-second
+::fms::path::_real_file mkdir /tmp/fms-test-coro/-home-test-code-second
 for {set i 0} {$i < 200} {incr i} {
-    set fh [open [format /tmp/csm-test-coro/-home-test-code-second/sess-%04d.jsonl $i] w]
+    set fh [open [format /tmp/fms-test-coro/-home-test-code-second/sess-%04d.jsonl $i] w]
     puts $fh "{\"type\":\"user\",\"message\":{\"content\":\"second prompt $i\"},\"cwd\":\"/home/test/code/second\"}"
     puts $fh "{\"type\":\"user\",\"message\":{\"content\":\"second again $i\"}}"
     close $fh
@@ -65,12 +65,12 @@ vwait ::done
 # Drain residual events.
 update
 check second_folder_visible 1 \
-    [expr {[$s lookup /tmp/csm-test-coro/-home-test-code-second/sess-0000.jsonl] ne ""}]
+    [expr {[$s lookup /tmp/fms-test-coro/-home-test-code-second/sess-0000.jsonl] ne ""}]
 check first_folder_visible 1 \
-    [expr {[$s lookup /tmp/csm-test-coro/-home-test-code-many/sess-0000.jsonl] ne ""}]
+    [expr {[$s lookup /tmp/fms-test-coro/-home-test-code-many/sess-0000.jsonl] ne ""}]
 
 $s destroy
-::csm::path::_real_file delete -force /tmp/csm-test-coro
+::fms::path::_real_file delete -force /tmp/fms-test-coro
 
 if {$fails > 0} {
     puts "$fails failures"

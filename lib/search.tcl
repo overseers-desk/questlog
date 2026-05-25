@@ -2,19 +2,19 @@ package require Tcl 9
 package require TclOO
 package require json
 
-namespace eval ::csm::search {}
+namespace eval ::fms::search {}
 
 # Worker→main delivery shim. Async messages may arrive after the Search
 # object is destroyed; resolve the object command lazily and swallow.
-proc ::csm::search::dispatch {obj_cmd args} {
+proc ::fms::search::dispatch {obj_cmd args} {
     if {[info commands $obj_cmd] eq ""} return
     if {[catch {{*}$obj_cmd {*}$args} err]} {
-        puts stderr "csm::search::dispatch: $err"
+        puts stderr "fms::search::dispatch: $err"
     }
 }
 
 # Whitespace-collapse and length-cap a content string for display.
-proc ::csm::search::clean_text {s {limit 300}} {
+proc ::fms::search::clean_text {s {limit 300}} {
     set s [regsub -all {[\s]+} $s " "]
     set s [string trim $s]
     if {[string length $s] > $limit} {
@@ -29,10 +29,10 @@ proc ::csm::search::clean_text {s {limit 300}} {
 # always inside the window so the display can re-find and embolden it. If the
 # pattern does not match (it should, since the caller only calls this on a
 # hit) the head-capped clean_text is returned as a safe fallback.
-proc ::csm::search::snippet_window {s pat re_opts {radius 80}} {
+proc ::fms::search::snippet_window {s pat re_opts {radius 80}} {
     set s [string trim [regsub -all {[\s]+} $s " "]]
     if {[catch {regexp -indices {*}$re_opts -- $pat $s m} ok] || !$ok} {
-        return [::csm::search::clean_text $s 300]
+        return [::fms::search::clean_text $s 300]
     }
     lassign $m a b
     set len [string length $s]
@@ -48,11 +48,11 @@ proc ::csm::search::snippet_window {s pat re_opts {radius 80}} {
 
 # Render a tool_use block as "Name(key=value, ...)". Most informative key
 # first when the tool is one we know; otherwise dict insertion order.
-proc ::csm::search::format_tool_use {name input} {
+proc ::fms::search::format_tool_use {name input} {
     if {[catch {dict size $input}]} { return "${name}()" }
     set keys [dict keys $input]
     if {[llength $keys] == 0} { return "${name}()" }
-    set ordered [::csm::search::_order_tool_keys $name $keys]
+    set ordered [::fms::search::_order_tool_keys $name $keys]
     set parts [list]
     foreach k $ordered {
         set v [dict get $input $k]
@@ -71,7 +71,7 @@ proc ::csm::search::format_tool_use {name input} {
     return $s
 }
 
-proc ::csm::search::_order_tool_keys {name keys} {
+proc ::fms::search::_order_tool_keys {name keys} {
     set preferred [dict create \
         Bash       {command} \
         Read       {file_path} \
@@ -102,7 +102,7 @@ proc ::csm::search::_order_tool_keys {name keys} {
 # value, so a bare or partial filename matches that file in any directory
 # and a full path matches exactly. Content is cleaned for display. The
 # worker thread carries its own copy of this proc; the two must stay in sync.
-proc ::csm::search::record_hits {rec criteria re_opts} {
+proc ::fms::search::record_hits {rec criteria re_opts} {
     set toolsets {read Read write Write edit {Edit MultiEdit NotebookEdit}}
     set hits [list]
     set have_blocks 0; set blocks {}
@@ -115,18 +115,18 @@ proc ::csm::search::record_hits {rec criteria re_opts} {
         if {$val eq ""} continue
         if {$type eq "regex"} {
             if {!$have_blocks} {
-                set blocks [::csm::jsonl::extract_blocks $rec]
+                set blocks [::fms::jsonl::extract_blocks $rec]
                 set have_blocks 1
             }
             foreach {btype content} $blocks {
                 if {[regexp {*}$re_opts -- $val $content]} {
                     lappend hits [list $idx $btype \
-                        [::csm::search::snippet_window $content $val $re_opts]]
+                        [::fms::search::snippet_window $content $val $re_opts]]
                 }
             }
         } else {
             if {!$have_tools} {
-                set tools [::csm::jsonl::record_tool_uses $rec]
+                set tools [::fms::jsonl::record_tool_uses $rec]
                 set have_tools 1
             }
             set toolset [dict get $toolsets $type]
@@ -136,7 +136,7 @@ proc ::csm::search::record_hits {rec criteria re_opts} {
                 if {[dict get $t name] in $toolset && $off >= 0
                     && [string range $tp $off end] eq $val} {
                     lappend hits [list $idx tool_use \
-                        [::csm::search::clean_text [dict get $t rendered] 300]]
+                        [::fms::search::clean_text [dict get $t rendered] 300]]
                 }
             }
         }
@@ -148,7 +148,7 @@ proc ::csm::search::record_hits {rec criteria re_opts} {
 # interpreters with no access to procs defined in the parent, so
 # extract_blocks, format_tool_use, clean_text and the jsonl helpers are
 # duplicated here. Both copies must stay in sync.
-set ::csm::search::WorkerScript {
+set ::fms::search::WorkerScript {
     package require Tcl 9
     package require Thread
     package require json
@@ -174,7 +174,7 @@ set ::csm::search::WorkerScript {
         return $s
     }
 
-    # Worker copy of ::csm::search::snippet_window; keep in sync.
+    # Worker copy of ::fms::search::snippet_window; keep in sync.
     proc snippet_window {s pat re_opts {radius 80}} {
         set s [string trim [regsub -all {[\s]+} $s " "]]
         if {[catch {regexp -indices {*}$re_opts -- $pat $s m} ok] || !$ok} {
@@ -340,7 +340,7 @@ set ::csm::search::WorkerScript {
         return $out
     }
 
-    # Worker copy of ::csm::search::record_hits; keep in sync.
+    # Worker copy of ::fms::search::record_hits; keep in sync.
     proc record_hits {rec criteria re_opts} {
         set toolsets {read Read write Write edit {Edit MultiEdit NotebookEdit}}
         set hits [list]
@@ -435,7 +435,7 @@ set ::csm::search::WorkerScript {
                 bookmarked [file executable $path] \
                 cwd_hint $cwd_hint]
             thread::send -async $main_tid \
-                [list ::csm::search::dispatch $obj_cmd on_worker_row $epoch $row]
+                [list ::fms::search::dispatch $obj_cmd on_worker_row $epoch $row]
             set all 1
             foreach s $sat { if {!$s} { set all 0; break } }
             if {$all && [llength $buffer] > 0} {
@@ -444,21 +444,21 @@ set ::csm::search::WorkerScript {
                     set matchcore [dict create path $path lineoff $evlineno \
                         ts $first_ts btype $evbtype content $evcontent folder $folder]
                     thread::send -async $main_tid \
-                        [list ::csm::search::dispatch $obj_cmd on_worker_match \
+                        [list ::fms::search::dispatch $obj_cmd on_worker_match \
                              $epoch $matchcore]
                     incr matches_in_slice
                 }
             }
         }
         thread::send -async $main_tid \
-            [list ::csm::search::dispatch $obj_cmd on_worker_done \
+            [list ::fms::search::dispatch $obj_cmd on_worker_done \
                  $epoch [llength $paths] $matches_in_slice]
     }
     thread::wait
 }
 
-# ::csm::Search - typed-criteria search across session logs, coroutine by
-# default, threaded fan-out when CSM_SEARCH_THREADS is set.
+# ::fms::Search - typed-criteria search across session logs, coroutine by
+# default, threaded fan-out when FMS_SEARCH_THREADS is set.
 #
 # A search is a list of criteria, each {type regex|read|write|edit value}.
 # A session qualifies when every criterion is satisfied somewhere in it
@@ -483,7 +483,7 @@ set ::csm::search::WorkerScript {
 # Cancellation: each start increments Epoch; in-flight async dispatches
 # carrying a stale epoch are dropped on arrival.
 
-oo::class create ::csm::Search {
+oo::class create ::fms::Search {
     variable Scan
     variable Epoch
     variable MatchedSessions   ;# dict path -> 1 (first-match-per-session)
@@ -531,7 +531,7 @@ oo::class create ::csm::Search {
         set Active 1
         set MatchedSessions [dict create]
         set Counts [dict create done 0 total 0 matches 0]
-        set co ::csm::search::coro_$my_epoch
+        set co ::fms::search::coro_$my_epoch
         coroutine $co [namespace which my] run_search $my_epoch $snapshot
     }
 
@@ -546,8 +546,8 @@ oo::class create ::csm::Search {
     }
 
     method pick_thread_count {} {
-        if {![info exists ::env(CSM_SEARCH_THREADS)]} { return 0 }
-        set v $::env(CSM_SEARCH_THREADS)
+        if {![info exists ::env(FMS_SEARCH_THREADS)]} { return 0 }
+        set v $::env(FMS_SEARCH_THREADS)
         if {![string is integer -strict $v]} { return 0 }
         if {$v < 1} { return 0 }
         return $v
@@ -610,7 +610,7 @@ oo::class create ::csm::Search {
                     }
                 }
                 if {$candidate && ![catch {::json::json2dict $line} rec]} {
-                    foreach hit [::csm::search::record_hits $rec $criteria $re_opts] {
+                    foreach hit [::fms::search::record_hits $rec $criteria $re_opts] {
                         lassign $hit idx btype content
                         set sat [lreplace $sat $idx $idx 1]
                         set key "$lineno $btype $content"
@@ -717,7 +717,7 @@ oo::class create ::csm::Search {
         set main_tid [thread::id]
         set obj_cmd  [self]
         foreach slice $slices {
-            set tid [thread::create $::csm::search::WorkerScript]
+            set tid [thread::create $::fms::search::WorkerScript]
             lappend Workers $tid
             thread::send -async $tid \
                 [list worker_run $main_tid $obj_cmd $my_epoch $slice $criteria $re_opts]

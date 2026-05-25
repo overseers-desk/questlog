@@ -1,8 +1,8 @@
 # Voices
 
-Verbatim quotes from public discussion about living with Claude Code session history. Snapshot built May 2026, drawn chiefly from Reddit (r/ClaudeAI, r/ClaudeCode), the `anthropics/claude-code` GitHub issue tracker, Hacker News, and developer blogs. Each entry maps to a csm USP from `usp-ranking.md` or labels itself `gap`.
+Verbatim quotes from public discussion about living with Claude Code session history. Snapshot built May 2026, drawn chiefly from Reddit (r/ClaudeAI, r/ClaudeCode), the `anthropics/claude-code` GitHub issue tracker, Hacker News, and developer blogs. Each entry maps to a fms USP from `usp-ranking.md` or labels itself `gap`.
 
-The corpus exists so feature copy speaks in words users already use. When writing about a feature, grep this file for the USP number and read the user's own language before drafting. The categories below are reasons a developer goes back to a finished session; `use-case-survey.md` sorts those reasons by whether writing state forward could have prevented the return, which is the line between ground csm holds alone and ground the memory-system ecosystem already owns.
+The corpus exists so feature copy speaks in words users already use. When writing about a feature, grep this file for the USP number and read the user's own language before drafting. The categories below are reasons a developer goes back to a finished session; `use-case-survey.md` sorts those reasons by whether writing state forward could have prevented the return, which is the line between ground fms holds alone and ground the memory-system ecosystem already owns.
 
 A GitHub issue marked "closed as not planned" is noted as such: it shows Anthropic declining a need users plainly feel, which is the opening a third-party tool fills.
 
@@ -278,7 +278,7 @@ No session tool surveyed offers bookmarking, and the demand surfaces only on Git
 
 ## 9. Reference a past decision; reuse a past solution → USP #9
 
-These returns are real and frequent, and the community overwhelmingly answers them by writing state forward (memory systems, CLAUDE.md) rather than by reading old sessions. They are recorded here because csm can serve them, not because backward search is how users currently solve them.
+These returns are real and frequent, and the community overwhelmingly answers them by writing state forward (memory systems, CLAUDE.md) rather than by reading old sessions. They are recorded here because fms can serve them, not because backward search is how users currently solve them.
 
 > "Every morning, same ritual: open a new session, re-explain the architecture, re-explain the database schema, re-explain the decisions I made last week."
 > — u/cid3as, r/ClaudeAI, March 2026 (score 3)
@@ -312,9 +312,9 @@ Going back to the session archive as evidence. The strong, high-engagement form 
 
 ---
 
-## 11. Strong demand no csm feature meets → gap
+## 11. Strong demand no fms feature meets → gap
 
-**Token and cost analytics.** The largest gap by tool count: many independent builders ship local dashboards over the same JSONL csm reads.
+**Token and cost analytics.** The largest gap by tool count: many independent builders ship local dashboards over the same JSONL fms reads.
 
 > "I've been using Claude Code a lot and wanted to understand where my tokens and money were going. Claude Code already stores everything in `~/.claude/` but there's no way to visualize it."
 > — u/deshrajdry, r/ClaudeCode, February 2026 (score 45)

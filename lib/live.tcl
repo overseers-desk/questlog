@@ -1,6 +1,6 @@
 package require Tcl 9
 
-# ::csm::live - which sessions are running right now.
+# ::fms::live - which sessions are running right now.
 #
 # Claude Code records every live session at ~/.claude/sessions/<pid>.json
 # holding {pid, sessionId(=uuid), cwd, procStart, status, ...}. The file
@@ -14,7 +14,7 @@ package require Tcl 9
 # like path.tcl and terminal.tcl, not a class: there is no joint state
 # to absorb.
 
-namespace eval ::csm::live {
+namespace eval ::fms::live {
     namespace export running_uuids
 }
 
@@ -23,7 +23,7 @@ namespace eval ::csm::live {
 # uuid.jsonl); for a session the manager has moved this no longer names
 # the on-disk file, so callers MATCH by uuid (stable across a move) and
 # use the path only to scan a freshly-started session into view.
-proc ::csm::live::running_uuids {} {
+proc ::fms::live::running_uuids {} {
     set dir [file join $::env(HOME) .claude sessions]
     if {![file isdirectory $dir]} { return [dict create] }
     set out [dict create]
@@ -38,8 +38,8 @@ proc ::csm::live::running_uuids {} {
         set cwd ""
         regexp {"cwd":"([^"]+)"} $txt -> cwd
         if {![proc_alive_matching $pid $procstart]} continue
-        set path [file join [::csm::path::projects_root] \
-                      [::csm::path::encode_cwd $cwd] $uuid.jsonl]
+        set path [file join [::fms::path::projects_root] \
+                      [::fms::path::encode_cwd $cwd] $uuid.jsonl]
         dict set out $uuid $path
     }
     return $out
@@ -49,7 +49,7 @@ proc ::csm::live::running_uuids {} {
 # /proc/<pid>/stat field 2 (comm) may contain spaces and parentheses, so
 # anchor on the LAST ')': the remainder begins at field 3, making field
 # 22 (start_time) the 20th token (index 19).
-proc ::csm::live::proc_alive_matching {pid procstart} {
+proc ::fms::live::proc_alive_matching {pid procstart} {
     set p /proc/$pid/stat
     if {![file readable $p]} { return 0 }
     if {[catch {open $p r} fh]} { return 0 }

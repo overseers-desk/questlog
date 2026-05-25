@@ -1,13 +1,13 @@
 package require Tcl 9
 package require json
 
-namespace eval ::csm::jsonl {
+namespace eval ::fms::jsonl {
     namespace export extract_text extract_blocks record_tool_uses \
         is_compact_boundary record_timestamp first_cwd
 }
 
 # Parse one JSONL line into a Tcl dict. Returns "" on parse failure.
-proc ::csm::jsonl::parse_line {line} {
+proc ::fms::jsonl::parse_line {line} {
     if {[catch {::json::json2dict $line} d]} { return "" }
     return $d
 }
@@ -22,7 +22,7 @@ proc ::csm::jsonl::parse_line {line} {
 #   last-prompt:    .lastPrompt
 #   system:         .content (catches "Conversation compacted")
 #   anything else:  ""
-proc ::csm::jsonl::extract_text {rec} {
+proc ::fms::jsonl::extract_text {rec} {
     set t [dict_get_or $rec type ""]
     switch -- $t {
         user - assistant {
@@ -49,7 +49,7 @@ proc ::csm::jsonl::extract_text {rec} {
 # Tcl string; a JSON array is a Tcl list of dict-shaped strings. Tell them
 # apart by the test "the value, treated as a list, has at least one element
 # that is a valid dict with a 'type' key".
-proc ::csm::jsonl::is_string_content {c} {
+proc ::fms::jsonl::is_string_content {c} {
     if {$c eq ""} { return 1 }
     # If it is not a well-formed list, it is a string.
     if {[catch {llength $c} n]} { return 1 }
@@ -61,7 +61,7 @@ proc ::csm::jsonl::is_string_content {c} {
     return 0
 }
 
-proc ::csm::jsonl::extract_array_text {blocks} {
+proc ::fms::jsonl::extract_array_text {blocks} {
     set out [list]
     foreach blk $blocks {
         set bt [dict_get_or $blk type ""]
@@ -90,10 +90,10 @@ proc ::csm::jsonl::extract_array_text {blocks} {
 #   last-prompt:                          {user $lastPrompt}
 #   anything else (attachment, file-history-snapshot, etc.): empty list.
 #
-# tool_use blocks pass through ::csm::search::format_tool_use, which lives
+# tool_use blocks pass through ::fms::search::format_tool_use, which lives
 # in the search namespace because the rendered form is a search-pane
 # concern, not a JSONL concern.
-proc ::csm::jsonl::extract_blocks {rec} {
+proc ::fms::jsonl::extract_blocks {rec} {
     set out [list]
     set t [dict_get_or $rec type ""]
     switch -- $t {
@@ -131,7 +131,7 @@ proc ::csm::jsonl::extract_blocks {rec} {
                     } elseif {$bt eq "tool_use"} {
                         set name  [dict_get_or $blk name ""]
                         set input [dict_get_or $blk input [dict create]]
-                        lappend out tool_use [::csm::search::format_tool_use $name $input]
+                        lappend out tool_use [::fms::search::format_tool_use $name $input]
                     }
                 }
             }
@@ -148,7 +148,7 @@ proc ::csm::jsonl::extract_blocks {rec} {
     return $out
 }
 
-proc ::csm::jsonl::tool_result_text {blk} {
+proc ::fms::jsonl::tool_result_text {blk} {
     if {![dict exists $blk content]} { return "" }
     set c [dict get $blk content]
     if {[is_string_content $c]} { return $c }
@@ -169,7 +169,7 @@ proc ::csm::jsonl::tool_result_text {blk} {
 # rather than the rendered string, so it carries the full untruncated path
 # and the NotebookEdit notebook_path. Used by Search to satisfy
 # read/write/edit criteria structurally. Empty for non-assistant records.
-proc ::csm::jsonl::record_tool_uses {rec} {
+proc ::fms::jsonl::record_tool_uses {rec} {
     set out [list]
     if {[dict_get_or $rec type ""] ne "assistant"} { return $out }
     if {![dict exists $rec message]} { return $out }
@@ -190,27 +190,27 @@ proc ::csm::jsonl::record_tool_uses {rec} {
             }
         }
         lappend out [dict create name $name path $path \
-                         rendered [::csm::search::format_tool_use $name $input]]
+                         rendered [::fms::search::format_tool_use $name $input]]
     }
     return $out
 }
 
 # 1 iff this is a compaction boundary: type=system AND subtype=compact_boundary.
-proc ::csm::jsonl::is_compact_boundary {rec} {
+proc ::fms::jsonl::is_compact_boundary {rec} {
     if {[dict_get_or $rec type ""] ne "system"} { return 0 }
     if {[dict_get_or $rec subtype ""] ne "compact_boundary"} { return 0 }
     return 1
 }
 
 # ISO timestamp string from a record (.timestamp). Empty if absent.
-proc ::csm::jsonl::record_timestamp {rec} {
+proc ::fms::jsonl::record_timestamp {rec} {
     return [dict_get_or $rec timestamp ""]
 }
 
 # Last non-empty assistant text body in a session jsonl. Empty string if
 # the file holds no parseable assistant record with text content (e.g. the
 # final assistant turn was all tool_use blocks).
-proc ::csm::jsonl::last_assistant_text {path} {
+proc ::fms::jsonl::last_assistant_text {path} {
     set last ""
     if {[catch {open $path r} fh]} { return "" }
     while {[chan gets $fh line] >= 0} {
@@ -229,7 +229,7 @@ proc ::csm::jsonl::last_assistant_text {path} {
 # file cannot be opened or holds no record with a cwd. A line-level
 # regex, not a full parse: cwd appears on most record types and the
 # first hit is enough.
-proc ::csm::jsonl::first_cwd {path} {
+proc ::fms::jsonl::first_cwd {path} {
     if {[catch {open $path r} fh]} { return "" }
     chan configure $fh -encoding utf-8
     set cwd ""
@@ -245,7 +245,7 @@ proc ::csm::jsonl::first_cwd {path} {
 }
 
 # dict get with default - Tcl 9's [dict getdef] would do this but is verbose.
-proc ::csm::jsonl::dict_get_or {d k default} {
+proc ::fms::jsonl::dict_get_or {d k default} {
     if {[dict exists $d $k]} { return [dict get $d $k] }
     return $default
 }

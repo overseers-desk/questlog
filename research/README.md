@@ -2,7 +2,7 @@
 
 Verbatim user voices and competitive evidence backing the feature claims in the project README and any future landing-page copy. Nothing in this folder is canonical product spec, only the basis for it. Feature copy should use words taken from `voices.md` so the project speaks to users in the language they already use.
 
-The folder is organized around one question: why a developer goes back to a session that is already finished. `use-case-survey.md` sorts those reasons by whether writing state forward could have prevented the return. That line is the thesis of the research: the ecosystem's memory systems already serve the forward-preventable returns, so csm's least-substitutable value is the returns that cannot be foreseen at session time, closing a loop you did not know you left open and defending a conclusion you did not know would be challenged.
+The folder is organized around one question: why a developer goes back to a session that is already finished. `use-case-survey.md` sorts those reasons by whether writing state forward could have prevented the return. That line is the thesis of the research: the ecosystem's memory systems already serve the forward-preventable returns, so fms's least-substitutable value is the returns that cannot be foreseen at session time, closing a loop you did not know you left open and defending a conclusion you did not know would be challenged.
 
 ## Files
 

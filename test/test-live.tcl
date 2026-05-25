@@ -34,15 +34,15 @@ set mystart [real_procstart $me]
 set deadpid 2147480000
 
 # ---- direct predicate ----------------------------------------------
-check alive_match    1 [::csm::live::proc_alive_matching $me $mystart]
-check alive_mismatch 0 [::csm::live::proc_alive_matching $me 0]
-check dead_pid       0 [::csm::live::proc_alive_matching $deadpid $mystart]
+check alive_match    1 [::fms::live::proc_alive_matching $me $mystart]
+check alive_mismatch 0 [::fms::live::proc_alive_matching $me 0]
+check dead_pid       0 [::fms::live::proc_alive_matching $deadpid $mystart]
 
 # ---- running_uuids over a synthetic registry -----------------------
-set ::env(HOME) /tmp/csm-test-live-home
-::csm::path::_real_file delete -force /tmp/csm-test-live-home
-set sdir /tmp/csm-test-live-home/.claude/sessions
-::csm::path::_real_file mkdir $sdir
+set ::env(HOME) /tmp/fms-test-live-home
+::fms::path::_real_file delete -force /tmp/fms-test-live-home
+set sdir /tmp/fms-test-live-home/.claude/sessions
+::fms::path::_real_file mkdir $sdir
 
 proc write_rec {fname pid uuid cwd procstart} {
     global sdir
@@ -55,15 +55,15 @@ write_rec alive.json $me      alive-uuid /home/test/code/foo $mystart
 write_rec dead.json  $deadpid dead-uuid  /home/test/code/bar 12345
 write_rec reuse.json $me      reuse-uuid /home/test/code/baz 0   ;# pid alive, wrong start
 
-set running [::csm::live::running_uuids]
+set running [::fms::live::running_uuids]
 check alive_present 1 [dict exists $running alive-uuid]
 check dead_absent   0 [dict exists $running dead-uuid]
 check reuse_absent  0 [dict exists $running reuse-uuid]
 check alive_path \
-    /tmp/csm-test-live-home/.claude/projects/-home-test-code-foo/alive-uuid.jsonl \
+    /tmp/fms-test-live-home/.claude/projects/-home-test-code-foo/alive-uuid.jsonl \
     [dict get $running alive-uuid]
 
-::csm::path::_real_file delete -force /tmp/csm-test-live-home
+::fms::path::_real_file delete -force /tmp/fms-test-live-home
 
 if {$fails > 0} {
     puts "$fails failures"
