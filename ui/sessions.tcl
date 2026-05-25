@@ -402,11 +402,10 @@ oo::class create ::fms::ui::SessionList {
             [list [self] on_session_release $path %X %Y]
         $Text tag bind $stag <Double-Button-1> \
             [list [self] on_session_open $path]
-        # macOS/Aqua reports the secondary (right) click as Button-2; there
-        # Button-3 is the wheel button, which a trackpad cannot produce. X11
-        # and Windows use Button-3 for the right button.
-        set rmb [expr {[tk windowingsystem] eq "aqua" ? "<Button-2>" : "<Button-3>"}]
-        $Text tag bind $stag $rmb \
+        # Tk's <<ContextMenu>> virtual event already maps to the right button
+        # per platform (Button-2 on Aqua, Button-3 elsewhere); app.tcl extends
+        # it with Control-Button-1 on Aqua so Ctrl+click works too.
+        $Text tag bind $stag <<ContextMenu>> \
             [list [self] on_session_right $path %X %Y]
         foreach snip [dict get $Sessions $path snippets] {
             lassign $snip btype content lineoff
