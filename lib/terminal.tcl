@@ -13,13 +13,22 @@ proc ::fms::terminal::resume_command {cwd uuid {fork 0}} {
 }
 
 # Detection order from design.md §Resume command and terminal integration:
-#   1. $GNOME_TERMINAL_SERVICE  -> gnome-terminal
-#   2. $KONSOLE_VERSION         -> konsole
-#   3. parent process tree walk
-#   4. fall back to first installed: ptyxis, gnome-terminal, konsole, xterm
+#   1. macOS: $TERM_PROGRAM -> iTerm2 if set, else Terminal.app (always there)
+#   2. $GNOME_TERMINAL_SERVICE  -> gnome-terminal
+#   3. $KONSOLE_VERSION         -> konsole
+#   4. parent process tree walk
+#   5. fall back to first installed: ptyxis, gnome-terminal, konsole, xterm
 proc ::fms::terminal::detect {} {
     variable Detected
     if {$Detected ne ""} { return $Detected }
+
+    if {$::tcl_platform(os) eq "Darwin"} {
+        if {[info exists ::env(TERM_PROGRAM)] \
+            && $::env(TERM_PROGRAM) eq "iTerm.app"} {
+            return [set Detected iterm2]
+        }
+        return [set Detected macterminal]
+    }
 
     if {[info exists ::env(GNOME_TERMINAL_SERVICE)]} {
         return [set Detected gnome-terminal]
@@ -83,6 +92,34 @@ proc ::fms::terminal::launch_tab {cwd uuid {fork 0}} {
         konsole {
             return [exec_ok konsole --new-tab --workdir $cwd -e bash -c $inner]
         }
+        macterminal {
+            # Terminal.app has no flag for cwd; "do script" runs a shell
+            # command in a new window. Users who prefer tabs can set
+            # Terminal > Settings > General > New windows open with: Tab.
+            set shell "cd [shquote $cwd] && $inner"
+            set as "tell application \"Terminal\"\nactivate\ndo script [asquote $shell]\nend tell"
+            return [exec_ok osascript -e $as]
+        }
+        iterm2 {
+            # iTerm has first-class tab scripting; fall back to a new window
+            # if none is open. Same shell command as Terminal.app.
+            set shell "cd [shquote $cwd] && $inner"
+            set as [string map [list %CMD% [asquote $shell]] {
+tell application "iTerm"
+    activate
+    if (count of windows) = 0 then
+        set w to (create window with default profile)
+        tell current session of w to write text %CMD%
+    else
+        tell current window
+            set t to (create tab with default profile)
+            tell current session of t to write text %CMD%
+        end tell
+    end if
+end tell
+}]
+            return [exec_ok osascript -e $as]
+        }
         xterm - alacritty - kitty - default {
             # No reliable tab CLI: fall back to a fresh window.
             set bin [expr {$t eq "" ? "xterm" : $t}]
@@ -102,4 +139,9 @@ proc ::fms::terminal::exec_ok {args} {
 # Conservative shell-quote for a path that will appear inside a bash -c string.
 proc ::fms::terminal::shquote {s} {
     return '[string map {' '\\''} $s]'
+}
+
+# AppleScript string literal: wrap in double quotes and escape \ and " only.
+proc ::fms::terminal::asquote {s} {
+    return \"[string map [list \\ \\\\ \" \\\"] $s]\"
 }
