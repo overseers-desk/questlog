@@ -7,7 +7,7 @@ class FindMySession < Formula
   desc "GUI for finding, reading, and reopening past Claude Code sessions"
   homepage "https://github.com/SmartLayer/find-my-session"
   url "https://github.com/SmartLayer/find-my-session/archive/refs/tags/v1.0.0.tar.gz"
-  sha256 "51871e5b0fd8afdd30b299d01736dd05768ccd3f5402749de3ee2d2e4181a931"
+  sha256 "d48fbd9f11ae6978eda5fa5c8b076e0d2e8de0600c6fe57abbd77553a75d1aaf"
   license "MIT"
 
   depends_on "tcl-tk"
