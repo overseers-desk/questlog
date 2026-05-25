@@ -402,7 +402,11 @@ oo::class create ::fms::ui::SessionList {
             [list [self] on_session_release $path %X %Y]
         $Text tag bind $stag <Double-Button-1> \
             [list [self] on_session_open $path]
-        $Text tag bind $stag <Button-3> \
+        # macOS/Aqua reports the secondary (right) click as Button-2; there
+        # Button-3 is the wheel button, which a trackpad cannot produce. X11
+        # and Windows use Button-3 for the right button.
+        set rmb [expr {[tk windowingsystem] eq "aqua" ? "<Button-2>" : "<Button-3>"}]
+        $Text tag bind $stag $rmb \
             [list [self] on_session_right $path %X %Y]
         foreach snip [dict get $Sessions $path snippets] {
             lassign $snip btype content lineoff
