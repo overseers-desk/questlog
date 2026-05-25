@@ -93,11 +93,27 @@ proc ::fms::terminal::launch_tab {cwd uuid {fork 0}} {
             return [exec_ok konsole --new-tab --workdir $cwd -e bash -c $inner]
         }
         macterminal {
-            # Terminal.app has no flag for cwd; "do script" runs a shell
-            # command in a new window. Users who prefer tabs can set
-            # Terminal > Settings > General > New windows open with: Tab.
+            # Terminal.app has no scripting command for "new tab"; "do script"
+            # always opens a new window. Match the Linux behaviour (tab in
+            # the current window) by simulating Cmd-T via System Events when
+            # a window already exists, then writing into the new front tab.
+            # The first such invocation triggers a one-time macOS prompt to
+            # grant Accessibility to osascript; with no Terminal window open
+            # yet, fall back to a plain "do script" so the first launch
+            # never depends on that permission.
             set shell "cd [shquote $cwd] && $inner"
-            set as "tell application \"Terminal\"\nactivate\ndo script [asquote $shell]\nend tell"
+            set as [string map [list %CMD% [asquote $shell]] {
+tell application "Terminal"
+    activate
+    if (count of windows) = 0 then
+        do script %CMD%
+    else
+        tell application "System Events" to keystroke "t" using {command down}
+        delay 0.2
+        do script %CMD% in selected tab of front window
+    end if
+end tell
+}]
             return [exec_ok osascript -e $as]
         }
         iterm2 {
