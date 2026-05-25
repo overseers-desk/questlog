@@ -65,7 +65,7 @@ Two structural biases shape this corpus and are stated here so the rankings are 
 **Niche but real:**
 
 - USP #10 (move / drag between folders) and USP #7 (per-repo scope): organising the tree; folder-rename loss is the sharp edge.
-- USP #4 (bookmark as `u+x`): real need (#55291), thin verbatim base, near-unique mechanism.
+- USP #4 (bookmark): real need (#55291), thin verbatim base; only Chronicle offers any bookmark, and the `u+x` storage is implementation, not the competitive point.
 - USP #12 (native Linux, no Electron): real on Linux where the official Desktop does not run.
 
 **Solves a problem few ask about explicitly:**

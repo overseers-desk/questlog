@@ -9,7 +9,7 @@ The ranking sorts by demand (how often users voice the underlying pain) multipli
 1. **Tool-use path search.** Filter sessions by which file was Read, Written, or Edited, keyed to `tool_use` records; a bare filename matches any directory. (`lib/jsonl.tcl`, `lib/search.tcl`)
 2. **Git-status file picker in search criteria.** The "+ Read / + Write / + Edit" dropdowns populate from `git status` of the launch repo, so a recently-changed file is picked rather than typed. (`ui/toolbar.tcl`)
 3. **One-click resume, resume-forked, resume-in-new-terminal-tab.** Resume, `--fork-session` branching, and launching into a fresh terminal tab from the right-click menu, in the session's original working directory. (`lib/terminal.tcl`)
-4. **Bookmark as the file's `u+x` permission bit.** No sidecar, no database; the bookmark survives moves and is visible to `ls -l` and `find -perm`. (`lib/path.tcl`)
+4. **Bookmark important sessions.** Stored as the file's `u+x` permission bit rather than a sidecar database, so the mark survives moves and is visible to `ls -l` and `find -perm`; the storage mechanism is an implementation choice, not the competitive point. (`lib/path.tcl`)
 5. **Hit-centred streaming snippets with non-scrolling insert.** Up to three context-windowed snippets per session, match in bold; new rows insert above the viewport without moving the user's position. (`ui/sessions.tcl`)
 6. **Docked session viewer with segmentation.** Renders the JSONL as formatted turns split at `compact_boundary` records and 10-minute idle gaps into labelled sections, anchored to the matched line. (`ui/viewer.tcl`)
 7. **"This cwd only" auto-detection.** If the launch directory maps to a project folder, the filter pre-enables, scoping the list to the current repo. (`ui/toolbar.tcl`)
@@ -29,7 +29,7 @@ The ranking sorts by demand (how often users voice the underlying pain) multipli
 | 4 | #10 move / drag-to-move | High. Folder-rename loses sessions, recurring and unfixed | Rare. flow groups, CCM relocates by CLI; GUI drag preserving the bookmark is csm's | Strong differentiator (incident-driven) |
 | 5 | #3 resume / fork | Very high. Every tool covers it | Common. csm's three-mode right-click is convenience | Must-have, not a differentiator |
 | 6 | #12 native Linux, no Electron | Real on Linux, where the official Desktop does not run | Rare. Competitors are macOS-first or embed a WebView | Positioning angle |
-| 7 | #4 bookmark as `u+x` | Moderate (#55291); thin verbatim base | Mechanism unique; only Chronicle has any pin/tag | Distinctive, niche |
+| 7 | #4 bookmark | Moderate (#55291); thin verbatim base | Rare: only Chronicle offers any bookmark/pin; the `u+x` storage is implementation, not an edge | Distinctive, niche |
 | 8 | #7 "this cwd only" | Moderate. Both per-repo and cross-project scope wanted | Common. Category default | Table-stakes |
 | 9 | #5 streaming snippets, non-scrolling | Low. Voiced as "search is slow", not as this feature | Rare | Silent quality |
 | 10 | #11 coroutine responsiveness | None voiced | Implementation detail | Contributor-facing |

@@ -10,7 +10,7 @@ Cells: Yes / No / Partial / unconfirmed, with a short note.
 
 | Tool | Platform / UI | Cross-session search (#9) | Tool-use path search (#1) | Resume / fork (#3) | Bookmark (#4) | Live status (#8) | Compaction + idle segmentation (#6) | Move / organise (#10) |
 |---|---|---|---|---|---|---|---|---|
-| **csm** (SmartLayer) | Tcl/Tk native Linux GUI | Yes (regex, streaming snippets) | Yes (Read/Write/Edit filter + git-status picker) | Yes (resume, fork, new tab) | Yes (`u+x` bit, no DB) | Yes (process-table, any terminal) | Yes (compaction boundary + 10-min idle) | Yes (move / drag between folders) |
+| **csm** (SmartLayer) | Tcl/Tk native Linux GUI | Yes (regex, streaming snippets) | Yes (Read/Write/Edit filter + git-status picker) | Yes (resume, fork, new tab) | Yes (no sidecar DB) | Yes (process-table, any terminal) | Yes (compaction boundary + 10-min idle) | Yes (move / drag between folders) |
 | Claude Code CLI built-in | Node.js terminal picker | Partial (name/summary filter) | No | Yes (`--resume`, `--fork-session`, `/branch`) | No | No | No (compaction is silent) | No |
 | Claude Code Desktop | Electron (macOS/Windows) | Partial (sidebar summary) | No | Yes | No | Yes (sidebar live status) | No | No |
 | Chronicle (claude-history-manager) | macOS native | Yes (full-text index) | No | Yes (one-click, restores cwd) | Partial (pin / tag) | No | No | No |
@@ -43,7 +43,7 @@ Tool links: SmartLayer/claude-session-manager; code.claude.com/docs/en/sessions 
 
 **USP #3, resume and fork. Common.** Table-stakes: the built-in CLI, Chronicle, claude-history, Agent Deck, opcode, search-sessions and others resume; fork exists in the CLI (`--fork-session`, `/branch`), claude-history, and Agent Deck. Chronicle additionally restores the working directory, the specific friction users name. csm's three modes in one right-click menu is convenience, not a capability gap.
 
-**USP #4, bookmark via `u+x` permission bit. Rare; mechanism unique.** Chronicle offers pin/tag, the only competitor with any bookmark concept. The permission-bit encoding (no sidecar, scriptable, survives a move and a copy to another machine) is csm's alone.
+**USP #4, bookmark important sessions. Rare.** Chronicle's pin/tag is the only competitor with any bookmark concept, so the differentiator is offering bookmarking at all, not how it is stored. csm encodes the mark in the file's `u+x` bit (no sidecar, scriptable, survives a move and a copy to another machine); that is an implementation property, not a competitive edge, since a DB-backed pin survives moves too.
 
 **USP #5, hit-centred streaming snippets with non-scrolling insert. Rare.** Many tools show results; the no-autoscroll anchor as hits stream in is documented only in csm.
 
@@ -65,7 +65,7 @@ Tool links: SmartLayer/claude-session-manager; code.claude.com/docs/en/sessions 
 
 1. **GUI tool-use path search with the git-status picker (USP #1 + #2).** The file-level "which session touched X" query is now contested from the agent side by flex and searchat, but the human-GUI form, and the git-status picker that makes it a click, are csm's alone.
 2. **Native Linux desktop (USP #12) with read-only, any-terminal live detection (USP #8).** Native GUIs here are macOS-first; live monitors only see sessions they launched. csm is the only tool that is both native on Linux and able to see any running session by process inspection.
-3. **Move / drag-to-move (USP #10) with bookmark-as-`u+x` (USP #4).** Organising the session tree, with a bookmark that survives the move, against the loud folder-rename-loses-sessions pain that no competitor and not the core address.
+3. **Move / drag-to-move (USP #10) with bookmarking (USP #4).** Organising the session tree, with a bookmark that survives the move, against the loud folder-rename-loses-sessions pain that no competitor and not the core address.
 
 ## Top table-stakes
 
