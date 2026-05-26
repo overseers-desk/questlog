@@ -141,9 +141,19 @@ oo::class create ::fms::Scan {
     }
 
     # scan_one path - read the file line by line, extract the multi-turn
-    # predicate, the first user prompt preview, the cwd hint, and the
-    # first timestamp. Pure: no shared state, returns a fresh dict.
-    # The caller decides whether to publish.
+    # predicate, the first user prompt preview, the cwd hint, the first
+    # timestamp, and the slug Claude Code writes for the session. Pure:
+    # no shared state, returns a fresh dict. The caller decides whether
+    # to publish.
+    #
+    # Two-phase read. The forward scan keeps its existing early break on
+    # users/cwd/first_ts. Slug records (agentName, aiTitle) are NOT read
+    # forward: Claude Code appends rename records at the end of the file,
+    # so the first occurrence is always the original auto title, never
+    # the rename. After the forward break, a tail scan over the last
+    # ~64 KB takes the LAST agentName and the LAST aiTitle, which is the
+    # window the most recent rename and its mirrored agent-name record
+    # live in. Slug priority is unchanged: agentName wins over aiTitle.
     method scan_one {path} {
         if {[catch {open $path r} fh]} { return [dict create] }
         chan configure $fh -encoding utf-8
@@ -163,15 +173,37 @@ oo::class create ::fms::Scan {
             if {[regexp {"type":"user"} $line] && [regexp {"content":"([^"]+)"} $line -> uc]} {
                 incr users
                 if {$users == 1} { set first $uc }
-                if {$users >= 2 && $cwd ne "" && $first_ts ne ""} break
+            }
+            if {$users >= 2 && $cwd ne "" && $first_ts ne ""} break
+        }
+        # Tail scan. Seek to max(current_pos, size - 64KB) so a short file
+        # is read whole and a long file pays only the tail. Skip the first
+        # (probably partial) line after the seek when seeking mid-file.
+        set agent_name ""
+        set ai_title ""
+        if {[catch {file size $path} fsz]} { set fsz 0 }
+        set tail_start [expr {$fsz - 65536}]
+        set pos [chan tell $fh]
+        if {$tail_start > $pos} {
+            chan seek $fh $tail_start
+            chan gets $fh _
+        }
+        while {[chan gets $fh line] >= 0} {
+            if {$line eq ""} continue
+            if {[regexp {"agentName":"([^"]+)"} $line -> m]} {
+                set agent_name $m
+            }
+            if {[regexp {"aiTitle":"([^"]+)"} $line -> m]} {
+                set ai_title $m
             }
         }
         close $fh
-        if {[catch {file mtime $path} mtime]}  { set mtime 0 }
-        if {[catch {file size  $path} size]}   { set size 0 }
+        if {[catch {file mtime $path} mtime]} { set mtime 0 }
+        set size $fsz
         set folder [file tail [file dirname $path]]
         set uuid   [file rootname [file tail $path]]
         set first_clean [my clean_preview $first]
+        set slug [expr {$agent_name ne "" ? $agent_name : $ai_title}]
         return [dict create \
             path $path \
             mtime $mtime \
@@ -181,17 +213,20 @@ oo::class create ::fms::Scan {
             first_ts $first_ts \
             is_multi [expr {$users >= 2}] \
             first_user $first_clean \
+            slug $slug \
+            ai_title $ai_title \
             bookmarked [file executable $path] \
             cwd_hint $cwd]
     }
 
-    # Collapse whitespace, strip simple JSON escapes, truncate to ~80 chars.
+    # Collapse whitespace and strip simple JSON escapes. No length cap:
+    # the session list renders the prompt with -wrap none so overflow is
+    # clipped by the widget edge in the right font's actual width, and
+    # the row expands on click to show the rest. A byte-count truncation
+    # here would just be a worse approximation of the same clipping.
     method clean_preview {s} {
         set s [regsub -all {[\s]+} $s " "]
         set s [string map [list "\\\"" "\"" "\\\\" "\\" "\\n" " " "\\t" " "] $s]
-        if {[string length $s] > 80} {
-            set s [string range $s 0 79]…
-        }
         return [string trim $s]
     }
 

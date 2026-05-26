@@ -67,6 +67,8 @@ oo::class create ::fms::ui::SessionList {
     variable MenuPath
     variable MenuTarget
     variable BookmarkIndex    ;# menu index of the Bookmark entry (its label mutates)
+    variable RenameIndex      ;# menu index of the Rename entry, enabled per running state
+    variable PlacePending     ;# 1 while an `after idle` re-place is queued
 
     constructor {parent resolve_cb lookup_cb on_open on_move_request \
                  on_drop_move on_bookmark_toggle on_scan_path cancel_cb} {
@@ -86,6 +88,7 @@ oo::class create ::fms::ui::SessionList {
         set Query [dict create regex [list] nocase 0]
         set Selected ""
         set NextId 0
+        set PlacePending 0
         my reset_model
         my build
     }
@@ -112,7 +115,7 @@ oo::class create ::fms::ui::SessionList {
         ttk::frame $Top.body
         pack $Top.body -side top -fill both -expand 1
         text $Top.body.t -wrap word -state disabled -exportselection 0 \
-            -yscrollcommand [list $Top.body.sb set] \
+            -yscrollcommand [list [self] on_yscroll] \
             -borderwidth 0 -highlightthickness 0 -padx 4 -pady 4 -cursor arrow \
             -takefocus 0
         ttk::scrollbar $Top.body.sb -orient vertical \
@@ -122,6 +125,10 @@ oo::class create ::fms::ui::SessionList {
         grid columnconfigure $Top.body 0 -weight 1
         grid rowconfigure    $Top.body 0 -weight 1
         set Text $Top.body.t
+        # Re-place every visible expand arrow when the text widget changes
+        # height (window resize, theme reflow). Scroll updates flow through
+        # on_yscroll, which the text widget calls on every view change.
+        bind $Text <Configure> [list [self] schedule_place]
         # This is a list, not editable text: make the click-drag text selection
         # invisible (it otherwise paints rows grey, active and inactive) and
         # hide the insert cursor.
@@ -158,6 +165,11 @@ oo::class create ::fms::ui::SessionList {
         # selected row gets a highlight for click feedback.
         $Text tag configure sessionhead -lmargin1 12 -lmargin2 28 \
             -spacing1 6 -spacing3 2 -foreground "#143d8a"
+        # The slug (Claude's agentName / aiTitle) renders bold inline before
+        # the prompt body, so the slug acts as the headline and the prompt
+        # as the deck below it. Bold weight is the only marker; brackets
+        # would compete with the kebab-case hyphens.
+        $Text tag configure slug -font {-weight bold}
         $Text tag configure selected -background "#aecbff"
         $Text tag configure drop-candidate -background "#cce5ff"
 
@@ -214,6 +226,8 @@ oo::class create ::fms::ui::SessionList {
         # Addressed by index, not label: on_session_right rewrites this label
         # to Add/Remove bookmark, so a label lookup would fail on the next open.
         set BookmarkIndex [$Menu index end]
+        $Menu add command -label "Rename..." -command [list [self] menu_rename]
+        set RenameIndex [$Menu index end]
         set MenuTarget [dict create]
         set MenuPath ""
     }
@@ -240,12 +254,20 @@ oo::class create ::fms::ui::SessionList {
             catch {$Text yview AnchorTop}
         }
         catch {$Text mark unset AnchorTop}
+        # Streaming inserts may have shifted rows; line positions change
+        # without a scrollbar yview event. Re-place arrows explicitly.
+        my schedule_place
     }
 
     # ---- filter / clear ----------------------------------------------
 
     method clear {} {
         $Text configure -state normal
+        # Drop every place'd arrow before the text rows go.
+        dict for {p s} $Sessions {
+            set a [dict get $s arrow]
+            if {$a ne "" && [winfo exists $a]} { destroy $a }
+        }
         $Text delete 1.0 end
         my purge_tags_and_marks
         $Text mark set TailMark "end-1c"
@@ -361,13 +383,16 @@ oo::class create ::fms::ui::SessionList {
         set folder [dict get $row folder]
         my ensure_folder $folder
         set label [my session_label $path $row]
+        set slug  [my dict_or $row slug ""]
+        set aitt  [my dict_or $row ai_title ""]
         set when  [my fmt_time [my dict_or $row mtime 0]]
         set size  [my dict_or $row size 0]
         set uuid  [my dict_or $row uuid [file rootname [file tail $path]]]
         dict set Sessions $path [dict create \
-            folder $folder label $label when $when size $size uuid $uuid \
+            folder $folder label $label slug $slug ai_title $aitt \
+            when $when size $size uuid $uuid \
             count 0 first_lineno $first_lineno snippets [list] \
-            stag "" smark "" semark "" rendered 0]
+            stag "" smark "" semark "" arrow "" rendered 0 expanded 0]
         dict lappend SessionsByFolder $folder $path
         my bump_folder_count $folder 1
     }
@@ -381,9 +406,16 @@ oo::class create ::fms::ui::SessionList {
         set stag "s#[incr NextId]"
         set sstart [$Text index $femark]
         set meta [my session_meta_text $path]
-        $Text insert $femark "$meta[my session_title_text $path]\n" \
+        set title [my session_title_pieces $path]
+        $Text insert $femark "$meta[dict get $title line]\n" \
             [list sessionhead $stag]
         $Text tag add meta $sstart "$sstart + [string length $meta]c"
+        my tag_slug_range $sstart $meta $title
+        # Default to clipped single-line: overflow past the widget edge is
+        # simply not drawn. Click on the row toggles to word wrap so the
+        # full prompt becomes visible.
+        set exp [dict get $Sessions $path expanded]
+        $Text tag configure $stag -wrap [expr {$exp ? "word" : "none"}]
         set smark "sm[incr NextId]"
         $Text mark set $smark $sstart
         $Text mark gravity $smark left
@@ -407,13 +439,26 @@ oo::class create ::fms::ui::SessionList {
         # it with Control-Button-1 on Aqua so Ctrl+click works too.
         $Text tag bind $stag <<ContextMenu>> \
             [list [self] on_session_right $path %X %Y]
+        # Right-edge expand arrow. Its own widget rather than an inline
+        # text glyph because the text widget's -wrap none clips the line
+        # at the visible right edge; an inline marker at the logical end
+        # is exactly where the user can't see it.
+        set arrow $Text.x[incr NextId]
+        label $arrow -text ⌄ -borderwidth 0 -padx 2 -pady 0 \
+            -cursor hand2 \
+            -background [$Text cget -background] \
+            -foreground "#143d8a"
+        bind $arrow <Button-1> [list [self] on_arrow_click $path]
+        dict set Sessions $path arrow $arrow
         foreach snip [dict get $Sessions $path snippets] {
             lassign $snip btype content lineoff
             my render_snippet $path $btype $content $lineoff
         }
         if {$Selected eq $path} {
             $Text tag add selected $smark "$smark lineend"
+            $arrow configure -background [$Text tag cget selected -background]
         }
+        my schedule_place
     }
 
     # Accumulate a match in the model (count, capped snippet list) and draw
@@ -479,21 +524,44 @@ oo::class create ::fms::ui::SessionList {
         return [format "%-16s %7s   " $when $size]
     }
 
-    # The proportional-font title: glyphs, the first-prompt preview, and the
-    # match count when searching. Follows the metadata prefix on the line.
-    method session_title_text {path} {
+    # The proportional-font title: glyphs, the slug (when Claude assigned
+    # one), the first-prompt preview, and the match count when searching.
+    # Returns a dict so the caller can apply the bold slug tag to the right
+    # character range without re-measuring.
+    method session_title_pieces {path} {
         set s [dict get $Sessions $path]
         set running [dict exists $RunningSet [dict get $s uuid]]
         set bk [my session_bookmarked $path]
         set g [my glyph_cell $running $bk]
+        set slug [dict get $s slug]
         set line ""
         if {$g ne ""} { append line "$g " }
+        set slug_off -1
+        set slug_len 0
+        if {$slug ne ""} {
+            set slug_off [string length $line]
+            append line $slug
+            set slug_len [string length $slug]
+            append line "  "
+        }
         append line [dict get $s label]
         set count [dict get $s count]
         if {$count > 0} {
             append line "   ·   $count [expr {$count == 1 ? {match} : {matches}}]"
         }
-        return $line
+        return [dict create line $line slug_off $slug_off slug_len $slug_len]
+    }
+
+    # Apply the bold slug tag to the slug's character range within a
+    # freshly-inserted header line. row_start is the text index where the
+    # whole header begins; meta is the fixed-width metadata prefix that
+    # precedes the title within the same line.
+    method tag_slug_range {row_start meta title} {
+        set off [dict get $title slug_off]
+        if {$off < 0} return
+        set base [expr {[string length $meta] + $off}]
+        set len  [dict get $title slug_len]
+        $Text tag add slug "$row_start + ${base}c" "$row_start + [expr {$base + $len}]c"
     }
 
     method session_bookmarked {path} {
@@ -511,13 +579,85 @@ oo::class create ::fms::ui::SessionList {
         set smark [dict get $s smark]
         set stag  [dict get $s stag]
         set meta [my session_meta_text $path]
+        set title [my session_title_pieces $path]
         $Text delete $smark "$smark lineend"
-        $Text insert $smark "$meta[my session_title_text $path]" \
+        $Text insert $smark "$meta[dict get $title line]" \
             [list sessionhead $stag]
         $Text tag add meta $smark "$smark + [string length $meta]c"
+        my tag_slug_range $smark $meta $title
         if {$Selected eq $path} {
             $Text tag add selected $smark [dict get $s semark]
         }
+    }
+
+    # Flip the row between clipped-single-line and word-wrap. Per-row -wrap
+    # lives on $stag, which already tags the header range and is uniquely
+    # owned by this session. The arrow glyph follows the state.
+    method toggle_expanded {path} {
+        if {![dict exists $Sessions $path]} return
+        if {![dict get $Sessions $path rendered]} return
+        set new [expr {![dict get $Sessions $path expanded]}]
+        dict set Sessions $path expanded $new
+        set stag [dict get $Sessions $path stag]
+        $Text tag configure $stag -wrap [expr {$new ? "word" : "none"}]
+        set arrow [dict get $Sessions $path arrow]
+        if {$arrow ne "" && [winfo exists $arrow]} {
+            $arrow configure -text [expr {$new ? "⌃" : "⌄"}]
+        }
+        # The expanded line now occupies a different vertical span;
+        # neighbouring rows shifted, so every arrow needs re-placing.
+        my schedule_place
+    }
+
+    # Arrow click: select the row (matching plain-click feedback) and
+    # toggle wrap. Kept distinct from on_session_release so the body
+    # click never expands - that overloaded gesture confused users.
+    method on_arrow_click {path} {
+        my select $path
+        my toggle_expanded $path
+    }
+
+    # Text widget yview update: forward to the scrollbar, then schedule a
+    # re-place of every visible arrow. Tk fires this on every scroll tick;
+    # the re-place is coalesced behind `after idle` so we do one pass per
+    # event loop turn instead of one per tick.
+    method on_yscroll {args} {
+        $Top.body.sb set {*}$args
+        my schedule_place
+    }
+
+    method schedule_place {} {
+        if {$PlacePending} return
+        set PlacePending 1
+        after idle [list [self] place_all_arrows]
+    }
+
+    method place_all_arrows {} {
+        set PlacePending 0
+        if {![winfo exists $Text]} return
+        dict for {path s} $Sessions {
+            if {![dict get $s rendered]} continue
+            my place_arrow $path
+        }
+    }
+
+    # Position one arrow at the right edge of its row, or hide it if the
+    # row is scrolled out of view. dlineinfo returns "" when the line is
+    # not currently displayed; we hide rather than try to derive a
+    # position arithmetically because the text widget owns the truth.
+    method place_arrow {path} {
+        if {![dict exists $Sessions $path]} return
+        set s [dict get $Sessions $path]
+        set w [dict get $s arrow]
+        if {$w eq "" || ![winfo exists $w]} return
+        set smark [dict get $s smark]
+        if {$smark eq ""} { place forget $w; return }
+        set dli [$Text dlineinfo $smark]
+        if {$dli eq ""} { place forget $w; return }
+        lassign $dli _ y _ h _
+        # -x -4 leaves a couple of pixels of breathing room before the
+        # right edge (the scrollbar lives in the next grid column).
+        place $w -in $Text -anchor ne -relx 1.0 -x -4 -y $y
     }
 
     method ensure_folder {folder} {
@@ -597,10 +737,14 @@ oo::class create ::fms::ui::SessionList {
             if {![dict get $Sessions $path rendered]} continue
             catch {$Text mark unset [dict get $Sessions $path smark] \
                                     [dict get $Sessions $path semark]}
+            set arrow [dict get $Sessions $path arrow]
+            if {$arrow ne "" && [winfo exists $arrow]} { destroy $arrow }
             dict set Sessions $path rendered 0
             dict set Sessions $path stag ""
             dict set Sessions $path smark ""
             dict set Sessions $path semark ""
+            dict set Sessions $path arrow ""
+            dict set Sessions $path expanded 0
         }
         # Drop the now-empty per-session / per-snippet tags left by the delete.
         foreach tg [$Text tag names] {
@@ -651,17 +795,27 @@ oo::class create ::fms::ui::SessionList {
     # ---- selection / open --------------------------------------------
 
     # Select the whole session object - its header and any snippets - as one
-    # highlighted block (the full-width region, not a text run).
+    # highlighted block (the full-width region, not a text run). The arrow
+    # sits in front of the highlight (it is a place'd child of the text
+    # widget), so its -background follows the selected/unselected state.
     method select {path} {
         if {$Selected ne "" && [dict exists $Sessions $Selected] \
             && [dict get $Sessions $Selected rendered]} {
             set os [dict get $Sessions $Selected]
             catch {$Text tag remove selected [dict get $os smark] [dict get $os semark]}
+            set oarrow [dict get $os arrow]
+            if {$oarrow ne "" && [winfo exists $oarrow]} {
+                $oarrow configure -background [$Text cget -background]
+            }
         }
         set Selected $path
         if {[dict exists $Sessions $path] && [dict get $Sessions $path rendered]} {
             set s [dict get $Sessions $path]
             $Text tag add selected [dict get $s smark] [dict get $s semark]
+            set arrow [dict get $s arrow]
+            if {$arrow ne "" && [winfo exists $arrow]} {
+                $arrow configure -background [$Text tag cget selected -background]
+            }
         }
     }
 
@@ -678,6 +832,8 @@ oo::class create ::fms::ui::SessionList {
     # A plain click selects (and, having armed a drag on press, lets a drag
     # win if the pointer moved). Opening the viewer is a double-click, so a
     # single click can begin a drag without also loading the reading view.
+    # Expanding the row to full word-wrap is the right-edge arrow's job,
+    # not the click's - overloading click confused users.
     method on_session_release {path X Y} {
         set was_drag [::fms::ui::drag::release $X $Y]
         if {$was_drag} return
@@ -756,6 +912,11 @@ oo::class create ::fms::ui::SessionList {
             -state [expr {$folder ne "" ? "normal" : "disabled"}]
         $Menu entryconfigure $BookmarkIndex \
             -label [expr {[file executable $path] ? "Remove bookmark" : "Add bookmark"}]
+        # Rename writes into the file; greying it while the session is
+        # running keeps us from interleaving with claude's own writes.
+        set is_running [dict exists $RunningSet $uuid]
+        $Menu entryconfigure $RenameIndex \
+            -state [expr {$is_running ? "disabled" : "normal"}]
         tk_popup $Menu $X $Y
     }
 
@@ -782,6 +943,74 @@ oo::class create ::fms::ui::SessionList {
     }
     method menu_move {} { {*}$OnMoveRequest [list $MenuPath] }
     method menu_bookmark {} { {*}$OnBookmarkToggle $MenuPath }
+
+    # Rename the session. An empty entry reverts to Claude's auto title
+    # (the ai_title we captured at scan time); otherwise the new value
+    # becomes the custom title. Either path appends Claude Code's native
+    # rename records (custom-title and agent-name) to the jsonl, so the
+    # title survives an app restart and shows up in claude's own picker.
+    method menu_rename {} {
+        if {![dict exists $Sessions $MenuPath]} return
+        set s [dict get $Sessions $MenuPath]
+        set uuid [dict get $s uuid]
+        set current [dict get $s slug]
+        set aitt [my dict_or $s ai_title ""]
+        set entered [my prompt_rename $current]
+        if {$entered eq "<cancelled>"} return
+        if {$entered eq ""} {
+            ::fms::title::clear_custom $MenuPath $uuid $aitt
+            dict set Sessions $MenuPath slug $aitt
+        } else {
+            ::fms::title::set_custom $MenuPath $uuid $entered
+            dict set Sessions $MenuPath slug $entered
+        }
+        $Text configure -state normal
+        my redraw_header $MenuPath
+        $Text configure -state disabled
+    }
+
+    # Small modal one-field dialog. Returns the entered text on OK, or
+    # the literal "<cancelled>" string on Cancel / Escape / close.
+    # "<cancelled>" is a sentinel rather than {} so an OK with an empty
+    # entry (which means "revert to auto") stays distinguishable.
+    method prompt_rename {current} {
+        set dlg .renameDialog
+        if {[winfo exists $dlg]} { destroy $dlg }
+        toplevel $dlg
+        wm title $dlg "Set session title"
+        wm transient $dlg [winfo toplevel $Text]
+        wm resizable $dlg 1 0
+        set ::fms::ui::rename_entry $current
+        set ::fms::ui::rename_outcome ""
+        ttk::label $dlg.lbl \
+            -text "Title (kebab-case; empty reverts to Claude's auto title):"
+        ttk::entry $dlg.ent -textvariable ::fms::ui::rename_entry
+        ttk::frame $dlg.bf
+        ttk::button $dlg.bf.ok -text "OK" \
+            -command [list set ::fms::ui::rename_outcome ok]
+        ttk::button $dlg.bf.cancel -text "Cancel" \
+            -command [list set ::fms::ui::rename_outcome cancel]
+        pack $dlg.lbl -padx 12 -pady {12 4} -anchor w -fill x
+        pack $dlg.ent -padx 12 -pady 4 -fill x
+        pack $dlg.bf  -padx 12 -pady {4 12} -anchor e -fill x
+        pack $dlg.bf.cancel -side right -padx 4
+        pack $dlg.bf.ok     -side right -padx 4
+        bind $dlg.ent <Return> [list $dlg.bf.ok invoke]
+        bind $dlg.ent <Escape> [list $dlg.bf.cancel invoke]
+        wm protocol $dlg WM_DELETE_WINDOW \
+            [list set ::fms::ui::rename_outcome cancel]
+        focus $dlg.ent
+        $dlg.ent selection range 0 end
+        grab set $dlg
+        vwait ::fms::ui::rename_outcome
+        set outcome $::fms::ui::rename_outcome
+        set value   $::fms::ui::rename_entry
+        catch {grab release $dlg}
+        destroy $dlg
+        if {$outcome ne "ok"} { return "<cancelled>" }
+        return $value
+    }
+
     method clipboard_set {s} { clipboard clear; clipboard append $s }
 
     # ---- running / bookmark reconciliation ---------------------------
@@ -878,6 +1107,8 @@ oo::class create ::fms::ui::SessionList {
             $Text delete [dict get $s smark] [dict get $s semark]
             catch {$Text mark unset [dict get $s smark] [dict get $s semark]}
         }
+        set arrow [dict get $s arrow]
+        if {$arrow ne "" && [winfo exists $arrow]} { destroy $arrow }
         dict unset Sessions $path
         if {$Selected eq $path} { set Selected "" }
         set lst [my dict_or $SessionsByFolder $folder {}]
@@ -929,6 +1160,12 @@ oo::class create ::fms::ui::SessionList {
     method redraw_all {} {
         $Text configure -state normal
         my anchor_save
+        # Drop every arrow widget before the underlying rows go away.
+        # The text widget delete that follows would leave them orphaned.
+        dict for {p s} $Sessions {
+            set a [dict get $s arrow]
+            if {$a ne "" && [winfo exists $a]} { destroy $a }
+        }
         $Text delete 1.0 end
         my purge_tags_and_marks
         $Text mark set TailMark "end-1c"
@@ -953,7 +1190,9 @@ oo::class create ::fms::ui::SessionList {
                     [dict create folder [dict get $s folder] \
                          uuid [dict get $s uuid] mtime 0 \
                          size [dict get $s size] \
-                         first_user [dict get $s label]] \
+                         first_user [dict get $s label] \
+                         slug [my dict_or $s slug ""] \
+                         ai_title [my dict_or $s ai_title ""]] \
                     [dict get $s first_lineno]
                 dict set Sessions $path label [dict get $s label]
                 dict set Sessions $path when [dict get $s when]
