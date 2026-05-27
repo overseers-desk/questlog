@@ -13,6 +13,8 @@ Depends:
  ${misc:Depends},
  tcl9.0,
  tk9.0,
+ tcllib,
+ tcl9.0-thread,
 Description: GUI for finding, reading, and reopening past Claude Code sessions
  find-my-session is a Tk desktop tool that browses the JSONL logs Claude Code
  writes under ~/.claude/projects/. It lists sessions grouped by project, runs

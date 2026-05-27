@@ -70,6 +70,8 @@ oo::class create ::fms::ui::SessionList {
     variable BookmarkIndex    ;# menu index of the Bookmark entry (its label mutates)
     variable RenameIndex      ;# menu index of the Rename entry, enabled per running state
     variable PlacePending     ;# 1 while an `after idle` re-place is queued
+    variable TotalCost        ;# running sum of per-session cost in the model
+    variable StatusBase       ;# last text set by set_progress/set_done
 
     constructor {parent resolve_cb lookup_cb on_open on_move_request \
                  on_drop_move on_bookmark_toggle on_scan_path cancel_cb \
@@ -85,6 +87,8 @@ oo::class create ::fms::ui::SessionList {
         set CancelCb $cancel_cb
         set OnShowAll $on_show_all
         set StatusVar "Idle"
+        set StatusBase ""
+        set TotalCost 0.0
         set Snapshot [dict create]
         set CriteriaActive 0
         set RunningSet [dict create]
@@ -287,7 +291,9 @@ oo::class create ::fms::ui::SessionList {
         $Text mark gravity TailMark right
         $Text configure -state disabled
         my reset_model
-        set StatusVar "Idle"
+        set TotalCost 0.0
+        set StatusBase ""
+        my refresh_status
     }
 
     # Drop the per-region tags and position marks left behind by a cleared
@@ -439,13 +445,19 @@ oo::class create ::fms::ui::SessionList {
         set when  [my fmt_time [my dict_or $row mtime 0]]
         set size  [my dict_or $row size 0]
         set uuid  [my dict_or $row uuid [file rootname [file tail $path]]]
+        set cost  [my dict_or $row cost_usd ""]
         dict set Sessions $path [dict create \
             folder $folder label $label slug $slug ai_title $aitt \
-            when $when size $size uuid $uuid \
+            when $when size $size uuid $uuid cost $cost \
             count 0 first_lineno $first_lineno snippets [list] \
             stag "" smark "" semark "" arrow "" rendered 0 expanded 0]
         dict lappend SessionsByFolder $folder $path
         my bump_folder_count $folder 1
+        if {$cost ne "" && $cost > 0} {
+            my bump_folder_cost $folder $cost
+            set TotalCost [expr {$TotalCost + $cost}]
+            my refresh_status
+        }
     }
 
     # Draw a session that the model already knows, inserting its header (and
@@ -566,13 +578,18 @@ oo::class create ::fms::ui::SessionList {
         return $body
     }
 
-    # The fixed-width metadata prefix (monospace tag): time then size, each in
-    # a constant character column so they align down the list.
+    # The fixed-width metadata prefix (monospace tag): time, size, cost,
+    # each in a constant character column so they align down the list. Cost
+    # is blank until the second-pass worker fills it in; an unknown model
+    # (no row in the rate table) stays blank.
     method session_meta_text {path} {
         set s [dict get $Sessions $path]
         set when [dict get $s when]
         set size [my fmt_size [dict get $s size]]
-        return [format "%-16s %7s   " $when $size]
+        set cost [my dict_or $s cost ""]
+        set ctxt ""
+        if {$cost ne "" && $cost >= 0} { set ctxt [::fms::cost::format_cost $cost] }
+        return [format "%-16s %7s %6s   " $when $size $ctxt]
     }
 
     # The proportional-font title: glyphs, the slug (when Claude assigned
@@ -723,7 +740,7 @@ oo::class create ::fms::ui::SessionList {
         set fmark  "fm[incr NextId]"
         set femark "fe[incr NextId]"
         dict set Folders $folder [dict create fmark $fmark femark $femark \
-            htag $htag label $label count 0 expanded $expanded]
+            htag $htag label $label count 0 cost 0.0 expanded $expanded]
         set fstart [$Text index TailMark]
         $Text insert TailMark "[my folder_heading_text $folder]\n" \
             [list folderhead $htag]
@@ -744,7 +761,15 @@ oo::class create ::fms::ui::SessionList {
         # cannot strand the triangle alone on a line when the path is long.
         set line "$marker\u00A0[dict get $f label]"
         set n [dict get $f count]
-        if {$n > 0} { append line "  ($n)" }
+        set fc [my dict_or $f cost 0.0]
+        if {$n > 0} {
+            if {$fc > 0} {
+                set noun [expr {$n == 1 ? {session} : {sessions}}]
+                append line "  ($n $noun, [::fms::cost::format_total $fc])"
+            } else {
+                append line "  ($n)"
+            }
+        }
         return $line
     }
 
@@ -811,6 +836,46 @@ oo::class create ::fms::ui::SessionList {
         dict set Folders $folder count \
             [expr {[dict get [dict get $Folders $folder] count] + $delta}]
         my redraw_folder_heading $folder
+    }
+
+    method bump_folder_cost {folder delta} {
+        if {![dict exists $Folders $folder]} return
+        dict set Folders $folder cost \
+            [expr {[my dict_or [dict get $Folders $folder] cost 0.0] + $delta}]
+        my redraw_folder_heading $folder
+    }
+
+    # Late arrival from the cost-pass worker. Diffs the new cost against the
+    # cached one (so a retry on a re-scanned file does not double-count),
+    # updates the Sessions cell, bumps the folder aggregate and the running
+    # total, then redraws the row's meta region in place.
+    method refresh_cost {path cost_dict} {
+        if {![dict exists $Sessions $path]} return
+        set s [dict get $Sessions $path]
+        set old [my dict_or $s cost ""]
+        if {$old eq ""} { set old 0.0 }
+        set new [dict get $cost_dict cost_usd]
+        set delta 0.0
+        if {$new >= 0} {
+            dict set Sessions $path cost $new
+            if {$old < 0} { set old 0.0 }
+            set delta [expr {$new - $old}]
+        } else {
+            # Unknown model. Leave previous cost (if any) in place; do not
+            # zero out a known number on a partial result.
+            dict set Sessions $path cost $new
+        }
+        # bump_folder_cost mutates the heading line and redraw_header
+        # mutates the session line — both go through $Text delete/insert,
+        # so the widget must be in normal state for the duration.
+        $Text configure -state normal
+        if {$delta != 0} {
+            my bump_folder_cost [dict get $s folder] $delta
+            set TotalCost [expr {$TotalCost + $delta}]
+            my refresh_status
+        }
+        if {[dict get $s rendered]} { my redraw_header $path }
+        $Text configure -state disabled
     }
 
     method glyph_cell {running bookmarked} {
@@ -1160,6 +1225,15 @@ oo::class create ::fms::ui::SessionList {
         }
         set arrow [dict get $s arrow]
         if {$arrow ne "" && [winfo exists $arrow]} { destroy $arrow }
+        # Subtract this session's cost from the folder aggregate and the
+        # running total before the dict entry vanishes, so a later sum
+        # over remaining sessions stays exact.
+        set cost [my dict_or $s cost ""]
+        if {$cost ne "" && $cost > 0} {
+            my bump_folder_cost $folder [expr {-$cost}]
+            set TotalCost [expr {$TotalCost - $cost}]
+            my refresh_status
+        }
         dict unset Sessions $path
         if {$Selected eq $path} { set Selected "" }
         set lst [my dict_or $SessionsByFolder $folder {}]
@@ -1233,6 +1307,9 @@ oo::class create ::fms::ui::SessionList {
         set SessionsByFolder [dict create]
         set HtagFolder [dict create]
         set Sessions [dict create]
+        # Folders.cost was wiped above; reset TotalCost too so the bumps in
+        # model_add_session re-establish both consistently.
+        set TotalCost 0.0
         foreach folder $order {
             foreach path [my dict_or $byfolder $folder {}] {
                 if {![dict exists $saved $path]} continue
@@ -1243,7 +1320,8 @@ oo::class create ::fms::ui::SessionList {
                          size [dict get $s size] \
                          first_user [dict get $s label] \
                          slug [my dict_or $s slug ""] \
-                         ai_title [my dict_or $s ai_title ""]] \
+                         ai_title [my dict_or $s ai_title ""] \
+                         cost_usd [my dict_or $s cost ""]] \
                     [dict get $s first_lineno]
                 dict set Sessions $path label [dict get $s label]
                 dict set Sessions $path when [dict get $s when]
@@ -1274,14 +1352,34 @@ oo::class create ::fms::ui::SessionList {
     # ---- status ------------------------------------------------------
 
     method set_progress {done total matches} {
-        set StatusVar "Searching … $done / $total sessions   matches: $matches"
+        set StatusBase "Searching … $done / $total sessions   matches: $matches"
+        my refresh_status
     }
     method set_done {total matches} {
-        set StatusVar "Done. $total sessions, $matches matches."
+        set StatusBase "Done. $total sessions, $matches matches."
+        my refresh_status
     }
     method cancel {} {
         if {$CancelCb ne ""} { {*}$CancelCb }
-        set StatusVar "Cancelled."
+        set StatusBase "Cancelled."
+        my refresh_status
+    }
+
+    # Recompute the visible status string from the current base + total.
+    # The total is hidden when zero so a fresh app or a rate-table miss
+    # does not show "$0.00" as a misleading aggregate. The bullet
+    # separator only appears between a non-empty base and the total, so
+    # a browse-mode scan (base empty) shows the dollar amount alone.
+    method refresh_status {} {
+        set total ""
+        if {$TotalCost > 0} { set total [::fms::cost::format_total $TotalCost] }
+        if {$StatusBase ne "" && $total ne ""} {
+            set StatusVar "$StatusBase · $total"
+        } elseif {$total ne ""} {
+            set StatusVar $total
+        } else {
+            set StatusVar $StatusBase
+        }
     }
 
     # ---- formatting helpers ------------------------------------------

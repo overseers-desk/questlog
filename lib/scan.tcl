@@ -230,6 +230,18 @@ oo::class create ::fms::Scan {
         return [string trim $s]
     }
 
+    # Merge a cost result into the row. Called from the main thread when
+    # the cost-pass worker thread completes a file. Quiet no-op if the
+    # row is absent (race with a delete). Does not fire OnRow: cost
+    # arrivals route through the cost callback so the UI knows it is a
+    # field update, not a fresh row that needs adding.
+    method update_cost {path cost_dict} {
+        if {![dict exists $Rows $path]} return
+        set row [dict get $Rows $path]
+        dict for {k v} $cost_dict { dict set row $k $v }
+        dict set Rows $path $row
+    }
+
     # Publish a row. Used by run_scan and by Search (which produces row
     # data as a free side-effect of its own pass). Last-write-wins; the
     # content from either consumer is the same row.

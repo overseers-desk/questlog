@@ -13,7 +13,7 @@ class FindMySession < Formula
   depends_on "tcl-tk"
 
   def install
-    pkgshare.install "lib", "ui"
+    pkgshare.install "lib", "ui", "data"
 
     # fms sources lib/ and ui/ relative to ROOT and runs under wish. Point ROOT
     # at the installed tree, and pin the shebang to Homebrew's keg-only wish9.0

@@ -9,6 +9,8 @@ BuildArch:      noarch
 
 Requires:       tcl >= 9
 Requires:       tk >= 9
+Requires:       tcllib
+Requires:       tcl-thread
 
 %description
 find-my-session is a Tk desktop tool that browses the JSONL logs Claude Code
@@ -25,9 +27,10 @@ working directory.
 # Pure Tcl; nothing to build.
 
 %install
-install -d %{buildroot}%{_datadir}/%{name}/lib %{buildroot}%{_datadir}/%{name}/ui
+install -d %{buildroot}%{_datadir}/%{name}/lib %{buildroot}%{_datadir}/%{name}/ui %{buildroot}%{_datadir}/%{name}/data
 cp lib/*.tcl %{buildroot}%{_datadir}/%{name}/lib/
 cp ui/*.tcl  %{buildroot}%{_datadir}/%{name}/ui/
+cp data/*.csv %{buildroot}%{_datadir}/%{name}/data/
 install -D -m 0755 fms %{buildroot}%{_bindir}/fms
 sed -i 's|^set ROOT .*|set ROOT %{_datadir}/%{name}|' %{buildroot}%{_bindir}/fms
 install -D -m 0644 find-my-session.desktop \

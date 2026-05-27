@@ -99,6 +99,12 @@ proc ::fms::app::start {root {initial_criteria {}}} {
         [namespace code on_search_progress] \
         [namespace code on_search_done]]
 
+    # Cost scanner: rate table + tpool for the second-pass per-session
+    # token sum. Load rates first so the first worker has them; init the
+    # pool before any on_scan_row fires.
+    ::fms::cost::load_rates $Root
+    ::fms::cost::init [namespace code on_cost_result]
+
     $Toolbar subscribe [namespace code on_filter]
     # CLI exposes the legacy criterion words (regex|read|write|edit); the
     # toolbar's clause kinds renamed write→wrote, edit→edited, regex→pattern.
@@ -191,6 +197,21 @@ proc ::fms::app::on_filter {snapshot} {
 proc ::fms::app::on_scan_row {row} {
     variable SessionList
     $SessionList on_scan_row $row
+    # Queue a cost task only for rows that don't yet carry one. A
+    # memoised row republished on a filter change already has its cost.
+    if {![dict exists $row cost_usd]} {
+        ::fms::cost::start_one [dict get $row path]
+    }
+}
+
+# Cost-pass worker callback. Merge into the in-memory row, then update
+# the visible card. SessionList::refresh_cost is the only path that
+# touches the rendered meta region, folder aggregate, and total.
+proc ::fms::app::on_cost_result {path cost_dict} {
+    variable Scan
+    variable SessionList
+    $Scan update_cost $path $cost_dict
+    $SessionList refresh_cost $path $cost_dict
 }
 
 proc ::fms::app::on_scan_progress {done total} {
