@@ -51,6 +51,7 @@ oo::class create ::fms::ui::SessionList {
     variable OnDropMove       ;# cb: paths folder -> direct move
     variable OnBookmarkToggle ;# cb: path -> flip the +x bookmark bit
     variable OnScanPath       ;# cb: path -> row (synchronous single-file scan)
+    variable OnShowAll        ;# cb: () -> ask the toolbar to drop the auto-under
     variable Snapshot
     variable CriteriaActive
     variable RunningSet       ;# dict uuid -> 1, replaced wholesale each tick
@@ -71,7 +72,8 @@ oo::class create ::fms::ui::SessionList {
     variable PlacePending     ;# 1 while an `after idle` re-place is queued
 
     constructor {parent resolve_cb lookup_cb on_open on_move_request \
-                 on_drop_move on_bookmark_toggle on_scan_path cancel_cb} {
+                 on_drop_move on_bookmark_toggle on_scan_path cancel_cb \
+                 on_show_all} {
         set Top $parent
         set ResolveFolder $resolve_cb
         set LookupSession $lookup_cb
@@ -81,6 +83,7 @@ oo::class create ::fms::ui::SessionList {
         set OnBookmarkToggle $on_bookmark_toggle
         set OnScanPath $on_scan_path
         set CancelCb $cancel_cb
+        set OnShowAll $on_show_all
         set StatusVar "Idle"
         set Snapshot [dict create]
         set CriteriaActive 0
@@ -111,6 +114,16 @@ oo::class create ::fms::ui::SessionList {
         pack $Top.bar.status -side left -padx 4 -pady 2
         ttk::button $Top.bar.cancel -text "Cancel" -command [list [self] cancel]
         pack $Top.bar.cancel -side right -padx 4 -pady 2
+
+        # Show-all banner: visible only when the toolbar's `under` chip was
+        # seeded at launch (under_auto == 1) and so is hiding sessions the
+        # user did not ask to hide. Update_banner manages visibility.
+        ttk::frame $Top.banner
+        ttk::label $Top.banner.text -anchor w
+        ttk::button $Top.banner.showall -text "Show all" \
+            -command [list [self] on_show_all_clicked]
+        pack $Top.banner.text -side left -padx 6 -pady 4 -fill x -expand 1
+        pack $Top.banner.showall -side right -padx 6 -pady 4
 
         ttk::frame $Top.body
         pack $Top.body -side top -fill both -expand 1
@@ -297,7 +310,29 @@ oo::class create ::fms::ui::SessionList {
     method apply_filter {snapshot} {
         set Snapshot $snapshot
         set CriteriaActive [::fms::ui::any_criteria $snapshot]
+        my update_banner
         my clear
+    }
+
+    # Show the launch-scope banner when the toolbar's under chip was the
+    # one the app seeded (under_auto == 1), since the user did not type it
+    # and may not realise it is filtering their results. Hide otherwise.
+    method update_banner {} {
+        set under_auto [my dict_or $Snapshot under_auto 0]
+        set under_list [my dict_or $Snapshot under {}]
+        if {$under_auto && [llength $under_list] > 0} {
+            set path [lindex $under_list 0]
+            set pretty [::fms::path::pretty_home $path]
+            $Top.banner.text configure -text \
+                "Showing sessions from $pretty only."
+            pack $Top.banner -side top -fill x -after $Top.bar
+        } else {
+            pack forget $Top.banner
+        }
+    }
+
+    method on_show_all_clicked {} {
+        if {$OnShowAll ne ""} { {*}$OnShowAll }
     }
 
     method set_query {regex_list nocase} {

@@ -73,7 +73,8 @@ proc ::fms::app::start {root {initial_criteria {}}} {
         [namespace code on_drop_move] \
         [namespace code on_bookmark_toggle] \
         [namespace code on_scan_path] \
-        [namespace code on_search_cancel]]
+        [namespace code on_search_cancel] \
+        [namespace code on_show_all]]
     pack $list_frame.s -side top -fill both -expand 1
     $PW add $list_frame -weight 2
 
@@ -215,6 +216,14 @@ proc ::fms::app::on_search_done {total matches} {
 proc ::fms::app::on_search_cancel {} {
     variable Search
     $Search cancel
+}
+
+# The Show-all banner in SessionList calls this when the user clicks
+# Show all. Drop the auto-applied under chip; the toolbar will republish
+# the snapshot and the banner will hide on the next apply_filter.
+proc ::fms::app::on_show_all {} {
+    variable Toolbar
+    $Toolbar clear_under_auto
 }
 
 # ---- open in the docked viewer -----------------------------------------
