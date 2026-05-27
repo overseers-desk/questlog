@@ -3,72 +3,100 @@ package require Tk
 
 # ::fms::ui::Toolbar - the top-of-window controls.
 #
-# Owns the filter variables. Subscribers receive the full snapshot
-# dict whenever any control changes:
-#   window     24h | 7d | 30d | all
-#   criteria   list of {type regex|read|write|edit  value <string>};
-#              empty = no search. AND across all, at session scope.
-#   case       0 | 1   (regex matching/highlighting only)
-#   cwd_only   0 | 1
-#   one_turn   0 | 1   (1 = exclude one-turn sessions, default on)
-#   cwd        $env(PWD) at startup; constant after.
+# Owns the filter state. Subscribers receive the full snapshot dict
+# whenever any control changes:
+#   window           24h | 7d | 30d | all
+#   search           string (user's typed search; empty when blank)
+#   search_case      0 | 1   (Aa toggle next to the search field)
+#   under            list of absolute paths  (OR within, AND across clauses)
+#   read             list of absolute paths
+#   wrote            list of absolute paths
+#   edited           list of absolute paths
+#   pattern          list of regex strings   (case-sensitive, always)
+#   under_auto       1 iff `under` is the launch-seeded chip, untouched
+#   one_turn         0 | 1   (exclude one-turn sessions)
+#   running_only     0 | 1
+#   bookmarked_only  0 | 1
+#   cwd              launch cwd, constant after startup
 
 namespace eval ::fms::ui {}
 
-# any_criteria snapshot - true iff the snapshot carries at least one
-# criterion with a non-empty value. Shared by app.tcl (search start/cancel)
-# and sessions.tcl (CriteriaActive flag: browse versus result-index mode).
+# any_criteria snapshot - true iff the snapshot carries the search or any
+# restrict-block clause. Shared by app.tcl (search start/cancel) and
+# sessions.tcl (CriteriaActive flag: browse versus result-index mode).
 proc ::fms::ui::any_criteria {snapshot} {
-    if {![dict exists $snapshot criteria]} { return 0 }
-    foreach c [dict get $snapshot criteria] {
-        if {[dict get $c value] ne ""} { return 1 }
+    if {[dict exists $snapshot search] && [dict get $snapshot search] ne ""} {
+        return 1
+    }
+    foreach k {under read wrote edited pattern} {
+        if {[dict exists $snapshot $k] && [llength [dict get $snapshot $k]] > 0} {
+            return 1
+        }
     }
     return 0
 }
 
-# regex_values snapshot - the values of the regex-type criteria only, for
-# the result pane's in-place highlighter. Path criteria are not regex and
-# are not highlighted.
-proc ::fms::ui::regex_values {snapshot} {
+# Tokenise the search field's contents. Space-separated; double-quoted runs
+# preserve a phrase. Trailing/leading whitespace ignored. Empty input yields
+# an empty list.
+proc ::fms::ui::search_terms {s} {
     set out [list]
-    if {![dict exists $snapshot criteria]} { return $out }
-    foreach c [dict get $snapshot criteria] {
-        if {[dict get $c type] eq "regex" && [dict get $c value] ne ""} {
-            lappend out [dict get $c value]
+    set buf ""
+    set in_quotes 0
+    foreach ch [split $s ""] {
+        if {$ch eq "\""} { set in_quotes [expr {!$in_quotes}]; continue }
+        if {$ch eq " " && !$in_quotes} {
+            if {$buf ne ""} { lappend out $buf; set buf "" }
+            continue
         }
+        append buf $ch
     }
+    if {$buf ne ""} { lappend out $buf }
     return $out
 }
 
+# regex_values snapshot - values for the result pane's in-place highlighter.
+# Returns the tokenised search terms; the pattern row, while regex-typed, is
+# uncommon and not highlighted in this pass.
+proc ::fms::ui::regex_values {snapshot} {
+    set s ""
+    if {[dict exists $snapshot search]} { set s [dict get $snapshot search] }
+    return [::fms::ui::search_terms $s]
+}
+
 oo::class create ::fms::ui::Toolbar {
-    variable Top              ;# parent frame path
-    variable WindowVar
-    variable CaseVar
-    variable CwdOnlyVar
-    variable OneTurnVar
-    variable RunningOnlyVar
-    variable BookmarkedOnlyVar
+    variable Top
     variable Cwd
     variable Subscribers
     variable DebounceAfter
-    variable Patterns         ;# dict id -> type (regex|read|write|edit); values live in Pat$id ivars
-    variable NextId
-    variable RowsBox          ;# inner frame holding criterion rows + the add buttons
-    variable PopValue         ;# entry var for the criterion add dropdown
+    variable WindowVar
+    variable SearchVar
+    variable SearchCaseVar
+    variable OneTurnVar
+    variable RunningOnlyVar
+    variable BookmarkedOnlyVar
+    variable Clauses          ;# dict kind -> list of values
+    variable UnderAuto        ;# 1 iff `under` is exactly the launch-seeded chip
+    variable Restrict         ;# the "Restrict to sessions that…" labelframe
+    variable AddRail          ;# the "add:" rail frame inside Restrict
+    variable RowFrames        ;# dict kind -> widget path (present only when row exists)
+    variable PopValue         ;# textvar for the add-dropdown's entry
 
     constructor {parent cwd} {
         set Top $parent
         set Cwd $cwd
         set WindowVar  7d
-        set CaseVar    0
-        set CwdOnlyVar 0
+        set SearchVar  ""
+        set SearchCaseVar 0
         set OneTurnVar 1
         set RunningOnlyVar    0
         set BookmarkedOnlyVar 0
+        set Clauses [dict create under {} read {} wrote {} edited {} pattern {}]
+        set UnderAuto 0
         set Subscribers [list]
         set DebounceAfter ""
-        set Patterns [dict create]
-        set NextId 0
+        set RowFrames [dict create]
+        set PopValue ""
 
         my build
     }
@@ -76,126 +104,247 @@ oo::class create ::fms::ui::Toolbar {
     method build {} {
         ttk::frame $Top
 
-        # Row 1: window radios + cwd-only.
-        ttk::frame $Top.row1
-        pack $Top.row1 -side top -fill x -padx 4 -pady {4 2}
+        # Search row: label, full-width entry, Aa toggle.
+        ttk::frame $Top.search
+        pack $Top.search -side top -fill x -padx 4 -pady {4 2}
+        ttk::label $Top.search.label -text "Search:"
+        pack $Top.search.label -side left -padx {0 6}
+        ttk::entry $Top.search.e -textvariable [my varname SearchVar]
+        pack $Top.search.e -side left -fill x -expand 1
+        bind $Top.search.e <KeyRelease> [list [self] on_search_change]
+        ttk::checkbutton $Top.search.aa -text "Aa" \
+            -variable [my varname SearchCaseVar] \
+            -command [list [self] publish]
+        pack $Top.search.aa -side left -padx {6 0}
 
-        ttk::label $Top.row1.win -text "Time:"
-        pack $Top.row1.win -side left -padx {0 4}
+        # Restrict labelframe: time radios on top, then clause rows, then add rail.
+        ttk::labelframe $Top.restrict -text "Restrict to sessions that…"
+        pack $Top.restrict -side top -fill x -padx 4 -pady 2
+        set Restrict $Top.restrict
+
+        ttk::frame $Restrict.time
+        pack $Restrict.time -side top -fill x
+        ttk::label $Restrict.time.label -text "time" -width 18 -anchor w
+        pack $Restrict.time.label -side left -padx {0 4}
+        ttk::label $Restrict.time.rans -text "ran in the last"
+        pack $Restrict.time.rans -side left -padx {0 8}
         foreach w {24h 7d 30d all} {
-            ttk::radiobutton $Top.row1.r$w -text $w \
+            ttk::radiobutton $Restrict.time.r$w -text $w \
                 -variable [my varname WindowVar] -value $w \
                 -command [list [self] publish]
-            pack $Top.row1.r$w -side left
+            pack $Restrict.time.r$w -side left -padx 2
         }
 
-        ttk::separator $Top.row1.sep1 -orient vertical
-        pack $Top.row1.sep1 -side left -fill y -padx 8
+        set AddRail $Restrict.add
+        ttk::frame $AddRail
+        pack $AddRail -side top -fill x -pady {4 0}
+        ttk::label $AddRail.label -text "add:"
+        pack $AddRail.label -side left -padx {0 4}
+        foreach {k text} {under "+ under" read "+ Read" wrote "+ Write" \
+                          edited "+ Edit" pattern "+ regex"} {
+            ttk::button $AddRail.b$k -text $text \
+                -command [list [self] open_add $k]
+            pack $AddRail.b$k -side left -padx {0 4}
+        }
 
-        ttk::checkbutton $Top.row1.cwd -text "this cwd only" \
-            -variable [my varname CwdOnlyVar] \
-            -command [list [self] publish]
-        pack $Top.row1.cwd -side left
-
-        # Criteria box: AND-combined list of typed criteria, at session
-        # scope. Empty until the user adds one. "Aa" governs regex case;
-        # a path criterion matches case-sensitively when the recorded path
-        # ends with the typed value (a bare filename matches any directory).
-        ttk::labelframe $Top.criteria -text "Criteria (AND)"
-        pack $Top.criteria -side top -fill x -padx 4 -pady 2
-
-        ttk::frame $Top.criteria.hdr
-        pack $Top.criteria.hdr -side top -fill x
-        ttk::checkbutton $Top.criteria.hdr.case -text "Aa" \
-            -variable [my varname CaseVar] \
-            -command [list [self] publish]
-        pack $Top.criteria.hdr.case -side right -padx 4
-
-        set RowsBox $Top.criteria.rows
-        ttk::frame $RowsBox
-        pack $RowsBox -side top -fill x
-
-        ttk::frame $RowsBox.add
-        ttk::button $RowsBox.add.bregex -text "+ regex" \
-            -command [list [self] open_add_dropdown regex $RowsBox.add.bregex]
-        ttk::button $RowsBox.add.bread -text "+ Read" \
-            -command [list [self] open_add_dropdown read $RowsBox.add.bread]
-        ttk::button $RowsBox.add.bwrite -text "+ Write" \
-            -command [list [self] open_add_dropdown write $RowsBox.add.bwrite]
-        ttk::button $RowsBox.add.bedit -text "+ Edit" \
-            -command [list [self] open_add_dropdown edit $RowsBox.add.bedit]
-        pack $RowsBox.add.bregex $RowsBox.add.bread \
-             $RowsBox.add.bwrite $RowsBox.add.bedit -side left -padx {0 4}
-        pack $RowsBox.add -side top -anchor w -pady 1
-
-        # Row 2: secondary filter.
+        # Row 2: legacy result-set filters, unchanged by this refactor.
         ttk::frame $Top.row2
         pack $Top.row2 -side top -fill x -padx 4 -pady {2 4}
         ttk::checkbutton $Top.row2.oneturn -text "exclude one-turn sessions" \
             -variable [my varname OneTurnVar] \
             -command [list [self] publish]
         pack $Top.row2.oneturn -side left
-
         ttk::checkbutton $Top.row2.running -text "running only" \
             -variable [my varname RunningOnlyVar] \
             -command [list [self] publish]
         pack $Top.row2.running -side left -padx {16 0}
-
         ttk::checkbutton $Top.row2.booked -text "bookmarked only" \
             -variable [my varname BookmarkedOnlyVar] \
             -command [list [self] publish]
         pack $Top.row2.booked -side left -padx {16 0}
+    }
 
-        # If the launch cwd has no matching project folder on disk, dim
-        # "this cwd only" so the user is not misled.
-        set folder [::fms::path::encode_cwd $Cwd]
-        set on_disk [file isdirectory [file join [::fms::path::projects_root] $folder]]
-        if {$on_disk} {
-            set CwdOnlyVar 1
-        } else {
-            $Top.row1.cwd configure -state disabled
+    # ---- public API --------------------------------------------------------
+
+    method subscribe {cb} {
+        lappend Subscribers $cb
+    }
+
+    method snapshot {} {
+        return [dict create \
+            window         $WindowVar \
+            search         $SearchVar \
+            search_case    $SearchCaseVar \
+            under          [dict get $Clauses under] \
+            read           [dict get $Clauses read] \
+            wrote          [dict get $Clauses wrote] \
+            edited         [dict get $Clauses edited] \
+            pattern        [dict get $Clauses pattern] \
+            under_auto     $UnderAuto \
+            one_turn       $OneTurnVar \
+            running_only   $RunningOnlyVar \
+            bookmarked_only $BookmarkedOnlyVar \
+            cwd            $Cwd]
+    }
+
+    method publish {} {
+        set snap [my snapshot]
+        foreach cb $Subscribers {
+            if {[catch {{*}$cb $snap} err]} {
+                puts stderr "fms: toolbar subscriber failed: $err"
+            }
         }
     }
 
-    # Create a typed criterion row and register it. Returns the row id.
-    method new_row {type value} {
-        incr NextId
-        set id $NextId
-        my eval [list variable Pat$id ""]
-        my eval [list set Pat$id $value]
-        set row $RowsBox.r$id
-        ttk::frame $row
-        ttk::label $row.t -text $type -width 6 -anchor w
-        ttk::entry $row.e -textvariable [my varname Pat$id] -width 30
-        ttk::button $row.x -text "−" -width 2 \
-            -command [list [self] remove_row $id]
-        pack $row.t -side left -padx {0 4}
-        pack $row.e -side left -fill x -expand 1
-        pack $row.x -side left -padx {4 0}
-        pack $row -side top -fill x -pady 1 -before $RowsBox.add
-        bind $row.e <KeyRelease> [list [self] on_value_change]
-        dict set Patterns $id $type
-        return $id
-    }
-
-    method add_criterion_row {type value} {
-        my new_row $type $value
+    # Add a value to a clause, creating the row if needed. The first user
+    # action on `under` clears the auto-applied flag, since the user is now
+    # editing the row.
+    method add_value {kind value} {
+        set vals [dict get $Clauses $kind]
+        if {$value in $vals} return
+        lappend vals $value
+        dict set Clauses $kind $vals
+        if {$kind eq "under"} { set UnderAuto 0 }
+        my rebuild_clause_rows
+        my refresh_add_rail
         my publish
     }
 
-    # A dropdown under a + button, anchored to it. For regex it is a single
-    # pattern entry. For Read/Write/Edit, Write and Edit also list the launch
-    # repo's working-tree changes to pick from, and all three add a file
-    # chooser. Every type shares the manual entry and the "add" action;
-    # confirming creates the row, which is then edit-or-remove only. Typing
-    # happens here, not in a live row, so no search runs per keystroke.
-    method open_add_dropdown {type btn} {
+    method remove_value {kind value} {
+        set vals [dict get $Clauses $kind]
+        set i [lsearch -exact $vals $value]
+        if {$i < 0} return
+        set vals [lreplace $vals $i $i]
+        dict set Clauses $kind $vals
+        if {$kind eq "under"} { set UnderAuto 0 }
+        my rebuild_clause_rows
+        my refresh_add_rail
+        my publish
+    }
+
+    method clear_clause {kind} {
+        dict set Clauses $kind [list]
+        if {$kind eq "under"} { set UnderAuto 0 }
+        my rebuild_clause_rows
+        my refresh_add_rail
+        my publish
+    }
+
+    # Seed the `under` row with the launch cwd. Marks UnderAuto so the
+    # Show-all banner knows the chip was not user-typed. Any later edit
+    # clears the flag.
+    method seed_under {path} {
+        dict set Clauses under [list $path]
+        set UnderAuto 1
+        my rebuild_clause_rows
+        my refresh_add_rail
+        my publish
+    }
+
+    # Drop the auto-applied under chip. Used by the "Show all" banner.
+    method clear_under_auto {} {
+        if {!$UnderAuto} return
+        dict set Clauses under [list]
+        set UnderAuto 0
+        my rebuild_clause_rows
+        my refresh_add_rail
+        my publish
+    }
+
+    # ---- row management ----------------------------------------------------
+
+    # Destroy every clause-row frame and reconstruct the present ones in
+    # canonical reading order between the time row and the add rail.
+    method rebuild_clause_rows {} {
+        foreach k {under read wrote edited pattern} {
+            if {[dict exists $RowFrames $k]} {
+                destroy [dict get $RowFrames $k]
+                dict unset RowFrames $k
+            }
+        }
+        set labels [dict create \
+            under "under" \
+            read  "read" \
+            wrote "wrote" \
+            edited "edited" \
+            pattern "matches pattern"]
+        foreach k {under read wrote edited pattern} {
+            set vals [dict get $Clauses $k]
+            if {[llength $vals] == 0} continue
+            set row $Restrict.row_$k
+            ttk::frame $row
+            ttk::label $row.label -text [dict get $labels $k] -width 18 -anchor w
+            pack $row.label -side left -padx {0 4}
+            ttk::button $row.x -text "×" -width 2 \
+                -command [list [self] clear_clause $k]
+            pack $row.x -side right -padx {4 0}
+            ttk::frame $row.chips
+            pack $row.chips -side left -fill x -expand 1
+            my render_chips $k $row.chips
+            pack $row -side top -fill x -before $AddRail -pady 1
+            dict set RowFrames $k $row
+        }
+    }
+
+    method render_chips {kind chips_frame} {
+        set vals [dict get $Clauses $kind]
+        set first 1
+        set i 0
+        foreach v $vals {
+            if {!$first} {
+                ttk::label $chips_frame.or$i -text "or" -foreground gray
+                pack $chips_frame.or$i -side left -padx 4
+            }
+            set chip $chips_frame.c$i
+            ttk::frame $chip -borderwidth 1 -relief solid
+            ttk::label $chip.t -text [my chip_display $kind $v]
+            pack $chip.t -side left -padx {4 0}
+            ttk::button $chip.x -text "×" -width 1 \
+                -command [list [self] remove_value $kind $v]
+            pack $chip.x -side left -padx {2 4}
+            pack $chip -side left
+            set first 0
+            incr i
+        }
+        ttk::button $chips_frame.add -text "+ or" \
+            -command [list [self] open_add $kind]
+        pack $chips_frame.add -side left -padx 4
+    }
+
+    # Path-kind chips render as ~-abbreviated; pattern and others render raw.
+    method chip_display {kind value} {
+        if {$kind in {under read wrote edited}} {
+            return [::fms::path::pretty_home $value]
+        }
+        return $value
+    }
+
+    method refresh_add_rail {} {
+        foreach k {under read wrote edited pattern} {
+            set btn $AddRail.b$k
+            if {[llength [dict get $Clauses $k]] > 0} {
+                pack forget $btn
+            } else {
+                pack $btn -side left -padx {0 4}
+            }
+        }
+    }
+
+    # ---- add-value dropdown ------------------------------------------------
+
+    # Dropdown anchored under the triggering button (either an add-rail
+    # button or a chip-row's inline "+ or" button). For under/read/wrote/edited
+    # the user can pick from the launch repo's working-tree changes (where
+    # applicable) or open a file picker. For pattern the entry is the only
+    # input.
+    method open_add {kind} {
         set host [winfo toplevel $Top]
-        set pop [expr {$host eq "." ? ".criteriapop" : "$host.criteriapop"}]
+        set pop [expr {$host eq "." ? ".addpop" : "$host.addpop"}]
         destroy $pop
         ttk::frame $pop -relief solid -borderwidth 1 -padding 4
         set PopValue ""
-        if {$type in {write edit}} {
+
+        if {$kind in {wrote edited}} {
             set files [my git_modified_files]
             if {[llength $files] > 0} {
                 set lb $pop.lb
@@ -205,25 +354,28 @@ oo::class create ::fms::ui::Toolbar {
                 foreach f $files { $lb insert end $f }
                 pack $lb -side top -fill x
                 bind $lb <<ListboxSelect>> \
-                    [list [self] dropdown_pick_list $type $lb $pop]
+                    [list [self] dropdown_pick $kind $lb $pop]
                 ttk::separator $pop.sep -orient horizontal
                 pack $pop.sep -side top -fill x -pady 4
             }
         }
+
         ttk::frame $pop.row
         ttk::entry $pop.row.e -textvariable [my varname PopValue] -width 40
-        ttk::button $pop.row.add -text "add" \
-            -command [list [self] dropdown_add_entry $type $pop]
         pack $pop.row.e -side left -fill x -expand 1
-        if {$type ne "regex"} {
+        if {$kind in {under read wrote edited}} {
             ttk::button $pop.row.open -text "open…" \
-                -command [list [self] pick_file $type $pop]
+                -command [list [self] pick_file $kind $pop]
             pack $pop.row.open -side left -padx {4 0}
         }
+        ttk::button $pop.row.add -text "add" \
+            -command [list [self] dropdown_add_entry $kind $pop]
         pack $pop.row.add -side left -padx {4 0}
         pack $pop.row -side top -fill x
-        bind $pop.row.e <Return> [list [self] dropdown_add_entry $type $pop]
+        bind $pop.row.e <Return> [list [self] dropdown_add_entry $kind $pop]
         bind $pop <Escape> [list destroy $pop]
+
+        set btn [my anchor_widget $kind]
         set rx [expr {[winfo rootx $btn] - [winfo rootx $host]}]
         set ry [expr {[winfo rooty $btn] - [winfo rooty $host] \
                       + [winfo height $btn]}]
@@ -232,29 +384,36 @@ oo::class create ::fms::ui::Toolbar {
         focus $pop.row.e
     }
 
-    method dropdown_pick_list {type lb pop} {
+    # Anchor for the dropdown: the add-rail chip-button if no row exists,
+    # otherwise the row's inline "+ or" button.
+    method anchor_widget {kind} {
+        if {[dict exists $RowFrames $kind]} {
+            return [dict get $RowFrames $kind].chips.add
+        }
+        return $AddRail.b$kind
+    }
+
+    method dropdown_pick {kind lb pop} {
         set sel [$lb curselection]
         if {[llength $sel] == 0} return
         set val [$lb get [lindex $sel 0]]
         destroy $pop
-        my add_criterion_row $type $val
+        my add_value $kind $val
     }
 
-    method dropdown_add_entry {type pop} {
+    method dropdown_add_entry {kind pop} {
         set val [string trim $PopValue]
         destroy $pop
-        if {$val ne ""} { my add_criterion_row $type $val }
+        if {$val ne ""} { my add_value $kind $val }
     }
 
-    method pick_file {type pop} {
+    method pick_file {kind pop} {
         set f [tk_getOpenFile -initialdir $Cwd]
         if {$f eq ""} return
         destroy $pop
-        my add_criterion_row $type $f
+        my add_value $kind $f
     }
 
-    # Absolute paths of the launch repo's working-tree changes (modified,
-    # added, untracked). Empty when the launch cwd is not a git repo.
     method git_modified_files {} {
         if {[catch {exec git -C $Cwd rev-parse --show-toplevel} root]} {
             return [list]
@@ -271,58 +430,11 @@ oo::class create ::fms::ui::Toolbar {
         return $files
     }
 
-    method remove_row {id} {
-        if {![dict exists $Patterns $id]} return
-        destroy $RowsBox.r$id
-        dict unset Patterns $id
-        my eval [list unset -nocomplain Pat$id]
-        # Move focus to the previous remaining row, else the [+] button.
-        set remaining [dict keys $Patterns]
-        if {[llength $remaining] > 0} {
-            set last [lindex $remaining end]
-            focus $RowsBox.r$last.e
-        } else {
-            focus $RowsBox.add.bregex
-        }
-        my publish
-    }
+    # ---- search debounce ---------------------------------------------------
 
-    method on_value_change {} {
+    method on_search_change {} {
         if {$DebounceAfter ne ""} { after cancel $DebounceAfter }
         set DebounceAfter [after 200 [list [self] publish]]
-    }
-
-    method snapshot {} {
-        set criteria [list]
-        foreach id [dict keys $Patterns] {
-            set v [my eval [list set Pat$id]]
-            if {$v ne ""} {
-                lappend criteria \
-                    [dict create type [dict get $Patterns $id] value $v]
-            }
-        }
-        return [dict create \
-            window   $WindowVar \
-            criteria $criteria \
-            case     $CaseVar \
-            cwd_only $CwdOnlyVar \
-            one_turn $OneTurnVar \
-            running_only    $RunningOnlyVar \
-            bookmarked_only $BookmarkedOnlyVar \
-            cwd      $Cwd]
-    }
-
-    method subscribe {cb} {
-        lappend Subscribers $cb
-    }
-
-    method publish {} {
-        set snap [my snapshot]
-        foreach cb $Subscribers {
-            if {[catch {{*}$cb $snap} err]} {
-                puts stderr "fms: toolbar subscriber failed: $err"
-            }
-        }
     }
 
     method destroy {} {

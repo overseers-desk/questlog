@@ -99,8 +99,14 @@ proc ::fms::app::start {root {initial_criteria {}}} {
         [namespace code on_search_done]]
 
     $Toolbar subscribe [namespace code on_filter]
+    # CLI exposes the legacy criterion words (regex|read|write|edit); the
+    # toolbar's clause kinds renamed write→wrote, edit→edited, regex→pattern.
+    set cli_kind [dict create regex pattern read read write wrote edit edited]
     foreach c $initial_criteria {
-        $Toolbar add_criterion_row [dict get $c type] [dict get $c value]
+        set t [dict get $c type]
+        if {[dict exists $cli_kind $t]} {
+            $Toolbar add_value [dict get $cli_kind $t] [dict get $c value]
+        }
     }
     $Toolbar publish
 
@@ -158,7 +164,8 @@ proc ::fms::app::on_filter {snapshot} {
 
     if {$has_criteria} {
         $SessionList set_query \
-            [::fms::ui::regex_values $snapshot] [dict get $snapshot case]
+            [::fms::ui::regex_values $snapshot] \
+            [expr {![dict get $snapshot search_case]}]
         $Search start $snapshot
     } else {
         $Search cancel
