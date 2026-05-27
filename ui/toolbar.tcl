@@ -21,14 +21,18 @@ package require Tk
 
 namespace eval ::fms::ui {}
 
-# any_criteria snapshot - true iff the snapshot carries the search or any
-# restrict-block clause. Shared by app.tcl (search start/cancel) and
-# sessions.tcl (CriteriaActive flag: browse versus result-index mode).
+# any_criteria snapshot - true iff the snapshot carries a content-matching
+# clause (search text, regex pattern, or a read/wrote/edited path). The
+# `under` clause is a row-level scope, not a content match, so it does not
+# count here; treating it as a criterion flips sessions.tcl into result-
+# index mode and Search.start returns immediately because there is nothing
+# to match, leaving the list empty. Shared by app.tcl (search start/cancel)
+# and sessions.tcl (CriteriaActive flag: browse versus result-index mode).
 proc ::fms::ui::any_criteria {snapshot} {
     if {[dict exists $snapshot search] && [dict get $snapshot search] ne ""} {
         return 1
     }
-    foreach k {under read wrote edited pattern} {
+    foreach k {read wrote edited pattern} {
         if {[dict exists $snapshot $k] && [llength [dict get $snapshot $k]] > 0} {
             return 1
         }
