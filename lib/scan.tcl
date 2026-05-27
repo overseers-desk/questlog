@@ -258,17 +258,18 @@ oo::class create ::fms::Scan {
     method query {snapshot {folder ""}} {
         set window [my dict_or $snapshot window 7d]
         set one_turn [my dict_or $snapshot one_turn 1]
-        set cwd_only [my dict_or $snapshot cwd_only 0]
-        set cwd      [my dict_or $snapshot cwd ""]
+        set under    [my dict_or $snapshot under {}]
         set bookmarked_only [my dict_or $snapshot bookmarked_only 0]
         set cutoff 0
         if {$window ne "all"} {
             set hours [dict get {24h 24 7d 168 30d 720} $window]
             set cutoff [expr {[clock seconds] - $hours*3600}]
         }
-        set cwd_folder ""
-        if {$cwd_only && $cwd ne ""} {
-            set cwd_folder [::fms::path::encode_cwd $cwd]
+        set under_folders [list]
+        set under_paths   [list]
+        foreach u $under {
+            lappend under_folders [::fms::path::encode_cwd $u]
+            lappend under_paths   [string trimright $u /]
         }
         set out [list]
         dict for {path row} $Rows {
@@ -280,10 +281,26 @@ oo::class create ::fms::Scan {
             if {$one_turn && ![dict get $row is_multi]} continue
             set f [dict get $row folder]
             if {$folder ne "" && $f ne $folder} continue
-            if {$cwd_folder ne "" && $f ne $cwd_folder} continue
+            if {[llength $under_folders] > 0} {
+                if {![my row_under_match $row $under_folders $under_paths]} continue
+            }
             lappend out $row
         }
         return [lsort -decreasing -command ::fms::scan::cmp_mtime $out]
+    }
+
+    # Mirror of SessionList.row_under_match. Match by encoded folder name
+    # for an exact-cwd hit; for a parent-folder hit fall back to the
+    # cwd_hint string and check it starts with the under path.
+    method row_under_match {row folders paths} {
+        set f [dict get $row folder]
+        if {$f in $folders} { return 1 }
+        set cwd_hint [my dict_or $row cwd_hint ""]
+        if {$cwd_hint eq ""} { return 0 }
+        foreach u $paths {
+            if {$cwd_hint eq $u || [string match "$u/*" $cwd_hint]} { return 1 }
+        }
+        return 0
     }
 
     # The single canonical folder-basename -> cwd resolver. Every label

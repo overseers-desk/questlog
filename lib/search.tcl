@@ -94,54 +94,133 @@ proc ::fms::search::_order_tool_keys {name keys} {
     return $out
 }
 
-# record_hits rec criteria re_opts - the evidence a parsed record gives for
-# each criterion. Returns a flat list of {idx btype content} triples, idx
-# being the criterion's position in $criteria. A regex criterion matches
-# block text; a read/write/edit criterion matches a tool_use whose tool
-# name is in the type's set and whose file path ends with the criterion
-# value, so a bare or partial filename matches that file in any directory
-# and a full path matches exactly. Content is cleaned for display. The
-# worker thread carries its own copy of this proc; the two must stay in sync.
-proc ::fms::search::record_hits {rec criteria re_opts} {
-    set toolsets {read Read write Write edit {Edit MultiEdit NotebookEdit}}
+# build_clauses snapshot - normalise the toolbar's snapshot into the form
+# the matcher consumes: tokenised search terms, the regex patterns from the
+# pattern row, and the path lists from the read/wrote/edited rows. Each
+# value list is the user's input with empty entries stripped.
+proc ::fms::search::build_clauses {snapshot} {
+    set search ""
+    if {[dict exists $snapshot search]} { set search [dict get $snapshot search] }
+    set terms [::fms::ui::search_terms $search]
+    set search_case 0
+    if {[dict exists $snapshot search_case]} {
+        set search_case [dict get $snapshot search_case]
+    }
+    set out [dict create \
+        terms        $terms \
+        nocase       [expr {!$search_case}] \
+        patterns     [::fms::search::trim_values [dict_or $snapshot pattern {}]] \
+        paths_read   [::fms::search::trim_values [dict_or $snapshot read    {}]] \
+        paths_wrote  [::fms::search::trim_values [dict_or $snapshot wrote   {}]] \
+        paths_edited [::fms::search::trim_values [dict_or $snapshot edited  {}]]]
+    return $out
+}
+
+proc ::fms::search::trim_values {vs} {
+    set out [list]
+    foreach v $vs { if {$v ne ""} { lappend out $v } }
+    return $out
+}
+
+proc ::fms::search::dict_or {d k default} {
+    if {[dict exists $d $k]} { return [dict get $d $k] }
+    return $default
+}
+
+# clauses_any clauses - 1 iff any clause has at least one value. Used by
+# the matcher to early-exit when the user clears every filter.
+proc ::fms::search::clauses_any {clauses} {
+    foreach k {terms patterns paths_read paths_wrote paths_edited} {
+        if {[llength [dict get $clauses $k]] > 0} { return 1 }
+    }
+    return 0
+}
+
+# record_hits rec clauses - the evidence a parsed record gives for each
+# clause. Returns a dict:
+#   hits        list of {btype content} snippets to flush if the session passes
+#   rec_text    concatenated text of every block in this record (for the
+#               cross-record "all search terms appear somewhere" check)
+#   pat_hit     1 iff any pattern matched any block in this record
+#   read_hit    1 iff a Read tool_use referenced a path in paths_read
+#   wrote_hit   1 iff a Write tool_use referenced a path in paths_wrote
+#   edited_hit  1 iff an Edit/MultiEdit/NotebookEdit referenced a path in paths_edited
+# The worker thread carries its own copy of this proc; the two must stay in sync.
+proc ::fms::search::record_hits {rec clauses} {
+    set patterns     [dict get $clauses patterns]
+    set terms        [dict get $clauses terms]
+    set nocase       [dict get $clauses nocase]
+    set paths_read   [dict get $clauses paths_read]
+    set paths_wrote  [dict get $clauses paths_wrote]
+    set paths_edited [dict get $clauses paths_edited]
+
     set hits [list]
-    set have_blocks 0; set blocks {}
-    set have_tools 0;  set tools {}
-    set idx -1
-    foreach c $criteria {
-        incr idx
-        set type [dict get $c type]
-        set val  [dict get $c value]
-        if {$val eq ""} continue
-        if {$type eq "regex"} {
-            if {!$have_blocks} {
-                set blocks [::fms::jsonl::extract_blocks $rec]
-                set have_blocks 1
-            }
-            foreach {btype content} $blocks {
-                if {[regexp {*}$re_opts -- $val $content]} {
-                    lappend hits [list $idx $btype \
-                        [::fms::search::snippet_window $content $val $re_opts]]
+    set rec_text ""
+    set pat_hit 0
+    set read_hit 0
+    set wrote_hit 0
+    set edited_hit 0
+
+    set need_blocks [expr {[llength $terms] > 0 || [llength $patterns] > 0}]
+    if {$need_blocks} {
+        set blocks [::fms::jsonl::extract_blocks $rec]
+        foreach {btype content} $blocks {
+            append rec_text " " $content
+            foreach p $patterns {
+                if {[regexp -- $p $content]} {
+                    set pat_hit 1
+                    lappend hits [list $btype \
+                        [::fms::search::snippet_window $content $p ""]]
                 }
             }
-        } else {
-            if {!$have_tools} {
-                set tools [::fms::jsonl::record_tool_uses $rec]
-                set have_tools 1
-            }
-            set toolset [dict get $toolsets $type]
-            foreach t $tools {
-                set tp [dict get $t path]
-                set off [expr {[string length $tp] - [string length $val]}]
-                if {[dict get $t name] in $toolset && $off >= 0
-                    && [string range $tp $off end] eq $val} {
-                    lappend hits [list $idx tool_use \
-                        [::fms::search::clean_text [dict get $t rendered] 300]]
+            foreach t $terms {
+                set needle [expr {$nocase ? [string tolower $t] : $t}]
+                set hay    [expr {$nocase ? [string tolower $content] : $content}]
+                if {[string first $needle $hay] >= 0} {
+                    set re_opts [expr {$nocase ? "-nocase" : ""}]
+                    lappend hits [list $btype \
+                        [::fms::search::snippet_window $content $t $re_opts]]
                 }
             }
         }
     }
-    return $hits
+
+    set need_tools [expr {[llength $paths_read]   > 0
+                        || [llength $paths_wrote]  > 0
+                        || [llength $paths_edited] > 0}]
+    if {$need_tools} {
+        set tools [::fms::jsonl::record_tool_uses $rec]
+        set toolsets [dict create \
+            read   {Read} \
+            wrote  {Write} \
+            edited {Edit MultiEdit NotebookEdit}]
+        foreach {kind paths_var} {read paths_read wrote paths_wrote edited paths_edited} {
+            set paths [set $paths_var]
+            if {[llength $paths] == 0} continue
+            set toolset [dict get $toolsets $kind]
+            foreach t $tools {
+                if {[dict get $t name] ni $toolset} continue
+                set tp [dict get $t path]
+                foreach val $paths {
+                    set off [expr {[string length $tp] - [string length $val]}]
+                    if {$off >= 0 && [string range $tp $off end] eq $val} {
+                        switch -- $kind {
+                            read   { set read_hit 1 }
+                            wrote  { set wrote_hit 1 }
+                            edited { set edited_hit 1 }
+                        }
+                        lappend hits [list tool_use \
+                            [::fms::search::clean_text [dict get $t rendered] 300]]
+                        break
+                    }
+                }
+            }
+        }
+    }
+
+    return [dict create hits $hits rec_text $rec_text \
+        pat_hit $pat_hit read_hit $read_hit \
+        wrote_hit $wrote_hit edited_hit $edited_hit]
 }
 
 # Body sourced into each worker thread. Tcl threads carry separate
@@ -341,41 +420,95 @@ set ::fms::search::WorkerScript {
     }
 
     # Worker copy of ::fms::search::record_hits; keep in sync.
-    proc record_hits {rec criteria re_opts} {
-        set toolsets {read Read write Write edit {Edit MultiEdit NotebookEdit}}
+    proc record_hits {rec clauses} {
+        set patterns     [dict get $clauses patterns]
+        set terms        [dict get $clauses terms]
+        set nocase       [dict get $clauses nocase]
+        set paths_read   [dict get $clauses paths_read]
+        set paths_wrote  [dict get $clauses paths_wrote]
+        set paths_edited [dict get $clauses paths_edited]
+
         set hits [list]
-        set have_blocks 0; set blocks {}
-        set have_tools 0;  set tools {}
-        set idx -1
-        foreach c $criteria {
-            incr idx
-            set type [dict get $c type]
-            set val  [dict get $c value]
-            if {$val eq ""} continue
-            if {$type eq "regex"} {
-                if {!$have_blocks} { set blocks [extract_blocks $rec]; set have_blocks 1 }
-                foreach {btype content} $blocks {
-                    if {[regexp {*}$re_opts -- $val $content]} {
-                        lappend hits [list $idx $btype [snippet_window $content $val $re_opts]]
+        set rec_text ""
+        set pat_hit 0
+        set read_hit 0
+        set wrote_hit 0
+        set edited_hit 0
+
+        set need_blocks [expr {[llength $terms] > 0 || [llength $patterns] > 0}]
+        if {$need_blocks} {
+            set blocks [extract_blocks $rec]
+            foreach {btype content} $blocks {
+                append rec_text " " $content
+                foreach p $patterns {
+                    if {[regexp -- $p $content]} {
+                        set pat_hit 1
+                        lappend hits [list $btype [snippet_window $content $p ""]]
                     }
                 }
-            } else {
-                if {!$have_tools} { set tools [record_tool_uses $rec]; set have_tools 1 }
-                set toolset [dict get $toolsets $type]
-                foreach t $tools {
-                    set tp [dict get $t path]
-                    set off [expr {[string length $tp] - [string length $val]}]
-                    if {[dict get $t name] in $toolset && $off >= 0 \
-                        && [string range $tp $off end] eq $val} {
-                        lappend hits [list $idx tool_use [clean_text [dict get $t rendered] 300]]
+                foreach t $terms {
+                    set needle [expr {$nocase ? [string tolower $t] : $t}]
+                    set hay    [expr {$nocase ? [string tolower $content] : $content}]
+                    if {[string first $needle $hay] >= 0} {
+                        set re_opts [expr {$nocase ? "-nocase" : ""}]
+                        lappend hits [list $btype [snippet_window $content $t $re_opts]]
                     }
                 }
             }
         }
-        return $hits
+
+        set need_tools [expr {[llength $paths_read]   > 0
+                            || [llength $paths_wrote]  > 0
+                            || [llength $paths_edited] > 0}]
+        if {$need_tools} {
+            set tools [record_tool_uses $rec]
+            set toolsets [dict create \
+                read   {Read} \
+                wrote  {Write} \
+                edited {Edit MultiEdit NotebookEdit}]
+            foreach {kind paths_var} {read paths_read wrote paths_wrote edited paths_edited} {
+                set paths [set $paths_var]
+                if {[llength $paths] == 0} continue
+                set toolset [dict get $toolsets $kind]
+                foreach t $tools {
+                    if {[dict get $t name] ni $toolset} continue
+                    set tp [dict get $t path]
+                    foreach val $paths {
+                        set off [expr {[string length $tp] - [string length $val]}]
+                        if {$off >= 0 && [string range $tp $off end] eq $val} {
+                            switch -- $kind {
+                                read   { set read_hit 1 }
+                                wrote  { set wrote_hit 1 }
+                                edited { set edited_hit 1 }
+                            }
+                            lappend hits [list tool_use \
+                                [clean_text [dict get $t rendered] 300]]
+                            break
+                        }
+                    }
+                }
+            }
+        }
+
+        return [dict create hits $hits rec_text $rec_text \
+            pat_hit $pat_hit read_hit $read_hit \
+            wrote_hit $wrote_hit edited_hit $edited_hit]
     }
 
-    proc worker_run {main_tid obj_cmd epoch paths criteria re_opts} {
+    proc worker_run {main_tid obj_cmd epoch paths clauses} {
+        set terms        [dict get $clauses terms]
+        set patterns     [dict get $clauses patterns]
+        set paths_read   [dict get $clauses paths_read]
+        set paths_wrote  [dict get $clauses paths_wrote]
+        set paths_edited [dict get $clauses paths_edited]
+        set nocase       [dict get $clauses nocase]
+
+        set path_substrs [concat $paths_read $paths_wrote $paths_edited]
+        set term_needles [list]
+        foreach t $terms {
+            lappend term_needles [expr {$nocase ? [string tolower $t] : $t}]
+        }
+
         set matches_in_slice 0
         foreach path $paths {
             set folder [file tail [file dirname $path]]
@@ -384,8 +517,12 @@ set ::fms::search::WorkerScript {
             set cwd_hint ""
             set first_ts ""
             set lineno 0
-            set ncrit [llength $criteria]
-            set sat [lrepeat $ncrit 0]
+            set seen_terms [dict create]
+            set all_terms_seen [expr {[llength $terms] == 0}]
+            set pat_sat    [expr {[llength $patterns]     == 0}]
+            set read_sat   [expr {[llength $paths_read]   == 0}]
+            set wrote_sat  [expr {[llength $paths_wrote]  == 0}]
+            set edited_sat [expr {[llength $paths_edited] == 0}]
             set buffer [list]
             set seen [dict create]
             if {[catch {open $path r} fh]} { continue }
@@ -400,21 +537,45 @@ set ::fms::search::WorkerScript {
                     if {$users == 1} { set first_user $uc }
                 }
                 set candidate 0
-                foreach c $criteria {
-                    set val [dict get $c value]
-                    if {$val eq ""} continue
-                    if {[dict get $c type] eq "regex"} {
-                        if {[regexp {*}$re_opts -- $val $line]} { set candidate 1; break }
-                    } elseif {[string first $val $line] >= 0} {
-                        set candidate 1; break
+                if {[llength $term_needles] > 0} {
+                    set hay [expr {$nocase ? [string tolower $line] : $line}]
+                    foreach n $term_needles {
+                        if {[string first $n $hay] >= 0} { set candidate 1; break }
+                    }
+                }
+                if {!$candidate} {
+                    foreach p $patterns {
+                        if {[regexp -- $p $line]} { set candidate 1; break }
+                    }
+                }
+                if {!$candidate} {
+                    foreach s $path_substrs {
+                        if {[string first $s $line] >= 0} { set candidate 1; break }
                     }
                 }
                 if {!$candidate} continue
                 if {[catch {::json::json2dict $line} rec]} continue
-                foreach hit [record_hits $rec $criteria $re_opts] {
-                    lassign $hit idx btype content
-                    set sat [lreplace $sat $idx $idx 1]
-                    set key "$lineno $btype $content"
+                set r [record_hits $rec $clauses]
+                if {[dict get $r pat_hit]}    { set pat_sat 1 }
+                if {[dict get $r read_hit]}   { set read_sat 1 }
+                if {[dict get $r wrote_hit]}  { set wrote_sat 1 }
+                if {[dict get $r edited_hit]} { set edited_sat 1 }
+                if {!$all_terms_seen} {
+                    set rec_text [dict get $r rec_text]
+                    if {$nocase} { set rec_text [string tolower $rec_text] }
+                    foreach t $terms n $term_needles {
+                        if {[dict exists $seen_terms $t]} continue
+                        if {[string first $n $rec_text] >= 0} {
+                            dict set seen_terms $t 1
+                        }
+                    }
+                    if {[dict size $seen_terms] == [llength $terms]} {
+                        set all_terms_seen 1
+                    }
+                }
+                foreach hit [dict get $r hits] {
+                    lassign $hit btype content
+                    set key "$lineno $btype $content"
                     if {[dict exists $seen $key]} continue
                     dict set seen $key 1
                     lappend buffer [list $lineno $btype $content]
@@ -436,9 +597,8 @@ set ::fms::search::WorkerScript {
                 cwd_hint $cwd_hint]
             thread::send -async $main_tid \
                 [list ::fms::search::dispatch $obj_cmd on_worker_row $epoch $row]
-            set all 1
-            foreach s $sat { if {!$s} { set all 0; break } }
-            if {$all && [llength $buffer] > 0} {
+            if {$all_terms_seen && $pat_sat && $read_sat
+                && $wrote_sat && $edited_sat && [llength $buffer] > 0} {
                 foreach ev $buffer {
                     lassign $ev evlineno evbtype evcontent
                     set matchcore [dict create path $path lineoff $evlineno \
@@ -525,24 +685,14 @@ oo::class create ::fms::Search {
             return
         }
         my cancel
-        set criteria [my active_criteria $snapshot]
-        if {[llength $criteria] == 0} return
+        set clauses [::fms::search::build_clauses $snapshot]
+        if {![::fms::search::clauses_any $clauses]} return
         set my_epoch [incr Epoch]
         set Active 1
         set MatchedSessions [dict create]
         set Counts [dict create done 0 total 0 matches 0]
         set co ::fms::search::coro_$my_epoch
         coroutine $co [namespace which my] run_search $my_epoch $snapshot
-    }
-
-    # The snapshot's criteria with empty values dropped. A criterion is
-    # {type regex|read|write|edit  value <string>}.
-    method active_criteria {snapshot} {
-        set out [list]
-        foreach c [my dict_or $snapshot criteria {}] {
-            if {[dict get $c value] ne ""} { lappend out $c }
-        }
-        return $out
     }
 
     method pick_thread_count {} {
@@ -560,9 +710,23 @@ oo::class create ::fms::Search {
         yield
         if {$my_epoch != $Epoch} return
 
-        set criteria [my active_criteria $snapshot]
-        set case     [my dict_or $snapshot case 0]
-        set re_opts  [expr {$case ? "" : "-nocase"}]
+        set clauses [::fms::search::build_clauses $snapshot]
+        set terms        [dict get $clauses terms]
+        set patterns     [dict get $clauses patterns]
+        set paths_read   [dict get $clauses paths_read]
+        set paths_wrote  [dict get $clauses paths_wrote]
+        set paths_edited [dict get $clauses paths_edited]
+        set nocase       [dict get $clauses nocase]
+
+        # Per-line pre-filter literals: a record needs parsing only when its
+        # raw text contains a candidate substring for at least one clause.
+        # Terms are checked with case respected; when nocase, the line is
+        # lower-cased once per line.
+        set path_substrs [concat $paths_read $paths_wrote $paths_edited]
+        set term_needles [list]
+        foreach t $terms {
+            lappend term_needles [expr {$nocase ? [string tolower $t] : $t}]
+        }
 
         set paths [$Scan list_paths_for $snapshot]
         set total [llength $paths]
@@ -576,8 +740,12 @@ oo::class create ::fms::Search {
             set cwd_hint ""
             set first_ts ""
             set lineno 0
-            set ncrit [llength $criteria]
-            set sat [lrepeat $ncrit 0]
+            set seen_terms [dict create]
+            set all_terms_seen [expr {[llength $terms] == 0}]
+            set pat_sat    [expr {[llength $patterns]     == 0}]
+            set read_sat   [expr {[llength $paths_read]   == 0}]
+            set wrote_sat  [expr {[llength $paths_wrote]  == 0}]
+            set edited_sat [expr {[llength $paths_edited] == 0}]
             set buffer [list]
             set seen [dict create]
             if {[catch {open $path r} fh]} {
@@ -600,19 +768,43 @@ oo::class create ::fms::Search {
                     if {$users == 1} { set first_user $uc }
                 }
                 set candidate 0
-                foreach c $criteria {
-                    set val [dict get $c value]
-                    if {$val eq ""} continue
-                    if {[dict get $c type] eq "regex"} {
-                        if {[regexp {*}$re_opts -- $val $line]} { set candidate 1; break }
-                    } elseif {[string first $val $line] >= 0} {
-                        set candidate 1; break
+                if {[llength $term_needles] > 0} {
+                    set hay [expr {$nocase ? [string tolower $line] : $line}]
+                    foreach n $term_needles {
+                        if {[string first $n $hay] >= 0} { set candidate 1; break }
+                    }
+                }
+                if {!$candidate} {
+                    foreach p $patterns {
+                        if {[regexp -- $p $line]} { set candidate 1; break }
+                    }
+                }
+                if {!$candidate} {
+                    foreach s $path_substrs {
+                        if {[string first $s $line] >= 0} { set candidate 1; break }
                     }
                 }
                 if {$candidate && ![catch {::json::json2dict $line} rec]} {
-                    foreach hit [::fms::search::record_hits $rec $criteria $re_opts] {
-                        lassign $hit idx btype content
-                        set sat [lreplace $sat $idx $idx 1]
+                    set r [::fms::search::record_hits $rec $clauses]
+                    if {[dict get $r pat_hit]}    { set pat_sat 1 }
+                    if {[dict get $r read_hit]}   { set read_sat 1 }
+                    if {[dict get $r wrote_hit]}  { set wrote_sat 1 }
+                    if {[dict get $r edited_hit]} { set edited_sat 1 }
+                    if {!$all_terms_seen} {
+                        set rec_text [dict get $r rec_text]
+                        if {$nocase} { set rec_text [string tolower $rec_text] }
+                        foreach t $terms n $term_needles {
+                            if {[dict exists $seen_terms $t]} continue
+                            if {[string first $n $rec_text] >= 0} {
+                                dict set seen_terms $t 1
+                            }
+                        }
+                        if {[dict size $seen_terms] == [llength $terms]} {
+                            set all_terms_seen 1
+                        }
+                    }
+                    foreach hit [dict get $r hits] {
+                        lassign $hit btype content
                         set key "$lineno $btype $content"
                         if {[dict exists $seen $key]} continue
                         dict set seen $key 1
@@ -645,12 +837,11 @@ oo::class create ::fms::Search {
                 bookmarked [file executable $path] \
                 cwd_hint $cwd_hint]
             $Scan publish_row $row
-            # A session qualifies only when every criterion is satisfied
-            # somewhere in it; then flush its buffered evidence in line
-            # order, the first row marking the session for the consumers.
-            set all 1
-            foreach s $sat { if {!$s} { set all 0; break } }
-            if {$all && [llength $buffer] > 0} {
+            # A session qualifies only when every clause is satisfied;
+            # flush its buffered evidence in line order, the first row
+            # marking the session for the consumers.
+            if {$all_terms_seen && $pat_sat && $read_sat
+                && $wrote_sat && $edited_sat && [llength $buffer] > 0} {
                 foreach ev $buffer {
                     lassign $ev evlineno evbtype evcontent
                     set is_first [expr {![dict exists $MatchedSessions $path]}]
@@ -683,15 +874,13 @@ oo::class create ::fms::Search {
     method start_threaded {snapshot N} {
         package require Thread
         my cancel
-        set criteria [my active_criteria $snapshot]
-        if {[llength $criteria] == 0} return
+        set clauses [::fms::search::build_clauses $snapshot]
+        if {![::fms::search::clauses_any $clauses]} return
         set my_epoch [incr Epoch]
         set Active 1
         set MatchedSessions [dict create]
         set Counts [dict create done 0 total 0 matches 0]
 
-        set case    [my dict_or $snapshot case 0]
-        set re_opts [expr {$case ? "" : "-nocase"}]
         set paths   [$Scan list_paths_for $snapshot]
         set total   [llength $paths]
         dict set Counts total $total
@@ -720,7 +909,7 @@ oo::class create ::fms::Search {
             set tid [thread::create $::fms::search::WorkerScript]
             lappend Workers $tid
             thread::send -async $tid \
-                [list worker_run $main_tid $obj_cmd $my_epoch $slice $criteria $re_opts]
+                [list worker_run $main_tid $obj_cmd $my_epoch $slice $clauses]
         }
     }
 
