@@ -109,6 +109,19 @@ proc ::fms::app::start {root {initial_criteria {}}} {
             $Toolbar add_value [dict get $cli_kind $t] [dict get $c value]
         }
     }
+    # Launch from inside a known project: seed an `under` chip with that
+    # folder and flag it as auto-applied, so the Show-all banner can
+    # reveal that the result set is being narrowed on the user's behalf.
+    # Skipped when CLI criteria were given — the user is asking for a
+    # specific query, not a default scope.
+    if {[llength $initial_criteria] == 0} {
+        set launch_cwd $::env(PWD)
+        set folder [::fms::path::encode_cwd $launch_cwd]
+        set proj [file join [::fms::path::projects_root] $folder]
+        if {[file isdirectory $proj]} {
+            $Toolbar seed_under $launch_cwd
+        }
+    }
     $Toolbar publish
 
     bind . <Control-q> [namespace code quit]
