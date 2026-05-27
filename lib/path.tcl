@@ -1,6 +1,6 @@
 package require Tcl 9
 
-namespace eval ::fms::path {
+namespace eval ::questlog::path {
     namespace export encode_cwd projects_root pretty_home display_label \
         list_all_projects ensure_project_folder candidate_cwds_for \
         move_session set_bookmark clear_bookmark
@@ -15,25 +15,25 @@ namespace eval ::fms::path {
 # pass through untouched - the rest of the codebase uses them
 # constantly for legitimate non-mutating purposes.
 #
-# The original `file` is preserved as ::fms::path::_real_file and is
+# The original `file` is preserved as ::questlog::path::_real_file and is
 # the only way the legitimate sinks in this module reach the
 # filesystem. Idempotent: a second source of this file is a no-op.
-if {[info commands ::fms::path::_real_file] eq ""} {
-    rename file ::fms::path::_real_file
+if {[info commands ::questlog::path::_real_file] eq ""} {
+    rename file ::questlog::path::_real_file
     proc file {subcmd args} {
         if {$subcmd in {rename mkdir delete copy attributes link}} {
             set caller "top-level"
             catch {set caller [info level -1]}
             return -code error \
-                "file $subcmd is restricted to ::fms::path::* (called from $caller): $args"
+                "file $subcmd is restricted to ::questlog::path::* (called from $caller): $args"
         }
-        return [::fms::path::_real_file $subcmd {*}$args]
+        return [::questlog::path::_real_file $subcmd {*}$args]
     }
 }
 
 # Display-only: abbreviate a leading $HOME to ~. The model keeps absolute
 # paths so encode_cwd, xdg-open and the resume command stay literal.
-proc ::fms::path::pretty_home {path} {
+proc ::questlog::path::pretty_home {path} {
     set home $::env(HOME)
     if {$path eq $home || [string match "$home/*" $path]} {
         return "~[string range $path [string length $home] end]"
@@ -42,7 +42,7 @@ proc ::fms::path::pretty_home {path} {
 }
 
 # Root of the on-disk Claude session store.
-proc ::fms::path::projects_root {} {
+proc ::questlog::path::projects_root {} {
     return [file join $::env(HOME) .claude projects]
 }
 
@@ -57,7 +57,7 @@ proc ::fms::path::projects_root {} {
 # Claude itself would have written for the canonical cwd. The input must
 # be an absolute path; for encoding a bare directory-entry name (single
 # component, no slashes) use _encode_segment.
-proc ::fms::path::encode_cwd {cwd} {
+proc ::questlog::path::encode_cwd {cwd} {
     if {$cwd eq ""} { return "" }
     return [_encode_segment [file normalize $cwd]]
 }
@@ -66,7 +66,7 @@ proc ::fms::path::encode_cwd {cwd} {
 # no filesystem touch. The right tool for encoding a bare directory name
 # obtained from glob (e.g. inside _walk), where calling file normalize
 # would (mis-)resolve the bare name against the process cwd.
-proc ::fms::path::_encode_segment {name} {
+proc ::questlog::path::_encode_segment {name} {
     return [regsub -all {[^A-Za-z0-9]} $name -]
 }
 
@@ -75,7 +75,7 @@ proc ::fms::path::_encode_segment {name} {
 # basename, which is honest about the failure rather than a fictional
 # path. $cwd is whatever the canonical resolver returned ("" if it
 # could not resolve the folder).
-proc ::fms::path::display_label {cwd folder_basename} {
+proc ::questlog::path::display_label {cwd folder_basename} {
     if {$cwd eq ""} { return $folder_basename }
     return [pretty_home $cwd]
 }
@@ -83,7 +83,7 @@ proc ::fms::path::display_label {cwd folder_basename} {
 # All project folder basenames currently on disk under ~/.claude/projects/.
 # The move picker uses this so empty projects (no recent sessions) are
 # still reachable as destinations.
-proc ::fms::path::list_all_projects {} {
+proc ::questlog::path::list_all_projects {} {
     set root [projects_root]
     if {![file isdirectory $root]} { return [list] }
     set out [list]
@@ -99,7 +99,7 @@ proc ::fms::path::list_all_projects {} {
 # name a real directory, refuse rather than silently create an orphan
 # project folder from a typo'd path. The mkdir reaches through the
 # private _real_file because the public `file` is the trap from above.
-proc ::fms::path::ensure_project_folder {cwd} {
+proc ::questlog::path::ensure_project_folder {cwd} {
     if {$cwd eq ""} { error "destination cwd is empty" }
     set normalized [file normalize $cwd]
     if {![file isdirectory $normalized]} {
@@ -107,7 +107,7 @@ proc ::fms::path::ensure_project_folder {cwd} {
     }
     set folder [encode_cwd $normalized]
     set dir [file join [projects_root] $folder]
-    if {![file isdirectory $dir]} { ::fms::path::_real_file mkdir $dir }
+    if {![file isdirectory $dir]} { ::questlog::path::_real_file mkdir $dir }
     return $dir
 }
 
@@ -117,7 +117,7 @@ proc ::fms::path::ensure_project_folder {cwd} {
 # any future caller that skipped ensure_project_folder), and the
 # source file must exist. The actual rename goes through _real_file
 # because the public `file` is the trap.
-proc ::fms::path::move_session {src_path dst_cwd} {
+proc ::questlog::path::move_session {src_path dst_cwd} {
     if {![file isfile $src_path]} {
         error "source not found: $src_path"
     }
@@ -135,7 +135,7 @@ proc ::fms::path::move_session {src_path dst_cwd} {
     if {[file exists $new_path]} {
         error "destination already exists: $new_path"
     }
-    ::fms::path::_real_file rename -- $src_path $new_path
+    ::questlog::path::_real_file rename -- $src_path $new_path
     return $new_path
 }
 
@@ -146,15 +146,15 @@ proc ::fms::path::move_session {src_path dst_cwd} {
 # of the trapped `file attributes`; like move_session they reach the
 # filesystem through _real_file. The symbolic u+x / u-x form touches only
 # the owner-execute bit, leaving read/write bits untouched (0644 <-> 0744).
-proc ::fms::path::set_bookmark {path} {
+proc ::questlog::path::set_bookmark {path} {
     if {![file isfile $path]} { error "session not found: $path" }
-    ::fms::path::_real_file attributes $path -permissions u+x
+    ::questlog::path::_real_file attributes $path -permissions u+x
     return 1
 }
 
-proc ::fms::path::clear_bookmark {path} {
+proc ::questlog::path::clear_bookmark {path} {
     if {![file isfile $path]} { error "session not found: $path" }
-    ::fms::path::_real_file attributes $path -permissions u-x
+    ::questlog::path::_real_file attributes $path -permissions u-x
     return 1
 }
 
@@ -168,7 +168,7 @@ proc ::fms::path::clear_bookmark {path} {
 # directory is gone (a "black hole" that should not be offered as a
 # destination). A list of length > 1 means the basename is genuinely
 # ambiguous and the caller has to present each candidate.
-proc ::fms::path::candidate_cwds_for {basename} {
+proc ::questlog::path::candidate_cwds_for {basename} {
     if {$basename eq ""} { return [list] }
     if {[string index $basename 0] eq "-"} {
         set rest [string range $basename 1 end]
@@ -178,7 +178,7 @@ proc ::fms::path::candidate_cwds_for {basename} {
     return [_walk "/" [split $rest -]]
 }
 
-proc ::fms::path::_walk {dir parts} {
+proc ::questlog::path::_walk {dir parts} {
     if {[llength $parts] == 0} { return [list $dir] }
     set entries [concat \
         [glob -nocomplain -directory $dir -type d -tails -- *] \

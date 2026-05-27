@@ -1,7 +1,7 @@
 package require Tcl 9
 package require TclOO
 
-# ::fms::Scan - in-memory, coroutine-driven, memoised session scanner.
+# ::questlog::Scan - in-memory, coroutine-driven, memoised session scanner.
 #
 # Replaces the previous sqlite-cached design. Each launch builds the row
 # table fresh by line-streaming each jsonl with Tcl regex (no jq, no
@@ -19,10 +19,10 @@ package require TclOO
 # in-flight coroutine; the coroutine compares its captured epoch after
 # every yield and exits cleanly when stale. No `rename`, no race.
 
-namespace eval ::fms::scan {}
+namespace eval ::questlog::scan {}
 
 # Comparator for lsort -command. Sorts row-dict elements by mtime.
-proc ::fms::scan::cmp_mtime {a b} {
+proc ::questlog::scan::cmp_mtime {a b} {
     set ma [dict get $a mtime]
     set mb [dict get $b mtime]
     if {$ma < $mb} { return -1 }
@@ -30,7 +30,7 @@ proc ::fms::scan::cmp_mtime {a b} {
     return 0
 }
 
-oo::class create ::fms::Scan {
+oo::class create ::questlog::Scan {
     variable Rows         ;# dict: path -> row dict
     variable Folders      ;# dict: folder basename -> resolved display path
     variable Epoch        ;# generation counter; inc to cancel
@@ -65,7 +65,7 @@ oo::class create ::fms::Scan {
         set Snapshot $snapshot
         set my_epoch [incr Epoch]
         set Active 1
-        set co ::fms::scan::coro_$my_epoch
+        set co ::questlog::scan::coro_$my_epoch
         coroutine $co [namespace which my] run_scan $my_epoch
     }
 
@@ -115,7 +115,7 @@ oo::class create ::fms::Scan {
     # which holds internal subagent records (not user sessions).
     # Pre-sorted by mtime DESC so consumers see rows in display order.
     method list_paths_for {snapshot} {
-        set root [::fms::path::projects_root]
+        set root [::questlog::path::projects_root]
         if {![file isdirectory $root]} { return [list] }
         set window [my dict_or $snapshot window 7d]
         set cutoff 0
@@ -258,7 +258,7 @@ oo::class create ::fms::Scan {
         # only when the hint is self-consistent AND still points at an
         # extant directory, so the cache never holds a fictional path.
         if {$cwd ne "" && ![dict exists $Folders $folder]
-            && [::fms::path::encode_cwd $cwd] eq $folder
+            && [::questlog::path::encode_cwd $cwd] eq $folder
             && [file isdirectory $cwd]} {
             dict set Folders $folder $cwd
         }
@@ -280,7 +280,7 @@ oo::class create ::fms::Scan {
         set under_folders [list]
         set under_paths   [list]
         foreach u $under {
-            lappend under_folders [::fms::path::encode_cwd $u]
+            lappend under_folders [::questlog::path::encode_cwd $u]
             lappend under_paths   [string trimright $u /]
         }
         set out [list]
@@ -298,7 +298,7 @@ oo::class create ::fms::Scan {
             }
             lappend out $row
         }
-        return [lsort -decreasing -command ::fms::scan::cmp_mtime $out]
+        return [lsort -decreasing -command ::questlog::scan::cmp_mtime $out]
     }
 
     # Mirror of SessionList.row_under_match. Match by encoded folder name
@@ -335,7 +335,7 @@ oo::class create ::fms::Scan {
             dict set Folders $folder $cwd
             return $cwd
         }
-        set cands [::fms::path::candidate_cwds_for $folder]
+        set cands [::questlog::path::candidate_cwds_for $folder]
         if {[llength $cands] == 1} {
             set cwd [lindex $cands 0]
             dict set Folders $folder $cwd
@@ -349,11 +349,11 @@ oo::class create ::fms::Scan {
     # moved into the folder cannot mislabel it. The caller decides
     # whether the path still exists.
     method peek_folder_cwd {folder} {
-        set dir [file join [::fms::path::projects_root] $folder]
+        set dir [file join [::questlog::path::projects_root] $folder]
         if {![file isdirectory $dir]} { return "" }
         foreach f [glob -nocomplain -directory $dir -- *.jsonl] {
-            set cwd [::fms::jsonl::first_cwd $f]
-            if {$cwd ne "" && [::fms::path::encode_cwd $cwd] eq $folder} {
+            set cwd [::questlog::jsonl::first_cwd $f]
+            if {$cwd ne "" && [::questlog::path::encode_cwd $cwd] eq $folder} {
                 return $cwd
             }
         }

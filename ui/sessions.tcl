@@ -3,12 +3,12 @@ package require Tk
 
 # Glyphs for the status markers. The single home for both; the toolbar
 # toggles are plain text, so these characters live only here.
-namespace eval ::fms::ui {
+namespace eval ::questlog::ui {
     variable GLYPH_RUNNING  ●
     variable GLYPH_BOOKMARK ★
 }
 
-# ::fms::ui::SessionList - the left pane: one read-only text widget that is
+# ::questlog::ui::SessionList - the left pane: one read-only text widget that is
 # both the session browser and the search-result index in a single list.
 #
 # Layout, top to bottom, as tagged regions in the one text widget:
@@ -39,7 +39,7 @@ namespace eval ::fms::ui {
 # anchor_restore, which pins the top visible line back to the top, so a late
 # match inserted above the viewport never shifts what the reader is on.
 
-oo::class create ::fms::ui::SessionList {
+oo::class create ::questlog::ui::SessionList {
     variable Top
     variable Text
     variable StatusVar
@@ -163,7 +163,7 @@ oo::class create ::fms::ui::SessionList {
         # self-scrolling drag-select). The per-tag click/drag bindings fire
         # first; these widget-level breaks stop the class bindings that follow.
         # B1-Motion still drives drag-to-move, then breaks the class handler.
-        bind $Text <B1-Motion> {::fms::ui::drag::motion %X %Y; break}
+        bind $Text <B1-Motion> {::questlog::ui::drag::motion %X %Y; break}
         foreach ev {<Button-1> <Double-Button-1> <Triple-Button-1> \
                     <Shift-Button-1> <Control-Button-1> <B1-Leave>} {
             bind $Text $ev break
@@ -315,7 +315,7 @@ oo::class create ::fms::ui::SessionList {
 
     method apply_filter {snapshot} {
         set Snapshot $snapshot
-        set CriteriaActive [::fms::ui::any_criteria $snapshot]
+        set CriteriaActive [::questlog::ui::any_criteria $snapshot]
         my update_banner
         my clear
     }
@@ -328,7 +328,7 @@ oo::class create ::fms::ui::SessionList {
         set under_list [my dict_or $Snapshot under {}]
         if {$under_auto && [llength $under_list] > 0} {
             set path [lindex $under_list 0]
-            set pretty [::fms::path::pretty_home $path]
+            set pretty [::questlog::path::pretty_home $path]
             $Top.banner.text configure -text \
                 "Showing sessions from $pretty only."
             pack $Top.banner -side top -fill x -after $Top.bar
@@ -373,7 +373,7 @@ oo::class create ::fms::ui::SessionList {
         set folder [dict get $row folder]
         set cwd_hint [my dict_or $row cwd_hint ""]
         foreach u $under_list {
-            set enc [::fms::path::encode_cwd $u]
+            set enc [::questlog::path::encode_cwd $u]
             if {$folder eq $enc} { return 1 }
             if {$cwd_hint ne ""} {
                 set u [string trimright $u /]
@@ -588,7 +588,7 @@ oo::class create ::fms::ui::SessionList {
         set size [my fmt_size [dict get $s size]]
         set cost [my dict_or $s cost ""]
         set ctxt ""
-        if {$cost ne "" && $cost >= 0} { set ctxt [::fms::cost::format_cost $cost] }
+        if {$cost ne "" && $cost >= 0} { set ctxt [::questlog::cost::format_cost $cost] }
         return [format "%-16s %7s %6s   " $when $size $ctxt]
     }
 
@@ -730,7 +730,7 @@ oo::class create ::fms::ui::SessionList {
 
     method ensure_folder {folder} {
         if {[dict exists $Folders $folder]} return
-        set label [::fms::path::display_label [{*}$ResolveFolder $folder] $folder]
+        set label [::questlog::path::display_label [{*}$ResolveFolder $folder] $folder]
         set htag  "f#[incr NextId]"
         # Browsing opens folders collapsed (an overview of projects); a search
         # opens them expanded so the matches under each folder are visible. A
@@ -765,7 +765,7 @@ oo::class create ::fms::ui::SessionList {
         if {$n > 0} {
             if {$fc > 0} {
                 set noun [expr {$n == 1 ? {session} : {sessions}}]
-                append line "  ($n $noun, [::fms::cost::format_total $fc])"
+                append line "  ($n $noun, [::questlog::cost::format_total $fc])"
             } else {
                 append line "  ($n)"
             }
@@ -880,8 +880,8 @@ oo::class create ::fms::ui::SessionList {
 
     method glyph_cell {running bookmarked} {
         set s ""
-        if {$running}    { append s $::fms::ui::GLYPH_RUNNING }
-        if {$bookmarked} { append s $::fms::ui::GLYPH_BOOKMARK }
+        if {$running}    { append s $::questlog::ui::GLYPH_RUNNING }
+        if {$bookmarked} { append s $::questlog::ui::GLYPH_BOOKMARK }
         return $s
     }
 
@@ -951,7 +951,7 @@ oo::class create ::fms::ui::SessionList {
     # Expanding the row to full word-wrap is the right-edge arrow's job,
     # not the click's - overloading click confused users.
     method on_session_release {path X Y} {
-        set was_drag [::fms::ui::drag::release $X $Y]
+        set was_drag [::questlog::ui::drag::release $X $Y]
         if {$was_drag} return
         my select $path
     }
@@ -971,7 +971,7 @@ oo::class create ::fms::ui::SessionList {
     # ---- drag-to-move -------------------------------------------------
 
     method on_session_press {path X Y} {
-        ::fms::ui::drag::watch $Text $X $Y [list $path] \
+        ::questlog::ui::drag::watch $Text $X $Y [list $path] \
             [list [self] handle_drop] \
             [list [self] drag_hit] [list [self] drag_paint]
     }
@@ -1039,22 +1039,22 @@ oo::class create ::fms::ui::SessionList {
     method menu_target_get {key} { return [dict get $MenuTarget $key] }
     method menu_open {} { my open_session $MenuPath }
     method menu_copy_resume {} {
-        my clipboard_set [::fms::terminal::resume_command \
+        my clipboard_set [::questlog::terminal::resume_command \
             [my menu_target_get cwd] [my menu_target_get uuid]]
     }
     method menu_copy_uuid {} { my clipboard_set [my menu_target_get uuid] }
     method menu_copy_path {} { my clipboard_set $MenuPath }
     method menu_copy_last_assistant {} {
-        my clipboard_set [::fms::jsonl::last_assistant_text [my menu_target_get path]]
+        my clipboard_set [::questlog::jsonl::last_assistant_text [my menu_target_get path]]
     }
     method menu_resume {fork} {
-        ::fms::terminal::launch_tab [my menu_target_get cwd] \
+        ::questlog::terminal::launch_tab [my menu_target_get cwd] \
             [my menu_target_get uuid] $fork
     }
     method menu_reveal {} {
-        set dir [file join [::fms::path::projects_root] [my menu_target_get folder]]
+        set dir [file join [::questlog::path::projects_root] [my menu_target_get folder]]
         if {[catch {exec xdg-open $dir &} err]} {
-            puts stderr "fms: xdg-open failed: $err"
+            puts stderr "questlog: xdg-open failed: $err"
         }
     }
     method menu_move {} { {*}$OnMoveRequest [list $MenuPath] }
@@ -1074,10 +1074,10 @@ oo::class create ::fms::ui::SessionList {
         set entered [my prompt_rename $current]
         if {$entered eq "<cancelled>"} return
         if {$entered eq ""} {
-            ::fms::title::clear_custom $MenuPath $uuid $aitt
+            ::questlog::title::clear_custom $MenuPath $uuid $aitt
             dict set Sessions $MenuPath slug $aitt
         } else {
-            ::fms::title::set_custom $MenuPath $uuid $entered
+            ::questlog::title::set_custom $MenuPath $uuid $entered
             dict set Sessions $MenuPath slug $entered
         }
         $Text configure -state normal
@@ -1096,16 +1096,16 @@ oo::class create ::fms::ui::SessionList {
         wm title $dlg "Set session title"
         wm transient $dlg [winfo toplevel $Text]
         wm resizable $dlg 1 0
-        set ::fms::ui::rename_entry $current
-        set ::fms::ui::rename_outcome ""
+        set ::questlog::ui::rename_entry $current
+        set ::questlog::ui::rename_outcome ""
         ttk::label $dlg.lbl \
             -text "Title (kebab-case; empty reverts to Claude's auto title):"
-        ttk::entry $dlg.ent -textvariable ::fms::ui::rename_entry
+        ttk::entry $dlg.ent -textvariable ::questlog::ui::rename_entry
         ttk::frame $dlg.bf
         ttk::button $dlg.bf.ok -text "OK" \
-            -command [list set ::fms::ui::rename_outcome ok]
+            -command [list set ::questlog::ui::rename_outcome ok]
         ttk::button $dlg.bf.cancel -text "Cancel" \
-            -command [list set ::fms::ui::rename_outcome cancel]
+            -command [list set ::questlog::ui::rename_outcome cancel]
         pack $dlg.lbl -padx 12 -pady {12 4} -anchor w -fill x
         pack $dlg.ent -padx 12 -pady 4 -fill x
         pack $dlg.bf  -padx 12 -pady {4 12} -anchor e -fill x
@@ -1114,13 +1114,13 @@ oo::class create ::fms::ui::SessionList {
         bind $dlg.ent <Return> [list $dlg.bf.ok invoke]
         bind $dlg.ent <Escape> [list $dlg.bf.cancel invoke]
         wm protocol $dlg WM_DELETE_WINDOW \
-            [list set ::fms::ui::rename_outcome cancel]
+            [list set ::questlog::ui::rename_outcome cancel]
         focus $dlg.ent
         $dlg.ent selection range 0 end
         grab set $dlg
-        vwait ::fms::ui::rename_outcome
-        set outcome $::fms::ui::rename_outcome
-        set value   $::fms::ui::rename_entry
+        vwait ::questlog::ui::rename_outcome
+        set outcome $::questlog::ui::rename_outcome
+        set value   $::questlog::ui::rename_entry
         catch {grab release $dlg}
         destroy $dlg
         if {$outcome ne "ok"} { return "<cancelled>" }
@@ -1372,7 +1372,7 @@ oo::class create ::fms::ui::SessionList {
     # a browse-mode scan (base empty) shows the dollar amount alone.
     method refresh_status {} {
         set total ""
-        if {$TotalCost > 0} { set total [::fms::cost::format_total $TotalCost] }
+        if {$TotalCost > 0} { set total [::questlog::cost::format_total $TotalCost] }
         if {$StatusBase ne "" && $total ne ""} {
             set StatusVar "$StatusBase · $total"
         } elseif {$total ne ""} {

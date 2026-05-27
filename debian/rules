@@ -1,7 +1,7 @@
 #!/usr/bin/make -f
 
-PKGDIR = debian/find-my-session
-SHARE  = $(PKGDIR)/usr/share/find-my-session
+PKGDIR = debian/questlog
+SHARE  = $(PKGDIR)/usr/share/questlog
 
 %:
 	dh $@
@@ -15,7 +15,7 @@ override_dh_auto_install:
 	cp lib/*.tcl $(SHARE)/lib/
 	cp ui/*.tcl  $(SHARE)/ui/
 	cp data/*.csv $(SHARE)/data/
-	install -D -m 0755 fms $(PKGDIR)/usr/bin/fms
-	sed -i 's|^set ROOT .*|set ROOT /usr/share/find-my-session|' $(PKGDIR)/usr/bin/fms
-	install -D -m 0644 find-my-session.desktop \
-	    $(PKGDIR)/usr/share/applications/find-my-session.desktop
+	install -D -m 0755 questlog $(PKGDIR)/usr/bin/questlog
+	sed -i 's|^set ROOT .*|set ROOT /usr/share/questlog|' $(PKGDIR)/usr/bin/questlog
+	install -D -m 0644 questlog.desktop \
+	    $(PKGDIR)/usr/share/applications/questlog.desktop

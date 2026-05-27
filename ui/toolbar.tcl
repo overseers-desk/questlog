@@ -1,7 +1,7 @@
 package require Tcl 9
 package require Tk
 
-# ::fms::ui::Toolbar - the top-of-window controls.
+# ::questlog::ui::Toolbar - the top-of-window controls.
 #
 # Owns the filter state. Subscribers receive the full snapshot dict
 # whenever any control changes:
@@ -19,7 +19,7 @@ package require Tk
 #   bookmarked_only  0 | 1
 #   cwd              launch cwd, constant after startup
 
-namespace eval ::fms::ui {}
+namespace eval ::questlog::ui {}
 
 # any_criteria snapshot - true iff the snapshot carries a content-matching
 # clause (search text, regex pattern, or a read/wrote/edited path). The
@@ -28,7 +28,7 @@ namespace eval ::fms::ui {}
 # index mode and Search.start returns immediately because there is nothing
 # to match, leaving the list empty. Shared by app.tcl (search start/cancel)
 # and sessions.tcl (CriteriaActive flag: browse versus result-index mode).
-proc ::fms::ui::any_criteria {snapshot} {
+proc ::questlog::ui::any_criteria {snapshot} {
     if {[dict exists $snapshot search] && [dict get $snapshot search] ne ""} {
         return 1
     }
@@ -43,7 +43,7 @@ proc ::fms::ui::any_criteria {snapshot} {
 # Tokenise the search field's contents. Space-separated; double-quoted runs
 # preserve a phrase. Trailing/leading whitespace ignored. Empty input yields
 # an empty list.
-proc ::fms::ui::search_terms {s} {
+proc ::questlog::ui::search_terms {s} {
     set out [list]
     set buf ""
     set in_quotes 0
@@ -62,13 +62,13 @@ proc ::fms::ui::search_terms {s} {
 # regex_values snapshot - values for the result pane's in-place highlighter.
 # Returns the tokenised search terms; the pattern row, while regex-typed, is
 # uncommon and not highlighted in this pass.
-proc ::fms::ui::regex_values {snapshot} {
+proc ::questlog::ui::regex_values {snapshot} {
     set s ""
     if {[dict exists $snapshot search]} { set s [dict get $snapshot search] }
-    return [::fms::ui::search_terms $s]
+    return [::questlog::ui::search_terms $s]
 }
 
-oo::class create ::fms::ui::Toolbar {
+oo::class create ::questlog::ui::Toolbar {
     variable Top
     variable Cwd
     variable Subscribers
@@ -195,7 +195,7 @@ oo::class create ::fms::ui::Toolbar {
         set snap [my snapshot]
         foreach cb $Subscribers {
             if {[catch {{*}$cb $snap} err]} {
-                puts stderr "fms: toolbar subscriber failed: $err"
+                puts stderr "questlog: toolbar subscriber failed: $err"
             }
         }
     }
@@ -318,7 +318,7 @@ oo::class create ::fms::ui::Toolbar {
     # Path-kind chips render as ~-abbreviated; pattern and others render raw.
     method chip_display {kind value} {
         if {$kind in {under read wrote edited}} {
-            return [::fms::path::pretty_home $value]
+            return [::questlog::path::pretty_home $value]
         }
         return $value
     }

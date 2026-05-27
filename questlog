@@ -1,12 +1,12 @@
 #!/usr/bin/env wish9.0
-# find-my-session - entry script.
+# questlog - entry script.
 
 package require Tcl 9
 package require Tk
 
-set FMS_VERSION 1.0.0
+set QUESTLOG_VERSION 1.0.0
 if {[lindex $argv 0] in {--version -v}} {
-    puts "find-my-session $FMS_VERSION"
+    puts "questlog $QUESTLOG_VERSION"
     exit 0
 }
 
@@ -31,8 +31,8 @@ source [file join $ROOT lib app.tcl]
 # A leading criterion-type token (regex|read|write|edit) launches the GUI
 # pre-seeded with that criteria chain; otherwise the -regex flag prefills a
 # regex criterion. Either way the GUI opens normally.
-if {[::fms::cli::is_cli $argv]} {
-    set initial_criteria [::fms::cli::parse $argv]
+if {[::questlog::cli::is_cli $argv]} {
+    set initial_criteria [::questlog::cli::parse $argv]
 } else {
     set initial_criteria [list]
     for {set i 0} {$i < [llength $argv]} {incr i} {
@@ -45,4 +45,4 @@ if {[::fms::cli::is_cli $argv]} {
     }
 }
 
-::fms::app::start $ROOT $initial_criteria
+::questlog::app::start $ROOT $initial_criteria

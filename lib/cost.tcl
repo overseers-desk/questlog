@@ -2,7 +2,7 @@ package require Tcl 9
 package require Thread
 package require json
 
-# ::fms::cost - per-session token cost computation.
+# ::questlog::cost - per-session token cost computation.
 #
 # Runs as a second pass after the main scan. The scan keeps its early-break
 # on first-prompt extraction; cost needs every assistant turn, so it ships
@@ -20,7 +20,7 @@ package require json
 # global that meaningfully mutates (Epoch), so a class would be
 # scaffolding around what is essentially four procs over an epoch.
 
-namespace eval ::fms::cost {
+namespace eval ::questlog::cost {
     variable Rates [dict create]
     variable Loaded 0
     variable WorkerScript ""
@@ -35,14 +35,14 @@ namespace eval ::fms::cost {
 #   model,effective_from,input_per_mtok,output_per_mtok,
 #   cache_write_per_mtok,cache_read_per_mtok
 # Rates dict: model -> sorted list of {effective_from in out cw cr}.
-proc ::fms::cost::load_rates {root} {
+proc ::questlog::cost::load_rates {root} {
     variable Rates
     variable Loaded
     set csv_path [file join $root data anthropic-rates.csv]
     set Rates [dict create]
     set Loaded 0
     if {![file readable $csv_path]} {
-        puts stderr "fms: rates table not readable at $csv_path; cost column blank"
+        puts stderr "questlog: rates table not readable at $csv_path; cost column blank"
         return 0
     }
     set fh [open $csv_path r]
@@ -71,7 +71,7 @@ proc ::fms::cost::load_rates {root} {
 
 # Pick the rate row whose effective_from <= session_date. Empty if no
 # row matches (unknown model, or date before the first listed era).
-proc ::fms::cost::rate_for {model session_date} {
+proc ::questlog::cost::rate_for {model session_date} {
     variable Rates
     if {![dict exists $Rates $model]} { return "" }
     set best ""
@@ -84,7 +84,7 @@ proc ::fms::cost::rate_for {model session_date} {
 
 # per_model dict {model -> {in out cw cr}} + session date -> USD.
 # -1 signals "no rate row found for any model" -> UI shows blank.
-proc ::fms::cost::compute_usd {per_model session_date} {
+proc ::questlog::cost::compute_usd {per_model session_date} {
     set total 0.0
     set any 0
     dict for {model counts} $per_model {
@@ -101,7 +101,7 @@ proc ::fms::cost::compute_usd {per_model session_date} {
 }
 
 # Compact dollar format for the list column.
-proc ::fms::cost::format_cost {usd} {
+proc ::questlog::cost::format_cost {usd} {
     if {$usd < 0 || $usd == 0} { return "" }
     if {$usd < 0.01}            { return "<1¢" }
     if {$usd < 1.0}             { return [format "%d¢" [expr {int(round($usd*100))}]] }
@@ -109,14 +109,14 @@ proc ::fms::cost::format_cost {usd} {
 }
 
 # Compact dollar format for aggregate totals (folder, status strip).
-proc ::fms::cost::format_total {usd} {
+proc ::questlog::cost::format_total {usd} {
     if {$usd <= 0} { return "" }
     return [format "\$%.2f" $usd]
 }
 
 # Sourced into each tpool worker once at creation. Worker interpreters
 # share nothing with the main interp, so the file-reading procs live here.
-set ::fms::cost::WorkerScript {
+set ::questlog::cost::WorkerScript {
     package require Tcl 9
     package require Thread
     package require json
@@ -162,13 +162,13 @@ set ::fms::cost::WorkerScript {
     proc dispatch_main {path tid epoch} {
         set r [compute_cost $path]
         thread::send -async $tid \
-            [list ::fms::cost::on_worker_result $path $epoch $r]
+            [list ::questlog::cost::on_worker_result $path $epoch $r]
     }
 }
 
 # Initialise the singleton scanner. Called once at app start, after
 # load_rates so the rate table is in place before any worker fires.
-proc ::fms::cost::init {on_result} {
+proc ::questlog::cost::init {on_result} {
     variable Pool
     variable MainTid
     variable Epoch
@@ -182,7 +182,7 @@ proc ::fms::cost::init {on_result} {
 
 # Queue a cost task for one session path. Returns immediately; the
 # result arrives later on the main thread via on_worker_result.
-proc ::fms::cost::start_one {path} {
+proc ::questlog::cost::start_one {path} {
     variable Pool
     variable MainTid
     variable Epoch
@@ -192,13 +192,13 @@ proc ::fms::cost::start_one {path} {
 
 # Bump epoch so late results from prior posts are discarded. The pool
 # stays alive; the next start_one carries the new epoch.
-proc ::fms::cost::cancel {} {
+proc ::questlog::cost::cancel {} {
     variable Epoch
     incr Epoch
 }
 
 # Worker callback - eval'd in the main thread from thread::send -async.
-proc ::fms::cost::on_worker_result {path epoch result} {
+proc ::questlog::cost::on_worker_result {path epoch result} {
     variable Epoch
     variable OnResult
     if {$epoch != $Epoch} return

@@ -1,7 +1,7 @@
 package require Tcl 9
 package require Tk
 
-# ::fms::ui::drag - shared press-motion-release machinery for dragging a
+# ::questlog::ui::drag - shared press-motion-release machinery for dragging a
 # session onto a target folder. The widget that owns the drag supplies two
 # callbacks so this module needs no knowledge of how targets are drawn:
 #   hit   X Y      -> an opaque candidate id under the pointer, or "" for none
@@ -12,7 +12,7 @@ package require Tk
 # State is a single namespace dict; one drag at a time. No class because
 # there is no joint state across operations.
 
-namespace eval ::fms::ui::drag {
+namespace eval ::questlog::ui::drag {
     variable State [dict create]
     variable Threshold 6
     variable ScrollMs 60
@@ -25,7 +25,7 @@ namespace eval ::fms::ui::drag {
 #   on_drop: cmd prefix; called {*}$on_drop $payload $candidate on a release
 #            over a candidate.
 #   hit, paint: the target-resolution callbacks described above.
-proc ::fms::ui::drag::watch {source press_x press_y payload on_drop hit paint} {
+proc ::questlog::ui::drag::watch {source press_x press_y payload on_drop hit paint} {
     variable State
     set State [dict create \
         source $source \
@@ -35,7 +35,7 @@ proc ::fms::ui::drag::watch {source press_x press_y payload on_drop hit paint} {
         payload $payload on_drop $on_drop hit $hit paint $paint]
 }
 
-proc ::fms::ui::drag::motion {X Y} {
+proc ::questlog::ui::drag::motion {X Y} {
     variable State
     variable Threshold
     if {[dict size $State] == 0} return
@@ -76,7 +76,7 @@ proc ::fms::ui::drag::motion {X Y} {
 # dispatched when the cursor was over a candidate, suppressed otherwise).
 # Returns 0 if motion never crossed the threshold, telling the caller to run
 # its normal click handler.
-proc ::fms::ui::drag::release {X Y} {
+proc ::questlog::ui::drag::release {X Y} {
     variable State
     if {[dict size $State] == 0} { return 0 }
     set src [dict get $State source]
@@ -98,28 +98,28 @@ proc ::fms::ui::drag::release {X Y} {
     return $was_active
 }
 
-proc ::fms::ui::drag::schedule_scroll {direction} {
+proc ::questlog::ui::drag::schedule_scroll {direction} {
     variable State
     variable ScrollMs
     if {[dict size $State] == 0} return
     set existing [dict get $State autoscroll]
     if {$existing ne ""} return
-    set id [after $ScrollMs [list ::fms::ui::drag::scroll_tick $direction]]
+    set id [after $ScrollMs [list ::questlog::ui::drag::scroll_tick $direction]]
     dict set State autoscroll $id
 }
 
-proc ::fms::ui::drag::scroll_tick {direction} {
+proc ::questlog::ui::drag::scroll_tick {direction} {
     variable State
     variable ScrollMs
     if {[dict size $State] == 0} return
     if {![dict get $State active]} return
     set src [dict get $State source]
     $src yview scroll $direction units
-    set id [after $ScrollMs [list ::fms::ui::drag::scroll_tick $direction]]
+    set id [after $ScrollMs [list ::questlog::ui::drag::scroll_tick $direction]]
     dict set State autoscroll $id
 }
 
-proc ::fms::ui::drag::cancel_scroll {} {
+proc ::questlog::ui::drag::cancel_scroll {} {
     variable State
     if {[dict size $State] == 0} return
     set id [dict get $State autoscroll]

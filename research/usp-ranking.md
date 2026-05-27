@@ -2,7 +2,7 @@
 
 USP list synthesised from `voices.md`, `competitive-landscape.md`, and `use-case-survey.md`. Snapshot May 2026.
 
-The ranking sorts by demand (how often users voice the underlying pain) multiplied by differentiation (how rare the supply is among Claude Code session tools). One interpretive lens runs through it: a feature is most defensible when it serves a reason to return to a finished session that the user could not have prevented by writing state forward. The ecosystem already solves the forward-preventable returns with memory systems; fms's least-substitutable value is the backward ones.
+The ranking sorts by demand (how often users voice the underlying pain) multiplied by differentiation (how rare the supply is among Claude Code session tools). One interpretive lens runs through it: a feature is most defensible when it serves a reason to return to a finished session that the user could not have prevented by writing state forward. The ecosystem already solves the forward-preventable returns with memory systems; questlog's least-substitutable value is the backward ones.
 
 ## The 12 USPs
 
@@ -17,7 +17,7 @@ The ranking sorts by demand (how often users voice the underlying pain) multipli
 9. **Cross-session full-text regex search.** Streams matches across all projects, replacing manual grep/jq over `~/.claude/projects/`. (`lib/search.tcl`, `lib/scan.tcl`)
 10. **Move and drag-to-move sessions between project folders.** Renames the JSONL into the target folder, preserving the bookmark bit. (`lib/path.tcl`, `ui/move_dialog.tcl`, `ui/drag.tcl`)
 11. **Coroutine-driven responsiveness.** Scanner and searcher yield to the Tk event loop; no threads by default, O(1) cancellation. (`lib/scan.tcl`)
-12. **Native Linux Tk GUI.** No Electron, no embedded web view; the only first-class Linux native desktop tool in the survey with zero web-engine dependency. (`fms` entry script)
+12. **Native Linux Tk GUI.** No Electron, no embedded web view; the only first-class Linux native desktop tool in the survey with zero web-engine dependency. (`questlog` entry script)
 
 ## Ranked by demand-times-differentiation
 
@@ -26,8 +26,8 @@ The ranking sorts by demand (how often users voice the underlying pain) multipli
 | 1 | #9 + #1 + #6 backward-return core | The returns nothing else serves: close a loop, defend a conclusion | #9 common; file-level #1 contested only by a low-traction VS Code extension; the segmented reading pane #6 rare | Headline moat |
 | 2 | #8 live status, read-only, any terminal | High. Three top-scoring launch posts are session monitors | Feature common; detecting any-terminal sessions read-only on Linux is unduplicated | Headline moat (the angle) |
 | 3 | #2 git-status file picker | Low as voiced; the lever that makes #1 a click | Unique | Quiet moat (powers #1) |
-| 4 | #10 move / drag-to-move | High. Folder-rename loses sessions, recurring and unfixed | Rare. flow groups, CCM relocates by CLI; GUI drag preserving the bookmark is fms's | Strong differentiator (incident-driven) |
-| 5 | #3 resume / fork | Very high. Every tool covers it | Common. fms's three-mode right-click is convenience | Must-have, not a differentiator |
+| 4 | #10 move / drag-to-move | High. Folder-rename loses sessions, recurring and unfixed | Rare. flow groups, CCM relocates by CLI; GUI drag preserving the bookmark is questlog's | Strong differentiator (incident-driven) |
+| 5 | #3 resume / fork | Very high. Every tool covers it | Common. questlog's three-mode right-click is convenience | Must-have, not a differentiator |
 | 6 | #12 native Linux, no Electron | Real on Linux, where the official Desktop does not run | Rare. Competitors are macOS-first or embed a WebView | Positioning angle |
 | 7 | #4 bookmark | Moderate (#55291); thin verbatim base | Rare: only Chronicle offers any bookmark/pin; the `u+x` storage is implementation, not an edge | Distinctive, niche |
 | 8 | #7 "this cwd only" | Moderate. Both per-repo and cross-project scope wanted | Common. Category default | Table-stakes |
@@ -38,9 +38,9 @@ The ranking sorts by demand (how often users voice the underlying pain) multipli
 
 The defensible centre is not the search box; it is the kind of return the search box enables. Developers go back to a finished session for seven reasons, and the ecosystem has already absorbed five of them. Continuing interrupted work, looking up a past decision, and reusing a past solution are all forward-preventable, and the community solves them by writing state into files at the time, with memory systems and CLAUDE.md, not by searching old sessions. Contesting that ground means competing with a dozen memory tools on their terms.
 
-Two returns cannot be prevented that way, because the need is unknowable when the session ends. You do not write a note to find the session later when you do not yet know you forgot to send the result, and you do not preserve a citation trail against a challenge you do not yet know is coming. When those needs arrive, the finished session is the only record. Serving them is a trio: cross-session search to find the session (#9), the file-level filter and git-status picker to land on the one that touched the work (#1, #2), and the segmented reading pane to read its reasoning and the sources it used (#6). That trio is fms's least-substitutable value, and it is the quietest in the public record, because closing a loop and defending a conclusion are private, consequence-driven moments that rarely become posts.
+Two returns cannot be prevented that way, because the need is unknowable when the session ends. You do not write a note to find the session later when you do not yet know you forgot to send the result, and you do not preserve a citation trail against a challenge you do not yet know is coming. When those needs arrive, the finished session is the only record. Serving them is a trio: cross-session search to find the session (#9), the file-level filter and git-status picker to land on the one that touched the work (#1, #2), and the segmented reading pane to read its reasoning and the sources it used (#6). That trio is questlog's least-substitutable value, and it is the quietest in the public record, because closing a loop and defending a conclusion are private, consequence-driven moments that rarely become posts.
 
-Two more strengths stand on their own. Live status is one of the most-built features of the year, and where every other monitor sees only the sessions it launched, fms detects any running session from the process table, read-only, on Linux. And the folder-rename-loses-sessions pain, sharp and unfixed in the core, is answered directly by move and drag-to-move, with the bookmark surviving the move.
+Two more strengths stand on their own. Live status is one of the most-built features of the year, and where every other monitor sees only the sessions it launched, questlog detects any running session from the process table, read-only, on Linux. And the folder-rename-loses-sessions pain, sharp and unfixed in the core, is answered directly by move and drag-to-move, with the bookmark surviving the move.
 
 One differentiator is latent. The native Linux build with no web engine serves an audience the official Desktop app leaves on the CLI, and the README does not yet say so. A counter-segment wants no GUI at all and lives in tmux; the Linux-native pitch is aimed past them.
 
@@ -48,10 +48,10 @@ One differentiator is latent. The native Linux build with no web engine serves a
 
 In rough priority for positioning impact and feasibility.
 
-1. **Token / cost analytics per session.** The largest gap by tool count: a whole cluster (ccusage, Claud-ometer, budi, cc-lens) reads the same JSONL fms reads. The data is in hand; scope is the maintainer's call.
-2. **MCP-surfaced session history for the agent itself.** flex and searchat let the running agent recall its own past work mid-task. Matching it means fms shipping an MCP server over the index it already builds, a different architecture from a human GUI.
+1. **Token / cost analytics per session.** The largest gap by tool count: a whole cluster (ccusage, Claud-ometer, budi, cc-lens) reads the same JSONL questlog reads. The data is in hand; scope is the maintainer's call.
+2. **MCP-surfaced session history for the agent itself.** flex and searchat let the running agent recall its own past work mid-task. Matching it means questlog shipping an MCP server over the index it already builds, a different architecture from a human GUI.
 3. **Session export and sharing.** `/export` to Markdown exists in the core; a structured share is a feasible extension of the viewer (`ui/viewer.tcl`).
-4. **Chronological tool-call audit timeline within a session.** fms partially serves the did-vs-claimed audit through tool-use path search (#1) and segmentation (#6) but shows no step-by-step replay.
+4. **Chronological tool-call audit timeline within a session.** questlog partially serves the did-vs-claimed audit through tool-use path search (#1) and segmentation (#6) but shows no step-by-step replay.
 5. **In-place session rename.** Auto-generated titles are unhelpful; the built-in picker already renames. Low cost.
-6. **Cross-device and cross-client unification.** Real demand but out of architectural reach: fms reads local JSONL and cannot see server-held Desktop or Web sessions.
-7. **Bulk regression analytics.** Proving the model changed against a baseline reaches back into stored sessions, but in a statistical-over-many-sessions form closer to the cost-analytics cluster than to fms's single-session browse.
+6. **Cross-device and cross-client unification.** Real demand but out of architectural reach: questlog reads local JSONL and cannot see server-held Desktop or Web sessions.
+7. **Bulk regression analytics.** Proving the model changed against a baseline reaches back into stored sessions, but in a statistical-over-many-sessions form closer to the cost-analytics cluster than to questlog's single-session browse.

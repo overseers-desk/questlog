@@ -1,13 +1,13 @@
 package require Tcl 9
 
-namespace eval ::fms::terminal {
+namespace eval ::questlog::terminal {
     namespace export launch_tab resume_command
     variable Detected ""
 }
 
 # Build the compound resume command. claude has no flag for cwd, so cd is
 # part of the command. fork=1 appends --fork-session.
-proc ::fms::terminal::resume_command {cwd uuid {fork 0}} {
+proc ::questlog::terminal::resume_command {cwd uuid {fork 0}} {
     set extra [expr {$fork ? " --fork-session" : ""}]
     return "cd [shquote $cwd] && claude --resume $uuid$extra"
 }
@@ -18,7 +18,7 @@ proc ::fms::terminal::resume_command {cwd uuid {fork 0}} {
 #   3. $KONSOLE_VERSION         -> konsole
 #   4. parent process tree walk
 #   5. fall back to first installed: ptyxis, gnome-terminal, konsole, xterm
-proc ::fms::terminal::detect {} {
+proc ::questlog::terminal::detect {} {
     variable Detected
     if {$Detected ne ""} { return $Detected }
 
@@ -48,7 +48,7 @@ proc ::fms::terminal::detect {} {
 }
 
 # Walk /proc/$PID/status upward looking for a known terminal binary name.
-proc ::fms::terminal::walk_parents {} {
+proc ::questlog::terminal::walk_parents {} {
     set known {ptyxis gnome-terminal-server konsole xterm alacritty kitty}
     set pid [pid]
     for {set i 0} {$i < 10} {incr i} {
@@ -78,7 +78,7 @@ proc ::fms::terminal::walk_parents {} {
 
 # Open a new terminal tab (or window) running "claude --resume <uuid>" in
 # the given cwd. Returns 1 on success, 0 on failure.
-proc ::fms::terminal::launch_tab {cwd uuid {fork 0}} {
+proc ::questlog::terminal::launch_tab {cwd uuid {fork 0}} {
     set t [detect]
     set extra [expr {$fork ? " --fork-session" : ""}]
     set inner "claude --resume $uuid$extra; exec bash"
@@ -144,20 +144,20 @@ end tell
     }
 }
 
-proc ::fms::terminal::exec_ok {args} {
+proc ::questlog::terminal::exec_ok {args} {
     if {[catch {exec {*}$args &} err]} {
-        puts stderr "fms: terminal launch failed: $err"
+        puts stderr "questlog: terminal launch failed: $err"
         return 0
     }
     return 1
 }
 
 # Conservative shell-quote for a path that will appear inside a bash -c string.
-proc ::fms::terminal::shquote {s} {
+proc ::questlog::terminal::shquote {s} {
     return '[string map {' '\\''} $s]'
 }
 
 # AppleScript string literal: wrap in double quotes and escape \ and " only.
-proc ::fms::terminal::asquote {s} {
+proc ::questlog::terminal::asquote {s} {
     return \"[string map [list \\ \\\\ \" \\\"] $s]\"
 }

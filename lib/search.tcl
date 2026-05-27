@@ -2,19 +2,19 @@ package require Tcl 9
 package require TclOO
 package require json
 
-namespace eval ::fms::search {}
+namespace eval ::questlog::search {}
 
 # Worker→main delivery shim. Async messages may arrive after the Search
 # object is destroyed; resolve the object command lazily and swallow.
-proc ::fms::search::dispatch {obj_cmd args} {
+proc ::questlog::search::dispatch {obj_cmd args} {
     if {[info commands $obj_cmd] eq ""} return
     if {[catch {{*}$obj_cmd {*}$args} err]} {
-        puts stderr "fms::search::dispatch: $err"
+        puts stderr "questlog::search::dispatch: $err"
     }
 }
 
 # Whitespace-collapse and length-cap a content string for display.
-proc ::fms::search::clean_text {s {limit 300}} {
+proc ::questlog::search::clean_text {s {limit 300}} {
     set s [regsub -all {[\s]+} $s " "]
     set s [string trim $s]
     if {[string length $s] > $limit} {
@@ -29,10 +29,10 @@ proc ::fms::search::clean_text {s {limit 300}} {
 # always inside the window so the display can re-find and embolden it. If the
 # pattern does not match (it should, since the caller only calls this on a
 # hit) the head-capped clean_text is returned as a safe fallback.
-proc ::fms::search::snippet_window {s pat re_opts {radius 80}} {
+proc ::questlog::search::snippet_window {s pat re_opts {radius 80}} {
     set s [string trim [regsub -all {[\s]+} $s " "]]
     if {[catch {regexp -indices {*}$re_opts -- $pat $s m} ok] || !$ok} {
-        return [::fms::search::clean_text $s 300]
+        return [::questlog::search::clean_text $s 300]
     }
     lassign $m a b
     set len [string length $s]
@@ -48,11 +48,11 @@ proc ::fms::search::snippet_window {s pat re_opts {radius 80}} {
 
 # Render a tool_use block as "Name(key=value, ...)". Most informative key
 # first when the tool is one we know; otherwise dict insertion order.
-proc ::fms::search::format_tool_use {name input} {
+proc ::questlog::search::format_tool_use {name input} {
     if {[catch {dict size $input}]} { return "${name}()" }
     set keys [dict keys $input]
     if {[llength $keys] == 0} { return "${name}()" }
-    set ordered [::fms::search::_order_tool_keys $name $keys]
+    set ordered [::questlog::search::_order_tool_keys $name $keys]
     set parts [list]
     foreach k $ordered {
         set v [dict get $input $k]
@@ -71,7 +71,7 @@ proc ::fms::search::format_tool_use {name input} {
     return $s
 }
 
-proc ::fms::search::_order_tool_keys {name keys} {
+proc ::questlog::search::_order_tool_keys {name keys} {
     set preferred [dict create \
         Bash       {command} \
         Read       {file_path} \
@@ -98,10 +98,10 @@ proc ::fms::search::_order_tool_keys {name keys} {
 # the matcher consumes: tokenised search terms, the regex patterns from the
 # pattern row, and the path lists from the read/wrote/edited rows. Each
 # value list is the user's input with empty entries stripped.
-proc ::fms::search::build_clauses {snapshot} {
+proc ::questlog::search::build_clauses {snapshot} {
     set search ""
     if {[dict exists $snapshot search]} { set search [dict get $snapshot search] }
-    set terms [::fms::ui::search_terms $search]
+    set terms [::questlog::ui::search_terms $search]
     set search_case 0
     if {[dict exists $snapshot search_case]} {
         set search_case [dict get $snapshot search_case]
@@ -109,27 +109,27 @@ proc ::fms::search::build_clauses {snapshot} {
     set out [dict create \
         terms        $terms \
         nocase       [expr {!$search_case}] \
-        patterns     [::fms::search::trim_values [dict_or $snapshot pattern {}]] \
-        paths_read   [::fms::search::trim_values [dict_or $snapshot read    {}]] \
-        paths_wrote  [::fms::search::trim_values [dict_or $snapshot wrote   {}]] \
-        paths_edited [::fms::search::trim_values [dict_or $snapshot edited  {}]]]
+        patterns     [::questlog::search::trim_values [dict_or $snapshot pattern {}]] \
+        paths_read   [::questlog::search::trim_values [dict_or $snapshot read    {}]] \
+        paths_wrote  [::questlog::search::trim_values [dict_or $snapshot wrote   {}]] \
+        paths_edited [::questlog::search::trim_values [dict_or $snapshot edited  {}]]]
     return $out
 }
 
-proc ::fms::search::trim_values {vs} {
+proc ::questlog::search::trim_values {vs} {
     set out [list]
     foreach v $vs { if {$v ne ""} { lappend out $v } }
     return $out
 }
 
-proc ::fms::search::dict_or {d k default} {
+proc ::questlog::search::dict_or {d k default} {
     if {[dict exists $d $k]} { return [dict get $d $k] }
     return $default
 }
 
 # clauses_any clauses - 1 iff any clause has at least one value. Used by
 # the matcher to early-exit when the user clears every filter.
-proc ::fms::search::clauses_any {clauses} {
+proc ::questlog::search::clauses_any {clauses} {
     foreach k {terms patterns paths_read paths_wrote paths_edited} {
         if {[llength [dict get $clauses $k]] > 0} { return 1 }
     }
@@ -146,7 +146,7 @@ proc ::fms::search::clauses_any {clauses} {
 #   wrote_hit   1 iff a Write tool_use referenced a path in paths_wrote
 #   edited_hit  1 iff an Edit/MultiEdit/NotebookEdit referenced a path in paths_edited
 # The worker thread carries its own copy of this proc; the two must stay in sync.
-proc ::fms::search::record_hits {rec clauses} {
+proc ::questlog::search::record_hits {rec clauses} {
     set patterns     [dict get $clauses patterns]
     set terms        [dict get $clauses terms]
     set nocase       [dict get $clauses nocase]
@@ -163,14 +163,14 @@ proc ::fms::search::record_hits {rec clauses} {
 
     set need_blocks [expr {[llength $terms] > 0 || [llength $patterns] > 0}]
     if {$need_blocks} {
-        set blocks [::fms::jsonl::extract_blocks $rec]
+        set blocks [::questlog::jsonl::extract_blocks $rec]
         foreach {btype content} $blocks {
             append rec_text " " $content
             foreach p $patterns {
                 if {[regexp -- $p $content]} {
                     set pat_hit 1
                     lappend hits [list $btype \
-                        [::fms::search::snippet_window $content $p ""]]
+                        [::questlog::search::snippet_window $content $p ""]]
                 }
             }
             foreach t $terms {
@@ -179,7 +179,7 @@ proc ::fms::search::record_hits {rec clauses} {
                 if {[string first $needle $hay] >= 0} {
                     set re_opts [expr {$nocase ? "-nocase" : ""}]
                     lappend hits [list $btype \
-                        [::fms::search::snippet_window $content $t $re_opts]]
+                        [::questlog::search::snippet_window $content $t $re_opts]]
                 }
             }
         }
@@ -189,7 +189,7 @@ proc ::fms::search::record_hits {rec clauses} {
                         || [llength $paths_wrote]  > 0
                         || [llength $paths_edited] > 0}]
     if {$need_tools} {
-        set tools [::fms::jsonl::record_tool_uses $rec]
+        set tools [::questlog::jsonl::record_tool_uses $rec]
         set toolsets [dict create \
             read   {Read} \
             wrote  {Write} \
@@ -210,7 +210,7 @@ proc ::fms::search::record_hits {rec clauses} {
                             edited { set edited_hit 1 }
                         }
                         lappend hits [list tool_use \
-                            [::fms::search::clean_text [dict get $t rendered] 300]]
+                            [::questlog::search::clean_text [dict get $t rendered] 300]]
                         break
                     }
                 }
@@ -227,7 +227,7 @@ proc ::fms::search::record_hits {rec clauses} {
 # interpreters with no access to procs defined in the parent, so
 # extract_blocks, format_tool_use, clean_text and the jsonl helpers are
 # duplicated here. Both copies must stay in sync.
-set ::fms::search::WorkerScript {
+set ::questlog::search::WorkerScript {
     package require Tcl 9
     package require Thread
     package require json
@@ -253,7 +253,7 @@ set ::fms::search::WorkerScript {
         return $s
     }
 
-    # Worker copy of ::fms::search::snippet_window; keep in sync.
+    # Worker copy of ::questlog::search::snippet_window; keep in sync.
     proc snippet_window {s pat re_opts {radius 80}} {
         set s [string trim [regsub -all {[\s]+} $s " "]]
         if {[catch {regexp -indices {*}$re_opts -- $pat $s m} ok] || !$ok} {
@@ -419,7 +419,7 @@ set ::fms::search::WorkerScript {
         return $out
     }
 
-    # Worker copy of ::fms::search::record_hits; keep in sync.
+    # Worker copy of ::questlog::search::record_hits; keep in sync.
     proc record_hits {rec clauses} {
         set patterns     [dict get $clauses patterns]
         set terms        [dict get $clauses terms]
@@ -596,7 +596,7 @@ set ::fms::search::WorkerScript {
                 bookmarked [file executable $path] \
                 cwd_hint $cwd_hint]
             thread::send -async $main_tid \
-                [list ::fms::search::dispatch $obj_cmd on_worker_row $epoch $row]
+                [list ::questlog::search::dispatch $obj_cmd on_worker_row $epoch $row]
             if {$all_terms_seen && $pat_sat && $read_sat
                 && $wrote_sat && $edited_sat && [llength $buffer] > 0} {
                 foreach ev $buffer {
@@ -604,21 +604,21 @@ set ::fms::search::WorkerScript {
                     set matchcore [dict create path $path lineoff $evlineno \
                         ts $first_ts btype $evbtype content $evcontent folder $folder]
                     thread::send -async $main_tid \
-                        [list ::fms::search::dispatch $obj_cmd on_worker_match \
+                        [list ::questlog::search::dispatch $obj_cmd on_worker_match \
                              $epoch $matchcore]
                     incr matches_in_slice
                 }
             }
         }
         thread::send -async $main_tid \
-            [list ::fms::search::dispatch $obj_cmd on_worker_done \
+            [list ::questlog::search::dispatch $obj_cmd on_worker_done \
                  $epoch [llength $paths] $matches_in_slice]
     }
     thread::wait
 }
 
-# ::fms::Search - typed-criteria search across session logs, coroutine by
-# default, threaded fan-out when FMS_SEARCH_THREADS is set.
+# ::questlog::Search - typed-criteria search across session logs, coroutine by
+# default, threaded fan-out when QUESTLOG_SEARCH_THREADS is set.
 #
 # A search is a list of criteria, each {type regex|read|write|edit value}.
 # A session qualifies when every criterion is satisfied somewhere in it
@@ -643,7 +643,7 @@ set ::fms::search::WorkerScript {
 # Cancellation: each start increments Epoch; in-flight async dispatches
 # carrying a stale epoch are dropped on arrival.
 
-oo::class create ::fms::Search {
+oo::class create ::questlog::Search {
     variable Scan
     variable Epoch
     variable MatchedSessions   ;# dict path -> 1 (first-match-per-session)
@@ -685,19 +685,19 @@ oo::class create ::fms::Search {
             return
         }
         my cancel
-        set clauses [::fms::search::build_clauses $snapshot]
-        if {![::fms::search::clauses_any $clauses]} return
+        set clauses [::questlog::search::build_clauses $snapshot]
+        if {![::questlog::search::clauses_any $clauses]} return
         set my_epoch [incr Epoch]
         set Active 1
         set MatchedSessions [dict create]
         set Counts [dict create done 0 total 0 matches 0]
-        set co ::fms::search::coro_$my_epoch
+        set co ::questlog::search::coro_$my_epoch
         coroutine $co [namespace which my] run_search $my_epoch $snapshot
     }
 
     method pick_thread_count {} {
-        if {![info exists ::env(FMS_SEARCH_THREADS)]} { return 0 }
-        set v $::env(FMS_SEARCH_THREADS)
+        if {![info exists ::env(QUESTLOG_SEARCH_THREADS)]} { return 0 }
+        set v $::env(QUESTLOG_SEARCH_THREADS)
         if {![string is integer -strict $v]} { return 0 }
         if {$v < 1} { return 0 }
         return $v
@@ -710,7 +710,7 @@ oo::class create ::fms::Search {
         yield
         if {$my_epoch != $Epoch} return
 
-        set clauses [::fms::search::build_clauses $snapshot]
+        set clauses [::questlog::search::build_clauses $snapshot]
         set terms        [dict get $clauses terms]
         set patterns     [dict get $clauses patterns]
         set paths_read   [dict get $clauses paths_read]
@@ -785,7 +785,7 @@ oo::class create ::fms::Search {
                     }
                 }
                 if {$candidate && ![catch {::json::json2dict $line} rec]} {
-                    set r [::fms::search::record_hits $rec $clauses]
+                    set r [::questlog::search::record_hits $rec $clauses]
                     if {[dict get $r pat_hit]}    { set pat_sat 1 }
                     if {[dict get $r read_hit]}   { set read_sat 1 }
                     if {[dict get $r wrote_hit]}  { set wrote_sat 1 }
@@ -874,8 +874,8 @@ oo::class create ::fms::Search {
     method start_threaded {snapshot N} {
         package require Thread
         my cancel
-        set clauses [::fms::search::build_clauses $snapshot]
-        if {![::fms::search::clauses_any $clauses]} return
+        set clauses [::questlog::search::build_clauses $snapshot]
+        if {![::questlog::search::clauses_any $clauses]} return
         set my_epoch [incr Epoch]
         set Active 1
         set MatchedSessions [dict create]
@@ -906,7 +906,7 @@ oo::class create ::fms::Search {
         set main_tid [thread::id]
         set obj_cmd  [self]
         foreach slice $slices {
-            set tid [thread::create $::fms::search::WorkerScript]
+            set tid [thread::create $::questlog::search::WorkerScript]
             lappend Workers $tid
             thread::send -async $tid \
                 [list worker_run $main_tid $obj_cmd $my_epoch $slice $clauses]

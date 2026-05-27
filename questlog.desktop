@@ -1,7 +1,7 @@
 [Desktop Entry]
 Type=Application
-Name=Find My Session
+Name=Questlog
 Comment=Find, read, and reopen past Claude Code sessions
-Exec=fms
+Exec=questlog
 Terminal=false
 Categories=Development;Utility;

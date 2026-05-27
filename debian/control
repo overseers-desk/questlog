@@ -1,13 +1,13 @@
-Source: find-my-session
+Source: questlog
 Section: devel
 Priority: optional
 Maintainer: Weiwu Zhang <a@colourful.land>
 Build-Depends: debhelper-compat (= 13)
 Standards-Version: 4.6.2
-Homepage: https://github.com/SmartLayer/find-my-session
+Homepage: https://github.com/SmartLayer/questlog
 Rules-Requires-Root: no
 
-Package: find-my-session
+Package: questlog
 Architecture: all
 Depends:
  ${misc:Depends},
@@ -16,7 +16,7 @@ Depends:
  tcllib,
  tcl9.0-thread,
 Description: GUI for finding, reading, and reopening past Claude Code sessions
- find-my-session is a Tk desktop tool that browses the JSONL logs Claude Code
+ questlog is a Tk desktop tool that browses the JSONL logs Claude Code
  writes under ~/.claude/projects/. It lists sessions grouped by project, runs
  typed searches (regex over message content, or the files a built-in
  Read/Write/Edit tool touched) that stream matches as snippets, segments long

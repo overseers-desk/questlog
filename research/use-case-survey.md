@@ -4,13 +4,13 @@ Snapshot taken May 2026. Re-snapshot trigger: a major Anthropic feature release 
 
 Sources: r/ClaudeAI and r/ClaudeCode (the densest signal, full of "I built X" launch posts), the `anthropics/claude-code` issue tracker, Hacker News, developer blogs, product pages. USP numbers cross-reference `usp-ranking.md`.
 
-The organizing question of this survey is not "what features do session tools have" but **why a developer goes back to a session that is already finished.** That question separates the work fms is uniquely needed for from the work the ecosystem already handles another way.
+The organizing question of this survey is not "what features do session tools have" but **why a developer goes back to a session that is already finished.** That question separates the work questlog is uniquely needed for from the work the ecosystem already handles another way.
 
 ## Why you return to a finished session
 
 Seven distinct motivations appear in the evidence. The decisive axis is not how loudly each is voiced but whether it is **forward-preventable**: could the developer have avoided the return by writing state to a file at the time. The motivations that are forward-preventable are already owned by the community's memory-system culture. The ones that are not are where a backward-looking reader of the session archive is the only answer.
 
-| Why you return | How often voiced | Forward-preventable? | fms fit |
+| Why you return | How often voiced | Forward-preventable? | questlog fit |
 |---|---|---|---|
 | Continue interrupted work | Dominant | Yes (handoff docs, CLAUDE.md, memory MCPs) | #3, #9 |
 | Reference a decision or fact | Dominant memory-discussion pain | Yes (memory systems persist the decision) | #9, #6 |
@@ -20,9 +20,9 @@ Seven distinct motivations appear in the evidence. The decisive axis is not how 
 | Prove the model regressed against a baseline | Strong, high-score | Partly (some log every session forward) | #9, #6 (but bulk-analytical) |
 | Audit what the agent did versus claimed | Real pain | Mostly forward (in-session hooks) | #1, #6 (partial) |
 
-The forward-preventable rows are settled territory. Every high-engagement thread on continuity, reference, and reuse resolves to the same answer: capture state at the moment, so a future session never has to look back. `/ce:compound`, CLAUDE.md, AgentWorkingMemory, Mem0, and a dozen others exist for this, and direct session-history search has negligible traction as the advocated fix. fms does not win by fighting on this ground.
+The forward-preventable rows are settled territory. Every high-engagement thread on continuity, reference, and reuse resolves to the same answer: capture state at the moment, so a future session never has to look back. `/ce:compound`, CLAUDE.md, AgentWorkingMemory, Mem0, and a dozen others exist for this, and direct session-history search has negligible traction as the advocated fix. questlog does not win by fighting on this ground.
 
-The two rows marked "No" are different in kind. You cannot write a note at session time against a need you do not yet have. You did not know, when you finished the analysis, that you would forget to send it, or that a client would challenge the figure in a meeting three days later. When that need arrives, the only artefact is the finished session, and the only move is to go back into it. This is the ground fms holds alone, and it is the ground the public corpus shows least, because the moment is private and consequence-driven rather than a thing people post about.
+The two rows marked "No" are different in kind. You cannot write a note at session time against a need you do not yet have. You did not know, when you finished the analysis, that you would forget to send it, or that a client would challenge the figure in a meeting three days later. When that need arrives, the only artefact is the finished session, and the only move is to go back into it. This is the ground questlog holds alone, and it is the ground the public corpus shows least, because the moment is private and consequence-driven rather than a thing people post about.
 
 ### First-party owner cases
 
@@ -41,7 +41,7 @@ The tooling people actually ship clusters around a few mechanics; the detail and
 - **Live monitoring of parallel sessions** is among the highest-scoring launch posts (Agent Deck, Claude Control, Maestro): which of fifteen tabs is running, which waits for input.
 - **Resume**, with the working directory restored, is table-stakes and the named friction.
 - **Token/cost analytics** over the same JSONL is a whole cluster (ccusage, Claud-ometer, budi, cc-lens).
-- **MCP-surfaced history for the agent itself** (flex, searchat) lets the running agent recall its own past work, a category fms does not occupy.
+- **MCP-surfaced history for the agent itself** (flex, searchat) lets the running agent recall its own past work, a category questlog does not occupy.
 
 ## What public forums can and cannot show
 
@@ -55,7 +55,7 @@ Two structural biases shape this corpus and are stated here so the rankings are 
 **Broad demand, multiple independent sources:**
 
 - USP #9 (cross-session search): the most-built feature in the field.
-- USP #8 (live status of running sessions): three of the highest-scoring launch posts are monitors; fms's read-only any-terminal detection is the distinct form.
+- USP #8 (live status of running sessions): three of the highest-scoring launch posts are monitors; questlog's read-only any-terminal detection is the distinct form.
 - USP #3 (resume / fork): confirmed everywhere; cwd restoration is the named friction.
 
 **High value, low public volume (the backward core):**
@@ -74,11 +74,11 @@ Two structural biases shape this corpus and are stated here so the rankings are 
 
 **Gap versus demand:**
 
-- Token/cost analytics, MCP-surfaced history for the agent, session export/sharing, cross-device and cross-client unification: all voiced, none in fms.
+- Token/cost analytics, MCP-surfaced history for the agent, session export/sharing, cross-device and cross-client unification: all voiced, none in questlog.
 
 ## Bottom line
 
-fms is strongest, and least substitutable, on the returns that cannot be prevented by writing state forward: closing a loop you did not know you had left open, and defending a conclusion you did not know would be challenged. The ecosystem has converged on forward memory systems for continuity, reference, and reuse, so fms should not contest that ground; it should own the backward-looking returns, where the finished session is the only record and a fast way back into it is the whole value. The most-built things fms does not do (cost analytics, MCP history for the agent, parallel-session orchestration) are real demand but a different product.
+questlog is strongest, and least substitutable, on the returns that cannot be prevented by writing state forward: closing a loop you did not know you had left open, and defending a conclusion you did not know would be challenged. The ecosystem has converged on forward memory systems for continuity, reference, and reuse, so questlog should not contest that ground; it should own the backward-looking returns, where the finished session is the only record and a fast way back into it is the whole value. The most-built things questlog does not do (cost analytics, MCP history for the agent, parallel-session orchestration) are real demand but a different product.
 
 ## Sources
 

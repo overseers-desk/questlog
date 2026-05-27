@@ -1,7 +1,7 @@
 package require Tcl 9
 package require Tk
 
-# ::fms::app - startup wiring. Constructs Scan, Toolbar, SessionList, Viewer,
+# ::questlog::app - startup wiring. Constructs Scan, Toolbar, SessionList, Viewer,
 # Search. No splash: the empty UI renders immediately and rows stream in via
 # the Scan coroutine. Status-bar shows scanning progress while in flight.
 #
@@ -9,7 +9,7 @@ package require Tk
 # and search-result index in one), the reading view docked on the right. A
 # single click in the list opens the session in the viewer, anchored.
 
-namespace eval ::fms::app {
+namespace eval ::questlog::app {
     variable Scan
     variable Search
     variable Toolbar
@@ -24,7 +24,7 @@ namespace eval ::fms::app {
     variable RunTimer      ;# after-id of the running-poll loop
 }
 
-proc ::fms::app::start {root {initial_criteria {}}} {
+proc ::questlog::app::start {root {initial_criteria {}}} {
     variable Scan
     variable Search
     variable Toolbar
@@ -50,13 +50,13 @@ proc ::fms::app::start {root {initial_criteria {}}} {
         event add <<ContextMenu>> <Control-Button-1>
     }
 
-    wm title . "find-my-session"
+    wm title . "questlog"
     wm protocol . WM_DELETE_WINDOW [namespace code quit]
 
     ttk::frame .top
     pack .top -side top -fill both -expand 1
 
-    set Toolbar [::fms::ui::Toolbar new .top.tb $::env(PWD)]
+    set Toolbar [::questlog::ui::Toolbar new .top.tb $::env(PWD)]
     pack .top.tb -side top -fill x
 
     set PW .top.pw
@@ -65,7 +65,7 @@ proc ::fms::app::start {root {initial_criteria {}}} {
 
     set list_frame $PW.list
     ttk::frame $list_frame
-    set SessionList [::fms::ui::SessionList new $list_frame.s \
+    set SessionList [::questlog::ui::SessionList new $list_frame.s \
         [namespace code resolve_folder] \
         [namespace code lookup_session] \
         [namespace code on_open] \
@@ -82,19 +82,19 @@ proc ::fms::app::start {root {initial_criteria {}}} {
     # session or snippet is clicked, so the window opens as just the list.
     set ViewFrame $PW.view
     ttk::frame $ViewFrame
-    set Viewer [::fms::ui::Viewer new $ViewFrame.v]
+    set Viewer [::questlog::ui::Viewer new $ViewFrame.v]
     pack $ViewFrame.v -side top -fill both -expand 1
 
     ttk::label .top.status -textvariable [namespace which -variable StatusVar] \
         -anchor w -relief sunken
     pack .top.status -side bottom -fill x
 
-    set Scan [::fms::Scan new \
+    set Scan [::questlog::Scan new \
         [namespace code on_scan_row] \
         [namespace code on_scan_done] \
         [namespace code on_scan_progress]]
 
-    set Search [::fms::Search new $Scan \
+    set Search [::questlog::Search new $Scan \
         [namespace code on_search_match] \
         [namespace code on_search_progress] \
         [namespace code on_search_done]]
@@ -102,8 +102,8 @@ proc ::fms::app::start {root {initial_criteria {}}} {
     # Cost scanner: rate table + tpool for the second-pass per-session
     # token sum. Load rates first so the first worker has them; init the
     # pool before any on_scan_row fires.
-    ::fms::cost::load_rates $Root
-    ::fms::cost::init [namespace code on_cost_result]
+    ::questlog::cost::load_rates $Root
+    ::questlog::cost::init [namespace code on_cost_result]
 
     $Toolbar subscribe [namespace code on_filter]
     # CLI exposes the legacy criterion words (regex|read|write|edit); the
@@ -122,8 +122,8 @@ proc ::fms::app::start {root {initial_criteria {}}} {
     # specific query, not a default scope.
     if {[llength $initial_criteria] == 0} {
         set launch_cwd $::env(PWD)
-        set folder [::fms::path::encode_cwd $launch_cwd]
-        set proj [file join [::fms::path::projects_root] $folder]
+        set folder [::questlog::path::encode_cwd $launch_cwd]
+        set proj [file join [::questlog::path::projects_root] $folder]
         if {[file isdirectory $proj]} {
             $Toolbar seed_under $launch_cwd
         }
@@ -140,24 +140,24 @@ proc ::fms::app::start {root {initial_criteria {}}} {
 # Re-read the live-session registry and re-derive every row's running
 # state, then re-arm. 2s keeps the markers current without busy-polling;
 # the cost is O(running sessions), independent of the on-disk corpus.
-proc ::fms::app::run_tick {} {
+proc ::questlog::app::run_tick {} {
     variable SessionList
     variable Running
     variable RunTimer
-    set Running [::fms::live::running_uuids]
+    set Running [::questlog::live::running_uuids]
     $SessionList reconcile_running $Running
     set RunTimer [after 2000 [namespace code run_tick]]
 }
 
 # ---- toolbar callback --------------------------------------------------
 
-proc ::fms::app::on_filter {snapshot} {
+proc ::questlog::app::on_filter {snapshot} {
     variable Scan
     variable Search
     variable SessionList
     variable Running
 
-    set has_criteria [::fms::ui::any_criteria $snapshot]
+    set has_criteria [::questlog::ui::any_criteria $snapshot]
 
     $SessionList apply_filter $snapshot
 
@@ -184,7 +184,7 @@ proc ::fms::app::on_filter {snapshot} {
 
     if {$has_criteria} {
         $SessionList set_query \
-            [::fms::ui::regex_values $snapshot] \
+            [::questlog::ui::regex_values $snapshot] \
             [expr {![dict get $snapshot search_case]}]
         $Search start $snapshot
     } else {
@@ -194,34 +194,34 @@ proc ::fms::app::on_filter {snapshot} {
 
 # ---- scan callbacks ----------------------------------------------------
 
-proc ::fms::app::on_scan_row {row} {
+proc ::questlog::app::on_scan_row {row} {
     variable SessionList
     $SessionList on_scan_row $row
     # Queue a cost task only for rows that don't yet carry one. A
     # memoised row republished on a filter change already has its cost.
     if {![dict exists $row cost_usd]} {
-        ::fms::cost::start_one [dict get $row path]
+        ::questlog::cost::start_one [dict get $row path]
     }
 }
 
 # Cost-pass worker callback. Merge into the in-memory row, then update
 # the visible card. SessionList::refresh_cost is the only path that
 # touches the rendered meta region, folder aggregate, and total.
-proc ::fms::app::on_cost_result {path cost_dict} {
+proc ::questlog::app::on_cost_result {path cost_dict} {
     variable Scan
     variable SessionList
     $Scan update_cost $path $cost_dict
     $SessionList refresh_cost $path $cost_dict
 }
 
-proc ::fms::app::on_scan_progress {done total} {
+proc ::questlog::app::on_scan_progress {done total} {
     variable StatusVar
     if {$done < $total} {
         set StatusVar "Scanning $done / $total…"
     }
 }
 
-proc ::fms::app::on_scan_done {scanned} {
+proc ::questlog::app::on_scan_done {scanned} {
     variable StatusVar
     if {$scanned == 0} {
         set StatusVar ""
@@ -232,22 +232,22 @@ proc ::fms::app::on_scan_done {scanned} {
 
 # ---- search callbacks --------------------------------------------------
 
-proc ::fms::app::on_search_match {match} {
+proc ::questlog::app::on_search_match {match} {
     variable SessionList
     $SessionList add_match $match
 }
 
-proc ::fms::app::on_search_progress {done total matches} {
+proc ::questlog::app::on_search_progress {done total matches} {
     variable SessionList
     $SessionList set_progress $done $total $matches
 }
 
-proc ::fms::app::on_search_done {total matches} {
+proc ::questlog::app::on_search_done {total matches} {
     variable SessionList
     $SessionList set_done $total $matches
 }
 
-proc ::fms::app::on_search_cancel {} {
+proc ::questlog::app::on_search_cancel {} {
     variable Search
     $Search cancel
 }
@@ -255,7 +255,7 @@ proc ::fms::app::on_search_cancel {} {
 # The Show-all banner in SessionList calls this when the user clicks
 # Show all. Drop the auto-applied under chip; the toolbar will republish
 # the snapshot and the banner will hide on the next apply_filter.
-proc ::fms::app::on_show_all {} {
+proc ::questlog::app::on_show_all {} {
     variable Toolbar
     $Toolbar clear_under_auto
 }
@@ -264,7 +264,7 @@ proc ::fms::app::on_show_all {} {
 
 # A single click in the list lands here: render the whole session on the
 # right and anchor it to lineno (0 = top).
-proc ::fms::app::on_open {path lineno} {
+proc ::questlog::app::on_open {path lineno} {
     variable Viewer
     variable StatusVar
     variable PW
@@ -287,7 +287,7 @@ proc ::fms::app::on_open {path lineno} {
 # paths is a list of session paths to move to a single destination. The
 # dialog excludes the source's own folder only when exactly one session is
 # moved; a group may span folders, so no folder is excluded then.
-proc ::fms::app::on_move_request {paths} {
+proc ::questlog::app::on_move_request {paths} {
     variable Scan
     set current_folder ""
     if {[llength $paths] == 1} {
@@ -295,11 +295,11 @@ proc ::fms::app::on_move_request {paths} {
         if {$row eq ""} return
         set current_folder [dict get $row folder]
     }
-    ::fms::ui::move_dialog::open . [llength $paths] $current_folder \
+    ::questlog::ui::move_dialog::open . [llength $paths] $current_folder \
         [list [namespace current]::on_picker_done $paths]
 }
 
-proc ::fms::app::on_picker_done {paths dst_cwd} {
+proc ::questlog::app::on_picker_done {paths dst_cwd} {
     do_move_batch $paths $dst_cwd
 }
 
@@ -307,7 +307,7 @@ proc ::fms::app::on_picker_done {paths dst_cwd} {
 # canonical resolver. A drop onto a folder that cannot be resolved (its
 # underlying project directory is gone or ambiguous) is refused rather than
 # silently moving into an orphan.
-proc ::fms::app::on_drop_move {paths target_folder_basename} {
+proc ::questlog::app::on_drop_move {paths target_folder_basename} {
     variable Scan
     set dst_cwd [$Scan resolve_folder $target_folder_basename]
     if {$dst_cwd eq ""} {
@@ -321,7 +321,7 @@ proc ::fms::app::on_drop_move {paths target_folder_basename} {
 # Move every path to dst_cwd, then report any failures in one dialog so a
 # batch does not spray a messagebox per session. Successful moves have
 # already updated the list.
-proc ::fms::app::do_move_batch {paths dst_cwd} {
+proc ::questlog::app::do_move_batch {paths dst_cwd} {
     set failures [list]
     foreach src_path $paths {
         if {[catch {move_one $src_path $dst_cwd} err]} {
@@ -338,16 +338,16 @@ proc ::fms::app::do_move_batch {paths dst_cwd} {
 # already in the destination's encoded folder is a silent no-op - the only
 # "succeed without effect" path. A filesystem failure throws (the error
 # reaches do_move_batch).
-proc ::fms::app::move_one {src_path dst_cwd} {
+proc ::questlog::app::move_one {src_path dst_cwd} {
     variable SessionList
     variable Scan
     set src_basename [file tail [file dirname $src_path]]
-    if {![catch {::fms::path::encode_cwd $dst_cwd} dst_basename]
+    if {![catch {::questlog::path::encode_cwd $dst_cwd} dst_basename]
         && $dst_basename eq $src_basename} {
         return
     }
-    set new_path [::fms::path::move_session $src_path $dst_cwd]
-    set new_folder [::fms::path::encode_cwd $dst_cwd]
+    set new_path [::questlog::path::move_session $src_path $dst_cwd]
+    set new_folder [::questlog::path::encode_cwd $dst_cwd]
     $Scan relocate_row $src_path $new_path
     $SessionList relocate_card $src_path $new_path $new_folder
 }
@@ -359,13 +359,13 @@ proc ::fms::app::move_one {src_path dst_cwd} {
 # guard and is reported rather than crashing. The bit is the truth: flip it,
 # refresh the cached field, then re-derive that one row's marker immediately
 # so the user sees it without waiting for a tick.
-proc ::fms::app::on_bookmark_toggle {path} {
+proc ::questlog::app::on_bookmark_toggle {path} {
     variable Scan
     variable SessionList
     if {[file executable $path]} {
-        set rc [catch {::fms::path::clear_bookmark $path} err]
+        set rc [catch {::questlog::path::clear_bookmark $path} err]
     } else {
-        set rc [catch {::fms::path::set_bookmark $path} err]
+        set rc [catch {::questlog::path::set_bookmark $path} err]
     }
     if {$rc} {
         tk_messageBox -icon error -title "Bookmark" \
@@ -378,24 +378,24 @@ proc ::fms::app::on_bookmark_toggle {path} {
 
 # Synchronously scan one file into Rows, for the reconciler to surface a
 # running session that the windowed scan has not reached.
-proc ::fms::app::on_scan_path {path} {
+proc ::questlog::app::on_scan_path {path} {
     variable Scan
     return [$Scan scan_path $path]
 }
 
 # ---- shared helpers exposed to UI components --------------------------
 
-proc ::fms::app::resolve_folder {folder} {
+proc ::questlog::app::resolve_folder {folder} {
     variable Scan
     return [$Scan resolve_folder $folder]
 }
 
-proc ::fms::app::lookup_session {path} {
+proc ::questlog::app::lookup_session {path} {
     variable Scan
     return [$Scan lookup $path]
 }
 
-proc ::fms::app::quit {} {
+proc ::questlog::app::quit {} {
     variable Search
     variable Scan
     variable RunTimer
