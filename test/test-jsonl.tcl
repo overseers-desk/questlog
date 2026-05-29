@@ -112,6 +112,22 @@ check hits_suffix_basename  {0:tool_use} [ib $r_edit [list {type edit value b.tc
 check hits_partial_basename {0:tool_use} [ib $r_spar [list {type edit value spar-dispatcher-initcmd.tcl}] -nocase]
 check hits_not_substring    {}           [ib $r_spar [list {type edit value spar-manager}] -nocase]
 
+# segment_blockquotes: split a body into ordered {kind text} segments,
+# de-quoting one leading "> "/">" per blockquote line, strict blank split.
+check seg_plain      {{normal hello}} \
+    [::questlog::jsonl::segment_blockquotes "hello"]
+check seg_pure_quote {{quote {To: a@b
+body}}} \
+    [::questlog::jsonl::segment_blockquotes "> To: a@b\n> body"]
+check seg_mixed      {{normal intro:} {quote {line one
+line two}} {normal outro}} \
+    [::questlog::jsonl::segment_blockquotes "intro:\n> line one\n> line two\noutro"]
+check seg_bare_gt    {{quote {has space
+no space}}} \
+    [::questlog::jsonl::segment_blockquotes "> has space\n>no space"]
+check seg_blank_split {{quote first} {normal {}} {quote second}} \
+    [::questlog::jsonl::segment_blockquotes "> first\n\n> second"]
+
 if {$fails > 0} {
     puts "$fails failures"
     exit 1

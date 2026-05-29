@@ -3,7 +3,7 @@ package require json
 
 namespace eval ::questlog::jsonl {
     namespace export extract_text extract_blocks record_tool_uses \
-        is_compact_boundary record_timestamp first_cwd
+        is_compact_boundary record_timestamp first_cwd segment_blockquotes
 }
 
 # Parse one JSONL line into a Tcl dict. Returns "" on parse failure.
@@ -76,6 +76,38 @@ proc ::questlog::jsonl::extract_array_text {blocks} {
         }
     }
     return [join $out "\n"]
+}
+
+# Split a message body into ordered {kind text} segments, where kind is
+# "normal" or "quote". A quote segment is a maximal run of markdown
+# blockquote lines (each starting with ">"); its text is de-quoted, one
+# leading "> " or ">" stripped per line. A bare blank line (no ">") ends a
+# quote run, the strict markdown split. Pure function on the raw body.
+proc ::questlog::jsonl::segment_blockquotes {body} {
+    set segs [list]
+    set buf  [list]   ;# accumulating normal lines
+    set q    [list]   ;# accumulating de-quoted lines
+    set mode normal
+    foreach line [split $body "\n"] {
+        if {[regexp {^>( ?)(.*)$} $line -> _sp rest]} {
+            if {$mode eq "normal" && [llength $buf]} {
+                lappend segs [list normal [join $buf "\n"]]
+                set buf [list]
+            }
+            set mode quote
+            lappend q $rest
+        } else {
+            if {$mode eq "quote" && [llength $q]} {
+                lappend segs [list quote [join $q "\n"]]
+                set q [list]
+            }
+            set mode normal
+            lappend buf $line
+        }
+    }
+    if {[llength $buf]} { lappend segs [list normal [join $buf "\n"]] }
+    if {[llength $q]}   { lappend segs [list quote  [join $q "\n"]] }
+    return $segs
 }
 
 # Walk a record's content blocks and emit one {btype content} pair per
