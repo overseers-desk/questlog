@@ -59,10 +59,11 @@ proc ::questlog::ui::search_terms {s} {
     return $out
 }
 
-# regex_values snapshot - values for the result pane's in-place highlighter.
-# Returns the tokenised search terms; the pattern row, while regex-typed, is
-# uncommon and not highlighted in this pass.
-proc ::questlog::ui::regex_values {snapshot} {
+# highlight_terms snapshot - terms for the result pane's in-place highlighter
+# and the viewer's match index. Returns the tokenised search terms, matched
+# literally downstream; the pattern row, while regex-typed, is uncommon and
+# not highlighted in this pass.
+proc ::questlog::ui::highlight_terms {snapshot} {
     set s ""
     if {[dict exists $snapshot search]} { set s [dict get $snapshot search] }
     return [::questlog::ui::search_terms $s]

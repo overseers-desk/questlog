@@ -55,7 +55,7 @@ oo::class create ::questlog::ui::SessionList {
     variable Snapshot
     variable CriteriaActive
     variable RunningSet       ;# dict uuid -> 1, replaced wholesale each tick
-    variable Query            ;# {regex <list> nocase 0|1} for hit highlighting
+    variable Query            ;# {terms <list> nocase 0|1} for hit highlighting
     variable HitTags
     variable Folders          ;# folder -> {fmark femark htag}
     variable FolderOrder      ;# folders in arrival (mtime-desc) order
@@ -91,7 +91,7 @@ oo::class create ::questlog::ui::SessionList {
         set Snapshot [dict create]
         set CriteriaActive 0
         set RunningSet [dict create]
-        set Query [dict create regex [list] nocase 0]
+        set Query [dict create terms [list] nocase 0]
         set Selected ""
         set NextId 0
         my reset_model
@@ -327,8 +327,8 @@ oo::class create ::questlog::ui::SessionList {
         if {$OnShowAll ne ""} { {*}$OnShowAll }
     }
 
-    method set_query {regex_list nocase} {
-        set Query [dict create regex $regex_list nocase $nocase]
+    method set_query {terms nocase} {
+        set Query [dict create terms $terms nocase $nocase]
     }
 
     # ---- snapshot membership -----------------------------------------
@@ -792,23 +792,28 @@ oo::class create ::questlog::ui::SessionList {
     }
 
     method tag_hits_in_range {start end snippet} {
-        set patterns [dict get $Query regex]
-        if {[llength $patterns] == 0} return
+        set terms [dict get $Query terms]
+        if {[llength $terms] == 0} return
         set nocase [dict get $Query nocase]
         set hue_count [llength $HitTags]
         if {$hue_count == 0} return
-        set re_opts [list -indices -all -inline]
-        if {$nocase} { lappend re_opts -nocase }
+        # Terms are matched literally (the search bar is Google-style); a
+        # case-folded haystack gives case-insensitive search without regex.
+        set hay [expr {$nocase ? [string tolower $snippet] : $snippet}]
         set i 0
-        foreach pat $patterns {
-            if {$pat eq ""} { incr i; continue }
+        foreach term $terms {
+            if {$term eq ""} { incr i; continue }
+            set needle [expr {$nocase ? [string tolower $term] : $term}]
+            set tlen [string length $needle]
             set tag [lindex $HitTags [expr {$i % $hue_count}]]
-            if {[catch {regexp {*}$re_opts -- $pat $snippet} hits]} { incr i; continue }
-            foreach span $hits {
-                lassign $span s e
-                set ts [$Text index "$start + ${s}c"]
-                set te [$Text index "$start + [expr {$e + 1}]c"]
+            set from 0
+            while {1} {
+                set pos [string first $needle $hay $from]
+                if {$pos < 0} break
+                set ts [$Text index "$start + ${pos}c"]
+                set te [$Text index "$start + [expr {$pos + $tlen}]c"]
                 $Text tag add $tag $ts $te
+                set from [expr {$pos + $tlen}]
             }
             incr i
         }

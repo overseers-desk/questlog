@@ -116,9 +116,9 @@ oo::class create ::questlog::ui::Viewer {
     }
 
     # Load a session and anchor to a line (1-based; 0 means top). Replaces
-    # whatever was shown before. `query` is the active search ({regex <list>
-    # nocase 0|1}, or {}); its matches are highlighted and listed in the
-    # head-strip index.
+    # whatever was shown before. `query` is the active search ({terms <list>
+    # nocase 0|1}, or {}); its terms are matched literally, highlighted, and
+    # listed in the floating match index.
     method show {jsonl_path {scroll_to_line 0} {query {}}} {
         if {!$Shown} {
             grid remove $Empty
@@ -615,28 +615,30 @@ oo::class create ::questlog::ui::Viewer {
 
     # ---- match index (seeded from the search query) ------------------
 
-    # Highlight every occurrence of the search query in the rendered
-    # transcript, remember them in document order, and show the head-strip
-    # "N matches" control. An empty query (a session opened while browsing)
-    # clears the highlight and hides the control. Shares the `find` tag and
+    # Highlight every literal occurrence of the search terms in the rendered
+    # transcript, remember them in document order, and show the floating match
+    # index. Terms are matched literally (the search bar is Google-style, not
+    # regex; the toolbar's pattern row is the separate regex restriction and is
+    # not highlighted here). An empty query (a session opened while browsing)
+    # clears the highlight and hides the index. Shares the `find` tag and
     # FindMatches/FindIdx with the Ctrl-F overlay, so stepping is unified.
     method index_matches {query} {
         $Text tag remove find 1.0 end
         set FindMatches [list]
         set FindIdx 0
         set MatchLabels [list]
-        set patterns [expr {[dict exists $query regex] ? [dict get $query regex] : {}}]
+        set terms [expr {[dict exists $query terms] ? [dict get $query terms] : {}}]
         set nocase [expr {[dict exists $query nocase] ? [dict get $query nocase] : 0}]
         set hits [list]
-        foreach pat $patterns {
-            if {$pat eq ""} continue
+        foreach term $terms {
+            if {$term eq ""} continue
             set start 1.0
             while {1} {
                 set len 0
                 if {$nocase} {
-                    set m [$Text search -regexp -nocase -count len -- $pat $start end]
+                    set m [$Text search -nocase -count len -- $term $start end]
                 } else {
-                    set m [$Text search -regexp -count len -- $pat $start end]
+                    set m [$Text search -count len -- $term $start end]
                 }
                 if {$m eq ""} break
                 if {$len <= 0} { set len 1 }

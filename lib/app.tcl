@@ -25,7 +25,7 @@ namespace eval ::questlog::app {
     variable ViewFrame     ;# the viewer's container, present in the PW from launch
     variable Running       ;# last polled uuid -> path running set
     variable RunTimer      ;# after-id of the running-poll loop
-    variable CurrentQuery  ;# {regex <list> nocase 0|1} of the active search, or {}
+    variable CurrentQuery  ;# {terms <list> nocase 0|1} of the active search, or {}
 }
 
 proc ::questlog::app::start {root {initial_criteria {}}} {
@@ -207,14 +207,14 @@ proc ::questlog::app::on_filter {snapshot} {
     $SessionList reconcile_running $Running
 
     if {$has_criteria} {
-        set patterns [::questlog::ui::regex_values $snapshot]
+        set terms [::questlog::ui::highlight_terms $snapshot]
         set nocase [expr {![dict get $snapshot search_case]}]
-        $SessionList set_query $patterns $nocase
+        $SessionList set_query $terms $nocase
         # Cache the query so a session opened from this result set carries it
-        # into the viewer's match index. regex_values returns only the content
-        # patterns; read/write/edit clauses match files, not text, so they
-        # contribute no in-transcript highlight.
-        set CurrentQuery [dict create regex $patterns nocase $nocase]
+        # into the viewer's match index. highlight_terms returns only the
+        # literal search terms; read/write/edit clauses match files, not text,
+        # so they contribute no in-transcript highlight.
+        set CurrentQuery [dict create terms $terms nocase $nocase]
         $Search start $snapshot
     } else {
         set CurrentQuery {}
