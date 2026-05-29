@@ -169,20 +169,21 @@ oo::class create ::questlog::ui::SessionList {
         # Folder heading: the outermost level, bold, with a wide gap above so
         # each project group reads as a section.
         $Text tag configure folderhead \
-            -font {-weight bold} -foreground "#555" -spacing1 14 -spacing3 3
+            -font QLBold -foreground [::questlog::theme::c folder] \
+            -spacing1 14 -spacing3 3
         # Session header: one line, the block's "title" (like a search result
         # heading), indented under its folder. Rows are separated by the gap
         # above each and the bold title colour; no background band. The
         # selected row gets a highlight for click feedback.
         $Text tag configure sessionhead -lmargin1 12 -lmargin2 28 \
-            -spacing1 6 -spacing3 2 -foreground "#143d8a"
+            -spacing1 6 -spacing3 2 -foreground [::questlog::theme::c sessionhead]
         # The slug (Claude's agentName / aiTitle) renders bold inline before
         # the prompt body, so the slug acts as the headline and the prompt
         # as the deck below it. Bold weight is the only marker; brackets
         # would compete with the kebab-case hyphens.
-        $Text tag configure slug -font {-weight bold}
-        $Text tag configure selected -background "#aecbff"
-        $Text tag configure drop-candidate -background "#cce5ff"
+        $Text tag configure slug -font QLBold
+        $Text tag configure selected -background [::questlog::theme::c sel]
+        $Text tag configure drop-candidate -background [::questlog::theme::c drop]
 
         # Snippet rows: type label in a left column, content wrapping under it.
         # Indented past the header so each block reads title-then-evidence.
@@ -193,18 +194,18 @@ oo::class create ::questlog::ui::SessionList {
         set content_col [expr {$lm + $tw}]
         $Text configure -tabs [list $content_col left]
         $Text tag configure snippet -lmargin1 $lm -lmargin2 $content_col \
-            -foreground "#333" -spacing3 1
-        $Text tag configure type-user        -foreground "#06c" -font {-weight bold}
-        $Text tag configure type-assistant   -foreground "#222" -font {-weight bold}
-        $Text tag configure type-tool_use    -foreground "#a60" -font {-weight bold}
-        $Text tag configure type-tool_result -foreground "#666" -font {-weight bold}
-        $Text tag configure type-system      -foreground "#888" -font {-weight bold}
+            -foreground [::questlog::theme::c snippet] -spacing3 1
+        $Text tag configure type-user        -foreground [::questlog::theme::c user]        -font QLBold
+        $Text tag configure type-assistant   -foreground [::questlog::theme::c assistant]   -font QLBold
+        $Text tag configure type-tool_use    -foreground [::questlog::theme::c tool]        -font QLBold
+        $Text tag configure type-tool_result -foreground [::questlog::theme::c tool_result] -font QLBold
+        $Text tag configure type-system      -foreground [::questlog::theme::c muted]       -font QLBold
         # Metadata prefix: a fixed-width font so the time and size columns at
         # the front of each session line align down the list without tab math.
-        $Text tag configure meta -font TkFixedFont -foreground "#777"
+        $Text tag configure meta -font QLMono -foreground [::questlog::theme::c meta]
 
         set HitTags [list]
-        set hues {#fff59d #b3e5fc #f8bbd0 #c8e6c9}
+        set hues [::questlog::theme::hues]
         for {set i 0} {$i < [llength $hues]} {incr i} {
             set t hit-$i
             $Text tag configure $t -background [lindex $hues $i] -font {-weight bold}

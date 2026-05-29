@@ -3,6 +3,7 @@
 
 package require Tcl 9
 package require Tk
+package require ttk
 
 set QUESTLOG_VERSION 1.0.1
 if {[lindex $argv 0] in {--version -v}} {
@@ -12,6 +13,7 @@ if {[lindex $argv 0] in {--version -v}} {
 
 set ROOT [file dirname [file normalize [info script]]]
 
+source [file join $ROOT lib theme.tcl]
 source [file join $ROOT lib path.tcl]
 source [file join $ROOT lib jsonl.tcl]
 source [file join $ROOT lib terminal.tcl]
@@ -45,4 +47,5 @@ if {[::questlog::cli::is_cli $argv]} {
     }
 }
 
+::questlog::theme::init
 ::questlog::app::start $ROOT $initial_criteria

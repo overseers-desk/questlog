@@ -147,7 +147,7 @@ oo::class create ::questlog::ui::Viewer {
         # flush against the body (no separator, minimal pad), like the strip
         # atop a text editor. A plain frame/label carries a subtle background
         # tint so it reads as part of the pane rather than a control bar.
-        set strip "#e8e8e8"
+        set strip [::questlog::theme::c strip]
         frame $Top.head -background $strip
         pack $Top.head -side top -fill x
         label $Top.head.path -text "" -background $strip -anchor w
@@ -158,8 +158,8 @@ oo::class create ::questlog::ui::Viewer {
         # the panel is dismissed and re-shows it when clicked; its glyph reads
         # ▾ closed, ▴ open. Packed on demand by refresh_match_control; absent
         # when the session was opened without a search.
-        label $Top.head.matches -text "" -background $strip -foreground "#143d8a" \
-            -cursor hand2
+        label $Top.head.matches -text "" -background $strip \
+            -foreground [::questlog::theme::c sessionhead] -cursor hand2
         set MatchBtn $Top.head.matches
         bind $MatchBtn <Button-1> [list [self] match_panel_toggle]
 
@@ -183,7 +183,8 @@ oo::class create ::questlog::ui::Viewer {
         grid $Top.body.empty -row 0 -column 0 -columnspan 2 -sticky nsew
         grid rowconfigure    $Top.body.empty {0 2} -weight 1
         grid columnconfigure $Top.body.empty {0 2} -weight 1
-        ttk::label $Top.body.empty.msg -justify center -foreground "#888" \
+        ttk::label $Top.body.empty.msg -justify center \
+            -foreground [::questlog::theme::c muted] \
             -text "Click a session to open it here"
         grid $Top.body.empty.msg -row 1 -column 1
         set Empty $Top.body.empty
@@ -201,8 +202,9 @@ oo::class create ::questlog::ui::Viewer {
         set MatchPanel $Top.body.matches
         ttk::frame $MatchPanel -relief solid -borderwidth 1
         ttk::frame $MatchPanel.hdr
-        ttk::label $MatchPanel.hdr.title -text "" -foreground "#555"
-        ttk::label $MatchPanel.hdr.close -text "✕" -foreground "#888" -cursor hand2
+        ttk::label $MatchPanel.hdr.title -text "" -foreground [::questlog::theme::c folder]
+        ttk::label $MatchPanel.hdr.close -text "✕" \
+            -foreground [::questlog::theme::c muted] -cursor hand2
         pack $MatchPanel.hdr.title -side left -padx 6 -pady 1
         pack $MatchPanel.hdr.close -side right -padx 4
         bind $MatchPanel.hdr.close <Button-1> [list [self] match_panel_hide]
@@ -249,17 +251,17 @@ oo::class create ::questlog::ui::Viewer {
         # ===== end TRIM-AFTER block (issue #4) ======================
 
         # Tags.
-        $Text tag configure section-header -font {-weight bold -size 11} \
-            -spacing1 8 -spacing3 4 -foreground "#444"
-        $Text tag configure divider -justify center -foreground "#888" \
-            -spacing1 6 -spacing3 6
-        $Text tag configure compact-divider -justify center -foreground "#a33" \
-            -spacing1 8 -spacing3 8 -font {-weight bold}
-        $Text tag configure user      -foreground "#06c" -lmargin1 8 -lmargin2 8
-        $Text tag configure assistant -foreground "#222" -lmargin1 8 -lmargin2 8
-        $Text tag configure system    -foreground "#a60" -lmargin1 8 -lmargin2 8
-        $Text tag configure recap     -background "#ffefd0"
-        $Text tag configure find      -background yellow
+        $Text tag configure section-header -font QLSection \
+            -spacing1 8 -spacing3 4 -foreground [::questlog::theme::c section]
+        $Text tag configure divider -justify center \
+            -foreground [::questlog::theme::c muted] -spacing1 6 -spacing3 6
+        $Text tag configure compact-divider -justify center \
+            -foreground [::questlog::theme::c compact] -spacing1 8 -spacing3 8 -font QLBold
+        $Text tag configure user      -foreground [::questlog::theme::c user]      -lmargin1 8 -lmargin2 8
+        $Text tag configure assistant -foreground [::questlog::theme::c assistant] -lmargin1 8 -lmargin2 8
+        $Text tag configure system    -foreground [::questlog::theme::c tool]      -lmargin1 8 -lmargin2 8
+        $Text tag configure recap     -background [::questlog::theme::c recap]
+        $Text tag configure find      -background [::questlog::theme::c find]
 
         # Right-click copy (issue #4) and width tracking for the embedded
         # quote boxes that drafts render into.
@@ -406,7 +408,7 @@ oo::class create ::questlog::ui::Viewer {
         # show the I-beam. Pin an arrow here; the inner text keeps its xterm.
         ttk::frame $f -relief solid -borderwidth 1 -padding 2 -cursor arrow
         ttk::frame $f.hdr
-        ttk::label $f.hdr.cap -text "Quote" -foreground "#888"
+        ttk::label $f.hdr.cap -text "Quote" -foreground [::questlog::theme::c muted]
         pack $f.hdr.cap -side left -padx 4
         ttk::button $f.hdr.copy -text "Copy" -width 5 \
             -command [list [self] clipboard_set $dequoted]
@@ -709,9 +711,9 @@ oo::class create ::questlog::ui::Viewer {
     # Row foreground by role, echoing the rendered transcript's role colours.
     method role_color {ty} {
         switch -- $ty {
-            USER      { return "#1c3a6a" }
-            ASSISTANT { return "#345f23" }
-            default   { return "#7a4a14" }
+            USER      { return [::questlog::theme::c strip_user] }
+            ASSISTANT { return [::questlog::theme::c strip_assistant] }
+            default   { return [::questlog::theme::c strip_other] }
         }
     }
 

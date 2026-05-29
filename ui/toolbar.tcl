@@ -297,7 +297,8 @@ oo::class create ::questlog::ui::Toolbar {
         set i 0
         foreach v $vals {
             if {!$first} {
-                ttk::label $chips_frame.or$i -text "or" -foreground gray
+                ttk::label $chips_frame.or$i -text "or" \
+                    -foreground [::questlog::theme::c chip_or]
                 pack $chips_frame.or$i -side left -padx 4
             }
             set chip $chips_frame.c$i
