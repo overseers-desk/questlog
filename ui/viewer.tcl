@@ -1,6 +1,60 @@
 package require Tcl 9
 package require Tk
 
+# ===== TRIM-AFTER ~2026-06-05 (issue #4): always-on autoscroll capture =====
+# The native drag-select guards in Viewer build are parked (the `if {0}`
+# block). Until the root cause is found, capture every tk::TextAutoScan tick
+# plus the pointer press/release/motion stream to a persistent log, so a
+# once-a-week autoscroll runaway is recorded without anyone watching for it.
+# Each line is flushed, so a force-killed app still keeps what it logged.
+# The log lives at /var/local/log/questlog/autoscroll.log; it is a temporary
+# diagnostic, not a feature, and goes away with this block once the cause is
+# found (see issue #4). After about a week of capture, read that log, then
+# either fix the cause and remove this diagnostic or restore the guards.
+namespace eval ::questlog::ui::diag {
+    variable Chan ""
+}
+
+proc ::questlog::ui::diag::log {msg} {
+    variable Chan
+    if {$Chan eq ""} return
+    catch { puts $Chan "[clock milliseconds] $msg"; flush $Chan }
+}
+
+# The shared pointer/scroll state Tk drives drag-select and autoscan from.
+proc ::questlog::ui::diag::state {} {
+    set out ""
+    foreach k {buttons window mouseMoved afterId pressX pressY x y} {
+        if {[info exists ::tk::Priv($k)]} { append out " $k=[set ::tk::Priv($k)]" }
+    }
+    return "$out grab=[grab current]"
+}
+
+# Open the log (append) and wrap tk::TextAutoScan once. The log dir is
+# provisioned once, out of band; this diagnostic does no filesystem mutation,
+# since `file mkdir` is trapped to ::questlog::path::* (see lib/path.tcl). If
+# the dir is absent the open fails and we say so, loudly, on stderr: a silent
+# miss wastes a week of waiting. Idempotent across calls.
+proc ::questlog::ui::diag::init {} {
+    variable Chan
+    if {$Chan ne ""} return
+    set path /var/local/log/questlog/autoscroll.log
+    if {[catch {open $path a} ch]} {
+        puts stderr "questlog diag: cannot open $path (does its dir exist?): $ch"
+        return
+    }
+    set Chan $ch
+    log "==== started pid [pid] [clock format [clock seconds]] ===="
+    if {[llength [info commands ::tk::TextAutoScan_preissue4]] == 0} {
+        rename ::tk::TextAutoScan ::tk::TextAutoScan_preissue4
+        proc ::tk::TextAutoScan {w} {
+            ::questlog::ui::diag::log "AUTOSCAN w=$w[::questlog::ui::diag::state]"
+            ::tk::TextAutoScan_preissue4 $w
+        }
+    }
+}
+# ===== end TRIM-AFTER block (issue #4) =====================================
+
 # ::questlog::ui::Viewer - read-only segmented session viewer.
 #
 # A single instance docked in the right pane. `show path lineno` loads a
@@ -116,11 +170,12 @@ oo::class create ::questlog::ui::Viewer {
         set Empty $Top.body.empty
         grid remove $Top.body.t $Top.body.sb
 
-        # ===== TRIM-AFTER 2026-06-05 (issue #4) =====================
-        # Autoscroll diagnostic plus parked guards. Native drag-select is on
-        # under a no-incident watch. Remove this whole marked block (down to
-        # the matching end marker) if no autoscroll incident by the date above;
-        # if one recurs, re-enable the guards by flipping `if {0}` to `if {1}`.
+        # ===== TRIM-AFTER ~2026-06-05 (issue #4) ====================
+        # Parked native-drag-select guards plus the always-on autoscroll
+        # capture (the log setup and the tk::TextAutoScan wrap live in the
+        # diag namespace at the top of this file). Restore the guards by
+        # flipping `if {0}` to `if {1}`; remove the whole diagnostic, here
+        # and at the top, once the root cause is found.
         #
         # A read-only reading view. Keep <Button-1> (focus, for Ctrl-F) but
         # block the drag-select gestures: tk::TextSelectTo / tk::TextAutoScan
@@ -134,21 +189,15 @@ oo::class create ::questlog::ui::Viewer {
         }
         }
 
-        # DIAGNOSTIC (issue #4): log pointer events on the session viewer and
-        # dump Tk's shared button/grab/autoscan state on F12. Revert.
-        bind $Text <Button-1>        {+puts stderr "DIAG press    [clock milliseconds] state=%s"}
-        bind $Text <ButtonRelease-1> {+puts stderr "DIAG release  [clock milliseconds] state=%s"}
-        bind $Text <B1-Motion>       {+puts stderr "DIAG b1motion [clock milliseconds] state=%s"}
-        bind . <F8> {
-            puts stderr "==== tk::Priv DUMP [clock milliseconds] ===="
-            foreach _k {buttons window mouseMoved afterId pressX pressY} {
-                if {[info exists ::tk::Priv($_k)]} {
-                    puts stderr "  Priv($_k) = [set ::tk::Priv($_k)]"
-                }
-            }
-            puts stderr "  grab current = [grab current]"
-        }
-        # ===== end TRIM-AFTER 2026-06-05 block ======================
+        # Capture the autoscroll: diag::init wraps tk::TextAutoScan (every
+        # scroll tick logs with state); these bindings add this view's
+        # press/release/motion context. F8 forces an on-demand state dump.
+        ::questlog::ui::diag::init
+        bind $Text <Button-1>        {+::questlog::ui::diag::log "PRESS  [::questlog::ui::diag::state]"}
+        bind $Text <ButtonRelease-1> {+::questlog::ui::diag::log "RELEASE[::questlog::ui::diag::state]"}
+        bind $Text <B1-Motion>       {+::questlog::ui::diag::log "MOTION x=%x y=%y[::questlog::ui::diag::state]"}
+        bind . <F8>                  {+::questlog::ui::diag::log "F8DUMP [::questlog::ui::diag::state]"}
+        # ===== end TRIM-AFTER block (issue #4) ======================
 
         # Tags.
         $Text tag configure section-header -font {-weight bold -size 11} \
