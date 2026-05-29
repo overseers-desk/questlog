@@ -89,9 +89,11 @@ oo::class create ::questlog::ui::Viewer {
     variable NextQid          ;# monotonic id for embedded quote boxes
     variable Drafts           ;# dict: qid -> box state
     variable Bodies           ;# dict: jsonl line -> raw body (for Copy message)
-    variable MatchBtn         ;# head-strip "N matches" control, packed on demand
-    variable MatchMenu        ;# the dropdown listing each match
-    variable MatchLabels      ;# per-match one-line context, parallel to FindMatches
+    variable MatchBtn         ;# head-strip "N matches" toggle, packed on demand
+    variable MatchPanel       ;# floating index panel, placed over the body top-right
+    variable MatchList        ;# listbox of per-match rows inside the panel
+    variable MatchLabels      ;# per-match one-line excerpt, parallel to FindMatches
+    variable Roles            ;# dict: jsonl line -> uppercased role, for row colour
 
     constructor {parent} {
         set Top $parent
@@ -109,6 +111,7 @@ oo::class create ::questlog::ui::Viewer {
         set Drafts [dict create]
         set Bodies [dict create]
         set MatchLabels [list]
+        set Roles [dict create]
         my build
     }
 
@@ -150,16 +153,15 @@ oo::class create ::questlog::ui::Viewer {
         label $Top.head.path -text "" -background $strip -anchor w
         pack $Top.head.path -side left -padx 6 -pady 1 -fill x -expand 1
         set PathLabel $Top.head.path
-        # Match index: a count on the right that drops a list of every search
-        # match in the transcript, each jumping the view there (an in-page
-        # anchor). Packed on demand by refresh_match_control; absent when the
-        # session was opened without a search.
+        # Match index: a count on the right of the head strip that toggles the
+        # floating index panel (built below). It carries the count even while
+        # the panel is dismissed and re-shows it when clicked; its glyph reads
+        # ▾ closed, ▴ open. Packed on demand by refresh_match_control; absent
+        # when the session was opened without a search.
         label $Top.head.matches -text "" -background $strip -foreground "#143d8a" \
             -cursor hand2
         set MatchBtn $Top.head.matches
-        bind $MatchBtn <Button-1> [list [self] match_list_popup]
-        set MatchMenu $Top.head.mmenu
-        menu $MatchMenu -tearoff 0
+        bind $MatchBtn <Button-1> [list [self] match_panel_toggle]
 
         ttk::frame $Top.body
         pack $Top.body -side top -fill both -expand 1
@@ -186,6 +188,36 @@ oo::class create ::questlog::ui::Viewer {
         grid $Top.body.empty.msg -row 1 -column 1
         set Empty $Top.body.empty
         grid remove $Top.body.t $Top.body.sb
+
+        # Floating match index. A panel placed over the body's top-right;
+        # `place` is independent of the text's yview, so it stays put as the
+        # transcript scrolls under it (a true float, not an embedded window
+        # that would scroll away). Each row jumps the reading view to that
+        # match's line, the way an in-page anchor does. ✕ dismisses it; the
+        # head-strip count re-shows it. Sized to its rows (capped at 8), not to
+        # a fixed fraction, so it stays a limited-height index and lets content
+        # drive its height. Created hidden; refresh_match_control places it
+        # when a session opens with matches.
+        set MatchPanel $Top.body.matches
+        ttk::frame $MatchPanel -relief solid -borderwidth 1
+        ttk::frame $MatchPanel.hdr
+        ttk::label $MatchPanel.hdr.title -text "" -foreground "#555"
+        ttk::label $MatchPanel.hdr.close -text "✕" -foreground "#888" -cursor hand2
+        pack $MatchPanel.hdr.title -side left -padx 6 -pady 1
+        pack $MatchPanel.hdr.close -side right -padx 4
+        bind $MatchPanel.hdr.close <Button-1> [list [self] match_panel_hide]
+        set MatchList $MatchPanel.list
+        listbox $MatchList -height 1 -width 44 -activestyle none \
+            -borderwidth 0 -highlightthickness 0 \
+            -yscrollcommand [list $MatchPanel.sb set]
+        ttk::scrollbar $MatchPanel.sb -orient vertical \
+            -command [list $MatchList yview]
+        bind $MatchList <<ListboxSelect>> [list [self] match_list_select]
+        grid $MatchPanel.hdr -row 0 -column 0 -columnspan 2 -sticky ew
+        grid $MatchList      -row 1 -column 0 -sticky nsew
+        grid $MatchPanel.sb  -row 1 -column 1 -sticky ns
+        grid columnconfigure $MatchPanel 0 -weight 1
+        grid rowconfigure    $MatchPanel 1 -weight 1
 
         # ===== TRIM-AFTER ~2026-06-05 (issue #4) ====================
         # Parked native-drag-select guards plus the always-on autoscroll
@@ -272,6 +304,7 @@ oo::class create ::questlog::ui::Viewer {
     method render {} {
         $Text configure -state normal
         $Text delete 1.0 end
+        set Roles [dict create]
 
         set last_ts 0
         set in_section 0
@@ -323,6 +356,7 @@ oo::class create ::questlog::ui::Viewer {
             set start_idx [$Text index "end-1l linestart"]
             dict set LineMap $lineno $start_idx
             dict set Bodies $lineno $body
+            dict set Roles $lineno [string toupper $t]
             set tag $t
             if {$t eq "user" || $t eq "assistant" || $t eq "system"} {
                 # use the type as the tag name
@@ -633,36 +667,80 @@ oo::class create ::questlog::ui::Viewer {
         return $line
     }
 
+    # Fill the floating index and the head-strip count from the current
+    # matches, then open the panel. With no matches (a session opened while
+    # browsing) both are hidden. Opening on every populate is what lands a
+    # session click on the index when a search is active, with no second
+    # gesture.
     method refresh_match_control {} {
         set n [llength $FindMatches]
+        $MatchList delete 0 end
         if {$n == 0} {
             pack forget $MatchBtn
+            place forget $MatchPanel
             return
         }
-        $MatchBtn configure -text "▾ $n [expr {$n == 1 ? {match} : {matches}}]"
-        # Reserve the control's width on the right before the path fills the
-        # rest, so a long file path clips rather than squeezing the count out
-        # of the strip. Re-packing the path after the control fixes the pack
-        # order regardless of which was packed first.
+        set i 0
+        foreach m $FindMatches lab $MatchLabels {
+            set ln [my line_at $m]
+            set ty [expr {[dict exists $Roles $ln] ? [dict get $Roles $ln] : ""}]
+            set tail [expr {$ln eq "" ? "" : " · line $ln"}]
+            $MatchList insert end "$ty · …$lab…$tail"
+            $MatchList itemconfigure $i -foreground [my role_color $ty]
+            incr i
+        }
+        $MatchList configure -height [expr {min($n, 8)}]
+        $MatchList selection clear 0 end
+        $MatchList selection set 0
+        $MatchPanel.hdr.title configure -text \
+            "$n [expr {$n == 1 ? {match} : {matches}}]"
+        # Reserve the count's width on the right before the path fills the rest,
+        # so a long file path clips rather than squeezing it out of the strip.
+        # Re-packing the path after fixes the order regardless of which packed
+        # first.
         pack forget $PathLabel
         pack $MatchBtn -side right -padx 6
         pack $PathLabel -side left -padx 6 -pady 1 -fill x -expand 1
+        my match_panel_show
     }
 
-    # Post the match list under the control. tk_popup positions and scrolls
-    # the menu itself, so a long index needs no bespoke scrollbar.
-    method match_list_popup {} {
-        if {[llength $FindMatches] == 0} return
-        $MatchMenu delete 0 end
-        set i 0
-        foreach lab $MatchLabels {
-            incr i
-            $MatchMenu add command -label "$i. $lab" \
-                -command [list [self] jump_to_match [expr {$i - 1}]]
+    # Row foreground by role, echoing the rendered transcript's role colours.
+    method role_color {ty} {
+        switch -- $ty {
+            USER      { return "#1c3a6a" }
+            ASSISTANT { return "#345f23" }
+            default   { return "#7a4a14" }
         }
-        set x [winfo rootx $MatchBtn]
-        set y [expr {[winfo rooty $MatchBtn] + [winfo height $MatchBtn]}]
-        tk_popup $MatchMenu $x $y
+    }
+
+    # Place the panel over the body's top-right, offset left of the scrollbar
+    # so the drag thumb stays reachable; `raise` keeps it above the text. The
+    # head-strip glyph turns up (▴) to read as open.
+    method match_panel_show {} {
+        if {[llength $FindMatches] == 0} return
+        place $MatchPanel -relx 1.0 -x -18 -rely 0 -y 2 -anchor ne
+        raise $MatchPanel
+        $MatchBtn configure -text "▴ [$MatchPanel.hdr.title cget -text]"
+    }
+
+    method match_panel_hide {} {
+        place forget $MatchPanel
+        $MatchBtn configure -text "▾ [$MatchPanel.hdr.title cget -text]"
+    }
+
+    method match_panel_toggle {} {
+        if {[winfo ismapped $MatchPanel]} {
+            my match_panel_hide
+        } else {
+            my match_panel_show
+        }
+    }
+
+    # Jump from a clicked row.
+    method match_list_select {} {
+        set sel [$MatchList curselection]
+        if {$sel eq ""} return
+        my jump_to_match [lindex $sel 0]
     }
 
     method jump_to_match {i} {
