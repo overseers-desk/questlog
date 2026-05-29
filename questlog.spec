@@ -45,8 +45,17 @@ install -D -m 0644 questlog.desktop \
 
 %changelog
 * Fri May 29 2026 Weiwu Zhang <a@colourful.land> - 1.0.1-1
-- Persistent full-height session viewer beside the list, with an empty-state prompt
-- Search and criteria controls scoped to the list column
+- Project renamed from find-my-session to questlog; command is now questlog
+- Session viewer is a persistent full-height pane from launch; single-click opens
+- Match navigation moved into the viewer; match index shown as a floating overlay
+- Search terms matched literally (not as regex) in both highlighters
+- Search matches the whole session, not just the same line
+- Toolbar scoped to the list column
+- Assistant blockquotes rendered as collapsible copy boxes in the viewer
+- Per-session token cost shown as a column in the session list
+- Session slug shown; right-click menu includes a Rename action
+- Show-all banner when a directory chip was auto-applied from the launch cwd
+- Fix: empty session list when auto-applied directory chip was the only filter
 
 * Mon May 25 2026 Weiwu Zhang <a@colourful.land> - 1.0.0-1
 - Initial package

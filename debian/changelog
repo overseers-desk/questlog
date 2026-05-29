@@ -1,8 +1,21 @@
 questlog (1.0.1) unstable; urgency=medium
 
-  * Session viewer is now a persistent, full-height pane beside the list,
-    showing an empty-state prompt until a session is opened.
-  * Search and criteria controls now sit above the session list only.
+  * Project renamed from find-my-session to questlog; command is now questlog.
+  * Session viewer is a persistent, full-height pane beside the list from
+    launch, showing a placeholder until a session is opened; single-click
+    opens a session (was double-click).
+  * Match navigation moved into the viewer; match index shown as a floating
+    overlay beside the search box.
+  * Search terms matched literally (not as regex) in both highlighters.
+  * Search matches the whole session, not just the same line.
+  * Toolbar (search and criteria controls) scoped to the list column.
+  * Assistant blockquotes rendered as collapsible copy boxes in the viewer.
+  * Per-session token cost shown as a column in the session list.
+  * Session slug shown; right-click menu includes a Rename action.
+  * Show-all banner appears when a directory chip was auto-applied.
+  * Directory chip seeded from the working directory at launch.
+  * Fix: session list was empty when auto-applied directory chip was the
+    only active filter.
 
  -- Weiwu Zhang <a@colourful.land>  Fri, 29 May 2026 17:33:30 +0200
 
