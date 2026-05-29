@@ -1,5 +1,5 @@
 Name:           questlog
-Version:        1.0.0
+Version:        1.0.1
 Release:        1%{?dist}
 Summary:        GUI for finding, reading, and reopening past Claude Code sessions
 License:        MIT
@@ -44,5 +44,9 @@ install -D -m 0644 questlog.desktop \
 %{_datadir}/applications/questlog.desktop
 
 %changelog
+* Fri May 29 2026 Weiwu Zhang <a@colourful.land> - 1.0.1-1
+- Persistent full-height session viewer beside the list, with an empty-state prompt
+- Search and criteria controls scoped to the list column
+
 * Mon May 25 2026 Weiwu Zhang <a@colourful.land> - 1.0.0-1
 - Initial package

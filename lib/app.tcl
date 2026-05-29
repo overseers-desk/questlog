@@ -5,9 +5,13 @@ package require Tk
 # Search. No splash: the empty UI renders immediately and rows stream in via
 # the Scan coroutine. Status-bar shows scanning progress while in flight.
 #
-# Layout is a fixed horizontal split: the session list on the left (browser
-# and search-result index in one), the reading view docked on the right. A
-# single click in the list opens the session in the viewer, anchored.
+# Layout is a horizontal split with two full-height peers: the list column on
+# the left (the search/criteria toolbar above the session list, which is
+# browser and search-result index in one) and the viewer pane on the right.
+# Both are present from launch; the viewer shows a centered empty state until a
+# session is opened. A double click in the list opens the session in the viewer
+# pane (anchored). The split defaults to ~58/42 in the list's favour and the
+# sash is draggable.
 
 namespace eval ::questlog::app {
     variable Scan
@@ -18,8 +22,7 @@ namespace eval ::questlog::app {
     variable StatusVar
     variable Root
     variable PW            ;# the horizontal paned window
-    variable ViewFrame     ;# the viewer's container, added to PW on first open
-    variable ViewerShown   ;# 0 until the reading view is first revealed
+    variable ViewFrame     ;# the viewer's container, present in the PW from launch
     variable Running       ;# last polled uuid -> path running set
     variable RunTimer      ;# after-id of the running-poll loop
 }
@@ -34,12 +37,10 @@ proc ::questlog::app::start {root {initial_criteria {}}} {
     variable Root
     variable PW
     variable ViewFrame
-    variable ViewerShown
     variable Running
 
     set Root $root
     set StatusVar ""
-    set ViewerShown 0
     set Running [dict create]
 
     # The <<ContextMenu>> virtual event already covers Button-2 on Aqua and
@@ -56,15 +57,17 @@ proc ::questlog::app::start {root {initial_criteria {}}} {
     ttk::frame .top
     pack .top -side top -fill both -expand 1
 
-    set Toolbar [::questlog::ui::Toolbar new .top.tb $::env(PWD)]
-    pack .top.tb -side top -fill x
-
     set PW .top.pw
     ttk::panedwindow $PW -orient horizontal
     pack $PW -side top -fill both -expand 1
 
+    # List column: the search/criteria toolbar above the session list. The
+    # toolbar scopes the list (master), not the viewer (detail), so it lives
+    # inside this column rather than spanning the window.
     set list_frame $PW.list
     ttk::frame $list_frame
+    set Toolbar [::questlog::ui::Toolbar new $list_frame.tb $::env(PWD)]
+    pack $list_frame.tb -side top -fill x
     set SessionList [::questlog::ui::SessionList new $list_frame.s \
         [namespace code resolve_folder] \
         [namespace code lookup_session] \
@@ -76,14 +79,21 @@ proc ::questlog::app::start {root {initial_criteria {}}} {
         [namespace code on_search_cancel] \
         [namespace code on_show_all]]
     pack $list_frame.s -side top -fill both -expand 1
-    $PW add $list_frame -weight 2
+    $PW add $list_frame -weight 58
 
-    # The reading view is built now but stays out of the paned window until a
-    # session or snippet is clicked, so the window opens as just the list.
+    # Viewer pane: a full-height peer of the list, present from launch. It
+    # shows a centered empty state until the first session is previewed.
     set ViewFrame $PW.view
     ttk::frame $ViewFrame
     set Viewer [::questlog::ui::Viewer new $ViewFrame.v]
     pack $ViewFrame.v -side top -fill both -expand 1
+    $PW add $ViewFrame -weight 42
+
+    # -weight only distributes resize delta, not the initial sash; set the
+    # ~58/42 split once the window has a real width. A one-shot <Map> that
+    # unbinds itself, so a later user drag (including collapsing the viewer
+    # to the edge) is never snapped back.
+    bind $PW <Map> [namespace code [list init_sash %W]]
 
     ttk::label .top.status -textvariable [namespace which -variable StatusVar] \
         -anchor w -relief sunken
@@ -133,6 +143,16 @@ proc ::questlog::app::start {root {initial_criteria {}}} {
     bind . <Control-q> [namespace code quit]
 
     run_tick
+}
+
+# Place the sash at ~58% once the paned window is mapped (its width is 1
+# before that). Self-unbinds so a later manual drag is never overridden.
+proc ::questlog::app::init_sash {pw} {
+    bind $pw <Map> {}
+    update idletasks
+    set w [winfo width $pw]
+    if {$w <= 1} { set w [winfo reqwidth $pw] }
+    $pw sashpos 0 [expr {int($w * 0.58)}]
 }
 
 # ---- running poll ------------------------------------------------------
@@ -262,18 +282,12 @@ proc ::questlog::app::on_show_all {} {
 
 # ---- open in the docked viewer -----------------------------------------
 
-# A single click in the list lands here: render the whole session on the
-# right and anchor it to lineno (0 = top).
+# A double click (or a snippet/menu open) in the list lands here: render the
+# whole session in the viewer pane and anchor it to lineno (0 = top), replacing
+# the empty state.
 proc ::questlog::app::on_open {path lineno} {
     variable Viewer
     variable StatusVar
-    variable PW
-    variable ViewFrame
-    variable ViewerShown
-    if {!$ViewerShown} {
-        $PW add $ViewFrame -weight 3
-        set ViewerShown 1
-    }
     $Viewer show $path $lineno
     if {$lineno > 0} {
         set StatusVar "$path  (line $lineno)"

@@ -17,6 +17,8 @@ package require Tk
 
 oo::class create ::questlog::ui::Viewer {
     variable Top
+    variable Empty            ;# centered empty-state frame, shown until first load
+    variable Shown            ;# 0 until the first session replaces the empty state
     variable Path
     variable Records
     variable Sections        ;# list of dicts: {kind label start_idx end_idx}
@@ -36,6 +38,7 @@ oo::class create ::questlog::ui::Viewer {
 
     constructor {parent} {
         set Top $parent
+        set Shown 0
         set Path ""
         set IdleGap 10
         set FindVar ""
@@ -54,6 +57,12 @@ oo::class create ::questlog::ui::Viewer {
     # Load a session and anchor to a line (1-based; 0 means top). Replaces
     # whatever was shown before.
     method show {jsonl_path {scroll_to_line 0}} {
+        if {!$Shown} {
+            grid remove $Empty
+            grid $Text        -row 0 -column 0 -sticky nsew
+            grid $Top.body.sb -row 0 -column 1 -sticky ns
+            set Shown 1
+        }
         set Path $jsonl_path
         set Records [list]
         set LineMap [dict create]
@@ -70,10 +79,15 @@ oo::class create ::questlog::ui::Viewer {
 
     method build {} {
         ttk::frame $Top
-        ttk::frame $Top.head
+        # Path strip: an info strip embedded at the top of the viewer block,
+        # flush against the body (no separator, minimal pad), like the strip
+        # atop a text editor. A plain frame/label carries a subtle background
+        # tint so it reads as part of the pane rather than a control bar.
+        set strip "#e8e8e8"
+        frame $Top.head -background $strip
         pack $Top.head -side top -fill x
-        ttk::label $Top.head.path -text ""
-        pack $Top.head.path -side left -padx 4 -pady 2
+        label $Top.head.path -text "" -background $strip -anchor w
+        pack $Top.head.path -side left -padx 6 -pady 1
         set PathLabel $Top.head.path
 
         ttk::frame $Top.body
@@ -87,6 +101,20 @@ oo::class create ::questlog::ui::Viewer {
         grid columnconfigure $Top.body 0 -weight 1
         grid rowconfigure    $Top.body 0 -weight 1
         set Text $Top.body.t
+
+        # Empty state: a centered prompt for the open gesture, gridded into the
+        # same body cell as the text so the head+body silhouette is identical
+        # whether empty or loaded. Shown at launch (the text and its scrollbar
+        # start grid-removed); the first `show` swaps them in.
+        ttk::frame $Top.body.empty
+        grid $Top.body.empty -row 0 -column 0 -columnspan 2 -sticky nsew
+        grid rowconfigure    $Top.body.empty {0 2} -weight 1
+        grid columnconfigure $Top.body.empty {0 2} -weight 1
+        ttk::label $Top.body.empty.msg -justify center -foreground "#888" \
+            -text "Double-click a session to open it here"
+        grid $Top.body.empty.msg -row 1 -column 1
+        set Empty $Top.body.empty
+        grid remove $Top.body.t $Top.body.sb
 
         # ===== TRIM-AFTER 2026-06-05 (issue #4) =====================
         # Autoscroll diagnostic plus parked guards. Native drag-select is on

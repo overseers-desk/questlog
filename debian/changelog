@@ -1,3 +1,11 @@
+questlog (1.0.1) unstable; urgency=medium
+
+  * Session viewer is now a persistent, full-height pane beside the list,
+    showing an empty-state prompt until a session is opened.
+  * Search and criteria controls now sit above the session list only.
+
+ -- Weiwu Zhang <a@colourful.land>  Fri, 29 May 2026 17:33:30 +0200
+
 questlog (1.0.0) unstable; urgency=medium
 
   * Initial release.
