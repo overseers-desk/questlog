@@ -183,10 +183,16 @@ oo::class create ::questlog::ui::Viewer {
         grid $Top.body.empty -row 0 -column 0 -columnspan 2 -sticky nsew
         grid rowconfigure    $Top.body.empty {0 2} -weight 1
         grid columnconfigure $Top.body.empty {0 2} -weight 1
-        ttk::label $Top.body.empty.msg -justify center \
+        ttk::frame $Top.body.empty.box
+        ttk::label $Top.body.empty.box.msg -justify center \
             -foreground [::questlog::theme::c muted] \
-            -text "Click a session to open it here"
-        grid $Top.body.empty.msg -row 1 -column 1
+            -text "Click a session to show it here"
+        ttk::label $Top.body.empty.box.sub -justify center -wraplength 340 \
+            -foreground [::questlog::theme::c muted] \
+            -text "A single click loads the transcript here. After a search, the match index up top jumps to each hit."
+        pack $Top.body.empty.box.msg -side top -pady {0 6}
+        pack $Top.body.empty.box.sub -side top
+        grid $Top.body.empty.box -row 1 -column 1
         set Empty $Top.body.empty
         grid remove $Top.body.t $Top.body.sb
 
@@ -257,9 +263,13 @@ oo::class create ::questlog::ui::Viewer {
             -foreground [::questlog::theme::c muted] -spacing1 6 -spacing3 6
         $Text tag configure compact-divider -justify center \
             -foreground [::questlog::theme::c compact] -spacing1 8 -spacing3 8 -font QLBold
-        $Text tag configure user      -foreground [::questlog::theme::c user]      -lmargin1 8 -lmargin2 8
-        $Text tag configure assistant -foreground [::questlog::theme::c assistant] -lmargin1 8 -lmargin2 8
-        $Text tag configure system    -foreground [::questlog::theme::c tool]      -lmargin1 8 -lmargin2 8
+        # Colour marks only the role label; the message body is neutral ink, so
+        # the transcript reads as prose with a coloured speaker tag, not as a
+        # wall of tinted text.
+        $Text tag configure lbl-user      -foreground [::questlog::theme::c user]      -font QLBold -lmargin1 8 -lmargin2 8 -spacing1 8
+        $Text tag configure lbl-assistant -foreground [::questlog::theme::c assistant] -font QLBold -lmargin1 8 -lmargin2 8 -spacing1 8
+        $Text tag configure lbl-system    -foreground [::questlog::theme::c tool]      -font QLBold -lmargin1 8 -lmargin2 8 -spacing1 8
+        $Text tag configure body          -foreground [::questlog::theme::c ink]       -lmargin1 8 -lmargin2 8 -spacing3 4
         $Text tag configure recap     -background [::questlog::theme::c recap]
         $Text tag configure find      -background [::questlog::theme::c find]
 
@@ -359,17 +369,15 @@ oo::class create ::questlog::ui::Viewer {
             dict set LineMap $lineno $start_idx
             dict set Bodies $lineno $body
             dict set Roles $lineno [string toupper $t]
-            set tag $t
-            if {$t eq "user" || $t eq "assistant" || $t eq "system"} {
-                # use the type as the tag name
-            } else {
-                set tag system
+            set ltag "lbl-$t"
+            if {$t ne "user" && $t ne "assistant" && $t ne "system"} {
+                set ltag lbl-system
             }
-            $Text insert end "[string toupper $t]: " "$tag section-header"
+            $Text insert end "[string toupper $t]: " $ltag
             if {$t eq "assistant" && [regexp -line {^>} $body]} {
-                my insert_segments $body $tag
+                my insert_segments $body
             } else {
-                $Text insert end "$body\n\n" $tag
+                $Text insert end "$body\n\n" body
             }
 
             if {$ts_epoch > 0} { set last_ts $ts_epoch }
@@ -379,20 +387,20 @@ oo::class create ::questlog::ui::Viewer {
 
     # Render an assistant body that contains at least one blockquote run:
     # normal text inline, each blockquote run as an embedded box.
-    method insert_segments {body roletag} {
+    method insert_segments {body} {
         set atstart 0
         foreach seg [::questlog::jsonl::segment_blockquotes $body] {
             lassign $seg kind text
             if {$kind eq "quote"} {
-                if {!$atstart} { $Text insert end "\n" $roletag }
+                if {!$atstart} { $Text insert end "\n" body }
                 my insert_quote_box $text
                 set atstart 1
             } else {
-                $Text insert end "$text\n" $roletag
+                $Text insert end "$text\n" body
                 set atstart 1
             }
         }
-        $Text insert end "\n" $roletag
+        $Text insert end "\n" body
     }
 
     # A de-quoted blockquote run as a bordered box embedded in the reading

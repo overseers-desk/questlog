@@ -25,6 +25,7 @@ namespace eval ::questlog::theme {
     variable Palette {
         user            #2f5c8a
         assistant       #1f2328
+        ink             #1f2328
         tool            #8a5a00
         tool_result     #5c6166
         muted           #8a9099
@@ -39,6 +40,8 @@ namespace eval ::questlog::theme {
         recap           #f6ead4
         strip           #e8e8e8
         find            #ffe6a3
+        banner_bg       #fbf3d0
+        banner_fg       #6b5d1f
         chip_or         gray
         strip_user      #274b73
         strip_assistant #3d5c2e

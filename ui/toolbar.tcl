@@ -82,7 +82,8 @@ oo::class create ::questlog::ui::Toolbar {
     variable BookmarkedOnlyVar
     variable Clauses          ;# dict kind -> list of values
     variable UnderAuto        ;# 1 iff `under` is exactly the launch-seeded chip
-    variable Restrict         ;# the "Restrict to sessions that…" labelframe
+    variable Restrict         ;# the padded content frame holding the restrict rows
+    variable RestrictHd       ;# the heading label above that frame (the legend)
     variable AddRail          ;# the "add:" rail frame inside Restrict
     variable RowFrames        ;# dict kind -> widget path (present only when row exists)
     variable PopValue         ;# textvar for the add-dropdown's entry
@@ -111,10 +112,14 @@ oo::class create ::questlog::ui::Toolbar {
 
         # Search row: label, full-width entry, Aa toggle.
         ttk::frame $Top.search
-        pack $Top.search -side top -fill x -padx 4 -pady {4 2}
+        pack $Top.search -side top -fill x -padx 6 -pady {6 3}
         ttk::label $Top.search.label -text "Search:"
         pack $Top.search.label -side left -padx {0 6}
         ttk::entry $Top.search.e -textvariable [my varname SearchVar]
+        # Placeholder microcopy (Tk 9 ttk entry); a harmless no-op if the build
+        # lacks -placeholder.
+        catch {$Top.search.e configure \
+            -placeholder "type one or more words, all must appear somewhere in the session"}
         pack $Top.search.e -side left -fill x -expand 1
         bind $Top.search.e <KeyRelease> [list [self] on_search_change]
         ttk::checkbutton $Top.search.aa -text "Aa" \
@@ -122,13 +127,18 @@ oo::class create ::questlog::ui::Toolbar {
             -command [list [self] publish]
         pack $Top.search.aa -side left -padx {6 0}
 
-        # Restrict labelframe: time radios on top, then clause rows, then add rail.
-        ttk::labelframe $Top.restrict -text "Restrict to sessions that…"
-        pack $Top.restrict -side top -fill x -padx 4 -pady 2
+        # Restrict group: the legend sits as a heading ABOVE the box (as in the
+        # design), then a padded, lightly-bordered content frame holds the time
+        # row, the clause rows, and the add rail.
+        set RestrictHd $Top.restrict_hd
+        ttk::label $RestrictHd -text "Restrict to sessions that…" -anchor w
+        pack $RestrictHd -side top -fill x -padx 6 -pady {6 2}
+        ttk::frame $Top.restrict -relief solid -borderwidth 1 -padding {10 6}
+        pack $Top.restrict -side top -fill x -padx 6 -pady {0 2}
         set Restrict $Top.restrict
 
         ttk::frame $Restrict.time
-        pack $Restrict.time -side top -fill x
+        pack $Restrict.time -side top -fill x -pady {0 3}
         ttk::label $Restrict.time.label -text "time" -width 18 -anchor w
         pack $Restrict.time.label -side left -padx {0 4}
         ttk::label $Restrict.time.rans -text "ran in the last"
@@ -145,8 +155,8 @@ oo::class create ::questlog::ui::Toolbar {
         pack $AddRail -side top -fill x -pady {4 0}
         ttk::label $AddRail.label -text "add:"
         pack $AddRail.label -side left -padx {0 4}
-        foreach {k text} {under "+ under" read "+ Read" wrote "+ Write" \
-                          edited "+ Edit" pattern "+ regex"} {
+        foreach {k text} {under "+ folder" pattern "+ regex" read "+ Read" \
+                          wrote "+ Write" edited "+ Edit"} {
             ttk::button $AddRail.b$k -text $text \
                 -command [list [self] open_add $k]
             pack $AddRail.b$k -side left -padx {0 4}
@@ -154,7 +164,7 @@ oo::class create ::questlog::ui::Toolbar {
 
         # Row 2: legacy result-set filters, unchanged by this refactor.
         ttk::frame $Top.row2
-        pack $Top.row2 -side top -fill x -padx 4 -pady {2 4}
+        pack $Top.row2 -side top -fill x -padx 6 -pady {4 6}
         ttk::checkbutton $Top.row2.oneturn -text "exclude one-turn sessions" \
             -variable [my varname OneTurnVar] \
             -command [list [self] publish]
@@ -289,6 +299,19 @@ oo::class create ::questlog::ui::Toolbar {
             pack $row -side top -fill x -before $AddRail -pady 1
             dict set RowFrames $k $row
         }
+        my refresh_heading
+    }
+
+    # Update the restrict heading with a count of active clauses, so the legend
+    # reads "Restrict to sessions that…  N active" (count omitted at zero).
+    method refresh_heading {} {
+        set n 0
+        foreach k {under read wrote edited pattern} {
+            if {[llength [dict get $Clauses $k]] > 0} { incr n }
+        }
+        set txt "Restrict to sessions that…"
+        if {$n > 0} { append txt "   $n active" }
+        $RestrictHd configure -text $txt
     }
 
     method render_chips {kind chips_frame} {
@@ -326,7 +349,7 @@ oo::class create ::questlog::ui::Toolbar {
     }
 
     method refresh_add_rail {} {
-        foreach k {under read wrote edited pattern} {
+        foreach k {under pattern read wrote edited} {
             set btn $AddRail.b$k
             if {[llength [dict get $Clauses $k]] > 0} {
                 pack forget $btn

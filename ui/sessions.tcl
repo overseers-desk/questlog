@@ -120,18 +120,23 @@ oo::class create ::questlog::ui::SessionList {
         # Show-all banner: visible only when the toolbar's `under` chip was
         # seeded at launch (under_auto == 1) and so is hiding sessions the
         # user did not ask to hide. Update_banner manages visibility.
-        ttk::frame $Top.banner
-        ttk::label $Top.banner.text -anchor w
+        # A soft-tinted alert strip (plain tk frame/label so -background takes;
+        # ttk would ignore it), so the launch-scope notice reads as a banner
+        # rather than blending into the chrome.
+        frame $Top.banner -background [::questlog::theme::c banner_bg]
+        label $Top.banner.text -anchor w \
+            -background [::questlog::theme::c banner_bg] \
+            -foreground [::questlog::theme::c banner_fg]
         ttk::button $Top.banner.showall -text "Show all" \
             -command [list [self] on_show_all_clicked]
-        pack $Top.banner.text -side left -padx 6 -pady 4 -fill x -expand 1
-        pack $Top.banner.showall -side right -padx 6 -pady 4
+        pack $Top.banner.text -side left -padx 8 -pady 5 -fill x -expand 1
+        pack $Top.banner.showall -side right -padx 8 -pady 5
 
         ttk::frame $Top.body
         pack $Top.body -side top -fill both -expand 1
         text $Top.body.t -wrap word -state disabled -exportselection 0 \
             -yscrollcommand [list [self] on_yscroll] \
-            -borderwidth 0 -highlightthickness 0 -padx 4 -pady 4 -cursor arrow \
+            -borderwidth 0 -highlightthickness 0 -padx 8 -pady 8 -cursor arrow \
             -takefocus 0
         ttk::scrollbar $Top.body.sb -orient vertical \
             -command [list $Top.body.t yview]
@@ -176,7 +181,7 @@ oo::class create ::questlog::ui::SessionList {
         # above each and the bold title colour; no background band. The
         # selected row gets a highlight for click feedback.
         $Text tag configure sessionhead -lmargin1 12 -lmargin2 28 \
-            -spacing1 6 -spacing3 2 -foreground [::questlog::theme::c sessionhead]
+            -spacing1 6 -spacing3 2 -foreground [::questlog::theme::c ink]
         # The slug (Claude's agentName / aiTitle) renders bold inline before
         # the prompt body, so the slug acts as the headline and the prompt
         # as the deck below it. Bold weight is the only marker; brackets
