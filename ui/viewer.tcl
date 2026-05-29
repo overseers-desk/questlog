@@ -89,6 +89,9 @@ oo::class create ::questlog::ui::Viewer {
     variable NextQid          ;# monotonic id for embedded quote boxes
     variable Drafts           ;# dict: qid -> box state
     variable Bodies           ;# dict: jsonl line -> raw body (for Copy message)
+    variable MatchBtn         ;# head-strip "N matches" control, packed on demand
+    variable MatchMenu        ;# the dropdown listing each match
+    variable MatchLabels      ;# per-match one-line context, parallel to FindMatches
 
     constructor {parent} {
         set Top $parent
@@ -105,12 +108,15 @@ oo::class create ::questlog::ui::Viewer {
         set NextQid 0
         set Drafts [dict create]
         set Bodies [dict create]
+        set MatchLabels [list]
         my build
     }
 
     # Load a session and anchor to a line (1-based; 0 means top). Replaces
-    # whatever was shown before.
-    method show {jsonl_path {scroll_to_line 0}} {
+    # whatever was shown before. `query` is the active search ({regex <list>
+    # nocase 0|1}, or {}); its matches are highlighted and listed in the
+    # head-strip index.
+    method show {jsonl_path {scroll_to_line 0} {query {}}} {
         if {!$Shown} {
             grid remove $Empty
             grid $Text        -row 0 -column 0 -sticky nsew
@@ -124,6 +130,7 @@ oo::class create ::questlog::ui::Viewer {
         my find_hide
         my load
         my render
+        my index_matches $query
         if {$scroll_to_line > 0} {
             my scroll_to_line $scroll_to_line
         } else {
@@ -141,8 +148,18 @@ oo::class create ::questlog::ui::Viewer {
         frame $Top.head -background $strip
         pack $Top.head -side top -fill x
         label $Top.head.path -text "" -background $strip -anchor w
-        pack $Top.head.path -side left -padx 6 -pady 1
+        pack $Top.head.path -side left -padx 6 -pady 1 -fill x -expand 1
         set PathLabel $Top.head.path
+        # Match index: a count on the right that drops a list of every search
+        # match in the transcript, each jumping the view there (an in-page
+        # anchor). Packed on demand by refresh_match_control; absent when the
+        # session was opened without a search.
+        label $Top.head.matches -text "" -background $strip -foreground "#143d8a" \
+            -cursor hand2
+        set MatchBtn $Top.head.matches
+        bind $MatchBtn <Button-1> [list [self] match_list_popup]
+        set MatchMenu $Top.head.mmenu
+        menu $MatchMenu -tearoff 0
 
         ttk::frame $Top.body
         pack $Top.body -side top -fill both -expand 1
@@ -165,7 +182,7 @@ oo::class create ::questlog::ui::Viewer {
         grid rowconfigure    $Top.body.empty {0 2} -weight 1
         grid columnconfigure $Top.body.empty {0 2} -weight 1
         ttk::label $Top.body.empty.msg -justify center -foreground "#888" \
-            -text "Double-click a session to open it here"
+            -text "Click a session to open it here"
         grid $Top.body.empty.msg -row 1 -column 1
         set Empty $Top.body.empty
         grid remove $Top.body.t $Top.body.sb
@@ -277,7 +294,18 @@ oo::class create ::questlog::ui::Viewer {
                 continue
             }
 
-            # Idle-gap secondary divider.
+            # Records that carry no text body (permission-mode, file-history
+            # snapshots, attachments, tool-only turns) head no section and draw
+            # no line; they only keep the clock moving for gap detection. Tested
+            # before the header so a leading metadata record never leaves a bare
+            # section glyph at the top of the transcript.
+            set body [::questlog::jsonl::extract_text $rec]
+            if {$body eq ""} {
+                if {$ts_epoch > 0} { set last_ts $ts_epoch }
+                continue
+            }
+
+            # Idle-gap secondary divider, between content turns.
             if {$last_ts > 0 && $ts_epoch > 0} {
                 set gap [expr {($ts_epoch - $last_ts) / 60}]
                 if {$gap >= $IdleGap} {
@@ -287,21 +315,13 @@ oo::class create ::questlog::ui::Viewer {
             }
 
             if {!$in_section} {
-                set hdr [my section_header $ts_iso]
-                $Text insert end "$hdr\n" section-header
+                $Text insert end "[my section_header $ts_iso]\n" section-header
                 set in_section 1
             }
 
             # Map this jsonl line to the current text index.
             set start_idx [$Text index "end-1l linestart"]
             dict set LineMap $lineno $start_idx
-
-            set body [::questlog::jsonl::extract_text $rec]
-            if {$body eq ""} {
-                # Skip records that contribute no text body.
-                if {$ts_epoch > 0} { set last_ts $ts_epoch }
-                continue
-            }
             dict set Bodies $lineno $body
             set tag $t
             if {$t eq "user" || $t eq "assistant" || $t eq "system"} {
@@ -483,10 +503,12 @@ oo::class create ::questlog::ui::Viewer {
 
     method parse_iso {ts_iso} {
         if {$ts_iso eq ""} { return 0 }
-        if {[catch {clock scan $ts_iso -format "%Y-%m-%dT%H:%M:%S.%QZ" -gmt 1} e]} {
-            if {[catch {clock scan $ts_iso -format "%Y-%m-%dT%H:%M:%SZ" -gmt 1} e]} {
-                return 0
-            }
+        # Claude stamps millisecond precision (2026-05-24T22:29:21.279Z). Tcl's
+        # clock scan has no fractional-second specifier, so drop the fraction
+        # before the Z and parse the second-resolution remainder as UTC.
+        regsub {\.[0-9]+Z$} $ts_iso {Z} ts_iso
+        if {[catch {clock scan $ts_iso -format "%Y-%m-%dT%H:%M:%SZ" -gmt 1} e]} {
+            return 0
         }
         return $e
     }
@@ -556,4 +578,96 @@ oo::class create ::questlog::ui::Viewer {
     variable LastFindVar
     method last_find_var {}    { return [expr {[info exists LastFindVar] ? $LastFindVar : ""}] }
     method mark_find_var {v}   { set LastFindVar $v }
+
+    # ---- match index (seeded from the search query) ------------------
+
+    # Highlight every occurrence of the search query in the rendered
+    # transcript, remember them in document order, and show the head-strip
+    # "N matches" control. An empty query (a session opened while browsing)
+    # clears the highlight and hides the control. Shares the `find` tag and
+    # FindMatches/FindIdx with the Ctrl-F overlay, so stepping is unified.
+    method index_matches {query} {
+        $Text tag remove find 1.0 end
+        set FindMatches [list]
+        set FindIdx 0
+        set MatchLabels [list]
+        set patterns [expr {[dict exists $query regex] ? [dict get $query regex] : {}}]
+        set nocase [expr {[dict exists $query nocase] ? [dict get $query nocase] : 0}]
+        set hits [list]
+        foreach pat $patterns {
+            if {$pat eq ""} continue
+            set start 1.0
+            while {1} {
+                set len 0
+                if {$nocase} {
+                    set m [$Text search -regexp -nocase -count len -- $pat $start end]
+                } else {
+                    set m [$Text search -regexp -count len -- $pat $start end]
+                }
+                if {$m eq ""} break
+                if {$len <= 0} { set len 1 }
+                $Text tag add find $m "$m + ${len}c"
+                lappend hits $m
+                set start "$m + ${len}c"
+            }
+        }
+        foreach m [lsort -unique -command [list [self] cmp_index] $hits] {
+            lappend FindMatches $m
+            lappend MatchLabels [my match_context $m]
+        }
+        my refresh_match_control
+    }
+
+    # Order two text indices in document order, for lsort.
+    method cmp_index {a b} {
+        if {[$Text compare $a < $b]} { return -1 }
+        if {[$Text compare $a > $b]} { return 1 }
+        return 0
+    }
+
+    # A one-line, whitespace-collapsed excerpt of the match's line, for the
+    # dropdown entry.
+    method match_context {idx} {
+        set line [regsub -all {\s+} [string trim [$Text get "$idx linestart" "$idx lineend"]] " "]
+        if {[string length $line] > 60} { set line "[string range $line 0 59]…" }
+        return $line
+    }
+
+    method refresh_match_control {} {
+        set n [llength $FindMatches]
+        if {$n == 0} {
+            pack forget $MatchBtn
+            return
+        }
+        $MatchBtn configure -text "▾ $n [expr {$n == 1 ? {match} : {matches}}]"
+        # Reserve the control's width on the right before the path fills the
+        # rest, so a long file path clips rather than squeezing the count out
+        # of the strip. Re-packing the path after the control fixes the pack
+        # order regardless of which was packed first.
+        pack forget $PathLabel
+        pack $MatchBtn -side right -padx 6
+        pack $PathLabel -side left -padx 6 -pady 1 -fill x -expand 1
+    }
+
+    # Post the match list under the control. tk_popup positions and scrolls
+    # the menu itself, so a long index needs no bespoke scrollbar.
+    method match_list_popup {} {
+        if {[llength $FindMatches] == 0} return
+        $MatchMenu delete 0 end
+        set i 0
+        foreach lab $MatchLabels {
+            incr i
+            $MatchMenu add command -label "$i. $lab" \
+                -command [list [self] jump_to_match [expr {$i - 1}]]
+        }
+        set x [winfo rootx $MatchBtn]
+        set y [expr {[winfo rooty $MatchBtn] + [winfo height $MatchBtn]}]
+        tk_popup $MatchMenu $x $y
+    }
+
+    method jump_to_match {i} {
+        if {$i < 0 || $i >= [llength $FindMatches]} return
+        $Text see [lindex $FindMatches $i]
+        set FindIdx $i
+    }
 }

@@ -9,9 +9,9 @@ package require Tk
 # the left (the search/criteria toolbar above the session list, which is
 # browser and search-result index in one) and the viewer pane on the right.
 # Both are present from launch; the viewer shows a centered empty state until a
-# session is opened. A double click in the list opens the session in the viewer
-# pane (anchored). The split defaults to ~58/42 in the list's favour and the
-# sash is draggable.
+# session is opened. A click in the list opens the session in the viewer pane
+# (anchored). The split defaults to ~58/42 in the list's favour and the sash is
+# draggable.
 
 namespace eval ::questlog::app {
     variable Scan
@@ -25,6 +25,7 @@ namespace eval ::questlog::app {
     variable ViewFrame     ;# the viewer's container, present in the PW from launch
     variable Running       ;# last polled uuid -> path running set
     variable RunTimer      ;# after-id of the running-poll loop
+    variable CurrentQuery  ;# {regex <list> nocase 0|1} of the active search, or {}
 }
 
 proc ::questlog::app::start {root {initial_criteria {}}} {
@@ -38,10 +39,12 @@ proc ::questlog::app::start {root {initial_criteria {}}} {
     variable PW
     variable ViewFrame
     variable Running
+    variable CurrentQuery
 
     set Root $root
     set StatusVar ""
     set Running [dict create]
+    set CurrentQuery {}
 
     # The <<ContextMenu>> virtual event already covers Button-2 on Aqua and
     # Button-3 on X11/Windows. Tk does not include Control-Click in it on
@@ -176,6 +179,7 @@ proc ::questlog::app::on_filter {snapshot} {
     variable Search
     variable SessionList
     variable Running
+    variable CurrentQuery
 
     set has_criteria [::questlog::ui::any_criteria $snapshot]
 
@@ -203,11 +207,17 @@ proc ::questlog::app::on_filter {snapshot} {
     $SessionList reconcile_running $Running
 
     if {$has_criteria} {
-        $SessionList set_query \
-            [::questlog::ui::regex_values $snapshot] \
-            [expr {![dict get $snapshot search_case]}]
+        set patterns [::questlog::ui::regex_values $snapshot]
+        set nocase [expr {![dict get $snapshot search_case]}]
+        $SessionList set_query $patterns $nocase
+        # Cache the query so a session opened from this result set carries it
+        # into the viewer's match index. regex_values returns only the content
+        # patterns; read/write/edit clauses match files, not text, so they
+        # contribute no in-transcript highlight.
+        set CurrentQuery [dict create regex $patterns nocase $nocase]
         $Search start $snapshot
     } else {
+        set CurrentQuery {}
         $Search cancel
     }
 }
@@ -282,13 +292,15 @@ proc ::questlog::app::on_show_all {} {
 
 # ---- open in the docked viewer -----------------------------------------
 
-# A double click (or a snippet/menu open) in the list lands here: render the
-# whole session in the viewer pane and anchor it to lineno (0 = top), replacing
-# the empty state.
+# A click (or a snippet/menu open) in the list lands here: render the whole
+# session in the viewer pane and anchor it to lineno (0 = top), replacing the
+# empty state. The active search query rides along so the viewer can index the
+# matches in-transcript.
 proc ::questlog::app::on_open {path lineno} {
     variable Viewer
     variable StatusVar
-    $Viewer show $path $lineno
+    variable CurrentQuery
+    $Viewer show $path $lineno $CurrentQuery
     if {$lineno > 0} {
         set StatusVar "$path  (line $lineno)"
     } else {

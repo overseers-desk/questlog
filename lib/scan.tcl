@@ -221,9 +221,9 @@ oo::class create ::questlog::Scan {
 
     # Collapse whitespace and strip simple JSON escapes. No length cap:
     # the session list renders the prompt with -wrap none so overflow is
-    # clipped by the widget edge in the right font's actual width, and
-    # the row expands on click to show the rest. A byte-count truncation
-    # here would just be a worse approximation of the same clipping.
+    # clipped by the widget edge in the right font's actual width, and the
+    # full prompt is read in the viewer a click opens. A byte-count
+    # truncation here would just be a worse approximation of the same clipping.
     method clean_preview {s} {
         set s [regsub -all {[\s]+} $s " "]
         set s [string map [list "\\\"" "\"" "\\\\" "\\" "\\n" " " "\\t" " "] $s]

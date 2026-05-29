@@ -46,13 +46,13 @@ The list has two modes, switched implicitly by whether any criterion row current
 
 ### Interaction with the list
 
-Single click on a session header or a snippet row only selects the row (a light blue highlight tag is applied to the header line). It does not load the session into the session viewer.
+A single click on a session header opens that session in the session viewer, anchored at its first match (or the top, when browsing), and highlights the whole session block in light blue.
 
-Double click on a session header opens that session in the session viewer at the top.
+A single click on a snippet row opens the session too, scrolled to the line of that particular match.
 
-Double click on a snippet row opens the session in the session viewer scrolled to the line of that particular match.
+Selecting and opening are the same act, so the highlighted row and the viewer always refer to the same session.
 
-The first time any of these opens a session, the session viewer pane is added to the body split. From then on, every subsequent open replaces the content of the same right pane.
+The first time a click opens a session, the session viewer pane is added to the body split. From then on, every subsequent open replaces the content of the same right pane.
 
 Right-click (or Control-click on macOS) on a session opens a context menu with these items, in order:
 
@@ -81,7 +81,7 @@ Drag to move: pressing and holding on a session header and then moving the point
 
 The session viewer is the right pane. It is absent until the first open, then permanent for the rest of the session.
 
-At the top sits a header line showing the full file path of the loaded session. Below it, the main area is a read-only scrollable text widget with a vertical scrollbar.
+At the top sits a header strip: the full file path of the loaded session on the left, and, when the session was opened from a search, a match-count control on the right. Below it, the main area is a read-only scrollable text widget with a vertical scrollbar.
 
 The content is the full session transcript as a flat sequence of turns. Consecutive turns with no long gap between them are grouped into sections; each section begins with a "▼" heading and a timestamp. A gap of 10 minutes or more between two consecutive turns shows as a centred "---  N min later ---" divider. A compaction boundary in the underlying file shows as a red centred "--- /compact ---" line. Each turn is preceded by its type label in uppercase (USER, ASSISTANT, SYSTEM, or the raw type for other kinds), colour-coded by type, followed by the text body.
 
@@ -90,6 +90,8 @@ Clicking inside the session viewer gives the text widget keyboard focus, which i
 Note: lines 88–110 of the session viewer's source carry an active diagnostic block tied to issue #4, including mouse-event logging on stderr and an F8 binding that dumps internal Tk state. Text selection behaviour in this pane is currently in a transitional state and should be re-checked against the code at the moment any design work proceeds.
 
 **In-text search.** Ctrl+F opens a Find bar at the bottom of the session viewer: a "Find:" label, a text entry, a "Next" button, and a close button ("✕"). Typing and pressing Return (or clicking "Next") cycles through matches, highlighting each in yellow and scrolling it into view. Escape, "✕", or pressing Escape while focus is in the transcript closes the bar and clears the highlights.
+
+**Match index.** When a session is opened from a search, its search terms are highlighted in the transcript (yellow) and the head strip carries a "▾ N matches" control on the right. Clicking it drops a list of every match, each labelled with a one-line excerpt of its line; choosing one scrolls the viewer to that match. It is an in-page anchor list; a long index scrolls within the dropdown. The control is absent when the session was opened while browsing. The index and the Ctrl+F Find bar share the same match set, so stepping is consistent between them.
 
 ---
 
@@ -116,6 +118,6 @@ A one-line label across the full width of the window bottom, with a sunken relie
 - **Folder expanded.** One or more folder groups opened. Session headers visible under them.
 - **Search running.** At least one criterion has a value. Matching sessions stream into the list with their snippets. Progress shown in the list strip and the window status bar. Cancel button is meaningful.
 - **Search complete.** Summary in the list strip. Results stay until the filter changes.
-- **Viewer open.** The right pane is present and holds a transcript. Subsequent double-clicks in the list replace that transcript.
+- **Viewer open.** The right pane is present and holds a transcript. Subsequent clicks in the list replace that transcript.
 - **Find bar active.** Find bar visible at the bottom of the viewer; matches highlighted in yellow.
 - **Move dialog open.** Main window blocked. Modal move dialog in the foreground.

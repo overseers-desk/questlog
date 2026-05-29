@@ -69,7 +69,6 @@ oo::class create ::questlog::ui::SessionList {
     variable MenuTarget
     variable BookmarkIndex    ;# menu index of the Bookmark entry (its label mutates)
     variable RenameIndex      ;# menu index of the Rename entry, enabled per running state
-    variable PlacePending     ;# 1 while an `after idle` re-place is queued
     variable TotalCost        ;# running sum of per-session cost in the model
     variable StatusBase       ;# last text set by set_progress/set_done
 
@@ -95,7 +94,6 @@ oo::class create ::questlog::ui::SessionList {
         set Query [dict create regex [list] nocase 0]
         set Selected ""
         set NextId 0
-        set PlacePending 0
         my reset_model
         my build
     }
@@ -142,10 +140,6 @@ oo::class create ::questlog::ui::SessionList {
         grid columnconfigure $Top.body 0 -weight 1
         grid rowconfigure    $Top.body 0 -weight 1
         set Text $Top.body.t
-        # Re-place every visible expand arrow when the text widget changes
-        # height (window resize, theme reflow). Scroll updates flow through
-        # on_yscroll, which the text widget calls on every view change.
-        bind $Text <Configure> [list [self] schedule_place]
         # This is a list, not editable text: make the click-drag text selection
         # invisible (it otherwise paints rows grey, active and inactive) and
         # hide the insert cursor.
@@ -271,20 +265,12 @@ oo::class create ::questlog::ui::SessionList {
             catch {$Text yview AnchorTop}
         }
         catch {$Text mark unset AnchorTop}
-        # Streaming inserts may have shifted rows; line positions change
-        # without a scrollbar yview event. Re-place arrows explicitly.
-        my schedule_place
     }
 
     # ---- filter / clear ----------------------------------------------
 
     method clear {} {
         $Text configure -state normal
-        # Drop every place'd arrow before the text rows go.
-        dict for {p s} $Sessions {
-            set a [dict get $s arrow]
-            if {$a ne "" && [winfo exists $a]} { destroy $a }
-        }
         $Text delete 1.0 end
         my purge_tags_and_marks
         $Text mark set TailMark "end-1c"
@@ -450,7 +436,7 @@ oo::class create ::questlog::ui::SessionList {
             folder $folder label $label slug $slug ai_title $aitt \
             when $when size $size uuid $uuid cost $cost \
             count 0 first_lineno $first_lineno snippets [list] \
-            stag "" smark "" semark "" arrow "" rendered 0 expanded 0]
+            stag "" smark "" semark "" rendered 0]
         dict lappend SessionsByFolder $folder $path
         my bump_folder_count $folder 1
         if {$cost ne "" && $cost > 0} {
@@ -474,11 +460,10 @@ oo::class create ::questlog::ui::SessionList {
             [list sessionhead $stag]
         $Text tag add meta $sstart "$sstart + [string length $meta]c"
         my tag_slug_range $sstart $meta $title
-        # Default to clipped single-line: overflow past the widget edge is
-        # simply not drawn. Click on the row toggles to word wrap so the
-        # full prompt becomes visible.
-        set exp [dict get $Sessions $path expanded]
-        $Text tag configure $stag -wrap [expr {$exp ? "word" : "none"}]
+        # Rows are clipped single-line: overflow past the widget edge is
+        # simply not drawn. The full prompt is read in the viewer, which a
+        # click on the row opens.
+        $Text tag configure $stag -wrap none
         set smark "sm[incr NextId]"
         $Text mark set $smark $sstart
         $Text mark gravity $smark left
@@ -495,33 +480,23 @@ oo::class create ::questlog::ui::SessionList {
             [list [self] on_session_press $path %X %Y]
         $Text tag bind $stag <ButtonRelease-1> \
             [list [self] on_session_release $path %X %Y]
-        $Text tag bind $stag <Double-Button-1> \
-            [list [self] on_session_open $path]
         # Tk's <<ContextMenu>> virtual event already maps to the right button
         # per platform (Button-2 on Aqua, Button-3 elsewhere); app.tcl extends
         # it with Control-Button-1 on Aqua so Ctrl+click works too.
         $Text tag bind $stag <<ContextMenu>> \
             [list [self] on_session_right $path %X %Y]
-        # Right-edge expand arrow. Its own widget rather than an inline
-        # text glyph because the text widget's -wrap none clips the line
-        # at the visible right edge; an inline marker at the logical end
-        # is exactly where the user can't see it.
-        set arrow $Text.x[incr NextId]
-        label $arrow -text ⌄ -borderwidth 0 -padx 2 -pady 0 \
-            -cursor hand2 \
-            -background [$Text cget -background] \
-            -foreground "#143d8a"
-        bind $arrow <Button-1> [list [self] on_arrow_click $path]
-        dict set Sessions $path arrow $arrow
+        # A whole session row is one clickable object: a hand cursor over it,
+        # an arrow elsewhere. Text tags carry no -cursor, so swap the widget
+        # cursor on enter/leave.
+        $Text tag bind $stag <Enter> [list $Text configure -cursor hand2]
+        $Text tag bind $stag <Leave> [list $Text configure -cursor arrow]
         foreach snip [dict get $Sessions $path snippets] {
             lassign $snip btype content lineoff
             my render_snippet $path $btype $content $lineoff
         }
         if {$Selected eq $path} {
             $Text tag add selected $smark "$smark lineend"
-            $arrow configure -background [$Text tag cget selected -background]
         }
-        my schedule_place
     }
 
     # Accumulate a match in the model (count, capped snippet list) and draw
@@ -558,9 +533,9 @@ oo::class create ::questlog::ui::SessionList {
         $Text insert $tmp "\n" [list snippet $ntag]
         my tag_hits_in_range $cstart $cend $content
         $Text tag bind $ntag <ButtonRelease-1> \
-            [list [self] on_snippet_click $path]
-        $Text tag bind $ntag <Double-Button-1> \
-            [list [self] on_snippet_open $path $lineoff]
+            [list [self] on_snippet_release $path $lineoff]
+        $Text tag bind $ntag <Enter> [list $Text configure -cursor hand2]
+        $Text tag bind $ntag <Leave> [list $Text configure -cursor arrow]
         # Advance this session's end and the folder's append point past the
         # snippet (the session receiving snippets is always its folder's last).
         $Text mark set $semark [$Text index $tmp]
@@ -658,74 +633,9 @@ oo::class create ::questlog::ui::SessionList {
         }
     }
 
-    # Flip the row between clipped-single-line and word-wrap. Per-row -wrap
-    # lives on $stag, which already tags the header range and is uniquely
-    # owned by this session. The arrow glyph follows the state.
-    method toggle_expanded {path} {
-        if {![dict exists $Sessions $path]} return
-        if {![dict get $Sessions $path rendered]} return
-        set new [expr {![dict get $Sessions $path expanded]}]
-        dict set Sessions $path expanded $new
-        set stag [dict get $Sessions $path stag]
-        $Text tag configure $stag -wrap [expr {$new ? "word" : "none"}]
-        set arrow [dict get $Sessions $path arrow]
-        if {$arrow ne "" && [winfo exists $arrow]} {
-            $arrow configure -text [expr {$new ? "⌃" : "⌄"}]
-        }
-        # The expanded line now occupies a different vertical span;
-        # neighbouring rows shifted, so every arrow needs re-placing.
-        my schedule_place
-    }
-
-    # Arrow click: select the row (matching plain-click feedback) and
-    # toggle wrap. Kept distinct from on_session_release so the body
-    # click never expands - that overloaded gesture confused users.
-    method on_arrow_click {path} {
-        my select $path
-        my toggle_expanded $path
-    }
-
-    # Text widget yview update: forward to the scrollbar, then schedule a
-    # re-place of every visible arrow. Tk fires this on every scroll tick;
-    # the re-place is coalesced behind `after idle` so we do one pass per
-    # event loop turn instead of one per tick.
+    # Text widget yview update: forward to the scrollbar.
     method on_yscroll {args} {
         $Top.body.sb set {*}$args
-        my schedule_place
-    }
-
-    method schedule_place {} {
-        if {$PlacePending} return
-        set PlacePending 1
-        after idle [list [self] place_all_arrows]
-    }
-
-    method place_all_arrows {} {
-        set PlacePending 0
-        if {![winfo exists $Text]} return
-        dict for {path s} $Sessions {
-            if {![dict get $s rendered]} continue
-            my place_arrow $path
-        }
-    }
-
-    # Position one arrow at the right edge of its row, or hide it if the
-    # row is scrolled out of view. dlineinfo returns "" when the line is
-    # not currently displayed; we hide rather than try to derive a
-    # position arithmetically because the text widget owns the truth.
-    method place_arrow {path} {
-        if {![dict exists $Sessions $path]} return
-        set s [dict get $Sessions $path]
-        set w [dict get $s arrow]
-        if {$w eq "" || ![winfo exists $w]} return
-        set smark [dict get $s smark]
-        if {$smark eq ""} { place forget $w; return }
-        set dli [$Text dlineinfo $smark]
-        if {$dli eq ""} { place forget $w; return }
-        lassign $dli _ y _ h _
-        # -x -4 leaves a couple of pixels of breathing room before the
-        # right edge (the scrollbar lives in the next grid column).
-        place $w -in $Text -anchor ne -relx 1.0 -x -4 -y $y
     }
 
     method ensure_folder {folder} {
@@ -813,14 +723,10 @@ oo::class create ::questlog::ui::SessionList {
             if {![dict get $Sessions $path rendered]} continue
             catch {$Text mark unset [dict get $Sessions $path smark] \
                                     [dict get $Sessions $path semark]}
-            set arrow [dict get $Sessions $path arrow]
-            if {$arrow ne "" && [winfo exists $arrow]} { destroy $arrow }
             dict set Sessions $path rendered 0
             dict set Sessions $path stag ""
             dict set Sessions $path smark ""
             dict set Sessions $path semark ""
-            dict set Sessions $path arrow ""
-            dict set Sessions $path expanded 0
         }
         # Drop the now-empty per-session / per-snippet tags left by the delete.
         foreach tg [$Text tag names] {
@@ -911,27 +817,17 @@ oo::class create ::questlog::ui::SessionList {
     # ---- selection / open --------------------------------------------
 
     # Select the whole session object - its header and any snippets - as one
-    # highlighted block (the full-width region, not a text run). The arrow
-    # sits in front of the highlight (it is a place'd child of the text
-    # widget), so its -background follows the selected/unselected state.
+    # highlighted block (the full-width region, not a text run).
     method select {path} {
         if {$Selected ne "" && [dict exists $Sessions $Selected] \
             && [dict get $Sessions $Selected rendered]} {
             set os [dict get $Sessions $Selected]
             catch {$Text tag remove selected [dict get $os smark] [dict get $os semark]}
-            set oarrow [dict get $os arrow]
-            if {$oarrow ne "" && [winfo exists $oarrow]} {
-                $oarrow configure -background [$Text cget -background]
-            }
         }
         set Selected $path
         if {[dict exists $Sessions $path] && [dict get $Sessions $path rendered]} {
             set s [dict get $Sessions $path]
             $Text tag add selected [dict get $s smark] [dict get $s semark]
-            set arrow [dict get $s arrow]
-            if {$arrow ne "" && [winfo exists $arrow]} {
-                $arrow configure -background [$Text tag cget selected -background]
-            }
         }
     }
 
@@ -945,25 +841,19 @@ oo::class create ::questlog::ui::SessionList {
         {*}$OnOpen $path $lineno
     }
 
-    # A plain click selects (and, having armed a drag on press, lets a drag
-    # win if the pointer moved). Opening the viewer is a double-click, so a
-    # single click can begin a drag without also loading the reading view.
-    # Expanding the row to full word-wrap is the right-edge arrow's job,
-    # not the click's - overloading click confused users.
+    # A plain click selects and opens the session in the viewer. A click that
+    # moved the pointer is a drag (armed on press) and wins instead, so the
+    # reading view loads only on a click that stayed put. Selecting and showing
+    # are the same act, so the highlight and the viewer never disagree.
     method on_session_release {path X Y} {
         set was_drag [::questlog::ui::drag::release $X $Y]
         if {$was_drag} return
         my select $path
-    }
-
-    method on_session_open {path} {
-        my select $path
         my open_session $path
     }
 
-    method on_snippet_click {path} { my select $path }
-
-    method on_snippet_open {path lineno} {
+    # A snippet click opens the session too, deep-linked to that match's line.
+    method on_snippet_release {path lineno} {
         my select $path
         my open_session $path $lineno
     }
@@ -1223,8 +1113,6 @@ oo::class create ::questlog::ui::SessionList {
             $Text delete [dict get $s smark] [dict get $s semark]
             catch {$Text mark unset [dict get $s smark] [dict get $s semark]}
         }
-        set arrow [dict get $s arrow]
-        if {$arrow ne "" && [winfo exists $arrow]} { destroy $arrow }
         # Subtract this session's cost from the folder aggregate and the
         # running total before the dict entry vanishes, so a later sum
         # over remaining sessions stays exact.
@@ -1285,12 +1173,6 @@ oo::class create ::questlog::ui::SessionList {
     method redraw_all {} {
         $Text configure -state normal
         my anchor_save
-        # Drop every arrow widget before the underlying rows go away.
-        # The text widget delete that follows would leave them orphaned.
-        dict for {p s} $Sessions {
-            set a [dict get $s arrow]
-            if {$a ne "" && [winfo exists $a]} { destroy $a }
-        }
         $Text delete 1.0 end
         my purge_tags_and_marks
         $Text mark set TailMark "end-1c"
