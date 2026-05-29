@@ -18,32 +18,35 @@ package require Tk
 # colours are these same roles applied as tag config, identical on every OS.
 
 namespace eval ::questlog::theme {
-    # role -> colour. One value per role. Greys are kept distinct by use
-    # (today's values) rather than merged; a later pass may consolidate them.
+    # role -> colour. One value per role. A restrained, warm-neutral scheme:
+    # neutral inks for structure, a quiet slate blue for the user turn, and a
+    # single terracotta accent. Greys are kept distinct by use rather than
+    # merged; a later pass may consolidate them.
     variable Palette {
-        user            #06c
-        assistant       #222
-        tool            #a60
-        tool_result     #666
-        muted           #888
-        snippet         #333
-        meta            #777
-        folder          #555
-        sessionhead     #143d8a
-        section         #444
-        compact         #a33
-        sel             #aecbff
-        drop            #cce5ff
-        recap           #ffefd0
+        user            #2f5c8a
+        assistant       #1f2328
+        tool            #8a5a00
+        tool_result     #5c6166
+        muted           #8a9099
+        snippet         #3a3f44
+        meta            #8a9099
+        folder          #44494e
+        sessionhead     #1f4e79
+        section         #44494e
+        compact         #a14f3a
+        sel             #d3e2f2
+        drop            #e6eef6
+        recap           #f6ead4
         strip           #e8e8e8
-        find            yellow
+        find            #ffe6a3
         chip_or         gray
-        strip_user      #1c3a6a
-        strip_assistant #345f23
-        strip_other     #7a4a14
+        strip_user      #274b73
+        strip_assistant #3d5c2e
+        strip_other     #7a4f22
     }
-    # The list's hit-highlight hues, cycled one per search term.
-    variable Hues {#fff59d #b3e5fc #f8bbd0 #c8e6c9}
+    # The list's hit-highlight hues, cycled one per search term: low-chroma
+    # amber, blue, rose, green tints.
+    variable Hues {#f2e3a6 #cfe0ef #ecd5dc #d4e6d0}
 }
 
 # Colour for a role. Errors loudly on an unknown role rather than returning a
