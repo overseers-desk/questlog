@@ -245,6 +245,7 @@ proc ::questlog::jsonl::record_timestamp {rec} {
 proc ::questlog::jsonl::last_assistant_text {path} {
     set last ""
     if {[catch {open $path r} fh]} { return "" }
+    chan configure $fh -encoding utf-8 -profile replace
     while {[chan gets $fh line] >= 0} {
         if {$line eq ""} continue
         set rec [parse_line $line]
@@ -263,7 +264,7 @@ proc ::questlog::jsonl::last_assistant_text {path} {
 # first hit is enough.
 proc ::questlog::jsonl::first_cwd {path} {
     if {[catch {open $path r} fh]} { return "" }
-    chan configure $fh -encoding utf-8
+    chan configure $fh -encoding utf-8 -profile replace
     set cwd ""
     while {[chan gets $fh line] >= 0} {
         if {$line eq ""} continue

@@ -526,7 +526,7 @@ set ::questlog::search::WorkerScript {
             set buffer [list]
             set seen [dict create]
             if {[catch {open $path r} fh]} { continue }
-            chan configure $fh -encoding utf-8
+            chan configure $fh -encoding utf-8 -profile replace
             while {[chan gets $fh line] >= 0} {
                 incr lineno
                 if {$line eq ""} continue
@@ -728,7 +728,7 @@ oo::class create ::questlog::Search {
     method run_search {my_epoch snapshot} {
         # Yield once so callers establishing vwait before our callbacks
         # see them. Same pattern as Scan.run_scan.
-        after 1 [list catch [list [info coroutine]]]
+        after 1 [list ::questlog::resume_coro [info coroutine]]
         yield
         if {$my_epoch != $Epoch} return
 
@@ -774,7 +774,7 @@ oo::class create ::questlog::Search {
                 incr count
                 continue
             }
-            chan configure $fh -encoding utf-8
+            chan configure $fh -encoding utf-8 -profile replace
             set yield_clock [clock milliseconds]
             while {[chan gets $fh line] >= 0} {
                 incr lineno
@@ -838,7 +838,7 @@ oo::class create ::questlog::Search {
                 # of a large log.
                 if {$lineno % 500 == 0 && [clock milliseconds] - $yield_clock > 30} {
                     if {$my_epoch != $Epoch} { close $fh; return }
-                    after 1 [list catch [list [info coroutine]]]
+                    after 1 [list ::questlog::resume_coro [info coroutine]]
                     yield
                     if {$my_epoch != $Epoch} { close $fh; return }
                     set yield_clock [clock milliseconds]
@@ -879,7 +879,7 @@ oo::class create ::questlog::Search {
             dict set Counts done $count
             if {$count % 50 == 0} {
                 {*}$OnProgress $count $total [dict get $Counts matches]
-                after 1 [list catch [list [info coroutine]]]
+                after 1 [list ::questlog::resume_coro [info coroutine]]
                 yield
                 if {$my_epoch != $Epoch} return
             }

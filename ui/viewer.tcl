@@ -303,6 +303,7 @@ oo::class create ::questlog::ui::Viewer {
 
     method load {} {
         set fh [open $Path r]
+        chan configure $fh -encoding utf-8 -profile replace
         set lineno 0
         while {[chan gets $fh line] >= 0} {
             incr lineno

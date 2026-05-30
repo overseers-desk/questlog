@@ -127,7 +127,7 @@ set ::questlog::cost::WorkerScript {
         if {[catch {open $path r} fh]} {
             return [dict create per_model {} first_ts "" ok 0]
         }
-        chan configure $fh -encoding utf-8
+        chan configure $fh -encoding utf-8 -profile replace
         while {[chan gets $fh line] >= 0} {
             if {$line eq ""} continue
             if {$first_ts eq "" && [regexp {"timestamp":"([^"]+)"} $line -> m]} {

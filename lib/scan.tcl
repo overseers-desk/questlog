@@ -30,6 +30,16 @@ proc ::questlog::scan::cmp_mtime {a b} {
     return 0
 }
 
+# Resume a coroutine from an `after` callback. The coroutine command deletes
+# itself when it returns, so a resume scheduled before a cancel can fire after
+# the coroutine is already gone; skip it then. An error the coroutine itself
+# raises is deliberately NOT caught here - it reaches bgerror and is seen,
+# instead of dying silently and hanging the vwait that awaits the scan. A bare
+# `catch` around the resume swallowed both, turning a real fault into a freeze.
+proc ::questlog::resume_coro {co} {
+    if {[llength [info commands $co]]} { $co }
+}
+
 oo::class create ::questlog::Scan {
     variable Rows         ;# dict: path -> row dict
     variable Folders      ;# dict: folder basename -> resolved display path
@@ -76,7 +86,7 @@ oo::class create ::questlog::Scan {
         # scans complete synchronously inside `coroutine` and the
         # caller's vwait blocks forever waiting for a write that
         # already happened.
-        after 1 [list catch [list [info coroutine]]]
+        after 1 [list ::questlog::resume_coro [info coroutine]]
         yield
         if {$my_epoch != $Epoch} return
         set count 0
@@ -100,7 +110,7 @@ oo::class create ::questlog::Scan {
             incr count
             if {$count % 200 == 0} {
                 if {$OnProgress ne ""} { {*}$OnProgress $count $total }
-                after 1 [list catch [list [info coroutine]]]
+                after 1 [list ::questlog::resume_coro [info coroutine]]
                 yield
                 if {$my_epoch != $Epoch} return
             }
@@ -156,7 +166,11 @@ oo::class create ::questlog::Scan {
     # live in. Slug priority is unchanged: agentName wins over aiTitle.
     method scan_one {path} {
         if {[catch {open $path r} fh]} { return [dict create] }
-        chan configure $fh -encoding utf-8
+        # -profile replace: the tail scan below seeks to an arbitrary byte
+        # offset that can split a multibyte character, and a session file may
+        # hold malformed UTF-8; under Tcl 9 strict decoding `chan gets` would
+        # otherwise throw on the partial or invalid sequence and abort the scan.
+        chan configure $fh -encoding utf-8 -profile replace
         set users 0
         set first ""
         set cwd ""
