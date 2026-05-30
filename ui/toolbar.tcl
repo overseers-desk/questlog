@@ -180,6 +180,11 @@ oo::class create ::questlog::ui::Toolbar {
 
     # ---- public API --------------------------------------------------------
 
+    # True while the search entry holds the keyboard, so the global Control-b
+    # sidebar toggle declines and leaves the entry's own Control-b (cursor left)
+    # alone while the user is typing.
+    method owns_focus {} { return [expr {[focus] eq "$Top.search.e"}] }
+
     method subscribe {cb} {
         lappend Subscribers $cb
     }

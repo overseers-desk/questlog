@@ -40,8 +40,12 @@ oo::class create ::questlog::ui::Viewer {
     variable MatchList        ;# listbox of per-match rows inside the panel
     variable MatchLabels      ;# per-match one-line excerpt, parallel to FindMatches
     variable Roles            ;# dict: jsonl line -> uppercased role, for row colour
+    variable OnToggle         ;# cb: () -> ask the app to fold/unfold the list pane
+    variable CollapseBtn      ;# the header toggle label
+    variable IconOpen         ;# toggle photo, list shown (solid left pane)
+    variable IconClosed       ;# toggle photo, list hidden (dim left pane)
 
-    constructor {parent} {
+    constructor {parent {on_toggle ""}} {
         set Top $parent
         set Shown 0
         set Path ""
@@ -58,6 +62,7 @@ oo::class create ::questlog::ui::Viewer {
         set Bodies [dict create]
         set MatchLabels [list]
         set Roles [dict create]
+        set OnToggle $on_toggle
         my build
     }
 
@@ -120,6 +125,28 @@ oo::class create ::questlog::ui::Viewer {
         # width would otherwise claim the whole strip and squeeze this out.
         pack $Top.head.font -side right -padx 6 -before $Top.head.path
         bind $Top.head.font <Button-1> [list [self] choose_font]
+
+        # Sidebar toggle at the far left of the strip (Ctrl+B's mouse twin). The
+        # design icon (screens.jsx SessionViewer) is a panel outline with a
+        # filled left pane and a divider; the left pane is solid when the list is
+        # shown and dim when hidden, so the icon states the current mode. Two
+        # photos, swapped by set_collapsed. It is the always-visible hint that
+        # the list is foldable and reopenable. Core Tk 9 decodes SVG with no
+        # extension; if a build cannot, make_toggle_icon returns "" and a text
+        # glyph stands in.
+        set IconOpen   [my make_toggle_icon [::questlog::theme::c muted] \
+                            [::questlog::theme::c muted]]
+        set IconClosed [my make_toggle_icon [::questlog::theme::c muted] \
+                            [::questlog::theme::c faint]]
+        set CollapseBtn $Top.head.collapse
+        if {$IconOpen ne ""} {
+            label $CollapseBtn -image $IconOpen -background $strip -cursor hand2
+        } else {
+            label $CollapseBtn -text "◫" -background $strip -cursor hand2 \
+                -foreground [::questlog::theme::c muted]
+        }
+        pack $CollapseBtn -side left -padx {6 2} -before $Top.head.path
+        bind $CollapseBtn <Button-1> [list [self] do_toggle]
 
         ttk::frame $Top.body
         pack $Top.body -side top -fill both -expand 1
@@ -243,6 +270,36 @@ oo::class create ::questlog::ui::Viewer {
         bind $Find.e <Escape>   [list [self] find_hide]
         bind $Find.e <Return>   [list [self] find_next]
     }
+
+    # Build a sidebar-toggle photo from the design's inline SVG (screens.jsx),
+    # scaled to the strip's text height so it stays crisp on scaled displays.
+    # Returns "" if this Tk build cannot decode SVG, so the caller can fall back.
+    method make_toggle_icon {stroke leftfill} {
+        set h [expr {int([font metrics QLMono -linespace] * 0.9)}]
+        if {$h < 11} { set h 11 }
+        set svg "<svg width=\"14\" height=\"11\" viewBox=\"0 0 14 11\">\
+<rect x=\"0.6\" y=\"0.6\" width=\"12.8\" height=\"9.8\" rx=\"1.6\" fill=\"none\" stroke=\"$stroke\" stroke-width=\"1\"/>\
+<rect x=\"0.6\" y=\"0.6\" width=\"4.4\" height=\"9.8\" rx=\"1.6\" fill=\"$leftfill\"/>\
+<line x1=\"5\" y1=\"0.6\" x2=\"5\" y2=\"10.4\" stroke=\"$stroke\" stroke-width=\"1\"/></svg>"
+        if {[catch {image create photo -data $svg \
+                -format [list svg -scaletoheight $h]} img]} {
+            return ""
+        }
+        return $img
+    }
+
+    method do_toggle {} { if {$OnToggle ne ""} { {*}$OnToggle } }
+
+    # Reflect the list pane's state in the toggle icon: solid left pane when the
+    # list is shown, dim when it is hidden. A no-op under the text-glyph fallback.
+    method set_collapsed {collapsed} {
+        if {![winfo exists $CollapseBtn]} return
+        if {[$CollapseBtn cget -image] eq ""} return
+        $CollapseBtn configure -image [expr {$collapsed ? $IconClosed : $IconOpen}]
+    }
+
+    # The reading text, so the app can move focus here when it folds the list.
+    method textwidget {} { return $Text }
 
     # Pop the platform font chooser, seeded with the body's current font. It is
     # a single shared modeless dialog, not a widget; its -command fires with the

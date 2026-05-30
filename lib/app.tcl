@@ -22,10 +22,13 @@ namespace eval ::questlog::app {
     variable StatusVar
     variable Root
     variable PW            ;# the horizontal paned window
+    variable ListFrame     ;# the list column, forgotten/re-inserted on fold
     variable ViewFrame     ;# the viewer's container, present in the PW from launch
     variable Running       ;# last polled uuid -> path running set
     variable RunTimer      ;# after-id of the running-poll loop
     variable CurrentQuery  ;# {terms <list> nocase 0|1} of the active search, or {}
+    variable SidebarCollapsed ;# 1 while the list column is folded away (transient)
+    variable SidebarSash      ;# remembered divider position as a fraction of width
 }
 
 proc ::questlog::app::start {root {initial_criteria {}}} {
@@ -37,14 +40,19 @@ proc ::questlog::app::start {root {initial_criteria {}}} {
     variable StatusVar
     variable Root
     variable PW
+    variable ListFrame
     variable ViewFrame
     variable Running
     variable CurrentQuery
+    variable SidebarCollapsed
+    variable SidebarSash
 
     set Root $root
     set StatusVar ""
     set Running [dict create]
     set CurrentQuery {}
+    set SidebarCollapsed 0
+    set SidebarSash 0.58
 
     # The <<ContextMenu>> virtual event already covers Button-2 on Aqua and
     # Button-3 on X11/Windows. Tk does not include Control-Click in it on
@@ -68,6 +76,7 @@ proc ::questlog::app::start {root {initial_criteria {}}} {
     # toolbar scopes the list (master), not the viewer (detail), so it lives
     # inside this column rather than spanning the window.
     set list_frame $PW.list
+    set ListFrame $list_frame
     ttk::frame $list_frame
     set Toolbar [::questlog::ui::Toolbar new $list_frame.tb [::questlog::path::launch_cwd]]
     pack $list_frame.tb -side top -fill x
@@ -88,7 +97,7 @@ proc ::questlog::app::start {root {initial_criteria {}}} {
     # shows a centered empty state until the first session is previewed.
     set ViewFrame $PW.view
     ttk::frame $ViewFrame
-    set Viewer [::questlog::ui::Viewer new $ViewFrame.v]
+    set Viewer [::questlog::ui::Viewer new $ViewFrame.v [namespace code toggle_sidebar]]
     pack $ViewFrame.v -side top -fill both -expand 1
     $PW add $ViewFrame -weight 42
 
@@ -144,8 +153,54 @@ proc ::questlog::app::start {root {initial_criteria {}}} {
     $Toolbar publish
 
     bind . <Control-q> [namespace code quit]
+    bind . <Control-b> [namespace code toggle_sidebar]
 
     run_tick
+}
+
+# Fold the list column away so the viewer fills the window (Ctrl+B, or the
+# viewer header's toggle), and unfold it back. `forget` keeps the column and its
+# contents alive, so unfold is instant with no rescan; the divider is remembered
+# as a fraction of the paned width, so a resize while folded does not misplace
+# it on unfold. Transient: the app always opens unfolded.
+proc ::questlog::app::toggle_sidebar {} {
+    variable PW
+    variable ListFrame
+    variable Viewer
+    variable Toolbar
+    variable SidebarCollapsed
+    variable SidebarSash
+    # While the search field has focus, Control-b is the entry's own cursor-left;
+    # leave it to the entry rather than folding the pane.
+    if {[$Toolbar owns_focus]} return
+    if {$SidebarCollapsed} {
+        $PW insert 0 $ListFrame -weight 58
+        set SidebarCollapsed 0
+        after idle [list ::questlog::app::restore_sash $SidebarSash]
+        $Viewer set_collapsed 0
+    } else {
+        set w [winfo width $PW]
+        if {$w > 1} { set SidebarSash [expr {double([$PW sashpos 0]) / $w}] }
+        $PW forget $ListFrame
+        set SidebarCollapsed 1
+        $Viewer set_collapsed 1
+        focus [$Viewer textwidget]
+    }
+}
+
+# Re-place the divider after the re-inserted column has been laid out (its width
+# is not final in the same event-loop turn as the insert). Guarded so a fold
+# that happened before this idle fired leaves it a no-op.
+proc ::questlog::app::restore_sash {frac} {
+    variable PW
+    variable ListFrame
+    variable SidebarCollapsed
+    if {$SidebarCollapsed} return
+    if {![winfo exists $ListFrame]} return
+    update idletasks
+    set w [winfo width $PW]
+    if {$w <= 1} return
+    $PW sashpos 0 [expr {int($frac * $w)}]
 }
 
 # Place the sash at ~58% once the paned window is mapped (its width is 1
