@@ -617,8 +617,9 @@ set ::questlog::search::WorkerScript {
     thread::wait
 }
 
-# ::questlog::Search - typed-criteria search across session logs, coroutine by
-# default, threaded fan-out when QUESTLOG_SEARCH_THREADS is set.
+# ::questlog::Search - typed-criteria search across session logs, threaded
+# fan-out by default; QUESTLOG_SEARCH_THREADS tunes the worker count, or 0
+# selects the single-thread coroutine path.
 #
 # A search is a list of criteria, each {type regex|read|write|edit value}.
 # A session qualifies when every criterion is satisfied somewhere in it
@@ -695,12 +696,33 @@ oo::class create ::questlog::Search {
         coroutine $co [namespace which my] run_search $my_epoch $snapshot
     }
 
+    # Worker count for a search. Threaded by default; QUESTLOG_SEARCH_THREADS
+    # overrides - a non-negative integer sets the count, 0 forces the
+    # single-thread coroutine path. An unset or malformed value falls back to
+    # default_thread_count.
     method pick_thread_count {} {
-        if {![info exists ::env(QUESTLOG_SEARCH_THREADS)]} { return 0 }
-        set v $::env(QUESTLOG_SEARCH_THREADS)
-        if {![string is integer -strict $v]} { return 0 }
-        if {$v < 1} { return 0 }
-        return $v
+        if {[info exists ::env(QUESTLOG_SEARCH_THREADS)]} {
+            set v $::env(QUESTLOG_SEARCH_THREADS)
+            if {[string is integer -strict $v] && $v >= 0} { return $v }
+        }
+        return [my default_thread_count]
+    }
+
+    # Best-effort core count, less two to leave the UI and a margin, clamped to
+    # a sane band. Detection failure falls back to a modest 4.
+    method default_thread_count {} {
+        set cores 0
+        if {![catch {exec nproc} out] && [string is integer -strict [string trim $out]]} {
+            set cores [string trim $out]
+        } elseif {![catch {exec sysctl -n hw.ncpu} out]
+                  && [string is integer -strict [string trim $out]]} {
+            set cores [string trim $out]
+        }
+        if {$cores < 2} { return 4 }
+        set n [expr {$cores - 2}]
+        if {$n < 1} { set n 1 }
+        if {$n > 8} { set n 8 }
+        return $n
     }
 
     method run_search {my_epoch snapshot} {
@@ -811,8 +833,9 @@ oo::class create ::questlog::Search {
                         lappend buffer [list $lineno $btype $content]
                     }
                 }
-                # Yield mid-file so a cancel issued by a fresh keystroke
-                # lands without waiting for the rest of a large log.
+                # Yield mid-file so a cancel issued by a new search (a fresh
+                # Enter or a filter change) lands without waiting for the rest
+                # of a large log.
                 if {$lineno % 500 == 0 && [clock milliseconds] - $yield_clock > 30} {
                     if {$my_epoch != $Epoch} { close $fh; return }
                     after 1 [list catch [list [info coroutine]]]

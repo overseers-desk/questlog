@@ -73,7 +73,6 @@ oo::class create ::questlog::ui::Toolbar {
     variable Top
     variable Cwd
     variable Subscribers
-    variable DebounceAfter
     variable WindowVar
     variable SearchVar
     variable SearchCaseVar
@@ -100,7 +99,6 @@ oo::class create ::questlog::ui::Toolbar {
         set Clauses [dict create under {} read {} wrote {} edited {} pattern {}]
         set UnderAuto 0
         set Subscribers [list]
-        set DebounceAfter ""
         set RowFrames [dict create]
         set PopValue ""
 
@@ -119,9 +117,9 @@ oo::class create ::questlog::ui::Toolbar {
         # Placeholder microcopy (Tk 9 ttk entry); a harmless no-op if the build
         # lacks -placeholder.
         catch {$Top.search.e configure \
-            -placeholder "type one or more words, all must appear somewhere in the session"}
+            -placeholder "type one or more words and press Enter; all must appear somewhere in the session"}
         pack $Top.search.e -side left -fill x -expand 1
-        bind $Top.search.e <KeyRelease> [list [self] on_search_change]
+        bind $Top.search.e <Return> [list [self] publish]
         ttk::checkbutton $Top.search.aa -text "Aa" \
             -variable [my varname SearchCaseVar] \
             -command [list [self] publish]
@@ -459,15 +457,4 @@ oo::class create ::questlog::ui::Toolbar {
         return $files
     }
 
-    # ---- search debounce ---------------------------------------------------
-
-    method on_search_change {} {
-        if {$DebounceAfter ne ""} { after cancel $DebounceAfter }
-        set DebounceAfter [after 200 [list [self] publish]]
-    }
-
-    method destroy {} {
-        if {$DebounceAfter ne ""} { after cancel $DebounceAfter }
-        next
-    }
 }
