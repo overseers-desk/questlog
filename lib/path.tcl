@@ -3,7 +3,7 @@ package require Tcl 9
 namespace eval ::questlog::path {
     namespace export encode_cwd projects_root pretty_home display_label \
         list_all_projects ensure_project_folder candidate_cwds_for \
-        move_session set_bookmark clear_bookmark
+        move_session set_bookmark clear_bookmark launch_cwd
 }
 
 # Architectural gate. Rename Tcl's `file` command and replace it with a
@@ -44,6 +44,19 @@ proc ::questlog::path::pretty_home {path} {
 # Root of the on-disk Claude session store.
 proc ::questlog::path::projects_root {} {
     return [file join $::env(HOME) .claude projects]
+}
+
+# The directory questlog was launched from. Prefer the shell's logical
+# $PWD, which preserves the symlinked path the user cd'd through (the same
+# form Claude Code records as a session cwd), and fall back to the physical
+# getcwd when $PWD is unset. $PWD is exported by interactive shells but not
+# by GUI launchers (Finder, Spotlight, the Dock, a .desktop entry), so
+# reading $::env(PWD) directly would error there; [pwd] is always defined.
+proc ::questlog::path::launch_cwd {} {
+    if {[info exists ::env(PWD)] && [file isdirectory $::env(PWD)]} {
+        return $::env(PWD)
+    }
+    return [pwd]
 }
 
 # Encode an ABSOLUTE path into the basename form Claude uses on disk:

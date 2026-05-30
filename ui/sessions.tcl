@@ -980,8 +980,9 @@ oo::class create ::questlog::ui::SessionList {
     }
     method menu_reveal {} {
         set dir [file join [::questlog::path::projects_root] [my menu_target_get folder]]
-        if {[catch {exec xdg-open $dir &} err]} {
-            puts stderr "questlog: xdg-open failed: $err"
+        set opener [expr {$::tcl_platform(os) eq "Darwin" ? "open" : "xdg-open"}]
+        if {[catch {exec $opener $dir &} err]} {
+            puts stderr "questlog: $opener failed: $err"
         }
     }
     method menu_move {} { {*}$OnMoveRequest [list $MenuPath] }

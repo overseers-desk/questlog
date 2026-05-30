@@ -69,7 +69,7 @@ proc ::questlog::app::start {root {initial_criteria {}}} {
     # inside this column rather than spanning the window.
     set list_frame $PW.list
     ttk::frame $list_frame
-    set Toolbar [::questlog::ui::Toolbar new $list_frame.tb $::env(PWD)]
+    set Toolbar [::questlog::ui::Toolbar new $list_frame.tb [::questlog::path::launch_cwd]]
     pack $list_frame.tb -side top -fill x
     set SessionList [::questlog::ui::SessionList new $list_frame.s \
         [namespace code resolve_folder] \
@@ -134,7 +134,7 @@ proc ::questlog::app::start {root {initial_criteria {}}} {
     # Skipped when CLI criteria were given — the user is asking for a
     # specific query, not a default scope.
     if {[llength $initial_criteria] == 0} {
-        set launch_cwd $::env(PWD)
+        set launch_cwd [::questlog::path::launch_cwd]
         set folder [::questlog::path::encode_cwd $launch_cwd]
         set proj [file join [::questlog::path::projects_root] $folder]
         if {[file isdirectory $proj]} {
