@@ -1,5 +1,5 @@
 Name:           questlog
-Version:        1.0.1
+Version:        1.0.2
 Release:        1%{?dist}
 Summary:        GUI for finding, reading, and reopening past Claude Code sessions
 License:        MIT
@@ -44,6 +44,16 @@ install -D -m 0644 questlog.desktop \
 %{_datadir}/applications/questlog.desktop
 
 %changelog
+* Sat May 30 2026 Weiwu Zhang <a@colourful.land> - 1.0.2-1
+- Fix: session list could hang over a large recent history; a session file
+  above 64 KB aborted the scan under Tcl 9 strict UTF-8 decoding
+- Single-file executable via zipfs mkimg (runs with the Tcl 9 runtime)
+- Installation guide added (docs/installation.md)
+- Runs on macOS (liveness, launch cwd, reveal-in-folder no longer Linux-only)
+- Search runs on Enter instead of on every keystroke
+- Right-click a search-result row to open its session menu
+- Search hits marked by an amber background; design palette, pills, toolbar adopted
+
 * Fri May 29 2026 Weiwu Zhang <a@colourful.land> - 1.0.1-1
 - Project renamed from find-my-session to questlog; command is now questlog
 - Session viewer is a persistent full-height pane from launch; single-click opens

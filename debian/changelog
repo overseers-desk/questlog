@@ -1,3 +1,20 @@
+questlog (1.0.2) unstable; urgency=medium
+
+  * Fix: the session list could hang after a few rows over a large recent
+    history; a session file above 64 KB aborted the scan under Tcl 9's
+    strict UTF-8 decoding.
+  * Single-file executable: a zipfs mkimg build runs with no install on a
+    host that has the Tcl 9 runtime.
+  * Installation guide added (docs/installation.md).
+  * Runs on macOS: process-liveness, launch directory, and reveal-in-folder
+    no longer assume Linux.
+  * Search runs on Enter instead of on every keystroke.
+  * Right-click a search-result row to open its session menu.
+  * Search hits marked by an amber background; the design's role palette,
+    pill labels, and toolbar details adopted.
+
+ -- Weiwu Zhang <a@colourful.land>  Sat, 30 May 2026 12:29:40 +0200
+
 questlog (1.0.1) unstable; urgency=medium
 
   * Project renamed from find-my-session to questlog; command is now questlog.
