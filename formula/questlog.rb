@@ -6,8 +6,8 @@
 class Questlog < Formula
   desc "GUI for finding, reading, and reopening past Claude Code sessions"
   homepage "https://github.com/SmartLayer/questlog"
-  url "https://github.com/SmartLayer/questlog/archive/refs/tags/v1.0.1.tar.gz"
-  sha256 "a63f3e87a3f0a87239c9a29f7cd354db793eb70f5b84d0040566697c7cdcde02"
+  url "https://github.com/SmartLayer/questlog/archive/refs/tags/v1.0.2.tar.gz"
+  sha256 "a3ca5036c144287d28a595bdddad32aa5e584002975f5ac8f515d8b8e40d14b5"
   license "MIT"
 
   depends_on "tcl-tk"
