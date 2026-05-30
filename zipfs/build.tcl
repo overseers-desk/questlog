@@ -77,7 +77,11 @@ switch -- $tcl_platform(os) {
     Darwin  { set os macos }
     default { set os linux }
 }
-set out [file join $distdir "questlog-$ver-$os-[exec uname -m]"]
+# Linux reports aarch64 where macOS reports arm64; normalise so an arm64 image
+# carries the same token on either OS.
+set arch [exec uname -m]
+if {$arch eq "aarch64"} { set arch arm64 }
+set out [file join $distdir "questlog-$ver-$os-$arch"]
 file delete -force $out
 
 # strip == stage makes archive paths root-relative; the stub wish provides the
