@@ -39,7 +39,7 @@ namespace eval ::questlog::theme {
         drop            #e6eef6
         recap           #f6ead4
         strip           #e8e8e8
-        find            #ffe6a3
+        find            #ffec70
         banner_bg       #fbf3d0
         banner_fg       #6b5d1f
         chip_or         gray
@@ -47,9 +47,10 @@ namespace eval ::questlog::theme {
         strip_assistant #3d5c2e
         strip_other     #7a4f22
     }
-    # The list's hit-highlight hues, cycled one per search term: low-chroma
-    # amber, blue, rose, green tints.
-    variable Hues {#f2e3a6 #cfe0ef #ecd5dc #d4e6d0}
+    # The list's hit-highlight hues, cycled one per search term. The first
+    # (the single-term common case) is the design's amber, matching the viewer
+    # `find` mark; the rest are quiet tints that distinguish extra terms.
+    variable Hues {#ffec70 #cfe0ef #ecd5dc #d4e6d0}
 }
 
 # Colour for a role. Errors loudly on an unknown role rather than returning a

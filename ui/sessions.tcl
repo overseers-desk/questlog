@@ -213,7 +213,7 @@ oo::class create ::questlog::ui::SessionList {
         set hues [::questlog::theme::hues]
         for {set i 0} {$i < [llength $hues]} {incr i} {
             set t hit-$i
-            $Text tag configure $t -background [lindex $hues $i] -font {-weight bold}
+            $Text tag configure $t -background [lindex $hues $i]
             lappend HitTags $t
         }
     }
