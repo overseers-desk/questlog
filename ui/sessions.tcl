@@ -540,6 +540,10 @@ oo::class create ::questlog::ui::SessionList {
         my tag_hits_in_range $cstart $cend $content
         $Text tag bind $ntag <ButtonRelease-1> \
             [list [self] on_snippet_release $path $lineoff]
+        # A snippet row is an extension of its session, so right-clicking it
+        # raises the same session menu as the header.
+        $Text tag bind $ntag <<ContextMenu>> \
+            [list [self] on_session_right $path %X %Y]
         $Text tag bind $ntag <Enter> [list $Text configure -cursor hand2]
         $Text tag bind $ntag <Leave> [list $Text configure -cursor arrow]
         # Advance this session's end and the folder's append point past the
