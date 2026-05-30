@@ -174,8 +174,10 @@ oo::class create ::questlog::ui::SessionList {
         # Folder heading: the outermost level, bold, with a wide gap above so
         # each project group reads as a section.
         $Text tag configure folderhead \
-            -font QLBold -foreground [::questlog::theme::c folder] \
+            -font QLMono -foreground [::questlog::theme::c folder] \
             -spacing1 14 -spacing3 3
+        $Text tag configure glyph-running  -foreground [::questlog::theme::c glyph_running]
+        $Text tag configure glyph-bookmark -foreground [::questlog::theme::c glyph_bookmark]
         # Session header: one line, the block's "title" (like a search result
         # heading), indented under its folder. Rows are separated by the gap
         # above each and the bold title colour; no background band. The
@@ -200,11 +202,13 @@ oo::class create ::questlog::ui::SessionList {
         $Text configure -tabs [list $content_col left]
         $Text tag configure snippet -lmargin1 $lm -lmargin2 $content_col \
             -foreground [::questlog::theme::c snippet] -spacing3 1
-        $Text tag configure type-user        -foreground [::questlog::theme::c user]        -font QLBold
-        $Text tag configure type-assistant   -foreground [::questlog::theme::c assistant]   -font QLBold
-        $Text tag configure type-tool_use    -foreground [::questlog::theme::c tool]        -font QLBold
-        $Text tag configure type-tool_result -foreground [::questlog::theme::c tool_result] -font QLBold
-        $Text tag configure type-system      -foreground [::questlog::theme::c muted]       -font QLBold
+        # Snippet type labels are small tinted pill badges (role foreground on a
+        # pale background), matching the design's SNIPPET_COLORS.
+        $Text tag configure type-user        -foreground [::questlog::theme::c user]        -background [::questlog::theme::c user_bg]        -font QLBold
+        $Text tag configure type-assistant   -foreground [::questlog::theme::c assistant]   -background [::questlog::theme::c assistant_bg]   -font QLBold
+        $Text tag configure type-tool_use    -foreground [::questlog::theme::c tool]        -background [::questlog::theme::c tool_bg]        -font QLBold
+        $Text tag configure type-tool_result -foreground [::questlog::theme::c tool_result] -background [::questlog::theme::c tool_result_bg] -font QLBold
+        $Text tag configure type-system      -foreground [::questlog::theme::c system]      -background [::questlog::theme::c system_bg]      -font QLBold
         # Metadata prefix: a fixed-width font so the time and size columns at
         # the front of each session line align down the list without tab math.
         $Text tag configure meta -font QLMono -foreground [::questlog::theme::c meta]
@@ -322,7 +326,7 @@ oo::class create ::questlog::ui::SessionList {
             set path [lindex $under_list 0]
             set pretty [::questlog::path::pretty_home $path]
             $Top.banner.text configure -text \
-                "Showing sessions from $pretty only."
+                "ⓘ  Showing sessions from $pretty only."
             pack $Top.banner -side top -fill x -after $Top.bar
         } else {
             pack forget $Top.banner
@@ -466,6 +470,7 @@ oo::class create ::questlog::ui::SessionList {
             [list sessionhead $stag]
         $Text tag add meta $sstart "$sstart + [string length $meta]c"
         my tag_slug_range $sstart $meta $title
+        my tag_glyphs $sstart [string length $meta]
         # Rows are clipped single-line: overflow past the widget edge is
         # simply not drawn. The full prompt is read in the viewer, which a
         # click on the row opens.
@@ -531,7 +536,8 @@ oo::class create ::questlog::ui::SessionList {
         set tmp tmpsnip
         $Text mark set $tmp [$Text index $semark]
         $Text mark gravity $tmp right
-        $Text insert $tmp $btype [list snippet $type_tag $ntag]
+        $Text insert $tmp [string toupper [string map {_ { }} $btype]] \
+            [list snippet $type_tag $ntag]
         $Text insert $tmp "\t" [list snippet $ntag]
         set cstart [$Text index $tmp]
         $Text insert $tmp $content [list snippet $ntag]
@@ -617,6 +623,21 @@ oo::class create ::questlog::ui::SessionList {
         $Text tag add slug "$row_start + ${base}c" "$row_start + [expr {$base + $len}]c"
     }
 
+    # Colour the status glyphs at the head of a row: running ● green, bookmark
+    # ★ amber. They are the leading run of glyph chars right after the meta
+    # prefix, before the first space.
+    method tag_glyphs {row_start meta_len} {
+        set base "$row_start + ${meta_len}c"
+        for {set i 0} {$i < 4} {incr i} {
+            set ch [$Text get "$base + ${i}c"]
+            if {$ch eq $::questlog::ui::GLYPH_RUNNING} {
+                $Text tag add glyph-running "$base + ${i}c" "$base + [expr {$i + 1}]c"
+            } elseif {$ch eq $::questlog::ui::GLYPH_BOOKMARK} {
+                $Text tag add glyph-bookmark "$base + ${i}c" "$base + [expr {$i + 1}]c"
+            } else break
+        }
+    }
+
     method session_bookmarked {path} {
         set row [{*}$LookupSession $path]
         if {$row ne ""} { return [my dict_or $row bookmarked 0] }
@@ -638,6 +659,7 @@ oo::class create ::questlog::ui::SessionList {
             [list sessionhead $stag]
         $Text tag add meta $smark "$smark + [string length $meta]c"
         my tag_slug_range $smark $meta $title
+        my tag_glyphs $smark [string length $meta]
         if {$Selected eq $path} {
             $Text tag add selected $smark [dict get $s semark]
         }

@@ -18,39 +18,63 @@ package require Tk
 # colours are these same roles applied as tag config, identical on every OS.
 
 namespace eval ::questlog::theme {
-    # role -> colour. One value per role. A restrained, warm-neutral scheme:
-    # neutral inks for structure, a quiet slate blue for the user turn, and a
-    # single terracotta accent. Greys are kept distinct by use rather than
-    # merged; a later pass may consolidate them.
+    # role -> colour, taken from the design source: the transcript/snippet role
+    # set (screens.jsx SNIPPET_COLORS and the viewer's role map) and the
+    # criterion-type set (tk-mac.jsx CRITERION_TYPE_COLORS). One foreground set
+    # for USER/ASSISTANT/TOOL/etc is shared across the list, the viewer, and the
+    # match index; each also has a pale pill background for the badge labels.
+    # Inks and greys are the design's near-black and rgba-grey steps as hex.
     variable Palette {
-        user            #2f5c8a
-        assistant       #1f2328
-        ink             #1f2328
-        tool            #8a5a00
-        tool_result     #5c6166
-        muted           #8a9099
-        snippet         #3a3f44
-        meta            #8a9099
-        folder          #44494e
-        sessionhead     #1f4e79
-        section         #44494e
-        compact         #a14f3a
-        sel             #d3e2f2
-        drop            #e6eef6
+        user            #1c3a6a
+        assistant       #345f23
+        tool            #7a4a14
+        tool_result     #693f6e
+        system          #555555
+        user_bg         #dde9ff
+        assistant_bg    #e0f1d9
+        tool_bg         #fce8ce
+        tool_result_bg  #f4dff5
+        system_bg       #e8e8e8
+        ink             #1d1d1d
+        body            #262626
+        snippet         #262626
+        muted           #767676
+        meta            #767676
+        faint           #999999
+        folder          #1d1d1d
+        section         #595959
+        sessionhead     #1d1d1d
+        compact         #767676
+        sel             #d6e3fb
+        drop            #dbe6fc
         recap           #f6ead4
-        strip           #e8e8e8
         find            #ffec70
-        banner_bg       #fbf3d0
-        banner_fg       #6b5d1f
-        chip_or         gray
-        strip_user      #274b73
-        strip_assistant #3d5c2e
-        strip_other     #7a4f22
+        strip           #ececec
+        banner_bg       #fff5c2
+        banner_fg       #5a4a0a
+        banner_border   #e6d36a
+        glyph_running   #3ec25b
+        glyph_bookmark  #d6a30e
+        chip_or         #808080
+        crit_under_bg   #ece2f5
+        crit_under_fg   #4a3677
+        crit_under_bd   #c6b3df
+        crit_read_bg    #d9ebff
+        crit_read_fg    #1e4b80
+        crit_read_bd    #9bbfe6
+        crit_write_bg   #ffd9d9
+        crit_write_fg   #8a2828
+        crit_write_bd   #e6a3a3
+        crit_edit_bg    #dff5d9
+        crit_edit_fg    #2a5e1e
+        crit_edit_bd    #a5d495
+        crit_regex_bg   #fff4d6
+        crit_regex_fg   #7a5d00
+        crit_regex_bd   #e8c870
     }
-    # The list's hit-highlight hues, cycled one per search term. The first
-    # (the single-term common case) is the design's amber, matching the viewer
-    # `find` mark; the rest are quiet tints that distinguish extra terms.
-    variable Hues {#ffec70 #cfe0ef #ecd5dc #d4e6d0}
+    # Hit highlight: the design marks a match with one pale yellow and no bold.
+    # The list snippet mark is #fff59c; the viewer `find` mark is #ffec70.
+    variable Hues {#fff59c}
 }
 
 # Colour for a role. Errors loudly on an unknown role rather than returning a
@@ -74,9 +98,9 @@ proc ::questlog::theme::hues {} {
 # is a symbolic system colour the reapply is skipped and clam's default stands.
 proc ::questlog::theme::init {} {
     if {"QLBold" ni [font names]} {
-        font create QLBold    {*}[font actual TkTextFont] -weight bold
-        font create QLMono    {*}[font actual TkFixedFont]
-        font create QLSection {*}[font actual TkTextFont] -weight bold -size 11
+        font create QLBold     {*}[font actual TkTextFont] -weight bold
+        font create QLMono     {*}[font actual TkFixedFont]
+        font create QLMonoBold {*}[font actual TkFixedFont] -weight bold
     }
     set bg [. cget -background]
     ttk::style theme use clam

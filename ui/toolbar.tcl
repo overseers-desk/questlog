@@ -125,15 +125,16 @@ oo::class create ::questlog::ui::Toolbar {
             -command [list [self] publish]
         pack $Top.search.aa -side left -padx {6 0}
 
-        # Restrict group: the legend sits as a heading ABOVE the box (as in the
-        # design), then a padded, lightly-bordered content frame holds the time
-        # row, the clause rows, and the add rail.
-        set RestrictHd $Top.restrict_hd
-        ttk::label $RestrictHd -text "Restrict to sessions that…" -anchor w
-        pack $RestrictHd -side top -fill x -padx 6 -pady {6 2}
-        ttk::frame $Top.restrict -relief solid -borderwidth 1 -padding {10 6}
-        pack $Top.restrict -side top -fill x -padx 6 -pady {0 2}
+        # Restrict group: a lightly-bordered box whose first inner line is the
+        # heading (the legend sits inside, at the top, as in the design), then
+        # the time row, the clause rows, and the add rail.
+        ttk::frame $Top.restrict -relief solid -borderwidth 1 -padding {8 5}
+        pack $Top.restrict -side top -fill x -padx 6 -pady {2 2}
         set Restrict $Top.restrict
+        set RestrictHd $Restrict.hd
+        ttk::label $RestrictHd -text "Restrict to sessions that…" -anchor w \
+            -foreground [::questlog::theme::c muted]
+        pack $RestrictHd -side top -fill x -pady {0 4}
 
         ttk::frame $Restrict.time
         pack $Restrict.time -side top -fill x -pady {0 3}
@@ -275,19 +276,22 @@ oo::class create ::questlog::ui::Toolbar {
                 dict unset RowFrames $k
             }
         }
-        set labels [dict create \
-            under "under" \
-            read  "read" \
-            wrote "wrote" \
-            edited "edited" \
-            pattern "matches pattern"]
+        # type -> design criterion colour family (wrote=write, edited=edit,
+        # pattern=regex).
+        set ctype {under under read read wrote write edited edit pattern regex}
         foreach k {under read wrote edited pattern} {
             set vals [dict get $Clauses $k]
             if {[llength $vals] == 0} continue
+            set t [dict get $ctype $k]
             set row $Restrict.row_$k
             ttk::frame $row
-            ttk::label $row.label -text [dict get $labels $k] -width 18 -anchor w
-            pack $row.label -side left -padx {0 4}
+            # The type tag is a small tinted pill, colour-coded per type
+            # (tk label so -background takes).
+            label $row.label -text $t -width 8 -anchor center -padx 4 \
+                -borderwidth 1 -relief solid \
+                -background [::questlog::theme::c crit_${t}_bg] \
+                -foreground [::questlog::theme::c crit_${t}_fg]
+            pack $row.label -side left -padx {0 6} -pady 1
             ttk::button $row.x -text "×" -width 2 \
                 -command [list [self] clear_clause $k]
             pack $row.x -side right -padx {4 0}

@@ -150,7 +150,8 @@ oo::class create ::questlog::ui::Viewer {
         set strip [::questlog::theme::c strip]
         frame $Top.head -background $strip
         pack $Top.head -side top -fill x
-        label $Top.head.path -text "" -background $strip -anchor w
+        label $Top.head.path -text "no session selected" -background $strip \
+            -anchor w -font QLMono -foreground [::questlog::theme::c muted]
         pack $Top.head.path -side left -padx 6 -pady 1 -fill x -expand 1
         set PathLabel $Top.head.path
         # Match index: a count on the right of the head strip that toggles the
@@ -167,7 +168,7 @@ oo::class create ::questlog::ui::Viewer {
         pack $Top.body -side top -fill both -expand 1
         # text widget - no ttk equivalent.
         text $Top.body.t -wrap word -yscrollcommand [list $Top.body.sb set] \
-            -state disabled
+            -state disabled -padx 10 -pady 6 -borderwidth 0 -highlightthickness 0
         ttk::scrollbar $Top.body.sb -orient vertical -command [list $Top.body.t yview]
         grid $Top.body.t  -row 0 -column 0 -sticky nsew
         grid $Top.body.sb -row 0 -column 1 -sticky ns
@@ -184,8 +185,8 @@ oo::class create ::questlog::ui::Viewer {
         grid rowconfigure    $Top.body.empty {0 2} -weight 1
         grid columnconfigure $Top.body.empty {0 2} -weight 1
         ttk::frame $Top.body.empty.box
-        ttk::label $Top.body.empty.box.msg -justify center \
-            -foreground [::questlog::theme::c muted] \
+        ttk::label $Top.body.empty.box.msg -justify center -font QLBold \
+            -foreground [::questlog::theme::c section] \
             -text "Click a session to show it here"
         ttk::label $Top.body.empty.box.sub -justify center -wraplength 340 \
             -foreground [::questlog::theme::c muted] \
@@ -257,19 +258,20 @@ oo::class create ::questlog::ui::Viewer {
         # ===== end TRIM-AFTER block (issue #4) ======================
 
         # Tags.
-        $Text tag configure section-header -font QLSection \
-            -spacing1 8 -spacing3 4 -foreground [::questlog::theme::c section]
-        $Text tag configure divider -justify center \
+        # Section header (the "▼ date" line): grey, monospace, not bold.
+        $Text tag configure section-header -font QLMono \
+            -spacing1 10 -spacing3 4 -foreground [::questlog::theme::c section]
+        $Text tag configure divider -justify center -font QLMono \
             -foreground [::questlog::theme::c muted] -spacing1 6 -spacing3 6
-        $Text tag configure compact-divider -justify center \
-            -foreground [::questlog::theme::c compact] -spacing1 8 -spacing3 8 -font QLBold
-        # Colour marks only the role label; the message body is neutral ink, so
-        # the transcript reads as prose with a coloured speaker tag, not as a
-        # wall of tinted text.
-        $Text tag configure lbl-user      -foreground [::questlog::theme::c user]      -font QLBold -lmargin1 8 -lmargin2 8 -spacing1 8
-        $Text tag configure lbl-assistant -foreground [::questlog::theme::c assistant] -font QLBold -lmargin1 8 -lmargin2 8 -spacing1 8
-        $Text tag configure lbl-system    -foreground [::questlog::theme::c tool]      -font QLBold -lmargin1 8 -lmargin2 8 -spacing1 8
-        $Text tag configure body          -foreground [::questlog::theme::c ink]       -lmargin1 8 -lmargin2 8 -spacing3 4
+        $Text tag configure compact-divider -justify center -font QLMono \
+            -foreground [::questlog::theme::c compact] -spacing1 8 -spacing3 8
+        # Colour marks only the role label (monospace bold, design role fg); the
+        # message body is neutral ink, so the transcript reads as prose with a
+        # coloured speaker tag, not a wall of tinted text.
+        $Text tag configure lbl-user      -foreground [::questlog::theme::c user]      -font QLMonoBold -lmargin1 10 -lmargin2 10 -spacing1 6
+        $Text tag configure lbl-assistant -foreground [::questlog::theme::c assistant] -font QLMonoBold -lmargin1 10 -lmargin2 10 -spacing1 6
+        $Text tag configure lbl-system    -foreground [::questlog::theme::c tool]      -font QLMonoBold -lmargin1 10 -lmargin2 10 -spacing1 6
+        $Text tag configure body          -foreground [::questlog::theme::c body]      -lmargin1 10 -lmargin2 10 -spacing2 3 -spacing3 6
         $Text tag configure recap     -background [::questlog::theme::c recap]
         $Text tag configure find      -background [::questlog::theme::c find]
 
@@ -373,7 +375,7 @@ oo::class create ::questlog::ui::Viewer {
             if {$t ne "user" && $t ne "assistant" && $t ne "system"} {
                 set ltag lbl-system
             }
-            $Text insert end "[string toupper $t]: " $ltag
+            $Text insert end "[string toupper $t]  " $ltag
             if {$t eq "assistant" && [regexp -line {^>} $body]} {
                 my insert_segments $body
             } else {
@@ -719,9 +721,9 @@ oo::class create ::questlog::ui::Viewer {
     # Row foreground by role, echoing the rendered transcript's role colours.
     method role_color {ty} {
         switch -- $ty {
-            USER      { return [::questlog::theme::c strip_user] }
-            ASSISTANT { return [::questlog::theme::c strip_assistant] }
-            default   { return [::questlog::theme::c strip_other] }
+            USER      { return [::questlog::theme::c user] }
+            ASSISTANT { return [::questlog::theme::c assistant] }
+            default   { return [::questlog::theme::c tool] }
         }
     }
 
