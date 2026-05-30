@@ -330,6 +330,9 @@ oo::class create ::questlog::ui::Viewer {
     # reflows every body-tagged run; fenced code (QLMono) is untouched.
     method on_font_chosen {fontspec args} {
         ::questlog::theme::set_body_font $fontspec
+        # The named-font reflow updates the glyphs but not the boxes' fixed
+        # -height, computed from display lines at the previous size; re-fit.
+        my on_resize
     }
 
     method load {} {
@@ -461,42 +464,113 @@ oo::class create ::questlog::ui::Viewer {
         $Text insert end "\n" body
     }
 
-    # A de-quoted blockquote run as a bordered box embedded in the reading
-    # view: caption, a Copy button (full de-quoted text), and an Expand
-    # toggle when the run is longer than the preview limit.
+    # A de-quoted blockquote run embedded in the reading view. A thin left
+    # rule marks it as a quotation; the text follows the reading font. Copy,
+    # and a Collapse toggle for long runs, appear only while the pointer is
+    # over the quote (see make_overlay). Long runs show full height; Collapse
+    # trims to the preview limit.
     method insert_quote_box {dequoted} {
         set qid [incr NextQid]
         set n [llength [split $dequoted "\n"]]
         set limit 6
         set f $Text.q$qid
-        # The box is a child of the reading text widget, whose cursor is the
-        # xterm I-beam; an empty ttk cursor inherits it, so the buttons would
-        # show the I-beam. Pin an arrow here; the inner text keeps its xterm.
-        ttk::frame $f -relief solid -borderwidth 1 -padding 2 -cursor arrow
-        ttk::frame $f.hdr
-        ttk::label $f.hdr.cap -text "Quote" -foreground [::questlog::theme::c muted]
-        pack $f.hdr.cap -side left -padx 4
-        ttk::button $f.hdr.copy -text "Copy" -width 5 \
-            -command [list [self] clipboard_set $dequoted]
-        pack $f.hdr.copy -side right -padx 2
-        if {$n > $limit} {
-            ttk::button $f.hdr.toggle -text "Expand" -width 8 \
-                -command [list [self] toggle_box $qid]
-            pack $f.hdr.toggle -side right -padx 2
-        }
-        pack $f.hdr -side top -fill x
+        # Outer container draws no box. The hover buttons are children of it,
+        # pinned to the arrow cursor so they do not inherit the reading text's
+        # I-beam.
+        tk::frame $f -borderwidth 0 -highlightthickness 0 -cursor arrow
+        # The quoted marker: a single muted vertical rule. A classic tk::frame
+        # (not ttk) is used because clam ignores -background on ttk frames.
+        tk::frame $f.rule -width 3 -background [::questlog::theme::c muted]
+        pack $f.rule -side left -fill y
         set bt $f.body
+        # No -font of its own: QLBody is the reading font, reconfigured live by
+        # the font chooser, so the quote tracks the body. -padx indents the
+        # text in from the rule.
         text $bt -wrap word -borderwidth 0 -highlightthickness 0 \
-            -height [expr {$n > $limit ? $limit : $n}] -width 1
+            -height $n -width 1 -cursor arrow -font QLBody
         $bt insert end $dequoted
         $bt configure -state disabled
-        pack $bt -side top -fill both -expand 1
+        pack $bt -side left -fill both -expand 1 -padx {8 0}
         bind $bt <Map> [list [self] fit_box $qid]
         $Text window create end -window $f -align top
         $Text insert end "\n"
         dict set Drafts $qid [dict create frame $f body $bt full $dequoted \
-            nlines $n limit $limit expanded 0]
+            nlines $n limit $limit expanded 1 \
+            copybtn "" togglebtn "" hidetimer ""]
+        my make_overlay $qid
         my fit_box $qid
+    }
+
+    # Build the hover affordances un-placed: Copy always, plus a Collapse
+    # toggle for long runs. Entering the quote or any child shows them;
+    # leaving hides them. Bound on every descendant so crossing onto a button
+    # still counts as inside.
+    method make_overlay {qid} {
+        set d [dict get $Drafts $qid]
+        set f [dict get $d frame]
+        set cb $f.copy
+        ttk::button $cb -text "Copy" -width 5 \
+            -command [list [self] clipboard_set [dict get $d full]]
+        dict set Drafts $qid copybtn $cb
+        set hover [list $f [dict get $d body] $cb]
+        if {[dict get $d nlines] > [dict get $d limit]} {
+            set tb $f.toggle
+            ttk::button $tb -text "Collapse" -width 8 \
+                -command [list [self] toggle_box $qid]
+            dict set Drafts $qid togglebtn $tb
+            lappend hover $tb
+        }
+        foreach w $hover {
+            bind $w <Enter> [list [self] overlay_show $qid]
+            bind $w <Leave> [list [self] overlay_leave $qid]
+        }
+    }
+
+    # Place Copy top-right and the toggle top-left, over the body text.
+    method overlay_show {qid} {
+        if {![dict exists $Drafts $qid]} return
+        set d [dict get $Drafts $qid]
+        set t [dict get $d hidetimer]
+        if {$t ne ""} { after cancel $t; dict set Drafts $qid hidetimer "" }
+        set cb [dict get $d copybtn]
+        place $cb -relx 1.0 -x -2 -rely 0 -y 2 -anchor ne
+        raise $cb
+        set tb [dict get $d togglebtn]
+        if {$tb ne ""} {
+            place $tb -relx 0.0 -x 6 -rely 0 -y 2 -anchor nw
+            raise $tb
+        }
+    }
+
+    # Leaving any part of the quote schedules a hide. Deferring to idle lets
+    # the matching <Enter> on the button just crossed into cancel it first, so
+    # frame-to-button crossings do not dismiss the overlay.
+    method overlay_leave {qid} {
+        if {![dict exists $Drafts $qid]} return
+        set t [after idle [list [self] overlay_check $qid]]
+        dict set Drafts $qid hidetimer $t
+    }
+
+    method overlay_check {qid} {
+        if {![dict exists $Drafts $qid]} return
+        dict set Drafts $qid hidetimer ""
+        set f [dict get $Drafts $qid frame]
+        if {![winfo exists $f]} return
+        set w [winfo containing [winfo pointerx .] [winfo pointery .]]
+        set inside 0
+        while {$w ne "" && $w ne "."} {
+            if {$w eq $f} { set inside 1; break }
+            set w [winfo parent $w]
+        }
+        if {!$inside} { my overlay_hide $qid }
+    }
+
+    method overlay_hide {qid} {
+        if {![dict exists $Drafts $qid]} return
+        set d [dict get $Drafts $qid]
+        catch {place forget [dict get $d copybtn]}
+        set tb [dict get $d togglebtn]
+        if {$tb ne ""} { catch {place forget $tb} }
     }
 
     # Size a box's inner text to the reading column width, and (when
@@ -522,7 +596,7 @@ oo::class create ::questlog::ui::Viewer {
         if {[dict get $Drafts $qid expanded] \
                 && [winfo ismapped $bt] && [winfo width $bt] > 1} {
             update idletasks
-            set dl [$bt count -displaylines 1.0 "end-1c"]
+            set dl [$bt count -displaylines 1.0 "end"]
             $bt configure -height [expr {max(1, $dl)}]
         }
     }
@@ -530,14 +604,14 @@ oo::class create ::questlog::ui::Viewer {
     method toggle_box {qid} {
         if {![dict exists $Drafts $qid]} return
         set d [dict get $Drafts $qid]
-        set f [dict get $d frame]
+        set tb [dict get $d togglebtn]
         if {[dict get $d expanded]} {
             [dict get $d body] configure -height [dict get $d limit]
-            catch {$f.hdr.toggle configure -text "Expand"}
+            catch {$tb configure -text "Expand"}
             dict set Drafts $qid expanded 0
         } else {
             dict set Drafts $qid expanded 1
-            catch {$f.hdr.toggle configure -text "Collapse"}
+            catch {$tb configure -text "Collapse"}
             my fit_box $qid
         }
     }
