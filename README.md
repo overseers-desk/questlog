@@ -40,6 +40,10 @@ Right-clicking a session offers "Open in viewer", "Copy resume command", "Copy s
 
 **Memoise within a process, not across launches.** Once a file's row has been computed in this run it is reused for subsequent toolbar window changes. Shrinking the window filters in memory; growing it scans only the new files. The accumulated state lives for the lifetime of the GUI process and is discarded on quit. A user resuming a session in another terminal sees the change on the next launch, not via a watcher or a sync protocol.
 
+## Installing
+
+See [docs/installation.md](docs/installation.md) for the Debian, Fedora, Homebrew, and single-file options.
+
 ## Running
 
 ```

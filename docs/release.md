@@ -33,6 +33,17 @@ rpmbuild -ba questlog.spec
 # produces ~/rpmbuild/RPMS/noarch/questlog-<VERSION>-1.noarch.rpm
 ```
 
+### Single-file image (zipfs)
+
+```bash
+tclsh9.0 zipfs/build.tcl
+# produces dist/questlog-<VERSION>-linux-<arch>
+```
+
+One executable carrying questlog's own code, built with `zipfs mkimg` and stubbed with `wish9.0`. It runs from anywhere with no install and no root, on hosts that have the Tcl 9 runtime (`tcl9.0`, `tk9.0`, `tcllib`, `tcl-thread`), the same set the `.deb` requires and present in current distro repos. The version in the filename is read from the launcher, so there is nothing extra to bump.
+
+How users download and run it is in [installation.md](installation.md); link that section from the GitHub release notes.
+
 ## Update the Homebrew formula
 
 GitHub generates the tarball from the tag. Fetch it and compute the sha256:
@@ -64,6 +75,7 @@ gh release edit v<VERSION> \
 gh release upload v<VERSION> \
   ../questlog_<VERSION>_all.deb \
   ~/rpmbuild/RPMS/noarch/questlog-<VERSION>-1.noarch.rpm \
+  dist/questlog-<VERSION>-linux-x86_64 \
   --clobber
 ```
 
@@ -73,3 +85,4 @@ gh release upload v<VERSION> \
 - [ ] `questlog --version` prints the right version on macOS and Linux.
 - [ ] Debian package installs cleanly: `sudo apt install ./questlog_<VERSION>_all.deb`.
 - [ ] RPM installs cleanly: `sudo dnf install ./questlog-<VERSION>-1.noarch.rpm`.
+- [ ] Single-file image runs: `./dist/questlog-<VERSION>-linux-x86_64 --version`, then launch the GUI.

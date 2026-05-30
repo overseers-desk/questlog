@@ -1,3 +1,6 @@
+# Release build artifacts
+/dist/
+
 # Debian build artifacts
 /debian/questlog/
 /debian/files
