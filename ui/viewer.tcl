@@ -163,6 +163,17 @@ oo::class create ::questlog::ui::Viewer {
             -foreground [::questlog::theme::c sessionhead] -cursor hand2
         set MatchBtn $Top.head.matches
         bind $MatchBtn <Button-1> [list [self] match_panel_toggle]
+        # Reading-font picker at the right of the head strip: a plain label
+        # affordance (matching the strip's flat look) that pops the platform
+        # font chooser. Packed once, always present; the match toggle packs to
+        # its left when a search is active.
+        label $Top.head.font -text "Font…" -background $strip \
+            -foreground [::questlog::theme::c sessionhead] -cursor hand2
+        # -before the path so this fixed-width control keeps its slot: the path
+        # label expands and, once a long session path is loaded, its requested
+        # width would otherwise claim the whole strip and squeeze this out.
+        pack $Top.head.font -side right -padx 6 -before $Top.head.path
+        bind $Top.head.font <Button-1> [list [self] choose_font]
 
         ttk::frame $Top.body
         pack $Top.body -side top -fill both -expand 1
@@ -271,7 +282,12 @@ oo::class create ::questlog::ui::Viewer {
         $Text tag configure lbl-user      -foreground [::questlog::theme::c user]      -font QLMonoBold -lmargin1 10 -lmargin2 10 -spacing1 6
         $Text tag configure lbl-assistant -foreground [::questlog::theme::c assistant] -font QLMonoBold -lmargin1 10 -lmargin2 10 -spacing1 6
         $Text tag configure lbl-system    -foreground [::questlog::theme::c tool]      -font QLMonoBold -lmargin1 10 -lmargin2 10 -spacing1 6
-        $Text tag configure body          -foreground [::questlog::theme::c body]      -lmargin1 10 -lmargin2 10 -spacing2 3 -spacing3 6
+        # Body prose follows QLBody, the proportional reading font switched at
+        # runtime; fenced code keeps QLMono so it stays aligned regardless of
+        # the reading font. Without an explicit -font the text widget would
+        # render both in its TkFixedFont default.
+        $Text tag configure body          -font QLBody -foreground [::questlog::theme::c body] -lmargin1 10 -lmargin2 10 -spacing2 3 -spacing3 6
+        $Text tag configure code          -font QLMono -foreground [::questlog::theme::c body] -lmargin1 10 -lmargin2 10 -spacing2 3 -spacing3 6
         $Text tag configure recap     -background [::questlog::theme::c recap]
         $Text tag configure find      -background [::questlog::theme::c find]
 
@@ -299,6 +315,21 @@ oo::class create ::questlog::ui::Viewer {
         bind $Text <Escape>     [list [self] find_hide]
         bind $Find.e <Escape>   [list [self] find_hide]
         bind $Find.e <Return>   [list [self] find_next]
+    }
+
+    # Pop the platform font chooser, seeded with the body's current font. It is
+    # a single shared modeless dialog, not a widget; its -command fires with the
+    # chosen font appended when the reader confirms.
+    method choose_font {} {
+        tk fontchooser configure -parent $Top -title "Reading font" \
+            -font QLBody -command [list [self] on_font_chosen]
+        tk fontchooser show
+    }
+
+    # Apply a chosen font to the reading body. Reconfiguring the named QLBody
+    # reflows every body-tagged run; fenced code (QLMono) is untouched.
+    method on_font_chosen {fontspec args} {
+        ::questlog::theme::set_body_font $fontspec
     }
 
     method load {} {
@@ -377,15 +408,39 @@ oo::class create ::questlog::ui::Viewer {
                 set ltag lbl-system
             }
             $Text insert end "[string toupper $t]  " $ltag
-            if {$t eq "assistant" && [regexp -line {^>} $body]} {
-                my insert_segments $body
-            } else {
-                $Text insert end "$body\n\n" body
-            }
+            my insert_body $t $body
 
             if {$ts_epoch > 0} { set last_ts $ts_epoch }
         }
         $Text configure -state disabled
+    }
+
+    # Insert one turn's body. The common case (no fenced code, no blockquote)
+    # is one tagged run, byte-identical to the prior renderer. A fenced body is
+    # split into prose and code runs, code kept monospace; a prose run that is
+    # an assistant blockquote still becomes embedded quote boxes.
+    method insert_body {t body} {
+        set has_code  [regexp -line {^\s*```} $body]
+        set has_quote [expr {$t eq "assistant" && [regexp -line {^>} $body]}]
+        if {!$has_code && !$has_quote} {
+            $Text insert end "$body\n\n" body
+            return
+        }
+        if {!$has_code} {
+            my insert_segments $body
+            return
+        }
+        foreach seg [::questlog::jsonl::segment_code_fences $body] {
+            lassign $seg kind text
+            if {$kind eq "code"} {
+                $Text insert end "$text\n" code
+            } elseif {$has_quote && [regexp -line {^>} $text]} {
+                my insert_segments $text
+            } else {
+                $Text insert end "$text\n" body
+            }
+        }
+        $Text insert end "\n" body
     }
 
     # Render an assistant body that contains at least one blockquote run:

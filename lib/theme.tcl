@@ -89,16 +89,42 @@ proc ::questlog::theme::hues {} {
     return $Hues
 }
 
+# Apply a full font description ({family} size ?style?) to the reading body,
+# as the font chooser hands back on a confirmed pick. QLBody is reconfigured in
+# place, so every body-tagged run reflows live while the chrome and fenced-code
+# runs keep QLMono. A spec Tk cannot resolve is reported on stderr rather than
+# letting the callback's error reach bgerror.
+proc ::questlog::theme::set_body_font {spec} {
+    if {[catch {font configure QLBody {*}[font actual $spec]} err]} {
+        puts stderr "questlog: cannot apply font '$spec': $err"
+    }
+}
+
+# Set only the reading-body family, keeping the current size and style. This is
+# the --font command line: -family takes the whole value, so a spaced family
+# name ("DejaVu Serif") needs no list quoting and no size is injected. An
+# unknown family is recorded as requested and resolves to a fallback at render.
+proc ::questlog::theme::set_body_family {family} {
+    if {[catch {font configure QLBody -family $family} err]} {
+        puts stderr "questlog: cannot use font '$family': $err"
+    }
+}
+
 # Create the named fonts and switch ttk to the clam base. Call once, after Tk
 # is up and before any widget is built. The fonts are snapshots of the Tk
 # named fonts, so the typeface stays native per platform while weight and the
-# section size live here. The chrome's current background is captured and
-# reapplied under clam, so switching engines recolours nothing visible (clam's
-# own beige would otherwise read as a change); on a platform whose background
-# is a symbolic system colour the reapply is skipped and clam's default stands.
+# section size live here. QLBody is the reading-body font: a Tk text widget
+# defaults its whole content to TkFixedFont (monospace), so the transcript body
+# names QLBody (proportional TkTextFont) explicitly and reconfigures it live
+# when the reader picks a font; fenced code keeps QLMono. The chrome's current
+# background is captured and reapplied under clam, so switching engines
+# recolours nothing visible (clam's own beige would otherwise read as a
+# change); on a platform whose background is a symbolic system colour the
+# reapply is skipped and clam's default stands.
 proc ::questlog::theme::init {} {
     if {"QLBold" ni [font names]} {
         font create QLBold     {*}[font actual TkTextFont] -weight bold
+        font create QLBody     {*}[font actual TkTextFont]
         font create QLMono     {*}[font actual TkFixedFont]
         font create QLMonoBold {*}[font actual TkFixedFont] -weight bold
     }

@@ -11,6 +11,20 @@ if {[lindex $argv 0] in {--version -v}} {
     exit 0
 }
 
+# --font <family|spec> sets the session viewer's reading font. Pulled out of
+# argv before the criteria parse so it composes with a criteria chain; applied
+# after the theme is initialised.
+set VIEWER_FONT ""
+set kept [list]
+for {set i 0} {$i < [llength $argv]} {incr i} {
+    if {[lindex $argv $i] eq "--font"} {
+        set VIEWER_FONT [lindex $argv [incr i]]
+    } else {
+        lappend kept [lindex $argv $i]
+    }
+}
+set argv $kept
+
 set ROOT [file dirname [file normalize [info script]]]
 
 source [file join $ROOT lib theme.tcl]
@@ -48,4 +62,5 @@ if {[::questlog::cli::is_cli $argv]} {
 }
 
 ::questlog::theme::init
+if {$VIEWER_FONT ne ""} { ::questlog::theme::set_body_family $VIEWER_FONT }
 ::questlog::app::start $ROOT $initial_criteria
