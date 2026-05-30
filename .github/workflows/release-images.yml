@@ -1,0 +1,78 @@
+# Build the self-contained single-file image per platform and attach each to
+# the GitHub release. See zipfs/build-selfcontained.sh for the build recipe.
+#
+# Coverage:
+#   - linux x86_64 / arm64: validated locally on x86_64; the script is the same
+#     on both.
+#   - macos x86_64 / arm64: the script's Aqua branch, validated only through
+#     these CI runs.
+# Not covered: windows-x86_64 is blocked by questlog itself. lib/terminal.tcl
+# has no Windows branch (issue #10); the port lands before a Windows variant.
+#
+# Trigger manually, or automatically when a release is published; in the latter
+# case each artifact is uploaded to that release.
+
+name: release-images
+
+on:
+  workflow_dispatch:
+  release:
+    types: [published]
+
+permissions:
+  contents: write   # gh release upload
+
+jobs:
+  selfcontained:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-24.04,     ostoken: linux, arch: x86_64 }
+          - { os: ubuntu-24.04-arm, ostoken: linux, arch: arm64 }
+          - { os: macos-13,         ostoken: macos, arch: x86_64 }
+          - { os: macos-14,         ostoken: macos, arch: arm64 }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential curl ca-certificates \
+            libx11-dev libxext-dev libxft-dev libfontconfig1-dev \
+            libxss-dev zlib1g-dev
+
+      - name: Build self-contained image
+        run: zipfs/build-selfcontained.sh
+
+      - name: Smoke-test the image
+        run: |
+          img=$(ls dist/questlog-*-${{ matrix.ostoken }}-${{ matrix.arch }})
+          if [ "${{ runner.os }}" = "Linux" ]; then
+            sudo apt-get install -y --no-install-recommends xvfb
+            # A bogus TCL_LIBRARY proves the image uses its own embedded library.
+            TCL_LIBRARY=/nonexistent TK_LIBRARY=/nonexistent \
+              xvfb-run -a "$img" --version
+          else
+            # Hosted macOS runners have no window server, so a Tk launch cannot
+            # be exercised here; verify the binary is self-contained instead.
+            if otool -L "$img" | grep -Eiq 'libtcl|libtk9|libthread'; then
+              echo "image links a Tcl/Tk/Thread shared library:"; otool -L "$img"; exit 1
+            fi
+            echo "macOS self-containment OK; GUI launch deferred to a host with a window server"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: questlog-${{ matrix.ostoken }}-${{ matrix.arch }}
+          path: dist/questlog-*-${{ matrix.ostoken }}-${{ matrix.arch }}
+          if-no-files-found: error
+
+      - name: Attach to release
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ github.event.release.tag_name }}" dist/questlog-*-${{ matrix.ostoken }}-${{ matrix.arch }} --clobber

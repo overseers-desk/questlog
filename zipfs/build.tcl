@@ -1,16 +1,23 @@
 #!/usr/bin/env tclsh9.0
-# Build the single-file questlog executable with `zipfs mkimg`.
+# Stage questlog's payload and fold it into one executable with `zipfs mkimg`.
 #
 #   tclsh9.0 zipfs/build.tcl
 #
 # Stages the launcher, lib/, ui/, data/ and zipfs/main.tcl into a temporary
-# directory, then folds them into one executable stubbed with wish9.0. The
-# produced file needs the Tcl 9 runtime present on the host (tcl9.0, tk9.0,
-# tcllib, tcl-thread); it carries questlog's own code only. For a runtime-free
-# artifact, see appimage/.
+# directory, then stubs them onto a wish to make a single file. Two env vars
+# select what kind of image:
 #
-# The AppImage build reuses this script unchanged, run under a from-source
-# tclsh9.0 so the payload is stubbed with that interpreter's wish9.0.
+#   QUESTLOG_WISH      Path to the wish used as the stub. Default: wish9.0 from
+#                      PATH, which is dynamically linked, so the image still
+#                      needs the Tcl 9 runtime on the host (tcl9.0, tk9.0,
+#                      tcllib, tcl-thread) and carries questlog's code only.
+#   QUESTLOG_RUNTIME   Path to a runtime tree (tcl_library/, tk_library/,
+#                      tcl_library/json/) to stage alongside the payload. Set
+#                      together with a from-source static wish, this produces a
+#                      self-contained image that needs no Tcl on the target.
+#                      zipfs/build-selfcontained.sh builds both and calls here.
+#
+# The AppImage build reuses this script, run under a from-source tclsh9.0.
 
 package require Tcl 9
 
@@ -30,14 +37,19 @@ if {$ver eq ""} {
     exit 1
 }
 
-set wish [lindex [auto_execok wish9.0] 0]
-if {$wish eq ""} {
-    puts stderr "build: wish9.0 not found on PATH"
+if {[info exists ::env(QUESTLOG_WISH)] && $::env(QUESTLOG_WISH) ne ""} {
+    set wish $::env(QUESTLOG_WISH)
+} else {
+    set wish [lindex [auto_execok wish9.0] 0]
+}
+if {$wish eq "" || ![file executable $wish]} {
+    puts stderr "build: wish stub not found (set QUESTLOG_WISH or install wish9.0)"
     exit 1
 }
 
 # Stage the archive contents. main.tcl and the launcher sit at the staging
-# root so that, post-strip, they land at //zipfs:/main.tcl and //zipfs:/questlog.
+# root so that, post-strip, they land at //zipfs:/app/main.tcl and
+# //zipfs:/app/questlog (an mkimg image mounts at //zipfs:/app).
 set stage /tmp/questlog-zipfs-stage-[pid]
 file delete -force $stage
 file mkdir $stage
@@ -47,13 +59,29 @@ foreach d {lib ui data} {
     file copy [file join $repo $d] [file join $stage $d]
 }
 
+# A self-contained stub carries no script library of its own, so overlay the
+# from-source runtime (tcl_library/, tk_library/, embedded json). An mkimg
+# image mounts at //zipfs:/app, so these land at //zipfs:/app/tcl_library etc.,
+# where the interpreter and every worker interp find them on the default
+# auto_path.
+if {[info exists ::env(QUESTLOG_RUNTIME)] && $::env(QUESTLOG_RUNTIME) ne ""} {
+    set runtime $::env(QUESTLOG_RUNTIME)
+    foreach name [glob -nocomplain -tails -directory $runtime *] {
+        file copy [file join $runtime $name] [file join $stage $name]
+    }
+}
+
 set distdir [file join $repo dist]
 file mkdir $distdir
-set out [file join $distdir "questlog-$ver-linux-[exec uname -m]"]
+switch -- $tcl_platform(os) {
+    Darwin  { set os macos }
+    default { set os linux }
+}
+set out [file join $distdir "questlog-$ver-$os-[exec uname -m]"]
 file delete -force $out
 
-# strip == stage makes archive paths root-relative; infile == wish9.0 stubs a
-# Tk-capable image.
+# strip == stage makes archive paths root-relative; the stub wish provides the
+# Tk-capable interpreter.
 zipfs mkimg $out $stage $stage {} $wish
 file attributes $out -permissions 0755
 file delete -force $stage
