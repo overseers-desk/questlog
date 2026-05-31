@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Questlog
+Comment=Browse, search, and replay your Claude Code sessions
+Exec=questlog %F
+Icon=questlog
+Terminal=false
+Categories=Development;Utility;
+Keywords=claude;sessions;quests;log;search;
+StartupNotify=true
