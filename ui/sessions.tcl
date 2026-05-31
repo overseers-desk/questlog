@@ -93,6 +93,9 @@ oo::class create ::questlog::ui::SessionList {
     variable ColTabs          ;# -tabs spec for the session-header line (from the column model)
     variable ColRightX        ;# right-edge x px per metadata column, for header click mapping
     variable SubjectX         ;# x px where the subject column starts
+    variable SortKey          ;# active sort column id: date | size | cost
+    variable SortDir          ;# desc | asc
+    variable ResortPending    ;# 1 while a debounced redraw is queued under a non-default sort
 
     constructor {parent resolve_cb lookup_cb on_open on_move_request \
                  on_drop_move on_bookmark_toggle on_scan_path cancel_cb \
@@ -116,6 +119,11 @@ oo::class create ::questlog::ui::SessionList {
         set Query [dict create terms [list] nocase 0]
         set Selected ""
         set NextId 0
+        # Default sort reproduces the streaming order (mtime descending), so a
+        # fresh list looks exactly as before any header is clicked.
+        set SortKey "date"
+        set SortDir "desc"
+        set ResortPending 0
         my reset_model
         my build
     }
@@ -178,6 +186,7 @@ oo::class create ::questlog::ui::SessionList {
         $Text mark gravity TailMark right
 
         my configure_tags
+        my build_header
         # This is an object list, not editable text. Block the Text class's
         # selection gestures so a click never starts a text selection (which
         # would grab the X PRIMARY clipboard and, via tk::TextAutoScan, run a
@@ -275,6 +284,133 @@ oo::class create ::questlog::ui::SessionList {
         }
         set SubjectX [expr {$x + $gap}]
         lappend ColTabs $SubjectX left
+    }
+
+    # The sortable column header: a one-line strip directly above the rows,
+    # sharing the session line's font, -padx and tab stops so its labels sit
+    # over the columns. Clicking a metadata column sorts by it; clicking the
+    # active one flips the direction. The subject zone is not sortable.
+    method build_header {} {
+        set h $Top.colhdr
+        text $h -height 1 -wrap none -state disabled -takefocus 0 \
+            -exportselection 0 -borderwidth 0 -highlightthickness 0 \
+            -padx 8 -pady 1 -cursor hand2 -font QLList -tabs $ColTabs \
+            -background [::questlog::theme::c strip] \
+            -foreground [::questlog::theme::c muted]
+        $h tag configure colactive -font QLBold -foreground [::questlog::theme::c ink]
+        bind $h <Button-1> [list [self] on_header_click %x]
+        pack $h -side top -fill x -before $Top.body
+        my draw_header
+    }
+
+    # Map a header click x (widget pixels) to a metadata column and sort by it.
+    # Columns are right-aligned at ColRightX, so the band left of each right
+    # edge belongs to that column; past the last edge is the subject.
+    method on_header_click {x} {
+        set cx [expr {$x - 8}]
+        set i 0
+        foreach rx $ColRightX {
+            if {$cx <= $rx} break
+            incr i
+        }
+        set cols [::questlog::ui::session_columns]
+        if {$i >= [llength $cols]} return
+        lassign [lindex $cols $i] id label sample align sortable
+        if {!$sortable} return
+        my set_sort $id
+    }
+
+    # Adopt a new sort key (descending), or flip the direction when the active
+    # key is clicked again, then re-render the list in the new order.
+    method set_sort {id} {
+        if {$SortKey eq $id} {
+            set SortDir [expr {$SortDir eq "desc" ? "asc" : "desc"}]
+        } else {
+            set SortKey $id
+            set SortDir "desc"
+        }
+        my redraw_all
+        my draw_header
+    }
+
+    # Paint the header labels, marking the active column with a direction arrow
+    # and bold ink. The trailing Session label names the subject column.
+    method draw_header {} {
+        set h $Top.colhdr
+        $h configure -state normal
+        $h delete 1.0 end
+        set line ""
+        set act_off -1
+        set act_len 0
+        foreach col [::questlog::ui::session_columns] {
+            lassign $col id label
+            append line "\t"
+            set lbl $label
+            if {$id eq $SortKey} {
+                append lbl [expr {$SortDir eq "desc" ? " ▾" : " ▴"}]
+                set act_off [string length $line]
+                set act_len [string length $lbl]
+            }
+            append line $lbl
+        }
+        append line "\tSession"
+        $h insert 1.0 $line
+        if {$act_off >= 0} {
+            $h tag add colactive "1.0 + ${act_off}c" \
+                "1.0 + [expr {$act_off + $act_len}]c"
+        }
+        $h configure -state disabled
+    }
+
+    # Order a folder's session paths by the active sort. Each key reads a
+    # cached field (mtime for date, size, cost); date descending reproduces the
+    # mtime-descending streaming order. A blank or unknown cost sinks to the
+    # bottom. src is the dict to read fields from (the live model on expand, the
+    # pre-rebuild snapshot in redraw_all).
+    method sort_paths {paths src} {
+        set keyed [list]
+        foreach p $paths {
+            set v -1
+            if {[dict exists $src $p]} {
+                set s [dict get $src $p]
+                switch -- $SortKey {
+                    date { set v [my dict_or $s mtime 0] }
+                    size { set v [my dict_or $s size 0] }
+                    cost {
+                        set v [my dict_or $s cost ""]
+                        if {$v eq "" || $v < 0} { set v -1 }
+                    }
+                }
+            }
+            lappend keyed [list $p $v]
+        }
+        set dir [expr {$SortDir eq "asc" ? "-increasing" : "-decreasing"}]
+        return [lmap e [lsort -real -index 1 $dir $keyed] { lindex $e 0 }]
+    }
+
+    method sort_folders {order foldercost} {
+        set keyed [lmap f $order { list $f [my dict_or $foldercost $f 0.0] }]
+        set dir [expr {$SortDir eq "asc" ? "-increasing" : "-decreasing"}]
+        return [lmap e [lsort -real -index 1 $dir $keyed] { lindex $e 0 }]
+    }
+
+    method is_default_sort {} {
+        return [expr {$SortKey eq "date" && $SortDir eq "desc"}]
+    }
+
+    # A row streamed or recosted under a non-default sort lands out of order;
+    # coalesce a single full re-render at idle to restore the sort. The default
+    # sort needs none (streaming order is already correct), so this no-ops then.
+    method schedule_resort {} {
+        if {[my is_default_sort]} return
+        if {$ResortPending} return
+        set ResortPending 1
+        after idle [list [self] do_resort]
+    }
+    method do_resort {} {
+        set ResortPending 0
+        if {[my is_default_sort]} return
+        my redraw_all
     }
 
     method build_menu {} {
@@ -453,6 +589,7 @@ oo::class create ::questlog::ui::SessionList {
         if {[my folder_expanded [dict get $row folder]]} { my render_session $path }
         my anchor_restore
         $Text configure -state disabled
+        my schedule_resort
     }
 
     # Match record from Search. The first match for a session creates its
@@ -477,6 +614,7 @@ oo::class create ::questlog::ui::SessionList {
         my add_snippet $path $btype $content $lineoff
         my anchor_restore
         $Text configure -state disabled
+        my schedule_resort
     }
 
     method folder_expanded {folder} {
@@ -493,13 +631,14 @@ oo::class create ::questlog::ui::SessionList {
         set label [my session_label $path $row]
         set slug  [my dict_or $row slug ""]
         set aitt  [my dict_or $row ai_title ""]
-        set when  [my fmt_time [my dict_or $row mtime 0]]
+        set mtime [my dict_or $row mtime 0]
+        set when  [my fmt_time $mtime]
         set size  [my dict_or $row size 0]
         set uuid  [my dict_or $row uuid [file rootname [file tail $path]]]
         set cost  [my dict_or $row cost_usd ""]
         dict set Sessions $path [dict create \
             folder $folder label $label slug $slug ai_title $aitt \
-            when $when size $size uuid $uuid cost $cost \
+            when $when mtime $mtime size $size uuid $uuid cost $cost \
             count 0 first_lineno $first_lineno snippets [list] \
             stag "" smark "" semark "" rendered 0]
         dict lappend SessionsByFolder $folder $path
@@ -840,7 +979,7 @@ oo::class create ::questlog::ui::SessionList {
     }
 
     method expand_folder {folder} {
-        foreach path [my dict_or $SessionsByFolder $folder {}] {
+        foreach path [my sort_paths [my dict_or $SessionsByFolder $folder {}] $Sessions] {
             my render_session $path
         }
     }
@@ -919,6 +1058,8 @@ oo::class create ::questlog::ui::SessionList {
         }
         if {[dict get $s rendered]} { my redraw_header $path }
         $Text configure -state disabled
+        # A new cost can change cost-sorted order; other keys are unaffected.
+        if {$SortKey eq "cost"} { my schedule_resort }
     }
 
     method glyph_cell {running bookmarked} {
@@ -1173,6 +1314,7 @@ oo::class create ::questlog::ui::SessionList {
         set RunningSet $running
         set running_only    [my dict_or $Snapshot running_only 0]
         set bookmarked_only [my dict_or $Snapshot bookmarked_only 0]
+        set before [dict size $Sessions]
 
         $Text configure -state normal
         my anchor_save
@@ -1229,6 +1371,9 @@ oo::class create ::questlog::ui::SessionList {
         }
         my anchor_restore
         $Text configure -state disabled
+        # Surfacing or dropping running sessions changes the set, so a
+        # non-default sort needs a re-render to reseat them.
+        if {[dict size $Sessions] != $before} { my schedule_resort }
     }
 
     method reconcile_one {path} {
@@ -1326,7 +1471,14 @@ oo::class create ::questlog::ui::SessionList {
         set order $FolderOrder
         set byfolder $SessionsByFolder
         set wasexp [dict create]
-        dict for {f fd} $Folders { dict set wasexp $f [dict get $fd expanded] }
+        set foldercost [dict create]
+        dict for {f fd} $Folders {
+            dict set wasexp $f [dict get $fd expanded]
+            dict set foldercost $f [my dict_or $fd cost 0.0]
+        }
+        # Sorting by cost reorders the folders by their aggregate too; the other
+        # keys keep the folders in arrival order.
+        if {$SortKey eq "cost"} { set order [my sort_folders $order $foldercost] }
         set Folders [dict create]
         set FolderOrder [list]
         set SessionsByFolder [dict create]
@@ -1336,12 +1488,12 @@ oo::class create ::questlog::ui::SessionList {
         # model_add_session re-establish both consistently.
         set TotalCost 0.0
         foreach folder $order {
-            foreach path [my dict_or $byfolder $folder {}] {
+            foreach path [my sort_paths [my dict_or $byfolder $folder {}] $saved] {
                 if {![dict exists $saved $path]} continue
                 set s [dict get $saved $path]
                 my model_add_session $path \
                     [dict create folder [dict get $s folder] \
-                         uuid [dict get $s uuid] mtime 0 \
+                         uuid [dict get $s uuid] mtime [my dict_or $s mtime 0] \
                          size [dict get $s size] \
                          first_user [dict get $s label] \
                          slug [my dict_or $s slug ""] \
