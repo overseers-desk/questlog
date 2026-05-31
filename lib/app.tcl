@@ -69,6 +69,22 @@ proc ::questlog::app::start {root {initial_criteria {}}} {
     }
 
     wm title . "questlog"
+    # Dock/taskbar icon, rendered from the app's SVG at a few sizes so the
+    # window manager has a crisp source on scaled displays. -default carries it
+    # to dialogs too. Cosmetic, so a decode failure must not block startup.
+    # Sizes stay under 256: Tk 9.0.2 overflows the _NET_WM_ICON length at
+    # exactly 256x256 (65536 px) and writes an empty property.
+    catch {
+        set fh [open [file join $Root assets questlog.svg] r]
+        set svg [read $fh]
+        close $fh
+        set icons {}
+        foreach px {192 128 64} {
+            lappend icons [image create photo \
+                -data $svg -format [list svg -scaletoheight $px]]
+        }
+        wm iconphoto . -default {*}$icons
+    }
     wm protocol . WM_DELETE_WINDOW [namespace code quit]
 
     ttk::frame .top

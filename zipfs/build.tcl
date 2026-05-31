@@ -56,7 +56,7 @@ file mkdir $stage
 file copy $launcher                       [file join $stage questlog]
 file copy [file join $repo config.tcl]     [file join $stage config.tcl]
 file copy [file join $repo zipfs main.tcl] [file join $stage main.tcl]
-foreach d {lib ui data} {
+foreach d {lib ui data assets} {
     file copy [file join $repo $d] [file join $stage $d]
 }
 
