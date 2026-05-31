@@ -97,6 +97,7 @@ oo::class create ::questlog::ui::SessionList {
     variable CostW            ;# measured QLList widths of the metadata cells
     variable ColGap           ;# gap px between metadata cells
     variable SubjectMax       ;# px the subject may fill before the metadata block
+    variable FolderLabelMax   ;# px the folder label may fill before its aggregates
     variable LayoutW          ;# Text width the current layout was computed for
     variable RelayoutPending  ;# 1 while a debounced relayout is queued
     variable SortKey          ;# active sort column id: date | size | cost
@@ -226,9 +227,11 @@ oo::class create ::questlog::ui::SessionList {
         # Folder heading: the outermost level, with a wide gap above so each
         # project group reads as a section. Proportional (QLList), like the
         # rest of the list - the design carries no fixed-width font.
+        # Folder heading is single-line so its size/cost aggregates can sit in
+        # the same right-pinned columns as the session rows below it.
         $Text tag configure folderhead \
             -font QLList -foreground [::questlog::theme::c folder] \
-            -spacing1 14 -spacing3 3
+            -spacing1 14 -spacing3 3 -wrap none
         $Text tag configure glyph-running  -foreground [::questlog::theme::c glyph_running]
         $Text tag configure glyph-bookmark -foreground [::questlog::theme::c glyph_bookmark]
         # Session header: one line, the block's "title" (like a search result
@@ -275,6 +278,9 @@ oo::class create ::questlog::ui::SessionList {
         # tier foreground wins over it on the cost cell.
         $Text tag configure cost-mid     -foreground [::questlog::theme::c cost_mid]
         $Text tag configure cost-outlier -foreground [::questlog::theme::c cost_outlier]
+        # Folder size/cost aggregates are bold (a sum, not a row value); they
+        # overlay meta or a cost tier for colour, so this only sets the weight.
+        $Text tag configure foldagg -font QLBold
 
         set HitTags [list]
         set hues [::questlog::theme::hues]
@@ -318,7 +324,12 @@ oo::class create ::questlog::ui::SessionList {
         set ColTabs [list $x1 right $x2 right $x3 right]
         set SubjectMax [expr {$x1 - $DateW - $ColGap - 12}]
         if {$SubjectMax < 80} { set SubjectMax 80 }
+        # The folder label has no date cell, so it may run up to the first tab
+        # stop (x1) before its aggregates; cap it just short of that.
+        set FolderLabelMax [expr {$x1 - 16}]
+        if {$FolderLabelMax < 60} { set FolderLabelMax 60 }
         $Text tag configure sessionhead -tabs $ColTabs
+        $Text tag configure folderhead  -tabs $ColTabs
         if {[winfo exists $Top.body.hdr]} { $Top.body.hdr configure -tabs $ColTabs }
     }
 
@@ -336,6 +347,7 @@ oo::class create ::questlog::ui::SessionList {
         my layout_columns
         my draw_header
         $Text configure -state normal
+        foreach folder $FolderOrder { my redraw_folder_heading $folder }
         dict for {path s} $Sessions {
             if {[dict get $s rendered]} { my redraw_header $path }
         }
@@ -693,7 +705,13 @@ oo::class create ::questlog::ui::SessionList {
             count 0 first_lineno $first_lineno snippets [list] \
             stag "" smark "" semark "" rendered 0]
         dict lappend SessionsByFolder $folder $path
-        my bump_folder_count $folder 1
+        # Count and size accrue together (size is known at scan time); fold both
+        # into one heading redraw. Cost arrives later, on its own redraw.
+        dict set Folders $folder count \
+            [expr {[dict get [dict get $Folders $folder] count] + 1}]
+        dict set Folders $folder size \
+            [expr {[my dict_or [dict get $Folders $folder] size 0] + $size}]
+        my redraw_folder_heading $folder
         if {$cost ne "" && $cost > 0} {
             my bump_folder_cost $folder $cost
             set TotalCost [expr {$TotalCost + $cost}]
@@ -991,10 +1009,12 @@ oo::class create ::questlog::ui::SessionList {
         set fmark  "fm[incr NextId]"
         set femark "fe[incr NextId]"
         dict set Folders $folder [dict create fmark $fmark femark $femark \
-            htag $htag label $label count 0 cost 0.0 expanded $expanded]
+            htag $htag label $label count 0 cost 0.0 size 0 expanded $expanded]
         set fstart [$Text index TailMark]
-        $Text insert TailMark "[my folder_heading_text $folder]\n" \
+        set info [my folder_heading_info $folder]
+        $Text insert TailMark "[dict get $info line]\n" \
             [list folderhead $htag]
+        my apply_folder_tags $fstart $info
         $Text mark set $fmark $fstart
         $Text mark gravity $fmark left
         $Text mark set $femark [$Text index TailMark]
@@ -1005,32 +1025,78 @@ oo::class create ::questlog::ui::SessionList {
         $Text tag bind $htag <Button-1> [list [self] toggle_folder $folder]
     }
 
-    method folder_heading_text {folder} {
+    # Build a folder heading line: the marker, the (truncated) project label and
+    # a bare "(N)" session count on the left, then the folder's total size and
+    # cost pinned in the same columns as the rows below. The aggregates carry no
+    # date cell, so a double tab opens straight into the size column. Returns the
+    # line and the char ranges apply_folder_tags bolds.
+    method folder_heading_info {folder} {
         set f [dict get $Folders $folder]
         set marker [expr {[dict get $f expanded] ? "▾" : "▸"}]
-        # Bind the marker to the label with a non-breaking space so -wrap word
-        # cannot strand the triangle alone on a line when the path is long.
-        set line "$marker\u00A0[dict get $f label]"
         set n [dict get $f count]
-        set fc [my dict_or $f cost 0.0]
+        set count_str [expr {$n > 0 ? " ($n)" : ""}]
+        set size_sum ""
+        set cost_sum ""
+        set fc 0.0
         if {$n > 0} {
-            if {$fc > 0} {
-                set noun [expr {$n == 1 ? {session} : {sessions}}]
-                append line "  ($n $noun, [::questlog::cost::format_total $fc])"
-            } else {
-                append line "  ($n)"
-            }
+            set size_sum [my fmt_size [my dict_or $f size 0]]
+            set fc [my dict_or $f cost 0.0]
+            if {$fc > 0} { set cost_sum [::questlog::cost::format_total $fc] }
         }
-        return $line
+        # Marker joined to the label by a space; the label is truncated so it
+        # never runs into the right-pinned aggregates.
+        set fixed [expr {[font measure QLList "$marker "] \
+                         + [font measure QLList $count_str]}]
+        set label [my truncate_px [dict get $f label] \
+                       [expr {$FolderLabelMax - $fixed}] QLList]
+        set line "$marker $label$count_str"
+        append line "\t\t"
+        set size_off [string length $line]
+        set size_len [string length $size_sum]
+        append line $size_sum
+        append line "\t"
+        set cost_off [string length $line]
+        set cost_len [string length $cost_sum]
+        append line $cost_sum
+        return [dict create line $line \
+            size_off $size_off size_len $size_len \
+            cost_off $cost_off cost_len $cost_len cost $fc]
+    }
+
+    # Bold the folder's size and cost aggregates in their columns. The size
+    # keeps the muted meta grey; the cost also takes its tier colour, so the
+    # project that ate the most reads bold red at a glance.
+    method apply_folder_tags {fstart info} {
+        set so [dict get $info size_off]
+        set sl [dict get $info size_len]
+        if {$sl > 0} {
+            $Text tag add meta    "$fstart + ${so}c" "$fstart + [expr {$so + $sl}]c"
+            $Text tag add foldagg "$fstart + ${so}c" "$fstart + [expr {$so + $sl}]c"
+        }
+        set co [dict get $info cost_off]
+        set cl [dict get $info cost_len]
+        if {$cl > 0} {
+            set fc [dict get $info cost]
+            set ctag meta
+            if {$fc >= 1.0} {
+                set ctag cost-outlier
+            } elseif {$fc >= 0.10} {
+                set ctag cost-mid
+            }
+            $Text tag add $ctag   "$fstart + ${co}c" "$fstart + [expr {$co + $cl}]c"
+            $Text tag add foldagg "$fstart + ${co}c" "$fstart + [expr {$co + $cl}]c"
+        }
     }
 
     method redraw_folder_heading {folder} {
         if {![dict exists $Folders $folder]} return
         set f [dict get $Folders $folder]
         set fmark [dict get $f fmark]
+        set info [my folder_heading_info $folder]
         $Text delete $fmark "$fmark lineend"
-        $Text insert $fmark [my folder_heading_text $folder] \
+        $Text insert $fmark [dict get $info line] \
             [list folderhead [dict get $f htag]]
+        my apply_folder_tags $fmark $info
     }
 
     method toggle_folder {folder} {
@@ -1466,9 +1532,9 @@ oo::class create ::questlog::ui::SessionList {
             $Text delete [dict get $s smark] [dict get $s semark]
             catch {$Text mark unset [dict get $s smark] [dict get $s semark]}
         }
-        # Subtract this session's cost from the folder aggregate and the
-        # running total before the dict entry vanishes, so a later sum
-        # over remaining sessions stays exact.
+        # Subtract this session's cost and size from the folder aggregates and
+        # the running total before the dict entry vanishes, so a later sum over
+        # remaining sessions stays exact.
         set cost [my dict_or $s cost ""]
         if {$cost ne "" && $cost > 0} {
             my bump_folder_cost $folder [expr {-$cost}]
@@ -1483,6 +1549,9 @@ oo::class create ::questlog::ui::SessionList {
         if {[llength [my dict_or $SessionsByFolder $folder {}]] == 0} {
             my forget_folder $folder
         } else {
+            dict set Folders $folder size \
+                [expr {[my dict_or [dict get $Folders $folder] size 0] \
+                       - [my dict_or $s size 0]}]
             my bump_folder_count $folder -1
         }
     }
