@@ -83,10 +83,11 @@ namespace eval ::questlog::config {
     # list; immediate = render each session as it arrives (still one anchored
     # pass per session, never per match).
     dict set Config search_render coalesced
-    # 0 = render the whole idle batch in one pass (no millisecond cap); N>0 caps
-    # each idle slice to N ms, yielding between slices, so a query matching every
-    # file in the window cannot block input beyond N ms on any machine.
-    dict set Config search_render_slice_ms 0
+    # Caps each idle render slice to this many ms, yielding between slices, so a
+    # query matching every file in the window cannot block input beyond this on
+    # any machine. 0 renders the whole idle batch in one pass (faster overall,
+    # but an ~800ms hitch on a very broad term).
+    dict set Config search_render_slice_ms 50
 
     # ---- polling -----------------------------------------------------------
     # Re-poll interval for the live-session registry (running markers). The cost
