@@ -45,10 +45,10 @@ proc ::questlog::search::build_clauses {snapshot} {
     set out [dict create \
         terms        $terms \
         nocase       [expr {!$search_case}] \
-        patterns     [::questlog::search::trim_values [dict_or $snapshot pattern {}]] \
-        paths_read   [::questlog::search::trim_values [dict_or $snapshot read    {}]] \
-        paths_wrote  [::questlog::search::trim_values [dict_or $snapshot wrote   {}]] \
-        paths_edited [::questlog::search::trim_values [dict_or $snapshot edited  {}]]]
+        patterns     [::questlog::search::trim_values [dict getdef $snapshot pattern {}]] \
+        paths_read   [::questlog::search::trim_values [dict getdef $snapshot read    {}]] \
+        paths_wrote  [::questlog::search::trim_values [dict getdef $snapshot wrote   {}]] \
+        paths_edited [::questlog::search::trim_values [dict getdef $snapshot edited  {}]]]
     return $out
 }
 
@@ -56,11 +56,6 @@ proc ::questlog::search::trim_values {vs} {
     set out [list]
     foreach v $vs { if {$v ne ""} { lappend out $v } }
     return $out
-}
-
-proc ::questlog::search::dict_or {d k default} {
-    if {[dict exists $d $k]} { return [dict get $d $k] }
-    return $default
 }
 
 # clauses_any clauses - 1 iff any clause has at least one value. Used by
@@ -283,11 +278,6 @@ oo::class create ::questlog::Search {
         yield
         set YieldClock [clock milliseconds]
         return [expr {$my_epoch != $Epoch}]
-    }
-
-    method dict_or {d k default} {
-        if {[dict exists $d $k]} { return [dict get $d $k] }
-        return $default
     }
 
     method start_threaded {snapshot N} {

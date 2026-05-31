@@ -412,11 +412,6 @@ oo::class create ::questlog::Scan {
         if {$OnRow ne ""} { {*}$OnRow $row }
     }
 
-    method dict_or {d k default} {
-        if {[dict exists $d $k]} { return [dict get $d $k] }
-        return $default
-    }
-
     method destroy {} {
         my cancel
         next

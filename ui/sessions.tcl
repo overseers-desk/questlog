@@ -437,10 +437,10 @@ oo::class create ::questlog::ui::SessionList {
             if {[dict exists $src $p]} {
                 set s [dict get $src $p]
                 switch -- $SortKey {
-                    date { set v [my dict_or $s mtime 0] }
-                    size { set v [my dict_or $s size 0] }
+                    date { set v [dict getdef $s mtime 0] }
+                    size { set v [dict getdef $s size 0] }
                     cost {
-                        set v [my dict_or $s cost ""]
+                        set v [dict getdef $s cost ""]
                         if {$v eq "" || $v < 0} { set v -1 }
                     }
                 }
@@ -452,7 +452,7 @@ oo::class create ::questlog::ui::SessionList {
     }
 
     method sort_folders {order foldercost} {
-        set keyed [lmap f $order { list $f [my dict_or $foldercost $f 0.0] }]
+        set keyed [lmap f $order { list $f [dict getdef $foldercost $f 0.0] }]
         set dir [expr {$SortDir eq "asc" ? "-increasing" : "-decreasing"}]
         return [lmap e [lsort -real -index 1 $dir $keyed] { lindex $e 0 }]
     }
@@ -574,8 +574,8 @@ oo::class create ::questlog::ui::SessionList {
     # one the app seeded (under_auto == 1), since the user did not type it
     # and may not realise it is filtering their results. Hide otherwise.
     method update_banner {} {
-        set under_auto [my dict_or $Snapshot under_auto 0]
-        set under_list [my dict_or $Snapshot under {}]
+        set under_auto [dict getdef $Snapshot under_auto 0]
+        set under_list [dict getdef $Snapshot under {}]
         if {$under_auto && [llength $under_list] > 0} {
             set path [lindex $under_list 0]
             set pretty [::questlog::path::pretty_home $path]
@@ -610,7 +610,7 @@ oo::class create ::questlog::ui::SessionList {
     # owns the display then) and when criteria are active (the result index
     # is built from matches, not the scan stream).
     method on_scan_row {row} {
-        if {[my dict_or $Snapshot running_only 0]} return
+        if {[dict getdef $Snapshot running_only 0]} return
         if {$CriteriaActive} return
         if {![my row_matches_snapshot $row]} return
         set path [dict get $row path]
@@ -661,13 +661,13 @@ oo::class create ::questlog::ui::SessionList {
         set folder [dict get $row folder]
         my ensure_folder $folder
         set label [my session_label $path $row]
-        set slug  [my dict_or $row slug ""]
-        set aitt  [my dict_or $row ai_title ""]
-        set mtime [my dict_or $row mtime 0]
+        set slug  [dict getdef $row slug ""]
+        set aitt  [dict getdef $row ai_title ""]
+        set mtime [dict getdef $row mtime 0]
         set when  [my fmt_time $mtime]
-        set size  [my dict_or $row size 0]
-        set uuid  [my dict_or $row uuid [file rootname [file tail $path]]]
-        set cost  [my dict_or $row cost_usd ""]
+        set size  [dict getdef $row size 0]
+        set uuid  [dict getdef $row uuid [file rootname [file tail $path]]]
+        set cost  [dict getdef $row cost_usd ""]
         dict set Sessions $path [dict create \
             folder $folder label $label slug $slug ai_title $aitt \
             when $when mtime $mtime size $size uuid $uuid cost $cost \
@@ -679,7 +679,7 @@ oo::class create ::questlog::ui::SessionList {
         dict set Folders $folder count \
             [expr {[dict get [dict get $Folders $folder] count] + 1}]
         dict set Folders $folder size \
-            [expr {[my dict_or [dict get $Folders $folder] size 0] + $size}]
+            [expr {[dict getdef [dict get $Folders $folder] size 0] + $size}]
         my redraw_folder_heading $folder
         if {$cost ne "" && $cost > 0} {
             my bump_folder_cost $folder $cost
@@ -794,8 +794,8 @@ oo::class create ::questlog::ui::SessionList {
     }
 
     method session_label {path row} {
-        set body [my dict_or $row first_user ""]
-        if {$body eq ""} { set body [my dict_or $row uuid [file rootname [file tail $path]]] }
+        set body [dict getdef $row first_user ""]
+        if {$body eq ""} { set body [dict getdef $row uuid [file rootname [file tail $path]]] }
         return $body
     }
 
@@ -811,7 +811,7 @@ oo::class create ::questlog::ui::SessionList {
                 date { set v [dict get $s when] }
                 size { set v [my fmt_size [dict get $s size]] }
                 cost {
-                    set c [my dict_or $s cost ""]
+                    set c [dict getdef $s cost ""]
                     set v [expr {($c ne "" && $c >= 0) \
                                  ? [::questlog::cost::format_usd $c] : ""}]
                 }
@@ -913,7 +913,7 @@ oo::class create ::questlog::ui::SessionList {
         set co [dict get $info cost_off]
         set cl [dict get $info cost_len]
         if {$co >= 0 && $cl > 0} {
-            set c [my dict_or [dict get $Sessions $path] cost ""]
+            set c [dict getdef [dict get $Sessions $path] cost ""]
             if {$c ne "" && $c >= 0.10} {
                 set tag [expr {$c >= 1.0 ? "cost-outlier" : "cost-mid"}]
                 $Text tag add $tag "$row_start + ${co}c" \
@@ -939,7 +939,7 @@ oo::class create ::questlog::ui::SessionList {
 
     method session_bookmarked {path} {
         set row [{*}$LookupSession $path]
-        if {$row ne ""} { return [my dict_or $row bookmarked 0] }
+        if {$row ne ""} { return [dict getdef $row bookmarked 0] }
         return [file executable $path]
     }
 
@@ -1008,8 +1008,8 @@ oo::class create ::questlog::ui::SessionList {
         set cost_sum ""
         set fc 0.0
         if {$n > 0} {
-            set size_sum [my fmt_size [my dict_or $f size 0]]
-            set fc [my dict_or $f cost 0.0]
+            set size_sum [my fmt_size [dict getdef $f size 0]]
+            set fc [dict getdef $f cost 0.0]
             if {$fc > 0} { set cost_sum [::questlog::cost::format_usd $fc] }
         }
         # Marker joined to the label by a space; the label is truncated so it
@@ -1079,7 +1079,7 @@ oo::class create ::questlog::ui::SessionList {
     }
 
     method expand_folder {folder} {
-        foreach path [my sort_paths [my dict_or $SessionsByFolder $folder {}] $Sessions] {
+        foreach path [my sort_paths [dict getdef $SessionsByFolder $folder {}] $Sessions] {
             my render_session $path
         }
     }
@@ -1094,7 +1094,7 @@ oo::class create ::questlog::ui::SessionList {
         set bodystart [$Text index "$fmark lineend +1c"]
         $Text delete $bodystart $femark
         $Text mark set $femark $bodystart
-        foreach path [my dict_or $SessionsByFolder $folder {}] {
+        foreach path [dict getdef $SessionsByFolder $folder {}] {
             if {![dict exists $Sessions $path]} continue
             if {![dict get $Sessions $path rendered]} continue
             catch {$Text mark unset [dict get $Sessions $path smark] \
@@ -1123,7 +1123,7 @@ oo::class create ::questlog::ui::SessionList {
     method bump_folder_cost {folder delta} {
         if {![dict exists $Folders $folder]} return
         dict set Folders $folder cost \
-            [expr {[my dict_or [dict get $Folders $folder] cost 0.0] + $delta}]
+            [expr {[dict getdef [dict get $Folders $folder] cost 0.0] + $delta}]
         my redraw_folder_heading $folder
     }
 
@@ -1144,7 +1144,7 @@ oo::class create ::questlog::ui::SessionList {
     method refresh_cost {path cost_dict} {
         if {![dict exists $Sessions $path]} return
         set s [dict get $Sessions $path]
-        set old [my dict_or $s cost ""]
+        set old [dict getdef $s cost ""]
         if {$old eq ""} { set old 0.0 }
         set new [dict get $cost_dict cost_usd]
         set delta 0.0
@@ -1292,8 +1292,8 @@ oo::class create ::questlog::ui::SessionList {
         set folder ""
         set cwd ""
         if {$row ne ""} {
-            set folder [my dict_or $row folder ""]
-            set uuid [my dict_or $row uuid $uuid]
+            set folder [dict getdef $row folder ""]
+            set uuid [dict getdef $row uuid $uuid]
         }
         if {$folder eq "" && [dict exists $Sessions $path]} {
             set folder [dict get [dict get $Sessions $path] folder]
@@ -1354,7 +1354,7 @@ oo::class create ::questlog::ui::SessionList {
         set s [dict get $Sessions $MenuPath]
         set uuid [dict get $s uuid]
         set current [dict get $s slug]
-        set aitt [my dict_or $s ai_title ""]
+        set aitt [dict getdef $s ai_title ""]
         set entered [my prompt_rename $current]
         if {$entered eq "<cancelled>"} return
         if {$entered eq ""} {
@@ -1422,8 +1422,8 @@ oo::class create ::questlog::ui::SessionList {
     # self-corrects on the next.
     method reconcile_running {running} {
         set RunningSet $running
-        set running_only    [my dict_or $Snapshot running_only 0]
-        set bookmarked_only [my dict_or $Snapshot bookmarked_only 0]
+        set running_only    [dict getdef $Snapshot running_only 0]
+        set bookmarked_only [dict getdef $Snapshot bookmarked_only 0]
         set before [dict size $Sessions]
 
         $Text configure -state normal
@@ -1464,7 +1464,7 @@ oo::class create ::questlog::ui::SessionList {
             }
             set row [{*}$LookupSession $path]
             set bk 0
-            if {$row ne ""} { set bk [my dict_or $row bookmarked 0] }
+            if {$row ne ""} { set bk [dict getdef $row bookmarked 0] }
             if {$running_only && $bookmarked_only} {
                 set keep [expr {$is_running && $bk}]
             } elseif {$running_only} {
@@ -1496,7 +1496,7 @@ oo::class create ::questlog::ui::SessionList {
     method all_session_paths {} {
         set out [list]
         foreach folder $FolderOrder {
-            foreach path [my dict_or $SessionsByFolder $folder {}] { lappend out $path }
+            foreach path [dict getdef $SessionsByFolder $folder {}] { lappend out $path }
         }
         return $out
     }
@@ -1514,7 +1514,7 @@ oo::class create ::questlog::ui::SessionList {
         # Subtract this session's cost and size from the folder aggregates and
         # the running total before the dict entry vanishes, so a later sum over
         # remaining sessions stays exact.
-        set cost [my dict_or $s cost ""]
+        set cost [dict getdef $s cost ""]
         if {$cost ne "" && $cost > 0} {
             my bump_folder_cost $folder [expr {-$cost}]
             set TotalCost [expr {$TotalCost - $cost}]
@@ -1522,15 +1522,15 @@ oo::class create ::questlog::ui::SessionList {
         }
         dict unset Sessions $path
         if {$Selected eq $path} { set Selected "" }
-        set lst [my dict_or $SessionsByFolder $folder {}]
+        set lst [dict getdef $SessionsByFolder $folder {}]
         set i [lsearch -exact $lst $path]
         if {$i >= 0} { dict set SessionsByFolder $folder [lreplace $lst $i $i] }
-        if {[llength [my dict_or $SessionsByFolder $folder {}]] == 0} {
+        if {[llength [dict getdef $SessionsByFolder $folder {}]] == 0} {
             my forget_folder $folder
         } else {
             dict set Folders $folder size \
-                [expr {[my dict_or [dict get $Folders $folder] size 0] \
-                       - [my dict_or $s size 0]}]
+                [expr {[dict getdef [dict get $Folders $folder] size 0] \
+                       - [dict getdef $s size 0]}]
             my bump_folder_count $folder -1
         }
     }
@@ -1559,7 +1559,7 @@ oo::class create ::questlog::ui::SessionList {
         dict set s folder $new_folder
         dict unset Sessions $old_path
         dict set Sessions $new_path $s
-        set lst [my dict_or $SessionsByFolder $old_folder {}]
+        set lst [dict getdef $SessionsByFolder $old_folder {}]
         set i [lsearch -exact $lst $old_path]
         if {$i >= 0} { dict set SessionsByFolder $old_folder [lreplace $lst $i $i] }
         if {![dict exists $SessionsByFolder $new_folder]} {
@@ -1587,7 +1587,7 @@ oo::class create ::questlog::ui::SessionList {
         set foldercost [dict create]
         dict for {f fd} $Folders {
             dict set wasexp $f [dict get $fd expanded]
-            dict set foldercost $f [my dict_or $fd cost 0.0]
+            dict set foldercost $f [dict getdef $fd cost 0.0]
         }
         # Sorting by cost reorders the folders by their aggregate too; the other
         # keys keep the folders in arrival order.
@@ -1601,17 +1601,17 @@ oo::class create ::questlog::ui::SessionList {
         # model_add_session re-establish both consistently.
         set TotalCost 0.0
         foreach folder $order {
-            foreach path [my sort_paths [my dict_or $byfolder $folder {}] $saved] {
+            foreach path [my sort_paths [dict getdef $byfolder $folder {}] $saved] {
                 if {![dict exists $saved $path]} continue
                 set s [dict get $saved $path]
                 my model_add_session $path \
                     [dict create folder [dict get $s folder] \
-                         uuid [dict get $s uuid] mtime [my dict_or $s mtime 0] \
+                         uuid [dict get $s uuid] mtime [dict getdef $s mtime 0] \
                          size [dict get $s size] \
                          first_user [dict get $s label] \
-                         slug [my dict_or $s slug ""] \
-                         ai_title [my dict_or $s ai_title ""] \
-                         cost_usd [my dict_or $s cost ""]] \
+                         slug [dict getdef $s slug ""] \
+                         ai_title [dict getdef $s ai_title ""] \
+                         cost_usd [dict getdef $s cost ""]] \
                     [dict get $s first_lineno]
                 dict set Sessions $path label [dict get $s label]
                 dict set Sessions $path when [dict get $s when]
@@ -1624,7 +1624,7 @@ oo::class create ::questlog::ui::SessionList {
         }
         foreach folder $FolderOrder {
             if {[dict get [dict get $Folders $folder] expanded]} {
-                foreach path [my dict_or $SessionsByFolder $folder {}] {
+                foreach path [dict getdef $SessionsByFolder $folder {}] {
                     my render_session $path
                 }
             }
@@ -1685,10 +1685,5 @@ oo::class create ::questlog::ui::SessionList {
         if {$bytes < 1048576}     { return "[expr {$bytes / 1024}] K" }
         if {$bytes < 1073741824}  { return "[format %.1f [expr {$bytes / 1048576.0}]] M" }
         return "[format %.1f [expr {$bytes / 1073741824.0}]] G"
-    }
-
-    method dict_or {d k default} {
-        if {[dict exists $d $k]} { return [dict get $d $k] }
-        return $default
     }
 }

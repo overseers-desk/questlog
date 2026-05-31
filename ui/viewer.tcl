@@ -377,7 +377,7 @@ oo::class create ::questlog::ui::Viewer {
         set last_ts 0
         set in_section 0
         foreach rec $Records {
-            set t [::questlog::jsonl::dict_get_or $rec type ""]
+            set t [dict getdef $rec type ""]
             # last-prompt records are repeated, truncated harness snapshots of
             # the most recent user prompt: the harness writes the same value
             # many times, and it echoes the real user turn already shown. Not

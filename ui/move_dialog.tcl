@@ -5,7 +5,7 @@ package require Tk
 # project" operation. Lists every folder under ~/.claude/projects/, plus
 # a free-text entry for a cwd that has no project folder yet. The single
 # entry point `open` takes a callback; the caller routes the chosen cwd
-# through ::questlog::path::ensure_project_folder and ::questlog::move::session.
+# through ::questlog::path::ensure_project_folder and ::questlog::path::move_session.
 #
 # Single-instance: only one move dialog is open at a time (modal). Held
 # in namespace vars rather than a class because there is no joint

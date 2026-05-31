@@ -24,7 +24,7 @@ proc ::questlog::jsonl::parse_line {line} {
 #   system:         .content (catches "Conversation compacted")
 #   anything else:  ""
 proc ::questlog::jsonl::extract_text {rec} {
-    set t [dict_get_or $rec type ""]
+    set t [dict getdef $rec type ""]
     switch -- $t {
         user - assistant {
             if {![dict exists $rec message]} { return "" }
@@ -37,10 +37,10 @@ proc ::questlog::jsonl::extract_text {rec} {
             return [extract_array_text $c]
         }
         queue-operation - system {
-            return [dict_get_or $rec content ""]
+            return [dict getdef $rec content ""]
         }
         last-prompt {
-            return [dict_get_or $rec lastPrompt ""]
+            return [dict getdef $rec lastPrompt ""]
         }
         default { return "" }
     }
@@ -65,13 +65,13 @@ proc ::questlog::jsonl::is_string_content {c} {
 proc ::questlog::jsonl::extract_array_text {blocks} {
     set out [list]
     foreach blk $blocks {
-        set bt [dict_get_or $blk type ""]
+        set bt [dict getdef $blk type ""]
         switch -- $bt {
             text {
-                lappend out [dict_get_or $blk text ""]
+                lappend out [dict getdef $blk text ""]
             }
             tool_result {
-                set bc [dict_get_or $blk content ""]
+                set bc [dict getdef $blk content ""]
                 if {[is_string_content $bc]} { lappend out $bc }
             }
         }
@@ -309,7 +309,7 @@ proc ::questlog::jsonl::inline_unescape {s} {
 # concern, not a JSONL concern.
 proc ::questlog::jsonl::extract_blocks {rec} {
     set out [list]
-    set t [dict_get_or $rec type ""]
+    set t [dict getdef $rec type ""]
     switch -- $t {
         user {
             if {![dict exists $rec message]} { return $out }
@@ -320,12 +320,12 @@ proc ::questlog::jsonl::extract_blocks {rec} {
                 lappend out user $c
             } else {
                 foreach blk $c {
-                    set bt [dict_get_or $blk type ""]
+                    set bt [dict getdef $blk type ""]
                     if {$bt eq "tool_result"} {
                         set bc [tool_result_text $blk]
                         if {$bc ne ""} { lappend out tool_result $bc }
                     } elseif {$bt eq "text"} {
-                        lappend out user [dict_get_or $blk text ""]
+                        lappend out user [dict getdef $blk text ""]
                     }
                 }
             }
@@ -339,23 +339,23 @@ proc ::questlog::jsonl::extract_blocks {rec} {
                 lappend out assistant $c
             } else {
                 foreach blk $c {
-                    set bt [dict_get_or $blk type ""]
+                    set bt [dict getdef $blk type ""]
                     if {$bt eq "text"} {
-                        lappend out assistant [dict_get_or $blk text ""]
+                        lappend out assistant [dict getdef $blk text ""]
                     } elseif {$bt eq "tool_use"} {
-                        set name  [dict_get_or $blk name ""]
-                        set input [dict_get_or $blk input [dict create]]
+                        set name  [dict getdef $blk name ""]
+                        set input [dict getdef $blk input [dict create]]
                         lappend out tool_use [::questlog::match::format_tool_use $name $input]
                     }
                 }
             }
         }
         system - queue-operation {
-            set c [dict_get_or $rec content ""]
+            set c [dict getdef $rec content ""]
             if {$c ne ""} { lappend out system $c }
         }
         last-prompt {
-            set c [dict_get_or $rec lastPrompt ""]
+            set c [dict getdef $rec lastPrompt ""]
             if {$c ne ""} { lappend out user $c }
         }
     }
@@ -368,10 +368,10 @@ proc ::questlog::jsonl::tool_result_text {blk} {
     if {[is_string_content $c]} { return $c }
     set parts [list]
     foreach inner $c {
-        set it [dict_get_or $inner type ""]
+        set it [dict getdef $inner type ""]
         switch -- $it {
-            text            { lappend parts [dict_get_or $inner text ""] }
-            tool_reference  { lappend parts [dict_get_or $inner tool_name ""] }
+            text            { lappend parts [dict getdef $inner text ""] }
+            tool_reference  { lappend parts [dict getdef $inner tool_name ""] }
         }
     }
     return [join $parts " "]
@@ -385,16 +385,16 @@ proc ::questlog::jsonl::tool_result_text {blk} {
 # read/write/edit criteria structurally. Empty for non-assistant records.
 proc ::questlog::jsonl::record_tool_uses {rec} {
     set out [list]
-    if {[dict_get_or $rec type ""] ne "assistant"} { return $out }
+    if {[dict getdef $rec type ""] ne "assistant"} { return $out }
     if {![dict exists $rec message]} { return $out }
     set msg [dict get $rec message]
     if {![dict exists $msg content]} { return $out }
     set c [dict get $msg content]
     if {[is_string_content $c]} { return $out }
     foreach blk $c {
-        if {[dict_get_or $blk type ""] ne "tool_use"} continue
-        set name  [dict_get_or $blk name ""]
-        set input [dict_get_or $blk input [dict create]]
+        if {[dict getdef $blk type ""] ne "tool_use"} continue
+        set name  [dict getdef $blk name ""]
+        set input [dict getdef $blk input [dict create]]
         set path ""
         if {![catch {dict size $input}]} {
             if {[dict exists $input file_path]} {
@@ -411,14 +411,14 @@ proc ::questlog::jsonl::record_tool_uses {rec} {
 
 # 1 iff this is a compaction boundary: type=system AND subtype=compact_boundary.
 proc ::questlog::jsonl::is_compact_boundary {rec} {
-    if {[dict_get_or $rec type ""] ne "system"} { return 0 }
-    if {[dict_get_or $rec subtype ""] ne "compact_boundary"} { return 0 }
+    if {[dict getdef $rec type ""] ne "system"} { return 0 }
+    if {[dict getdef $rec subtype ""] ne "compact_boundary"} { return 0 }
     return 1
 }
 
 # ISO timestamp string from a record (.timestamp). Empty if absent.
 proc ::questlog::jsonl::record_timestamp {rec} {
-    return [dict_get_or $rec timestamp ""]
+    return [dict getdef $rec timestamp ""]
 }
 
 # Last non-empty assistant text body in a session jsonl. Empty string if
@@ -432,7 +432,7 @@ proc ::questlog::jsonl::last_assistant_text {path} {
         if {$line eq ""} continue
         set rec [parse_line $line]
         if {$rec eq ""} continue
-        if {[dict_get_or $rec type ""] ne "assistant"} continue
+        if {[dict getdef $rec type ""] ne "assistant"} continue
         set body [extract_text $rec]
         if {$body ne ""} { set last $body }
     }
@@ -457,10 +457,4 @@ proc ::questlog::jsonl::first_cwd {path} {
     }
     close $fh
     return $cwd
-}
-
-# dict get with default - Tcl 9's [dict getdef] would do this but is verbose.
-proc ::questlog::jsonl::dict_get_or {d k default} {
-    if {[dict exists $d $k]} { return [dict get $d $k] }
-    return $default
 }
