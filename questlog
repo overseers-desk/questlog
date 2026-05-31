@@ -36,6 +36,7 @@ source [file join $ROOT lib path.tcl]
 source [file join $ROOT lib filter.tcl]
 source [file join $ROOT lib state.tcl]
 source [file join $ROOT lib jsonl.tcl]
+source [file join $ROOT lib match.tcl]
 source [file join $ROOT lib terminal.tcl]
 source [file join $ROOT lib live.tcl]
 source [file join $ROOT lib scan.tcl]
@@ -66,6 +67,14 @@ if {[::questlog::cli::is_cli $argv]} {
         }
     }
 }
+
+# The match procs read the display caps from config; inject them once for the
+# main interp (each worker gets its own copy via worker_prelude).
+::questlog::match::set_caps [dict create \
+    content_cap     [::questlog::config::get content_cap] \
+    snippet_radius  [::questlog::config::get snippet_radius] \
+    tool_param_cap  [::questlog::config::get tool_param_cap] \
+    tool_render_cap [::questlog::config::get tool_render_cap]]
 
 ::questlog::theme::init
 if {$VIEWER_FONT ne ""} { ::questlog::theme::set_body_family $VIEWER_FONT }

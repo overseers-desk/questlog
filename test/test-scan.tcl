@@ -6,6 +6,7 @@ source [file join $ROOT config.tcl]
 source [file join $ROOT lib path.tcl]
 source [file join $ROOT lib filter.tcl]
 source [file join $ROOT lib jsonl.tcl]
+source [file join $ROOT lib match.tcl]
 source [file join $ROOT lib scan.tcl]
 
 # Synthetic projects tree under /tmp/questlog-test-projects.

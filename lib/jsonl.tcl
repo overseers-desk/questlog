@@ -304,8 +304,8 @@ proc ::questlog::jsonl::inline_unescape {s} {
 #   last-prompt:                          {user $lastPrompt}
 #   anything else (attachment, file-history-snapshot, etc.): empty list.
 #
-# tool_use blocks pass through ::questlog::search::format_tool_use, which lives
-# in the search namespace because the rendered form is a search-pane
+# tool_use blocks pass through ::questlog::match::format_tool_use, which lives
+# in the match namespace because the rendered form is a search-pane
 # concern, not a JSONL concern.
 proc ::questlog::jsonl::extract_blocks {rec} {
     set out [list]
@@ -345,7 +345,7 @@ proc ::questlog::jsonl::extract_blocks {rec} {
                     } elseif {$bt eq "tool_use"} {
                         set name  [dict_get_or $blk name ""]
                         set input [dict_get_or $blk input [dict create]]
-                        lappend out tool_use [::questlog::search::format_tool_use $name $input]
+                        lappend out tool_use [::questlog::match::format_tool_use $name $input]
                     }
                 }
             }
@@ -404,7 +404,7 @@ proc ::questlog::jsonl::record_tool_uses {rec} {
             }
         }
         lappend out [dict create name $name path $path \
-                         rendered [::questlog::search::format_tool_use $name $input]]
+                         rendered [::questlog::match::format_tool_use $name $input]]
     }
     return $out
 }

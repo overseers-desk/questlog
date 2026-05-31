@@ -95,11 +95,11 @@ namespace eval ::questlog::config {
     # Characters of context shown either side of a search hit in a snippet.
     dict set Config snippet_radius 80
     # Length caps for displayed strings: a matched content block, a rendered
-    # tool call, one tool parameter value, and the first-prompt preview.
+    # tool call, and one tool parameter value. The first-prompt preview is left
+    # uncapped; the session list clips it to the subject column at render.
     dict set Config content_cap     300
     dict set Config tool_render_cap 250
     dict set Config tool_param_cap  60
-    dict set Config preview_cap     80
     # Snippets shown per matching session card.
     dict set Config snippets_per_session 3
     # A viewer blockquote longer than this gets a Collapse toggle.

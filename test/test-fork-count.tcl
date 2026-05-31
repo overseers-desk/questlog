@@ -25,8 +25,8 @@ set ROOT [file dirname [file dirname [file normalize [info script]]]]
 # the Scan/Search/SessionList filter path reads ::questlog::config; source both
 # and create the fonts before constructing any widget.
 foreach f {config.tcl lib/theme.tcl lib/path.tcl lib/filter.tcl lib/jsonl.tcl \
-           lib/terminal.tcl lib/live.tcl lib/scan.tcl lib/search.tcl ui/drag.tcl \
-           ui/toolbar.tcl ui/sessions.tcl} {
+           lib/match.tcl lib/terminal.tcl lib/live.tcl lib/scan.tcl lib/search.tcl \
+           ui/drag.tcl ui/toolbar.tcl ui/sessions.tcl} {
     source [file join $ROOT $f]
 }
 ::questlog::theme::init

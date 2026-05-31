@@ -241,7 +241,7 @@ oo::class create ::questlog::Scan {
         set size $fsz
         set folder [file tail [file dirname $path]]
         set uuid   [file rootname [file tail $path]]
-        set first_clean [my clean_preview $first]
+        set first_clean [::questlog::match::clean_preview $first]
         set slug [expr {$agent_name ne "" ? $agent_name : $ai_title}]
         return [dict create \
             path $path \
@@ -256,17 +256,6 @@ oo::class create ::questlog::Scan {
             ai_title $ai_title \
             bookmarked [file executable $path] \
             cwd_hint $cwd]
-    }
-
-    # Collapse whitespace and strip simple JSON escapes. No length cap:
-    # the session list renders the prompt with -wrap none so overflow is
-    # clipped by the widget edge in the right font's actual width, and the
-    # full prompt is read in the viewer a click opens. A byte-count
-    # truncation here would just be a worse approximation of the same clipping.
-    method clean_preview {s} {
-        set s [regsub -all {[\s]+} $s " "]
-        set s [string map [list "\\\"" "\"" "\\\\" "\\" "\\n" " " "\\t" " "] $s]
-        return [string trim $s]
     }
 
     # Merge a cost result into the row. Called from the main thread when

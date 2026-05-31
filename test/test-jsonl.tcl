@@ -3,9 +3,15 @@ package require Tcl 9
 set ROOT [file dirname [file dirname [file normalize [info script]]]]
 source [file join $ROOT config.tcl]
 source [file join $ROOT lib jsonl.tcl]
-# extract_blocks calls ::questlog::search::format_tool_use, which reads the
-# display caps from ::questlog::config; source both so the dependency resolves.
-source [file join $ROOT lib search.tcl]
+# extract_blocks/record_hits live in ::questlog::match, which reads the display
+# caps from ::questlog::config; source it and inject the caps the way the
+# launcher does.
+source [file join $ROOT lib match.tcl]
+::questlog::match::set_caps [dict create \
+    content_cap     [::questlog::config::get content_cap] \
+    snippet_radius  [::questlog::config::get snippet_radius] \
+    tool_param_cap  [::questlog::config::get tool_param_cap] \
+    tool_render_cap [::questlog::config::get tool_render_cap]]
 
 set fails 0
 proc check {name expected actual} {
@@ -105,13 +111,13 @@ proc mk_clauses {args} {
 }
 
 check hits_mixed        {pat_hit read_hit edited_hit} \
-    [hit_flags [::questlog::search::record_hits $r_mixed \
+    [hit_flags [::questlog::match::record_hits $r_mixed \
         [mk_clauses patterns {first} paths_read {/a/r.tcl /a/b.tcl} paths_edited {/a/b.tcl}]]]
 check hits_edit_only    {edited_hit} \
-    [hit_flags [::questlog::search::record_hits $r_edit \
+    [hit_flags [::questlog::match::record_hits $r_edit \
         [mk_clauses paths_edited {/a/b.tcl}]]]
 check hits_read_not_edit {} \
-    [hit_flags [::questlog::search::record_hits $r_read \
+    [hit_flags [::questlog::match::record_hits $r_read \
         [mk_clauses paths_edited {/a/r.tcl}]]]
 
 # Path criteria match by path suffix: a bare or partial filename matches
@@ -119,13 +125,13 @@ check hits_read_not_edit {} \
 # not contains).
 set r_spar [::questlog::jsonl::parse_line {{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Edit","input":{"file_path":"/a/spar-manager.spar-dispatcher-initcmd.tcl","old_string":"x","new_string":"y"}}]}}}]
 check hits_suffix_basename  {edited_hit} \
-    [hit_flags [::questlog::search::record_hits $r_edit \
+    [hit_flags [::questlog::match::record_hits $r_edit \
         [mk_clauses paths_edited {b.tcl}]]]
 check hits_partial_basename {edited_hit} \
-    [hit_flags [::questlog::search::record_hits $r_spar \
+    [hit_flags [::questlog::match::record_hits $r_spar \
         [mk_clauses paths_edited {spar-dispatcher-initcmd.tcl}]]]
 check hits_not_substring    {} \
-    [hit_flags [::questlog::search::record_hits $r_spar \
+    [hit_flags [::questlog::match::record_hits $r_spar \
         [mk_clauses paths_edited {spar-manager}]]]
 
 # segment_blockquotes: split a body into ordered {kind text} segments,
