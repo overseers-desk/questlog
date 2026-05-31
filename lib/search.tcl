@@ -77,20 +77,17 @@ set ::questlog::search::WorkerScript {
     package require json
 
     # Scan each file in the slice with the shared ::questlog::match::scan_file
-    # (sourced via worker_prelude) and fan its row and any matches back to the
-    # main thread; is_first is re-derived main-side in on_worker_match.
+    # (sourced via worker_prelude) and fan its row and full match list back to
+    # the main thread in one message per file, so a session's matches arrive
+    # together and render in a single pass.
     proc worker_run {main_tid obj_cmd epoch paths clauses} {
         set matches_in_slice 0
         foreach path $paths {
             lassign [::questlog::match::scan_file $path $clauses] row matches
             if {$row eq ""} continue
             thread::send -async $main_tid \
-                [list ::questlog::search::dispatch $obj_cmd on_worker_row $epoch $row]
-            foreach mc $matches {
-                thread::send -async $main_tid \
-                    [list ::questlog::search::dispatch $obj_cmd on_worker_match $epoch $mc]
-                incr matches_in_slice
-            }
+                [list ::questlog::search::dispatch $obj_cmd on_worker_file $epoch $row $matches]
+            incr matches_in_slice [llength $matches]
         }
         thread::send -async $main_tid \
             [list ::questlog::search::dispatch $obj_cmd on_worker_done \
@@ -115,9 +112,9 @@ set ::questlog::search::WorkerScript {
 # is skipped on lines that cannot contribute; on a candidate line, parse
 # once and collect the record's hits via record_hits, marking criteria
 # satisfied and buffering evidence rows. At end of file, if every
-# criterion is satisfied, flush the buffered rows in line order through
-# OnMatch as match-record dicts {is_first path lineoff ts btype content
-# folder}; the first row of a session carries is_first 1.
+# criterion is satisfied, deliver the file's row and its match list (in line
+# order) together through OnFile; each match is a dict {path lineoff ts btype
+# content folder}.
 #
 # Side effect: as a free byproduct of reading each file, the row data
 # (multi-turn predicate, first prompt, cwd_hint, first timestamp) is
@@ -131,7 +128,7 @@ oo::class create ::questlog::Search {
     variable Epoch
     variable MatchedSessions   ;# dict path -> 1 (first-match-per-session)
     variable Counts            ;# dict done total matches
-    variable OnMatch
+    variable OnFile
     variable OnProgress
     variable OnDone
     variable Active
@@ -139,12 +136,12 @@ oo::class create ::questlog::Search {
     variable WorkersRemaining  ;# slices yet to report on_worker_done
     variable YieldClock        ;# clock-ms of the coroutine path's last yield
 
-    constructor {scan on_match on_progress on_done} {
+    constructor {scan on_file on_progress on_done} {
         set Scan $scan
         set Epoch 0
         set MatchedSessions [dict create]
         set Counts [dict create done 0 total 0 matches 0]
-        set OnMatch $on_match
+        set OnFile $on_file
         set OnProgress $on_progress
         set OnDone $on_done
         set Active 0
@@ -241,14 +238,12 @@ oo::class create ::questlog::Search {
             # Publish row data back to Scan as a free side-effect.
             $Scan publish_row $row
             # A session qualifies only when every clause is satisfied (scan_file
-            # returns no matches otherwise); flush them in line order, is_first
-            # marking the first hit per session for the consumers.
-            foreach mc $matches {
-                set is_first [expr {![dict exists $MatchedSessions $path]}]
+            # returns no matches otherwise); deliver the whole match list at once
+            # so the session renders in one pass.
+            if {[llength $matches] > 0 && ![dict exists $MatchedSessions $path]} {
                 dict set MatchedSessions $path 1
-                dict set mc is_first $is_first
-                {*}$OnMatch $mc
-                dict incr Counts matches
+                dict incr Counts matches [llength $matches]
+                {*}$OnFile $matches
             }
             incr count
             dict set Counts done $count
@@ -323,20 +318,12 @@ oo::class create ::questlog::Search {
         }
     }
 
-    # Receives a typed match from a worker. Re-derives is_first on the
-    # main side so the per-session-first-hit invariant is authoritative
-    # here rather than relying on disjoint slicing.
-    method on_worker_match {epoch matchcore} {
-        if {$epoch != $Epoch} return
-        set path [dict get $matchcore path]
-        set is_first [expr {![dict exists $MatchedSessions $path]}]
-        dict set MatchedSessions $path 1
-        dict set matchcore is_first $is_first
-        {*}$OnMatch $matchcore
-        dict incr Counts matches
-    }
-
-    method on_worker_row {epoch row} {
+    # Receives one found file from a worker: its row (published to Scan for
+    # memoisation and the cost-pass side-effect) and its full match list,
+    # delivered together so the session renders in a single pass. Disjoint
+    # slices mean each path arrives once; the MatchedSessions guard makes that
+    # authoritative rather than relying on it.
+    method on_worker_file {epoch row matches} {
         if {$epoch != $Epoch} return
         $Scan publish_row $row
         dict incr Counts done
@@ -345,6 +332,12 @@ oo::class create ::questlog::Search {
         if {$d % [::questlog::config::get search_progress_files] == 0} {
             {*}$OnProgress $d $t [dict get $Counts matches]
         }
+        if {[llength $matches] == 0} return
+        set path [dict get $row path]
+        if {[dict exists $MatchedSessions $path]} return
+        dict set MatchedSessions $path 1
+        dict incr Counts matches [llength $matches]
+        {*}$OnFile $matches
     }
 
     method on_worker_done {epoch slice_size slice_matches} {

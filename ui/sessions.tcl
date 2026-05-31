@@ -626,27 +626,52 @@ oo::class create ::questlog::ui::SessionList {
 
     # Match record from Search. The first match for a session creates its
     # card; later matches bump the count and add a snippet (capped at three).
-    method add_match {match} {
-        set path [dict get $match path]
-        set btype [dict get $match btype]
-        set content [dict get $match content]
-        set lineoff [dict get $match lineoff]
+    # A whole found session from Search: its full match list in line order.
+    # Renders the session card, up to snippets_per_session snippets, and the
+    # final match count in one anchored pass - no per-match anchoring or redraw,
+    # which is what kept a broad query from freezing the list. Self-brackets one
+    # session; the batched flush (begin_batch/end_batch) brackets many at once.
+    method add_session_matches {matches} {
+        if {[llength $matches] == 0} return
         $Text configure -state normal
         my anchor_save
+        my render_session_matches $matches
+        my anchor_restore
+        $Text configure -state disabled
+        my schedule_resort
+    }
+
+    # The render body without the anchor/state bracketing, so a flush can
+    # bracket a whole slice of sessions once (see app.tcl flush_search).
+    method render_session_matches {matches} {
+        set first [lindex $matches 0]
+        set path  [dict get $first path]
         if {![dict exists $Sessions $path]} {
             set row [{*}$LookupSession $path]
-            if {$row eq ""} { set row [dict create folder [dict get $match folder]] }
-            my model_add_session $path $row $lineoff
+            if {$row eq ""} { set row [dict create folder [dict get $first folder]] }
+            my model_add_session $path $row [dict get $first lineoff]
         }
         # Search folders are expanded, so render the session if it is not yet.
         if {[my folder_expanded [dict get $Sessions $path folder]] \
             && ![dict get $Sessions $path rendered]} {
             my render_session $path
         }
-        my add_snippet $path $btype $content $lineoff
-        my anchor_restore
-        $Text configure -state disabled
-        my schedule_resort
+        set cap [::questlog::config::get snippets_per_session]
+        foreach m $matches {
+            dict set Sessions $path count [expr {[dict get $Sessions $path count] + 1}]
+            if {[llength [dict get $Sessions $path snippets]] < $cap} {
+                set btype   [dict get $m btype]
+                set content [dict get $m content]
+                set lineoff [dict get $m lineoff]
+                set sn [dict get $Sessions $path snippets]
+                lappend sn [list $btype $content $lineoff]
+                dict set Sessions $path snippets $sn
+                if {[dict get $Sessions $path rendered]} {
+                    my render_snippet $path $btype $content $lineoff
+                }
+            }
+        }
+        if {[dict get $Sessions $path rendered]} { my redraw_header $path }
     }
 
     method folder_expanded {folder} {
@@ -737,20 +762,6 @@ oo::class create ::questlog::ui::SessionList {
         }
         if {$Selected eq $path} {
             $Text tag add selected $smark "$smark lineend"
-        }
-    }
-
-    # Accumulate a match in the model (count, capped snippet list) and draw
-    # the snippet row when the session is on screen.
-    method add_snippet {path btype content lineoff} {
-        dict set Sessions $path count [expr {[dict get $Sessions $path count] + 1}]
-        my redraw_header $path
-        if {[llength [dict get $Sessions $path snippets]] >= [::questlog::config::get snippets_per_session]} return
-        set sn [dict get $Sessions $path snippets]
-        lappend sn [list $btype $content $lineoff]
-        dict set Sessions $path snippets $sn
-        if {[dict get $Sessions $path rendered]} {
-            my render_snippet $path $btype $content $lineoff
         }
     }
 

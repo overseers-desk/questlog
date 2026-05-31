@@ -140,7 +140,7 @@ proc ::questlog::app::start {root {initial_criteria {}} {init_window ""} {init_s
         [namespace code scan_is_typing]]
 
     set Search [::questlog::Search new $Scan \
-        [namespace code on_search_match] \
+        [namespace code on_search_file] \
         [namespace code on_search_progress] \
         [namespace code on_search_done]]
 
@@ -406,9 +406,9 @@ proc ::questlog::app::on_scan_done {scanned} {
 
 # ---- search callbacks --------------------------------------------------
 
-proc ::questlog::app::on_search_match {match} {
+proc ::questlog::app::on_search_file {matches} {
     variable SessionList
-    $SessionList add_match $match
+    $SessionList add_session_matches $matches
 }
 
 proc ::questlog::app::on_search_progress {done total matches} {
