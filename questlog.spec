@@ -11,6 +11,7 @@ Requires:       tcl >= 9
 Requires:       tk >= 9
 Requires:       tcllib
 Requires:       tcl-thread
+Requires:       hicolor-icon-theme
 
 %description
 questlog is a Tk desktop tool that browses the JSONL logs Claude Code
@@ -31,11 +32,20 @@ install -d %{buildroot}%{_datadir}/%{name}/lib %{buildroot}%{_datadir}/%{name}/u
 cp lib/*.tcl %{buildroot}%{_datadir}/%{name}/lib/
 cp ui/*.tcl  %{buildroot}%{_datadir}/%{name}/ui/
 cp data/*.csv %{buildroot}%{_datadir}/%{name}/data/
+cp config.tcl %{buildroot}%{_datadir}/%{name}/
 cp assets/questlog.svg %{buildroot}%{_datadir}/%{name}/assets/
 install -D -m 0755 questlog %{buildroot}%{_bindir}/questlog
 sed -i 's|^set ROOT .*|set ROOT %{_datadir}/%{name}|' %{buildroot}%{_bindir}/questlog
-install -D -m 0644 questlog.desktop \
+install -D -m 0644 assets/questlog.desktop \
     %{buildroot}%{_datadir}/applications/questlog.desktop
+# Icon theme: the .desktop's Icon=questlog resolves here. The hicolor file
+# triggers rebuild the cache on install.
+install -D -m 0644 assets/questlog.svg \
+    %{buildroot}%{_datadir}/icons/hicolor/scalable/apps/questlog.svg
+install -D -m 0644 assets/questlog-256.png \
+    %{buildroot}%{_datadir}/icons/hicolor/256x256/apps/questlog.png
+install -D -m 0644 assets/questlog-512.png \
+    %{buildroot}%{_datadir}/icons/hicolor/512x512/apps/questlog.png
 
 %files
 %license LICENSE
@@ -43,6 +53,9 @@ install -D -m 0644 questlog.desktop \
 %{_bindir}/questlog
 %{_datadir}/%{name}/
 %{_datadir}/applications/questlog.desktop
+%{_datadir}/icons/hicolor/scalable/apps/questlog.svg
+%{_datadir}/icons/hicolor/256x256/apps/questlog.png
+%{_datadir}/icons/hicolor/512x512/apps/questlog.png
 
 %changelog
 * Sat May 30 2026 Weiwu Zhang <a@colourful.land> - 1.0.2-1

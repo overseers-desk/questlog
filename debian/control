@@ -15,6 +15,7 @@ Depends:
  tk9.0,
  tcllib,
  tcl9.0-thread,
+ hicolor-icon-theme,
 Description: GUI for finding, reading, and reopening past Claude Code sessions
  questlog is a Tk desktop tool that browses the JSONL logs Claude Code
  writes under ~/.claude/projects/. It lists sessions grouped by project, runs

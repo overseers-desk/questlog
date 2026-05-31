@@ -1,7 +1,0 @@
-[Desktop Entry]
-Type=Application
-Name=Questlog
-Comment=Find, read, and reopen past Claude Code sessions
-Exec=questlog
-Terminal=false
-Categories=Development;Utility;
