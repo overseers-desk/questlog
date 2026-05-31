@@ -56,7 +56,7 @@ proc ::questlog::app::start {root {initial_criteria {}} {init_window ""} {init_s
     variable SearchFlushTimer
 
     set Root $root
-    set StatusVar ""
+    set StatusVar [scope_status]
     set Running [dict create]
     set CurrentQuery {}
     set SidebarCollapsed 0
@@ -398,6 +398,29 @@ proc ::questlog::app::flush_cost {} {
     $SessionList refresh_cost_batch $batch
 }
 
+# The bottom status bar's resting line: what questlog reads and how many
+# sessions sit on disk in scope, so a first-time reader never has to ask where
+# the list comes from. It is the default whenever no transient message (a scan
+# in flight, or the path of an opened session) is showing. (No "this Mac": the
+# design's wording is from a macOS mock; questlog is the native Linux tool.)
+proc ::questlog::app::scope_status {} {
+    set pretty [::questlog::path::pretty_home [::questlog::path::projects_root]]
+    return "Reading from $pretty · Claude Code CLI sessions only · [corpus_count] total"
+}
+
+# Count the session files across every project folder, independent of the
+# toolbar window: a directory walk over <projects_root>/*/*.jsonl with no file
+# reads, cheap enough to recompute whenever the resting line is shown.
+proc ::questlog::app::corpus_count {} {
+    set root [::questlog::path::projects_root]
+    if {![file isdirectory $root]} { return 0 }
+    set n 0
+    foreach folder [glob -nocomplain -directory $root -type d -- *] {
+        incr n [llength [glob -nocomplain -directory $folder -- *.jsonl]]
+    }
+    return $n
+}
+
 proc ::questlog::app::on_scan_progress {done total} {
     variable StatusVar
     if {$done < $total} {
@@ -405,13 +428,11 @@ proc ::questlog::app::on_scan_progress {done total} {
     }
 }
 
+# Scan finished: fall back to the resting corpus-scope line rather than a
+# transient "scanned N" message, so the bar's idle state always names the source.
 proc ::questlog::app::on_scan_done {scanned} {
     variable StatusVar
-    if {$scanned == 0} {
-        set StatusVar ""
-    } else {
-        set StatusVar "Scanned $scanned new sessions."
-    }
+    set StatusVar [scope_status]
 }
 
 # ---- search callbacks --------------------------------------------------
