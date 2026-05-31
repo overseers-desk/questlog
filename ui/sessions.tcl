@@ -597,42 +597,11 @@ oo::class create ::questlog::ui::SessionList {
 
     # ---- snapshot membership -----------------------------------------
 
+    # Whether a row passes the current snapshot's row-level filters. The
+    # predicate is shared with Scan through ::questlog::filter, so the model and
+    # the view never disagree on what the snapshot admits.
     method row_matches_snapshot {row} {
-        set window [my dict_or $Snapshot window [::questlog::config::get window_default]]
-        set one_turn [my dict_or $Snapshot one_turn 1]
-        set under    [my dict_or $Snapshot under {}]
-        set bookmarked_only [my dict_or $Snapshot bookmarked_only 0]
-        set bk [my dict_or $row bookmarked 0]
-        if {$bookmarked_only && !$bk} { return 0 }
-        set cutoff 0
-        if {$window ne "all"} {
-            set hours [dict get [::questlog::config::get window_hours] $window]
-            set cutoff [expr {[clock seconds] - $hours*3600}]
-        }
-        if {[dict get $row mtime] <= $cutoff && !$bk} { return 0 }
-        if {$one_turn && ![dict get $row is_multi]} { return 0 }
-        if {[llength $under] > 0 && ![my row_under_match $row $under]} { return 0 }
-        return 1
-    }
-
-    # Session passes the `under` clause if its cwd is at or below any one of
-    # the listed folders. We compare by encoded folder name (which is the
-    # row's `folder` field), so a path equal to the launch cwd matches; for a
-    # parent path the comparison falls back to the recorded cwd_hint.
-    method row_under_match {row under_list} {
-        set folder [dict get $row folder]
-        set cwd_hint [my dict_or $row cwd_hint ""]
-        foreach u $under_list {
-            set enc [::questlog::path::encode_cwd $u]
-            if {$folder eq $enc} { return 1 }
-            if {$cwd_hint ne ""} {
-                set u [string trimright $u /]
-                if {$cwd_hint eq $u || [string match "$u/*" $cwd_hint]} {
-                    return 1
-                }
-            }
-        }
-        return 0
+        return [::questlog::filter::row_matches $Snapshot $row]
     }
 
     # ---- streaming inserts -------------------------------------------

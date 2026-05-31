@@ -157,12 +157,7 @@ oo::class create ::questlog::Scan {
     method list_paths_for {snapshot} {
         set root [::questlog::path::projects_root]
         if {![file isdirectory $root]} { return [list] }
-        set window [my dict_or $snapshot window [::questlog::config::get window_default]]
-        set cutoff 0
-        if {$window ne "all"} {
-            set hours [dict get [::questlog::config::get window_hours] $window]
-            set cutoff [expr {[clock seconds] - $hours*3600}]
-        }
+        set cutoff [::questlog::filter::cutoff_for $snapshot]
         set pairs [list]
         foreach folder [glob -nocomplain -directory $root -type d -- *] {
             foreach f [glob -nocomplain -directory $folder -- *.jsonl] {
@@ -310,53 +305,17 @@ oo::class create ::questlog::Scan {
     }
 
     # Filter rows by a snapshot. Used by the session list and Search to read
-    # the current memoised view. Returns a list of row dicts, mtime DESC.
+    # the current memoised view. The snapshot row-level predicate lives in
+    # ::questlog::filter (shared with SessionList); this adds only the optional
+    # folder-scoped narrowing. Returns a list of row dicts, mtime DESC.
     method query {snapshot {folder ""}} {
-        set window [my dict_or $snapshot window [::questlog::config::get window_default]]
-        set one_turn [my dict_or $snapshot one_turn 1]
-        set under    [my dict_or $snapshot under {}]
-        set bookmarked_only [my dict_or $snapshot bookmarked_only 0]
-        set cutoff 0
-        if {$window ne "all"} {
-            set hours [dict get [::questlog::config::get window_hours] $window]
-            set cutoff [expr {[clock seconds] - $hours*3600}]
-        }
-        set under_folders [list]
-        set under_paths   [list]
-        foreach u $under {
-            lappend under_folders [::questlog::path::encode_cwd $u]
-            lappend under_paths   [string trimright $u /]
-        }
         set out [list]
         dict for {path row} $Rows {
-            set bk [my dict_or $row bookmarked 0]
-            if {$bookmarked_only && !$bk} continue
-            # A bookmark pins the row past the time window; running is the
-            # reconciler's job, not the query's.
-            if {[dict get $row mtime] <= $cutoff && !$bk} continue
-            if {$one_turn && ![dict get $row is_multi]} continue
-            set f [dict get $row folder]
-            if {$folder ne "" && $f ne $folder} continue
-            if {[llength $under_folders] > 0} {
-                if {![my row_under_match $row $under_folders $under_paths]} continue
-            }
+            if {![::questlog::filter::row_matches $snapshot $row]} continue
+            if {$folder ne "" && [dict get $row folder] ne $folder} continue
             lappend out $row
         }
         return [lsort -decreasing -command ::questlog::scan::cmp_mtime $out]
-    }
-
-    # Mirror of SessionList.row_under_match. Match by encoded folder name
-    # for an exact-cwd hit; for a parent-folder hit fall back to the
-    # cwd_hint string and check it starts with the under path.
-    method row_under_match {row folders paths} {
-        set f [dict get $row folder]
-        if {$f in $folders} { return 1 }
-        set cwd_hint [my dict_or $row cwd_hint ""]
-        if {$cwd_hint eq ""} { return 0 }
-        foreach u $paths {
-            if {$cwd_hint eq $u || [string match "$u/*" $cwd_hint]} { return 1 }
-        }
-        return 0
     }
 
     # The single canonical folder-basename -> cwd resolver. Every label

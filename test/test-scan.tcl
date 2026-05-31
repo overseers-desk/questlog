@@ -4,6 +4,7 @@ package require TclOO
 set ROOT [file dirname [file dirname [file normalize [info script]]]]
 source [file join $ROOT config.tcl]
 source [file join $ROOT lib path.tcl]
+source [file join $ROOT lib filter.tcl]
 source [file join $ROOT lib jsonl.tcl]
 source [file join $ROOT lib scan.tcl]
 
