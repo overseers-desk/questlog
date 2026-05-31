@@ -21,10 +21,15 @@ set PROJDIR [file join $SAND .claude projects $FOLDER]
 set ::env(HOME) $SAND
 
 set ROOT [file dirname [file dirname [file normalize [info script]]]]
-foreach f {lib/path.tcl lib/jsonl.tcl lib/terminal.tcl lib/live.tcl lib/scan.tcl \
-           lib/search.tcl ui/drag.tcl ui/toolbar.tcl ui/sessions.tcl} {
+# SessionList::build reads ::questlog::theme colours and the named fonts, and
+# the Scan/Search/SessionList filter path reads ::questlog::config; source both
+# and create the fonts before constructing any widget.
+foreach f {config.tcl lib/theme.tcl lib/path.tcl lib/jsonl.tcl lib/terminal.tcl \
+           lib/live.tcl lib/scan.tcl lib/search.tcl ui/drag.tcl ui/toolbar.tcl \
+           ui/sessions.tcl} {
     source [file join $ROOT $f]
 }
+::questlog::theme::init
 
 proc noop {args} {}
 proc write_multi {path} {
@@ -45,7 +50,7 @@ set ::Scan [::questlog::Scan new [list apply {{r} { $::SL on_scan_row $r }}] noo
 proc lookup {path}   { return [$::Scan lookup $path] }
 proc scanpath {path} { return [$::Scan scan_path $path] }
 proc resolvef {f}    { return "/tmp/proj" }
-set SL [::questlog::ui::SessionList new .s resolvef lookup noop noop noop noop scanpath noop]
+set SL [::questlog::ui::SessionList new .s resolvef lookup noop noop noop noop scanpath noop noop]
 pack .s -fill both -expand 1
 $SL apply_filter [dict create window 7d one_turn 1]
 

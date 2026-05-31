@@ -1,9 +1,10 @@
 #!/usr/bin/env tclsh9.0
 package require Tcl 9
 set ROOT [file dirname [file dirname [file normalize [info script]]]]
+source [file join $ROOT config.tcl]
 source [file join $ROOT lib jsonl.tcl]
-# extract_blocks calls ::questlog::search::format_tool_use; source search.tcl
-# so the dependency resolves at runtime.
+# extract_blocks calls ::questlog::search::format_tool_use, which reads the
+# display caps from ::questlog::config; source both so the dependency resolves.
 source [file join $ROOT lib search.tcl]
 
 set fails 0
@@ -37,7 +38,7 @@ check is_compact_no_other_system  0     [::questlog::jsonl::is_compact_boundary 
 check is_compact_no_user          0     [::questlog::jsonl::is_compact_boundary $user_str]
 
 # extract_blocks: walks a record into typed {btype content} pairs.
-set user_tool_result [::questlog::jsonl::parse_line {{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","content":"README.md\nfms\nlib"}]}}}]
+set user_tool_result [::questlog::jsonl::parse_line {{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","content":"README.md\nquestlog\nlib"}]}}}]
 set assist_tool_use  [::questlog::jsonl::parse_line {{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"ls /tmp","description":"list"}}]}}}]
 set assist_mixed     [::questlog::jsonl::parse_line {{"type":"assistant","message":{"content":[{"type":"text","text":"first"},{"type":"tool_use","name":"Read","input":{"file_path":"/etc/hosts"}},{"type":"text","text":"second"}]}}}]
 set sys_metadata     [::questlog::jsonl::parse_line {{"type":"system","subtype":"turn_duration","durationMs":1000}}]
