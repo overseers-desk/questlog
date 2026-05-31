@@ -155,7 +155,43 @@ proc ::questlog::app::start {root {initial_criteria {}}} {
     bind . <Control-q> [namespace code quit]
     bind . <Control-b> [namespace code toggle_sidebar]
 
+    maybe_show_onboarding
     run_tick
+}
+
+# First-launch welcome strip across the top of the window, shown until the
+# reader dismisses it. It teaches what the app reads and that nothing leaves
+# the machine; the dismissal is remembered by a single XDG state flag, the
+# app's only cross-launch state.
+proc ::questlog::app::maybe_show_onboarding {} {
+    if {[::questlog::state::flag_get onboarded]} return
+    set b .top.onboard
+    if {[winfo exists $b]} return
+    # Plain tk frame/label so -background takes (ttk would ignore it).
+    frame $b -background [::questlog::theme::c onboard_bg]
+    label $b.icon -text "?" -width 2 -font QLBold \
+        -background [::questlog::theme::c onboard_accent] -foreground white
+    frame $b.txt -background [::questlog::theme::c onboard_bg]
+    label $b.txt.h -anchor w -font QLBold \
+        -background [::questlog::theme::c onboard_bg] \
+        -foreground [::questlog::theme::c onboard_fg] \
+        -text "This is your Claude Code session history"
+    label $b.txt.s -anchor w \
+        -background [::questlog::theme::c onboard_bg] \
+        -foreground [::questlog::theme::c onboard_sub] \
+        -text "questlog reads ~/.claude/projects on this machine; nothing leaves it."
+    pack $b.txt.h -side top -anchor w
+    pack $b.txt.s -side top -anchor w
+    ttk::button $b.got -text "Got it" -command [namespace code dismiss_onboarding]
+    pack $b.icon -side left -padx {10 8} -pady 8
+    pack $b.txt -side left -fill x -expand 1 -pady 6
+    pack $b.got -side right -padx 10 -pady 8
+    pack $b -side top -fill x -before .top.pw
+}
+
+proc ::questlog::app::dismiss_onboarding {} {
+    ::questlog::state::flag_set onboarded
+    if {[winfo exists .top.onboard]} { destroy .top.onboard }
 }
 
 # Fold the list column away so the viewer fills the window (Ctrl+B, or the

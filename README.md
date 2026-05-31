@@ -38,7 +38,7 @@ Right-clicking a session offers "Open in viewer", "Copy resume command", "Copy s
 
 **Read what is needed at the moment it is needed.** The toolbar's default seven-day window covers a few thousand files. Reading each one with a line-streaming regex, stopping at the second user record, takes under a second in serial. The full corpus of ten thousand files takes two seconds. There is no work budget here that demands amortisation across launches.
 
-**Memoise within a process, not across launches.** Once a file's row has been computed in this run it is reused for subsequent toolbar window changes. Shrinking the window filters in memory; growing it scans only the new files. The accumulated state lives for the lifetime of the GUI process and is discarded on quit. A user resuming a session in another terminal sees the change on the next launch, not via a watcher or a sync protocol.
+**Memoise within a process, not across launches.** Once a file's row has been computed in this run it is reused for subsequent toolbar window changes. Shrinking the window filters in memory; growing it scans only the new files. The accumulated state lives for the lifetime of the GUI process and is discarded on quit. A user resuming a session in another terminal sees the change on the next launch, not via a watcher or a sync protocol. This covers the session model; the only state kept across launches is a single first-run flag under `$XDG_STATE_HOME/questlog`, recording that the welcome banner was dismissed, which holds no session data.
 
 ## Installing
 

@@ -55,6 +55,10 @@ namespace eval ::questlog::theme {
         banner_bg       #fff5c2
         banner_fg       #5a4a0a
         banner_border   #e6d36a
+        onboard_bg      #e2eeff
+        onboard_fg      #1d1d1d
+        onboard_sub     #41597e
+        onboard_accent  #1f6eed
         glyph_running   #3ec25b
         glyph_bookmark  #d6a30e
         chip_or         #808080
