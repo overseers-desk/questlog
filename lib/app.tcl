@@ -578,7 +578,15 @@ proc ::questlog::app::quit {} {
     variable Search
     variable Scan
     variable RunTimer
+    variable CostFlushTimer
     if {[info exists RunTimer]} { after cancel $RunTimer }
+    if {[info exists CostFlushTimer] && $CostFlushTimer ne ""} {
+        after cancel $CostFlushTimer
+    }
+    # Stop the cost pass before tearing down Scan: a worker result still in
+    # flight would otherwise reach on_cost_result -> $Scan update_cost after the
+    # object is gone. The epoch bump makes on_worker_result drop those results.
+    ::questlog::cost::cancel
     if {[info exists Search] && $Search ne ""} { catch {$Search destroy} }
     if {[info exists Scan]   && $Scan ne ""}   { catch {$Scan destroy} }
     exit 0
