@@ -4,10 +4,13 @@
 # Coverage:
 #   - linux x86_64 / arm64: validated locally on x86_64; the script is the same
 #     on both.
-#   - macos x86_64 / arm64: the script's Aqua branch, validated only through
-#     these CI runs.
-# Not covered: windows-x86_64 is blocked by questlog itself. lib/terminal.tcl
-# has no Windows branch (issue #10); the port lands before a Windows variant.
+#   - macos arm64: the script's Aqua branch, validated through these CI runs.
+# Not covered:
+#   - macos x86_64: hosted Intel runners (macos-13) do not get allocated, so a
+#     run sits queued until the 24h limit cancels it. The arm64 job exercises
+#     the same Aqua branch; revisit Intel during the cross-platform work.
+#   - windows-x86_64: blocked by questlog itself. lib/terminal.tcl has no
+#     Windows branch (issue #10); the port lands before a Windows variant.
 #
 # Trigger manually, or automatically when a release is published; in the latter
 # case each artifact is uploaded to that release.
@@ -30,7 +33,6 @@ jobs:
         include:
           - { os: ubuntu-24.04,     ostoken: linux, arch: x86_64 }
           - { os: ubuntu-24.04-arm, ostoken: linux, arch: arm64 }
-          - { os: macos-13,         ostoken: macos, arch: x86_64 }
           - { os: macos-14,         ostoken: macos, arch: arm64 }
     runs-on: ${{ matrix.os }}
     steps:
