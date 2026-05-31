@@ -31,6 +31,8 @@ namespace eval ::questlog::app {
     variable SidebarSash      ;# remembered divider position as a fraction of width
     variable CostPending      ;# path -> cost_dict buffered for a coalesced render flush
     variable CostFlushTimer   ;# after-id of the pending cost flush, or ""
+    variable SearchPending    ;# list of per-file match lists buffered for an idle flush
+    variable SearchFlushTimer ;# after-id of the pending search-render flush, or ""
 }
 
 proc ::questlog::app::start {root {initial_criteria {}} {init_window ""} {init_search ""}} {
@@ -50,6 +52,8 @@ proc ::questlog::app::start {root {initial_criteria {}} {init_window ""} {init_s
     variable SidebarSash
     variable CostPending
     variable CostFlushTimer
+    variable SearchPending
+    variable SearchFlushTimer
 
     set Root $root
     set StatusVar ""
@@ -59,6 +63,8 @@ proc ::questlog::app::start {root {initial_criteria {}} {init_window ""} {init_s
     set SidebarSash 0.58
     set CostPending [dict create]
     set CostFlushTimer ""
+    set SearchPending [list]
+    set SearchFlushTimer ""
 
     # The <<ContextMenu>> virtual event already covers Button-2 on Aqua and
     # Button-3 on X11/Windows. Tk does not include Control-Click in it on
@@ -299,6 +305,10 @@ proc ::questlog::app::on_filter {snapshot} {
 
     set has_criteria [::questlog::ui::any_criteria $snapshot]
 
+    # A new filter/search invalidates the previous result set; drop any buffered
+    # per-file results and cancel a pending flush before the list is cleared, so
+    # a stale session never renders into the fresh list.
+    discard_search_buffer
     $SessionList apply_filter $snapshot
 
     # Under running-only the reconciler builds the view straight from the
@@ -406,9 +416,65 @@ proc ::questlog::app::on_scan_done {scanned} {
 
 # ---- search callbacks --------------------------------------------------
 
+# A found session's matches arrive together (one message per file). Under
+# search_render=coalesced (the default) they are buffered and rendered in a
+# folder-grouped pass when the event loop next goes idle, so typing always
+# preempts and a broad term cannot freeze the list; immediate renders each
+# session as it arrives (still one anchored pass per session, never per match).
 proc ::questlog::app::on_search_file {matches} {
     variable SessionList
-    $SessionList add_session_matches $matches
+    variable SearchPending
+    variable SearchFlushTimer
+    if {[::questlog::config::get search_render] eq "immediate"} {
+        $SessionList add_session_matches $matches
+        return
+    }
+    lappend SearchPending $matches
+    if {$SearchFlushTimer eq ""} {
+        set SearchFlushTimer [after idle [namespace code flush_search]]
+    }
+}
+
+# Render the buffered sessions when idle, folder-grouped, bracketed by one
+# anchor_save/restore for the whole slice. When search_render_slice_ms > 0 the
+# slice stops at that wall-clock budget and re-arms at idle to finish, so even a
+# match-every-file query never blocks input beyond one budget; 0 renders the
+# whole buffer in one idle pass.
+proc ::questlog::app::flush_search {} {
+    variable SessionList
+    variable SearchPending
+    variable SearchFlushTimer
+    set SearchFlushTimer ""
+    if {[llength $SearchPending] == 0} return
+    set SearchPending [lsort -command ::questlog::app::cmp_search_folder $SearchPending]
+    set slice_ms [::questlog::config::get search_render_slice_ms]
+    set deadline [expr {[clock milliseconds] + $slice_ms}]
+    $SessionList begin_batch
+    while {[llength $SearchPending] > 0} {
+        $SessionList render_session_matches [lindex $SearchPending 0]
+        set SearchPending [lrange $SearchPending 1 end]
+        if {$slice_ms > 0 && [clock milliseconds] >= $deadline} break
+    }
+    $SessionList end_batch
+    if {[llength $SearchPending] > 0} {
+        set SearchFlushTimer [after idle [namespace code flush_search]]
+    }
+}
+
+# Order two buffered per-file entries by their folder, so a flush updates a
+# folder's sessions as one group.
+proc ::questlog::app::cmp_search_folder {a b} {
+    return [string compare \
+        [dict get [lindex $a 0] folder] [dict get [lindex $b 0] folder]]
+}
+
+# Drop buffered per-file results and cancel a pending flush, when the result set
+# is invalidated (a new search, a filter change, a cancel, quit).
+proc ::questlog::app::discard_search_buffer {} {
+    variable SearchPending
+    variable SearchFlushTimer
+    if {$SearchFlushTimer ne ""} { after cancel $SearchFlushTimer; set SearchFlushTimer "" }
+    set SearchPending [list]
 }
 
 proc ::questlog::app::on_search_progress {done total matches} {
@@ -424,6 +490,7 @@ proc ::questlog::app::on_search_done {total matches} {
 proc ::questlog::app::on_search_cancel {} {
     variable Search
     $Search cancel
+    discard_search_buffer
 }
 
 # The Show-all banner in SessionList calls this when the user clicks
@@ -579,9 +646,13 @@ proc ::questlog::app::quit {} {
     variable Scan
     variable RunTimer
     variable CostFlushTimer
+    variable SearchFlushTimer
     if {[info exists RunTimer]} { after cancel $RunTimer }
     if {[info exists CostFlushTimer] && $CostFlushTimer ne ""} {
         after cancel $CostFlushTimer
+    }
+    if {[info exists SearchFlushTimer] && $SearchFlushTimer ne ""} {
+        after cancel $SearchFlushTimer
     }
     # Stop the cost pass before tearing down Scan: a worker result still in
     # flight would otherwise reach on_cost_result -> $Scan update_cost after the

@@ -76,6 +76,18 @@ namespace eval ::questlog::config {
     dict set Config cost_render      coalesced
     dict set Config cost_coalesce_ms 80
 
+    # ---- search render -----------------------------------------------------
+    # How found sessions reach the list as a search runs. coalesced = buffer the
+    # per-file results and render them folder-grouped when the event loop next
+    # goes idle, so typing always preempts and a broad term cannot freeze the
+    # list; immediate = render each session as it arrives (still one anchored
+    # pass per session, never per match).
+    dict set Config search_render coalesced
+    # 0 = render the whole idle batch in one pass (no millisecond cap); N>0 caps
+    # each idle slice to N ms, yielding between slices, so a query matching every
+    # file in the window cannot block input beyond N ms on any machine.
+    dict set Config search_render_slice_ms 0
+
     # ---- polling -----------------------------------------------------------
     # Re-poll interval for the live-session registry (running markers). The cost
     # is O(running sessions), independent of the on-disk corpus.

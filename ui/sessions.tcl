@@ -626,6 +626,18 @@ oo::class create ::questlog::ui::SessionList {
 
     # Match record from Search. The first match for a session creates its
     # card; later matches bump the count and add a snippet (capped at three).
+    # Bracket a slice of render_session_matches calls so a whole idle flush does
+    # one anchor_save/restore and one schedule_resort, not per session.
+    method begin_batch {} {
+        $Text configure -state normal
+        my anchor_save
+    }
+    method end_batch {} {
+        my anchor_restore
+        $Text configure -state disabled
+        my schedule_resort
+    }
+
     # A whole found session from Search: its full match list in line order.
     # Renders the session card, up to snippets_per_session snippets, and the
     # final match count in one anchored pass - no per-match anchoring or redraw,
