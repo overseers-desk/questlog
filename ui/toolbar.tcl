@@ -86,6 +86,7 @@ oo::class create ::questlog::ui::Toolbar {
     variable AddRail          ;# the "add:" rail frame inside Restrict
     variable RowFrames        ;# dict kind -> widget path (present only when row exists)
     variable PopValue         ;# textvar for the add-dropdown's entry
+    variable DebounceAfter    ;# after-id of the pending live-search publish, or ""
 
     constructor {parent cwd} {
         set Top $parent
@@ -101,6 +102,7 @@ oo::class create ::questlog::ui::Toolbar {
         set Subscribers [list]
         set RowFrames [dict create]
         set PopValue ""
+        set DebounceAfter ""
 
         my build
     }
@@ -115,11 +117,20 @@ oo::class create ::questlog::ui::Toolbar {
         pack $Top.search.label -side left -padx {0 6}
         ttk::entry $Top.search.e -textvariable [my varname SearchVar]
         # Placeholder microcopy (Tk 9 ttk entry); a harmless no-op if the build
-        # lacks -placeholder.
-        catch {$Top.search.e configure \
-            -placeholder "type one or more words and press Enter; all must appear somewhere in the session"}
+        # lacks -placeholder. Live mode searches as typing pauses; enter mode
+        # waits for Return, so the hint matches the configured trigger.
+        set live [expr {[::questlog::config::get search_trigger] eq "live"}]
+        set ph [expr {$live \
+            ? "type one or more words; all must appear somewhere in the session" \
+            : "type one or more words and press Enter; all must appear somewhere in the session"}]
+        catch {$Top.search.e configure -placeholder $ph}
         pack $Top.search.e -side left -fill x -expand 1
-        bind $Top.search.e <Return> [list [self] publish]
+        # Return always publishes at once and cancels any pending debounce. In
+        # live mode a keystroke also schedules a debounced publish.
+        bind $Top.search.e <Return> [list [self] publish_now]
+        if {$live} {
+            bind $Top.search.e <KeyRelease> [list [self] on_search_change %K]
+        }
         ttk::checkbutton $Top.search.aa -text "Aa" \
             -variable [my varname SearchCaseVar] \
             -command [list [self] publish]
@@ -213,6 +224,28 @@ oo::class create ::questlog::ui::Toolbar {
                 puts stderr "questlog: toolbar subscriber failed: $err"
             }
         }
+    }
+
+    # Live-search debounce: republish after a pause in typing. The keysym is
+    # passed so the trailing KeyRelease of an Enter (handled by publish_now)
+    # does not re-arm the timer.
+    method on_search_change {{key ""}} {
+        if {$key in {Return KP_Enter}} return
+        if {$DebounceAfter ne ""} { after cancel $DebounceAfter }
+        set DebounceAfter [after [::questlog::config::get search_debounce_ms] \
+            [list [self] debounce_fire]]
+    }
+
+    method debounce_fire {} {
+        set DebounceAfter ""
+        my publish
+    }
+
+    # Enter: cancel any pending debounce and publish now, so the search runs at
+    # once and the trailing KeyRelease cannot fire a second, redundant search.
+    method publish_now {} {
+        if {$DebounceAfter ne ""} { after cancel $DebounceAfter; set DebounceAfter "" }
+        my publish
     }
 
     # Add a value to a clause, creating the row if needed. The first user
@@ -464,6 +497,13 @@ oo::class create ::questlog::ui::Toolbar {
             lappend files [file join $root $rest]
         }
         return $files
+    }
+
+    method destroy {} {
+        if {[info exists DebounceAfter] && $DebounceAfter ne ""} {
+            after cancel $DebounceAfter
+        }
+        next
     }
 
 }
