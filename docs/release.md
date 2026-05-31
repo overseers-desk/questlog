@@ -33,14 +33,25 @@ rpmbuild -ba questlog.spec
 # produces ~/rpmbuild/RPMS/noarch/questlog-<VERSION>-1.noarch.rpm
 ```
 
-### Single-file image (zipfs)
+### Single-file images (CI)
+
+Self-contained executables that run on a host with no Tcl installed, one per platform. The `release-images` GitHub Actions workflow builds each from a static Tcl 9 + Tk + Thread (see `zipfs/build-selfcontained.sh`) and attaches it to the release. Coverage is linux x86_64, linux arm64, and macos arm64; macos x86_64 and windows are not built (see the workflow header for why).
+
+The workflow runs automatically when a release is published (see [Publish](#publish-the-github-release) below). To run the matrix manually, e.g. a dry run before tagging:
 
 ```bash
-tclsh9.0 zipfs/build.tcl
-# produces dist/questlog-<VERSION>-linux-<arch>
+gh workflow run release-images.yml --ref main
+gh run watch          # follow the jobs to green
 ```
 
-One executable carrying questlog's own code, built with `zipfs mkimg` and stubbed with `wish9.0`. It runs from anywhere with no install and no root, on hosts that have the Tcl 9 runtime (`tcl9.0`, `tk9.0`, `tcllib`, `tcl-thread`), the same set the `.deb` requires and present in current distro repos. The version in the filename is read from the launcher, so there is nothing extra to bump.
+For a local self-contained build on the current platform:
+
+```bash
+zipfs/build-selfcontained.sh
+# produces dist/questlog-<VERSION>-<os>-<arch>
+```
+
+For a quick local image stubbed on the host `wish9.0` (so it still needs the Tcl 9 runtime present), `tclsh9.0 zipfs/build.tcl`. The version in the filename is read from the launcher, so there is nothing extra to bump.
 
 How users download and run it is in [installation.md](installation.md); link that section from the GitHub release notes.
 
@@ -67,6 +78,8 @@ git push
 
 ## Publish the GitHub release
 
+Publishing the release fires the `release-images` workflow, which builds the per-platform single-file images and attaches them to this release. Upload the `.deb` and `.rpm` (built locally above) alongside them:
+
 ```bash
 gh release edit v<VERSION> \
   --title "v<VERSION>" \
@@ -75,9 +88,10 @@ gh release edit v<VERSION> \
 gh release upload v<VERSION> \
   ../questlog_<VERSION>_all.deb \
   ~/rpmbuild/RPMS/noarch/questlog-<VERSION>-1.noarch.rpm \
-  dist/questlog-<VERSION>-linux-x86_64 \
   --clobber
 ```
+
+Watch the single-file images land with `gh run watch`. If publishing is done through `gh release create ... --draft` then a separate publish step, the workflow fires on publish, not on the draft.
 
 ## Verify
 
@@ -85,4 +99,4 @@ gh release upload v<VERSION> \
 - [ ] `questlog --version` prints the right version on macOS and Linux.
 - [ ] Debian package installs cleanly: `sudo apt install ./questlog_<VERSION>_all.deb`.
 - [ ] RPM installs cleanly: `sudo dnf install ./questlog-<VERSION>-1.noarch.rpm`.
-- [ ] Single-file image runs: `./dist/questlog-<VERSION>-linux-x86_64 --version`, then launch the GUI.
+- [ ] Single-file image from the release runs on a host with no Tcl installed: `./questlog-<VERSION>-linux-x86_64 --version`, then launch the GUI.
