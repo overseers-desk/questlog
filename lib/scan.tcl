@@ -275,6 +275,21 @@ oo::class create ::questlog::Scan {
     # content from either consumer is the same row.
     method publish_row {row} {
         set path [dict get $row path]
+        # Search republishes this row from scan_file without cost fields. When
+        # the file is unchanged (same mtime as the cached row that carries a
+        # cost), carry the computed cost across, so the republish neither clobbers
+        # it nor re-triggers the cost pass for every matched session. A changed
+        # mtime means the cost is stale, so it is left to be recomputed.
+        if {![dict exists $row cost_usd] && [dict exists $Rows $path]} {
+            set old [dict get $Rows $path]
+            if {[dict exists $old cost_usd]
+                && [dict getdef $old mtime ""] eq [dict getdef $row mtime ""]} {
+                foreach k {cost_usd input_tokens output_tokens \
+                           cache_write_tokens cache_read_tokens model_breakdown} {
+                    if {[dict exists $old $k]} { dict set row $k [dict get $old $k] }
+                }
+            }
+        }
         dict set Rows $path $row
         set folder [dict get $row folder]
         set cwd [dict get $row cwd_hint]
