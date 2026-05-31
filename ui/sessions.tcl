@@ -240,6 +240,12 @@ oo::class create ::questlog::ui::SessionList {
         # leads each session line. Proportional QLList, aligned by the
         # sessionhead tab stops, not a monospace font.
         $Text tag configure meta -foreground [::questlog::theme::c meta]
+        # Cost tiers draw the eye to the sessions that ate the budget: amber
+        # from 10c, brick red from $1. Below 10c the cell keeps the muted meta
+        # grey, so only elevated costs stand out. Configured after meta so the
+        # tier foreground wins over it on the cost cell.
+        $Text tag configure cost-mid     -foreground [::questlog::theme::c cost_mid]
+        $Text tag configure cost-outlier -foreground [::questlog::theme::c cost_outlier]
 
         set HitTags [list]
         set hues [::questlog::theme::hues]
@@ -519,6 +525,7 @@ oo::class create ::questlog::ui::SessionList {
         $Text insert $femark "$mtext[dict get $title line]\n" \
             [list sessionhead $stag]
         $Text tag add meta $sstart "$sstart + [string length $mtext]c"
+        my tag_cost_tier $sstart $path $meta
         my tag_slug_range $sstart $mtext $title
         my tag_glyphs $sstart [string length $mtext]
         # Rows are clipped single-line: overflow past the widget edge is
@@ -693,6 +700,20 @@ oo::class create ::questlog::ui::SessionList {
         return [dict create line $line slug_off $slug_off slug_len $slug_len]
     }
 
+    # Colour the cost cell by tier. meta carries the cost cell's char range
+    # (cost_off/cost_len from session_meta_text); the numeric cost decides the
+    # tier. Under 10c (and blank/unknown) the cell keeps the meta grey.
+    method tag_cost_tier {row_start path meta} {
+        set off [dict get $meta cost_off]
+        set len [dict get $meta cost_len]
+        if {$off < 0 || $len <= 0} return
+        set c [my dict_or [dict get $Sessions $path] cost ""]
+        if {$c eq "" || $c < 0.10} return
+        set tag [expr {$c >= 1.0 ? "cost-outlier" : "cost-mid"}]
+        $Text tag add $tag "$row_start + ${off}c" \
+            "$row_start + [expr {$off + $len}]c"
+    }
+
     # Apply the bold slug tag to the slug's character range within a
     # freshly-inserted header line. row_start is the text index where the
     # whole header begins; meta is the tab-separated metadata run that
@@ -741,6 +762,7 @@ oo::class create ::questlog::ui::SessionList {
         $Text insert $smark "$mtext[dict get $title line]" \
             [list sessionhead $stag]
         $Text tag add meta $smark "$smark + [string length $mtext]c"
+        my tag_cost_tier $smark $path $meta
         my tag_slug_range $smark $mtext $title
         my tag_glyphs $smark [string length $mtext]
         if {$Selected eq $path} {

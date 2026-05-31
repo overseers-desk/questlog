@@ -40,6 +40,8 @@ namespace eval ::questlog::theme {
         snippet         #262626
         muted           #767676
         meta            #767676
+        cost_mid        #7a5d00
+        cost_outlier    #a02818
         faint           #999999
         folder          #1d1d1d
         section         #595959
