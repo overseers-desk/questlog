@@ -242,6 +242,14 @@ oo::class create ::questlog::ui::Viewer {
         # render both in its TkFixedFont default.
         $Text tag configure body          -font QLBody -foreground [::questlog::theme::c body] -lmargin1 10 -lmargin2 10 -spacing2 3 -spacing3 6
         $Text tag configure code          -font QLMono -foreground [::questlog::theme::c body] -lmargin1 10 -lmargin2 10 -spacing2 3 -spacing3 6
+        # Inline-span tags carry only a -font; colour and margins keep coming
+        # from the body tag, which stays on every prose run (tags stack, and
+        # these later tags win on -font). i-code is kept separate from the
+        # block code tag so block-fence spacing and inline spans stay decoupled.
+        $Text tag configure i-bold       -font QLBodyBold
+        $Text tag configure i-italic     -font QLBodyItalic
+        $Text tag configure i-bolditalic -font QLBodyBoldItalic
+        $Text tag configure i-code       -font QLMono
         $Text tag configure recap     -background [::questlog::theme::c recap]
         $Text tag configure find      -background [::questlog::theme::c find]
 
@@ -402,15 +410,42 @@ oo::class create ::questlog::ui::Viewer {
         $Text configure -state disabled
     }
 
-    # Insert one turn's body. The common case (no fenced code, no blockquote)
-    # is one tagged run, byte-identical to the prior renderer. A fenced body is
-    # split into prose and code runs, code kept monospace; a prose run that is
-    # an assistant blockquote still becomes embedded quote boxes.
+    # Insert inline-parsed runs into a text widget. The style->tag mapping lives
+    # here so the main pane and the quote boxes render emphasis identically; base
+    # is the tag stacked under every run (body in the main pane, none in a box,
+    # where the widget's default face already is QLBody).
+    method insert_runs {w text base} {
+        foreach run [::questlog::jsonl::parse_inline $text] {
+            lassign $run style chunk
+            set tags $base
+            switch -- $style {
+                code       { lappend tags i-code }
+                bold       { lappend tags i-bold }
+                italic     { lappend tags i-italic }
+                bolditalic { lappend tags i-bolditalic }
+            }
+            $w insert end $chunk $tags
+        }
+    }
+
+    # Insert a prose run into the main reading pane with inline markdown
+    # rendered. Each font tag stacks over body, so colour and margins are
+    # inherited and only the face changes. The trailing newline(s) are a
+    # rendering concern, passed as a suffix rather than parsed.
+    method insert_prose {text {suffix "\n\n"}} {
+        my insert_runs $Text $text body
+        if {$suffix ne ""} { $Text insert end $suffix body }
+    }
+
+    # Insert one turn's body. Plain prose goes through insert_prose, which renders
+    # inline `code`, *italic* and **bold** spans. A fenced body is split into
+    # prose and code runs (fenced code kept verbatim in monospace); a prose run
+    # that is an assistant blockquote becomes embedded quote boxes.
     method insert_body {t body} {
         set has_code  [regexp -line {^\s*```} $body]
         set has_quote [expr {$t eq "assistant" && [regexp -line {^>} $body]}]
         if {!$has_code && !$has_quote} {
-            $Text insert end "$body\n\n" body
+            my insert_prose $body "\n\n"
             return
         }
         if {!$has_code} {
@@ -424,7 +459,7 @@ oo::class create ::questlog::ui::Viewer {
             } elseif {$has_quote && [regexp -line {^>} $text]} {
                 my insert_segments $text
             } else {
-                $Text insert end "$text\n" body
+                my insert_prose $text "\n"
             }
         }
         $Text insert end "\n" body
@@ -441,7 +476,7 @@ oo::class create ::questlog::ui::Viewer {
                 my insert_quote_box $text
                 set atstart 1
             } else {
-                $Text insert end "$text\n" body
+                my insert_prose $text "\n"
                 set atstart 1
             }
         }
@@ -472,7 +507,14 @@ oo::class create ::questlog::ui::Viewer {
         # text in from the rule.
         text $bt -wrap word -borderwidth 0 -highlightthickness 0 \
             -height $n -width 1 -cursor arrow -font QLBody
-        $bt insert end $dequoted
+        # Inline spans inside the quote. The box's default face is QLBody, so
+        # plain text needs no tag; these variant tags carry only a font and
+        # track the reading font just like the main pane's i-* tags.
+        $bt tag configure i-bold       -font QLBodyBold
+        $bt tag configure i-italic     -font QLBodyItalic
+        $bt tag configure i-bolditalic -font QLBodyBoldItalic
+        $bt tag configure i-code       -font QLMono
+        my insert_runs $bt $dequoted ""
         $bt configure -state disabled
         pack $bt -side left -fill both -expand 1 -padx {8 0}
         bind $bt <Map> [list [self] fit_box $qid]

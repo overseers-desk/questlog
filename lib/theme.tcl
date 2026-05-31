@@ -96,22 +96,38 @@ proc ::questlog::theme::hues {} {
 }
 
 # Apply a full font description ({family} size ?style?) to the reading body,
-# as the font chooser hands back on a confirmed pick. QLBody is reconfigured in
-# place, so every body-tagged run reflows live while the chrome and fenced-code
-# runs keep QLMono. A spec Tk cannot resolve is reported on stderr rather than
-# letting the callback's error reach bgerror.
+# as the font chooser hands back on a confirmed pick. QLBody and its bold and
+# italic variants are reconfigured in place from the picked family and size, so
+# every body-tagged run (plain or emphasised) reflows live while the chrome and
+# fenced-code runs keep QLMono. The base is forced to normal/roman and each
+# variant to its own weight/slant, so a bold or italic source spec cannot leak
+# the wrong face into a variant. A spec Tk cannot resolve is reported on stderr
+# rather than letting the callback's error reach bgerror.
 proc ::questlog::theme::set_body_font {spec} {
-    if {[catch {font configure QLBody {*}[font actual $spec]} err]} {
+    if {[catch {
+        set a [font actual $spec]
+        set fam [dict get $a -family]
+        set sz  [dict get $a -size]
+        font configure QLBody           -family $fam -size $sz -weight normal -slant roman
+        font configure QLBodyBold       -family $fam -size $sz -weight bold   -slant roman
+        font configure QLBodyItalic     -family $fam -size $sz -weight normal -slant italic
+        font configure QLBodyBoldItalic -family $fam -size $sz -weight bold   -slant italic
+    } err]} {
         puts stderr "questlog: cannot apply font '$spec': $err"
     }
 }
 
-# Set only the reading-body family, keeping the current size and style. This is
-# the --font command line: -family takes the whole value, so a spaced family
-# name ("DejaVu Serif") needs no list quoting and no size is injected. An
-# unknown family is recorded as requested and resolves to a fallback at render.
+# Set only the reading-body family across QLBody and its bold/italic variants,
+# keeping each one's size and style. This is the --font command line: -family
+# takes the whole value, so a spaced family name ("DejaVu Serif") needs no list
+# quoting and no size is injected. An unknown family is recorded as requested
+# and resolves to a fallback at render.
 proc ::questlog::theme::set_body_family {family} {
-    if {[catch {font configure QLBody -family $family} err]} {
+    if {[catch {
+        foreach f {QLBody QLBodyBold QLBodyItalic QLBodyBoldItalic} {
+            font configure $f -family $family
+        }
+    } err]} {
         puts stderr "questlog: cannot use font '$family': $err"
     }
 }
@@ -137,6 +153,13 @@ proc ::questlog::theme::init {} {
         font create QLList     {*}[font actual TkTextFont]
         font create QLMono     {*}[font actual TkFixedFont]
         font create QLMonoBold {*}[font actual TkFixedFont] -weight bold
+        # Bold and italic faces of the reading body, for inline emphasis. They
+        # are kept in lockstep with QLBody by set_body_font/set_body_family, so
+        # the reader's chosen face carries through to *bold* and *italic* spans;
+        # inline `code` reuses QLMono.
+        font create QLBodyBold       {*}[font actual TkTextFont] -weight bold
+        font create QLBodyItalic     {*}[font actual TkTextFont] -slant italic
+        font create QLBodyBoldItalic {*}[font actual TkTextFont] -weight bold -slant italic
     }
     set bg [. cget -background]
     ttk::style theme use clam

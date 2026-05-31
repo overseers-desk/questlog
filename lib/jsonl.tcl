@@ -3,7 +3,8 @@ package require json
 
 namespace eval ::questlog::jsonl {
     namespace export extract_text extract_blocks record_tool_uses \
-        is_compact_boundary record_timestamp first_cwd segment_blockquotes
+        is_compact_boundary record_timestamp first_cwd segment_blockquotes \
+        parse_inline
 }
 
 # Parse one JSONL line into a Tcl dict. Returns "" on parse failure.
@@ -136,6 +137,159 @@ proc ::questlog::jsonl::segment_blockquotes {body} {
     if {[llength $buf]} { lappend segs [list normal [join $buf "\n"]] }
     if {[llength $q]}   { lappend segs [list quote  [join $q "\n"]] }
     return $segs
+}
+
+# Parse one prose run into styled inline runs for the reading view. Returns an
+# ordered list of {style chunk} pairs; style is one of plain, code, bold,
+# italic, bolditalic, and chunk is the text to display with the markdown
+# markers removed. Adjacent plain runs are coalesced. A pure function on a
+# single prose run: callers strip fenced code and blockquotes first, so this
+# never sees a ``` fence. Pragmatic, not full CommonMark:
+#   - code spans (one or two backticks) win over emphasis, so asterisks inside
+#     `code` are never styled;
+#   - emphasis is asterisks only (*, **, ***): underscores stay literal, so
+#     snake_case, __init__ and the like are left alone;
+#   - an opener needs a non-space char after it and a closer a non-space char
+#     before it (flanking), so "3 * 4" and "* item" stay literal;
+#   - \`, \* and \\ escape a literal backtick, asterisk and backslash; every
+#     other backslash is kept verbatim (paths and regex carry many).
+proc ::questlog::jsonl::parse_inline {text} {
+    # Escapes go to private-use sentinels so the marker scans never meet them;
+    # any stray sentinel in the raw input is dropped first.
+    set bt \uE000 ;# escaped backtick  -> literal `
+    set st \uE001 ;# escaped asterisk  -> literal *
+    set bs \uE002 ;# escaped backslash -> literal \
+    set text [string map [list $bt {} $st {} $bs {}] $text]
+    set text [string map [list {\`} $bt {\*} $st {\\} $bs] $text]
+
+    # Pass A: peel off code spans; the gaps between them are prose.
+    set segs [list]
+    set buf ""
+    set i 0
+    set n [string length $text]
+    while {$i < $n} {
+        if {[string index $text $i] ne "`"} {
+            append buf [string index $text $i]
+            incr i
+            continue
+        }
+        set j $i
+        while {$j < $n && [string index $text $j] eq "`"} { incr j }
+        set fence [expr {$j - $i}]
+        set close -1
+        if {$fence <= 2} {
+            set close [::questlog::jsonl::inline_close_code $text $j $fence]
+        }
+        if {$close < 0} {
+            append buf [string range $text $i [expr {$j - 1}]]
+            set i $j
+            continue
+        }
+        if {$buf ne ""} { lappend segs prose $buf; set buf "" }
+        set content [string range $text $j [expr {$close - 1}]]
+        if {[string length $content] >= 2 && [string index $content 0] eq " " \
+                && [string index $content end] eq " " \
+                && [string trim $content] ne ""} {
+            set content [string range $content 1 end-1]
+        }
+        lappend segs code $content
+        set i [expr {$close + $fence}]
+    }
+    if {$buf ne ""} { lappend segs prose $buf }
+
+    # Pass B: emphasis within each prose gap; unescape every emitted chunk.
+    set runs [list]
+    foreach {kind chunk} $segs {
+        if {$kind eq "code"} {
+            lappend runs [list code [::questlog::jsonl::inline_unescape $chunk]]
+            continue
+        }
+        foreach run [::questlog::jsonl::inline_emphasis $chunk] {
+            lassign $run style stext
+            lappend runs [list $style [::questlog::jsonl::inline_unescape $stext]]
+        }
+    }
+    return $runs
+}
+
+# Index of the closing backtick run of exactly `fence` backticks at or after
+# `from`, or -1. Runs of a different length are literal content, so skipped.
+proc ::questlog::jsonl::inline_close_code {s from fence} {
+    set n [string length $s]
+    set i $from
+    while {$i < $n} {
+        if {[string index $s $i] ne "`"} { incr i; continue }
+        set k $i
+        while {$k < $n && [string index $s $k] eq "`"} { incr k }
+        if {($k - $i) == $fence} { return $i }
+        set i $k
+    }
+    return -1
+}
+
+# Split one prose run into {style chunk} runs on asterisk emphasis. plain runs
+# are coalesced; chunks still carry escape sentinels (the caller unescapes).
+proc ::questlog::jsonl::inline_emphasis {s} {
+    set runs [list]
+    set plain ""
+    set i 0
+    set n [string length $s]
+    while {$i < $n} {
+        if {[string index $s $i] ne "*"} {
+            append plain [string index $s $i]
+            incr i
+            continue
+        }
+        set j $i
+        while {$j < $n && [string index $s $j] eq "*"} { incr j }
+        set runlen [expr {$j - $i}]
+        set style ""
+        switch -- $runlen {
+            1 { set style italic }
+            2 { set style bold }
+            3 { set style bolditalic }
+        }
+        set close -1
+        if {$style ne ""} {
+            set after [string index $s $j]
+            if {$after ne "" && ![string is space $after]} {
+                set close [::questlog::jsonl::inline_close_emph $s $j $runlen]
+            }
+        }
+        if {$close < 0} {
+            append plain [string range $s $i [expr {$j - 1}]]
+            set i $j
+            continue
+        }
+        if {$plain ne ""} { lappend runs [list plain $plain]; set plain "" }
+        lappend runs [list $style [string range $s $j [expr {$close - 1}]]]
+        set i [expr {$close + $runlen}]
+    }
+    if {$plain ne ""} { lappend runs [list plain $plain] }
+    return $runs
+}
+
+# Index of a closing asterisk run of exactly `runlen` whose preceding char is
+# non-space (flanking), at or after `from`; -1 if none.
+proc ::questlog::jsonl::inline_close_emph {s from runlen} {
+    set n [string length $s]
+    set i $from
+    while {$i < $n} {
+        if {[string index $s $i] ne "*"} { incr i; continue }
+        set k $i
+        while {$k < $n && [string index $s $k] eq "*"} { incr k }
+        if {($k - $i) == $runlen} {
+            set before [string index $s [expr {$i - 1}]]
+            if {$before ne "" && ![string is space $before]} { return $i }
+        }
+        set i $k
+    }
+    return -1
+}
+
+# Restore the escape sentinels to their literal characters.
+proc ::questlog::jsonl::inline_unescape {s} {
+    return [string map [list \uE000 "`" \uE001 "*" \uE002 "\\"] $s]
 }
 
 # Walk a record's content blocks and emit one {btype content} pair per
