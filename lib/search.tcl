@@ -108,7 +108,7 @@ set ::questlog::search::WorkerScript {
 # fan-out by default; QUESTLOG_SEARCH_THREADS tunes the worker count, or 0
 # selects the single-thread coroutine path.
 #
-# A search is a list of criteria, each {type regex|read|write|edit value}.
+# A search is a list of criteria, each {type pattern|read|wrote|edited value}.
 # A session qualifies when every criterion is satisfied somewhere in it
 # (AND at session scope). A regex criterion is satisfied by a content
 # block matching its pattern; a read/write/edit criterion by a tool_use

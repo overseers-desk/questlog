@@ -151,14 +151,10 @@ proc ::questlog::app::start {root {initial_criteria {}} {init_window ""} {init_s
     ::questlog::cost::init [namespace code on_cost_result]
 
     $Toolbar subscribe [namespace code on_filter]
-    # CLI exposes the legacy criterion words (regex|read|write|edit); the
-    # toolbar's clause kinds renamed write→wrote, edit→edited, regex→pattern.
-    set cli_kind [dict create regex pattern read read write wrote edit edited]
+    # cli::parse already normalised each criterion to a canonical toolbar clause
+    # kind (pattern/read/wrote/edited), so seed the toolbar directly.
     foreach c $initial_criteria {
-        set t [dict get $c type]
-        if {[dict exists $cli_kind $t]} {
-            $Toolbar add_value [dict get $cli_kind $t] [dict get $c value]
-        }
+        $Toolbar add_value [dict get $c type] [dict get $c value]
     }
     # Launch pre-fills: --window pre-selects the time radio, --search pre-fills
     # the search field. Applied before the first publish so the opening search

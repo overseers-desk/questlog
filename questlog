@@ -51,9 +51,9 @@ source [file join $ROOT ui  viewer.tcl]
 source [file join $ROOT ui  move_dialog.tcl]
 source [file join $ROOT lib app.tcl]
 
-# A leading criterion-type token (regex|read|write|edit) launches the GUI
+# A leading criterion-type token (pattern|read|wrote|edited) launches the GUI
 # pre-seeded with that criteria chain; otherwise the -regex flag prefills a
-# regex criterion. Either way the GUI opens normally.
+# pattern criterion. Either way the GUI opens normally.
 if {[::questlog::cli::is_cli $argv]} {
     set initial_criteria [::questlog::cli::parse $argv]
 } else {
@@ -63,7 +63,7 @@ if {[::questlog::cli::is_cli $argv]} {
         if {$a eq "-regex" || $a eq "--regex"} {
             incr i
             lappend initial_criteria \
-                [dict create type regex value [lindex $argv $i]]
+                [dict create type pattern value [lindex $argv $i]]
         }
     }
 }

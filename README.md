@@ -48,13 +48,13 @@ See [docs/installation.md](docs/installation.md) for the Debian, Fedora, Homebre
 
 ```
 ./questlog                                        # launch the GUI
-./questlog edit lib/scan.tcl                      # launch pre-seeded with an edit criterion
-./questlog edit foo.tcl regex "bar"               # several criteria, AND-joined
-./questlog -regex "pattern"                       # prefill a single regex criterion
+./questlog edited lib/scan.tcl                    # launch pre-seeded with an edited criterion
+./questlog edited foo.tcl pattern "bar"           # several criteria, AND-joined
+./questlog -regex "pattern"                       # prefill a single pattern criterion
 ./questlog --search "california michael"          # prefill the search bar (plain words, not regex)
 ./questlog --window 30d                            # open on a time window other than the 7d default
 ```
 
 `./questlog` opens the main window immediately and streams rows in. The default seven-day window populates in under a second; switching to "all" extends incrementally with the tree growing as files are scanned. Scan progress is reported in the bottom status bar.
 
-A leading criterion type on the command line pre-seeds the GUI with a criteria chain: arguments pair as `<type> <value>`, where type is `regex`, `read`, `write`, or `edit`. `read` / `write` / `edit` match the recorded file path by suffix, `regex` matches content. The GUI then behaves normally, including the time-window control, so widen the window from the default 7 d when hunting an older edit. This launches `wish` like any GUI invocation and needs an X display. The older `-regex PATTERN` flag still prefills one regex criterion.
+A leading criterion type on the command line pre-seeds the GUI with a criteria chain: arguments pair as `<type> <value>`, where type is `pattern`, `read`, `wrote`, or `edited` (the older `regex`, `write`, `edit` are accepted as aliases). `read` / `wrote` / `edited` match the recorded file path by suffix, `pattern` matches content. The GUI then behaves normally, including the time-window control, so widen the window from the default 7 d when hunting an older edit. This launches `wish` like any GUI invocation and needs an X display. The older `-regex PATTERN` flag still prefills one pattern criterion.
