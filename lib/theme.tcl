@@ -35,6 +35,7 @@ namespace eval ::questlog::theme {
         tool_bg         #fce8ce
         tool_result_bg  #f4dff5
         system_bg       #e8e8e8
+        snippet_guide   #c6dbff
         ink             #1d1d1d
         body            #262626
         snippet         #262626

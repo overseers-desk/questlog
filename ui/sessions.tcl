@@ -255,16 +255,24 @@ oo::class create ::questlog::ui::SessionList {
         $Text tag configure selected -background [::questlog::theme::c sel]
         $Text tag configure drop-candidate -background [::questlog::theme::c drop]
 
-        # Snippet rows: type label in a left column, content wrapping under it.
+        # Snippet rows: a type label in a left column, the matched line beside it.
         # Indented past the header so each block reads title-then-evidence. The
         # column is sized to the widest rendered label ("TOOL RESULT") in its
         # own bold font; content is the proportional QLList, like the headers.
-        set lm 36
+        set barcol 22
+        set lm 40
         set tw [font measure QLBold "TOOL RESULT  "]
         set content_col [expr {$lm + $tw}]
         $Text configure -tabs [list $content_col left]
-        $Text tag configure snippet -lmargin1 $lm -lmargin2 $content_col \
+        # A thin session-grouping spine runs in the gutter to the left of the
+        # badge column: every snippet line opens with a bar glyph, so the matches
+        # of one session stack into one continuous rule (the design's MatchList
+        # left guide). The badge then tabs to $lm and content to $content_col;
+        # -wrap none clips each match to a single row, as the design ellipsises it.
+        $Text tag configure snippet -lmargin1 $barcol -lmargin2 $content_col \
+            -tabs [list $lm left $content_col left] -wrap none \
             -font QLList -foreground [::questlog::theme::c snippet] -spacing3 1
+        $Text tag configure snippetbar -foreground [::questlog::theme::c snippet_guide]
         # Snippet type labels are small tinted pill badges (role foreground on a
         # pale background), matching the design's SNIPPET_COLORS.
         $Text tag configure type-user        -foreground [::questlog::theme::c user]        -background [::questlog::theme::c user_bg]        -font QLBold
@@ -824,6 +832,8 @@ oo::class create ::questlog::ui::SessionList {
         set tmp tmpsnip
         $Text mark set $tmp [$Text index $semark]
         $Text mark gravity $tmp right
+        $Text insert $tmp "▏" [list snippet snippetbar $ntag]
+        $Text insert $tmp "\t" [list snippet $ntag]
         $Text insert $tmp [string toupper [string map {_ { }} $btype]] \
             [list snippet $type_tag $ntag]
         $Text insert $tmp "\t" [list snippet $ntag]
