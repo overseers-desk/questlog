@@ -718,17 +718,19 @@ oo::class create ::questlog::Search {
                   && [string is integer -strict [string trim $out]]} {
             set cores [string trim $out]
         }
-        if {$cores < 2} { return 4 }
-        set n [expr {$cores - 2}]
-        if {$n < 1} { set n 1 }
-        if {$n > 8} { set n 8 }
+        if {$cores < 2} { return [::questlog::config::get search_threads_fallback] }
+        set n [expr {$cores - [::questlog::config::get search_threads_reserve]}]
+        set lo [::questlog::config::get search_threads_min]
+        set hi [::questlog::config::get search_threads_max]
+        if {$n < $lo} { set n $lo }
+        if {$n > $hi} { set n $hi }
         return $n
     }
 
     method run_search {my_epoch snapshot} {
         # Yield once so callers establishing vwait before our callbacks
         # see them. Same pattern as Scan.run_scan.
-        after 1 [list ::questlog::resume_coro [info coroutine]]
+        after [::questlog::config::get search_resume_ms] [list ::questlog::resume_coro [info coroutine]]
         yield
         if {$my_epoch != $Epoch} return
 
@@ -836,9 +838,10 @@ oo::class create ::questlog::Search {
                 # Yield mid-file so a cancel issued by a new search (a fresh
                 # Enter or a filter change) lands without waiting for the rest
                 # of a large log.
-                if {$lineno % 500 == 0 && [clock milliseconds] - $yield_clock > 30} {
+                if {$lineno % [::questlog::config::get search_yield_lines] == 0
+                    && [clock milliseconds] - $yield_clock > [::questlog::config::get search_yield_ms]} {
                     if {$my_epoch != $Epoch} { close $fh; return }
-                    after 1 [list ::questlog::resume_coro [info coroutine]]
+                    after [::questlog::config::get search_resume_ms] [list ::questlog::resume_coro [info coroutine]]
                     yield
                     if {$my_epoch != $Epoch} { close $fh; return }
                     set yield_clock [clock milliseconds]
@@ -877,9 +880,9 @@ oo::class create ::questlog::Search {
             }
             incr count
             dict set Counts done $count
-            if {$count % 50 == 0} {
+            if {$count % [::questlog::config::get search_progress_files] == 0} {
                 {*}$OnProgress $count $total [dict get $Counts matches]
-                after 1 [list ::questlog::resume_coro [info coroutine]]
+                after [::questlog::config::get search_resume_ms] [list ::questlog::resume_coro [info coroutine]]
                 yield
                 if {$my_epoch != $Epoch} return
             }
@@ -955,7 +958,7 @@ oo::class create ::questlog::Search {
         dict incr Counts done
         set d [dict get $Counts done]
         set t [dict get $Counts total]
-        if {$d % 50 == 0} {
+        if {$d % [::questlog::config::get search_progress_files] == 0} {
             {*}$OnProgress $d $t [dict get $Counts matches]
         }
     }

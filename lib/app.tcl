@@ -260,7 +260,7 @@ proc ::questlog::app::run_tick {} {
     variable RunTimer
     set Running [::questlog::live::running_uuids]
     $SessionList reconcile_running $Running
-    set RunTimer [after 2000 [namespace code run_tick]]
+    set RunTimer [after [::questlog::config::get running_poll_ms] [namespace code run_tick]]
 }
 
 # ---- toolbar callback --------------------------------------------------

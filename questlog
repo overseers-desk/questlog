@@ -27,6 +27,7 @@ set argv $kept
 
 set ROOT [file dirname [file normalize [info script]]]
 
+source [file join $ROOT config.tcl]
 source [file join $ROOT lib theme.tcl]
 source [file join $ROOT lib path.tcl]
 source [file join $ROOT lib state.tcl]

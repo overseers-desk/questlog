@@ -108,9 +108,9 @@ oo::class create ::questlog::Scan {
                 }
             }
             incr count
-            if {$count % 200 == 0} {
+            if {$count % [::questlog::config::get scan_yield_files] == 0} {
                 if {$OnProgress ne ""} { {*}$OnProgress $count $total }
-                after 1 [list ::questlog::resume_coro [info coroutine]]
+                after [::questlog::config::get scan_resume_ms] [list ::questlog::resume_coro [info coroutine]]
                 yield
                 if {$my_epoch != $Epoch} return
             }
@@ -127,10 +127,10 @@ oo::class create ::questlog::Scan {
     method list_paths_for {snapshot} {
         set root [::questlog::path::projects_root]
         if {![file isdirectory $root]} { return [list] }
-        set window [my dict_or $snapshot window 7d]
+        set window [my dict_or $snapshot window [::questlog::config::get window_default]]
         set cutoff 0
         if {$window ne "all"} {
-            set hours [dict get {24h 24 7d 168 30d 720} $window]
+            set hours [dict get [::questlog::config::get window_hours] $window]
             set cutoff [expr {[clock seconds] - $hours*3600}]
         }
         set pairs [list]
@@ -196,7 +196,7 @@ oo::class create ::questlog::Scan {
         set agent_name ""
         set ai_title ""
         if {[catch {file size $path} fsz]} { set fsz 0 }
-        set tail_start [expr {$fsz - 65536}]
+        set tail_start [expr {$fsz - [::questlog::config::get tail_window_bytes]}]
         set pos [chan tell $fh]
         if {$tail_start > $pos} {
             chan seek $fh $tail_start
@@ -282,13 +282,13 @@ oo::class create ::questlog::Scan {
     # Filter rows by a snapshot. Used by the session list and Search to read
     # the current memoised view. Returns a list of row dicts, mtime DESC.
     method query {snapshot {folder ""}} {
-        set window [my dict_or $snapshot window 7d]
+        set window [my dict_or $snapshot window [::questlog::config::get window_default]]
         set one_turn [my dict_or $snapshot one_turn 1]
         set under    [my dict_or $snapshot under {}]
         set bookmarked_only [my dict_or $snapshot bookmarked_only 0]
         set cutoff 0
         if {$window ne "all"} {
-            set hours [dict get {24h 24 7d 168 30d 720} $window]
+            set hours [dict get [::questlog::config::get window_hours] $window]
             set cutoff [expr {[clock seconds] - $hours*3600}]
         }
         set under_folders [list]

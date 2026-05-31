@@ -54,6 +54,7 @@ set stage /tmp/questlog-zipfs-stage-[pid]
 file delete -force $stage
 file mkdir $stage
 file copy $launcher                       [file join $stage questlog]
+file copy [file join $repo config.tcl]     [file join $stage config.tcl]
 file copy [file join $repo zipfs main.tcl] [file join $stage main.tcl]
 foreach d {lib ui data} {
     file copy [file join $repo $d] [file join $stage $d]

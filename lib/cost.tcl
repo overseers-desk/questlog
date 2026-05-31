@@ -171,7 +171,10 @@ proc ::questlog::cost::init {on_result} {
     set OnResult $on_result
     set Epoch 0
     set MainTid [thread::id]
-    set Pool [tpool::create -minworkers 0 -maxworkers 4 -initcmd $WorkerScript]
+    set Pool [tpool::create \
+        -minworkers [::questlog::config::get cost_workers_min] \
+        -maxworkers [::questlog::config::get cost_workers_max] \
+        -initcmd $WorkerScript]
 }
 
 # Queue a cost task for one session path. Returns immediately; the
