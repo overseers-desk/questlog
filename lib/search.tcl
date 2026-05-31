@@ -13,8 +13,24 @@ proc ::questlog::search::dispatch {obj_cmd args} {
     }
 }
 
+# The display caps the worker interpreters need, as a script prelude. A worker
+# is a separate interp with no reach into ::questlog::config, so the values are
+# read here and prepended to the worker script as plain ::QL_* globals the
+# worker procs read. Config stays the one home; the worker copies mirror the
+# main-interp procs and read the same numbers from here.
+proc ::questlog::search::worker_caps_prelude {} {
+    return "
+        set ::QL_content_cap [::questlog::config::get content_cap]
+        set ::QL_snippet_radius [::questlog::config::get snippet_radius]
+        set ::QL_tool_param_cap [::questlog::config::get tool_param_cap]
+        set ::QL_tool_render_cap [::questlog::config::get tool_render_cap]
+        set ::QL_preview_cap [::questlog::config::get preview_cap]
+    "
+}
+
 # Whitespace-collapse and length-cap a content string for display.
-proc ::questlog::search::clean_text {s {limit 300}} {
+proc ::questlog::search::clean_text {s {limit -1}} {
+    if {$limit < 0} { set limit [::questlog::config::get content_cap] }
     set s [regsub -all {[\s]+} $s " "]
     set s [string trim $s]
     if {[string length $s] > $limit} {
@@ -29,10 +45,11 @@ proc ::questlog::search::clean_text {s {limit 300}} {
 # always inside the window so the display can re-find and embolden it. If the
 # pattern does not match (it should, since the caller only calls this on a
 # hit) the head-capped clean_text is returned as a safe fallback.
-proc ::questlog::search::snippet_window {s pat re_opts {radius 80}} {
+proc ::questlog::search::snippet_window {s pat re_opts {radius -1}} {
+    if {$radius < 0} { set radius [::questlog::config::get snippet_radius] }
     set s [string trim [regsub -all {[\s]+} $s " "]]
     if {[catch {regexp -indices {*}$re_opts -- $pat $s m} ok] || !$ok} {
-        return [::questlog::search::clean_text $s 300]
+        return [::questlog::search::clean_text $s]
     }
     lassign $m a b
     set len [string length $s]
@@ -61,13 +78,15 @@ proc ::questlog::search::format_tool_use {name input} {
         # value as a display string. Whitespace-collapse and cap.
         set v [regsub -all {[\s]+} $v " "]
         # Paths render whole; only bulky fields are capped.
-        if {$k ni {file_path notebook_path} && [string length $v] > 60} {
-            set v "[string range $v 0 59]…"
+        set cap [::questlog::config::get tool_param_cap]
+        if {$k ni {file_path notebook_path} && [string length $v] > $cap} {
+            set v "[string range $v 0 [expr {$cap - 1}]]…"
         }
         lappend parts "${k}=${v}"
     }
     set s "${name}([join $parts {, }])"
-    if {[string length $s] > 250} { set s "[string range $s 0 249]…" }
+    set rcap [::questlog::config::get tool_render_cap]
+    if {[string length $s] > $rcap} { set s "[string range $s 0 [expr {$rcap - 1}]]…" }
     return $s
 }
 
@@ -210,7 +229,7 @@ proc ::questlog::search::record_hits {rec clauses} {
                             edited { set edited_hit 1 }
                         }
                         lappend hits [list tool_use \
-                            [::questlog::search::clean_text [dict get $t rendered] 300]]
+                            [::questlog::search::clean_text [dict get $t rendered]]]
                         break
                     }
                 }
@@ -240,11 +259,12 @@ set ::questlog::search::WorkerScript {
     proc clean_preview {s} {
         set s [regsub -all {[\s]+} $s " "]
         set s [string map [list "\\\"" "\"" "\\\\" "\\" "\\n" " " "\\t" " "] $s]
-        if {[string length $s] > 80} { set s "[string range $s 0 79]…" }
+        if {[string length $s] > $::QL_preview_cap} { set s "[string range $s 0 [expr {$::QL_preview_cap - 1}]]…" }
         return [string trim $s]
     }
 
-    proc clean_text {s {limit 300}} {
+    proc clean_text {s {limit -1}} {
+        if {$limit < 0} { set limit $::QL_content_cap }
         set s [regsub -all {[\s]+} $s " "]
         set s [string trim $s]
         if {[string length $s] > $limit} {
@@ -254,10 +274,11 @@ set ::questlog::search::WorkerScript {
     }
 
     # Worker copy of ::questlog::search::snippet_window; keep in sync.
-    proc snippet_window {s pat re_opts {radius 80}} {
+    proc snippet_window {s pat re_opts {radius -1}} {
+        if {$radius < 0} { set radius $::QL_snippet_radius }
         set s [string trim [regsub -all {[\s]+} $s " "]]
         if {[catch {regexp -indices {*}$re_opts -- $pat $s m} ok] || !$ok} {
-            return [clean_text $s 300]
+            return [clean_text $s]
         }
         lassign $m a b
         set len [string length $s]
@@ -328,13 +349,13 @@ set ::questlog::search::WorkerScript {
         foreach k $ordered {
             set v [dict get $input $k]
             set v [regsub -all {[\s]+} $v " "]
-            if {$k ni {file_path notebook_path} && [string length $v] > 60} {
-                set v "[string range $v 0 59]…"
+            if {$k ni {file_path notebook_path} && [string length $v] > $::QL_tool_param_cap} {
+                set v "[string range $v 0 [expr {$::QL_tool_param_cap - 1}]]…"
             }
             lappend parts "${k}=${v}"
         }
         set s "${name}([join $parts {, }])"
-        if {[string length $s] > 250} { set s "[string range $s 0 249]…" }
+        if {[string length $s] > $::QL_tool_render_cap} { set s "[string range $s 0 [expr {$::QL_tool_render_cap - 1}]]…" }
         return $s
     }
 
@@ -482,7 +503,7 @@ set ::questlog::search::WorkerScript {
                                 edited { set edited_hit 1 }
                             }
                             lappend hits [list tool_use \
-                                [clean_text [dict get $t rendered] 300]]
+                                [clean_text [dict get $t rendered]]]
                             break
                         }
                     }
@@ -931,8 +952,9 @@ oo::class create ::questlog::Search {
         set WorkersRemaining [llength $slices]
         set main_tid [thread::id]
         set obj_cmd  [self]
+        set wscript "[::questlog::search::worker_caps_prelude]$::questlog::search::WorkerScript"
         foreach slice $slices {
-            set tid [thread::create $::questlog::search::WorkerScript]
+            set tid [thread::create $wscript]
             lappend Workers $tid
             thread::send -async $tid \
                 [list worker_run $main_tid $obj_cmd $my_epoch $slice $clauses]

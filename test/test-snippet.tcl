@@ -4,6 +4,7 @@
 #   tclsh9.0 test/test-snippet.tcl
 
 set ROOT [file dirname [file dirname [file normalize [info script]]]]
+source [file join $ROOT config.tcl]
 source [file join $ROOT lib search.tcl]
 
 set failures 0
