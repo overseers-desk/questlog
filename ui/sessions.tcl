@@ -1158,6 +1158,16 @@ oo::class create ::questlog::ui::SessionList {
         my redraw_folder_heading $folder
     }
 
+    # Apply a batch of buffered cost results in one pass (see app.tcl
+    # flush_cost). Each is routed through refresh_cost; grouping them into one
+    # event-loop turn keeps a flood of worker results from churning the list
+    # while the user interacts.
+    method refresh_cost_batch {batch} {
+        dict for {path cost_dict} $batch {
+            my refresh_cost $path $cost_dict
+        }
+    }
+
     # Late arrival from the cost-pass worker. Diffs the new cost against the
     # cached one (so a retry on a re-scanned file does not double-count),
     # updates the Sessions cell, bumps the folder aggregate and the running

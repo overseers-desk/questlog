@@ -29,6 +29,8 @@ namespace eval ::questlog::app {
     variable CurrentQuery  ;# {terms <list> nocase 0|1} of the active search, or {}
     variable SidebarCollapsed ;# 1 while the list column is folded away (transient)
     variable SidebarSash      ;# remembered divider position as a fraction of width
+    variable CostPending      ;# path -> cost_dict buffered for a coalesced render flush
+    variable CostFlushTimer   ;# after-id of the pending cost flush, or ""
 }
 
 proc ::questlog::app::start {root {initial_criteria {}}} {
@@ -46,6 +48,8 @@ proc ::questlog::app::start {root {initial_criteria {}}} {
     variable CurrentQuery
     variable SidebarCollapsed
     variable SidebarSash
+    variable CostPending
+    variable CostFlushTimer
 
     set Root $root
     set StatusVar ""
@@ -53,6 +57,8 @@ proc ::questlog::app::start {root {initial_criteria {}}} {
     set CurrentQuery {}
     set SidebarCollapsed 0
     set SidebarSash 0.58
+    set CostPending [dict create]
+    set CostFlushTimer ""
 
     # The <<ContextMenu>> virtual event already covers Button-2 on Aqua and
     # Button-3 on X11/Windows. Tk does not include Control-Click in it on
@@ -326,14 +332,42 @@ proc ::questlog::app::on_scan_row {row} {
     }
 }
 
-# Cost-pass worker callback. Merge into the in-memory row, then update
-# the visible card. SessionList::refresh_cost is the only path that
-# touches the rendered meta region, folder aggregate, and total.
+# Cost-pass worker callback. Merge into the in-memory row immediately so Rows
+# stays current for lookups and memoisation, then render the visible card.
+# SessionList::refresh_cost is the only path that touches the rendered meta
+# region, folder aggregate, and total.
+#
+# Under cost_render=coalesced (the default) the visible render is buffered and
+# flushed in one pass every cost_coalesce_ms, so a flood of worker results does
+# not churn the list (each render is a main-thread text mutation) while the user
+# interacts. immediate restores the per-result render.
 proc ::questlog::app::on_cost_result {path cost_dict} {
     variable Scan
     variable SessionList
+    variable CostPending
+    variable CostFlushTimer
     $Scan update_cost $path $cost_dict
-    $SessionList refresh_cost $path $cost_dict
+    if {[::questlog::config::get cost_render] eq "immediate"} {
+        $SessionList refresh_cost $path $cost_dict
+        return
+    }
+    dict set CostPending $path $cost_dict
+    if {$CostFlushTimer eq ""} {
+        set CostFlushTimer [after [::questlog::config::get cost_coalesce_ms] \
+            [namespace code flush_cost]]
+    }
+}
+
+# Drain the buffered cost results in one render pass. Keyed by path, so repeated
+# results for one session within a window collapse to the last.
+proc ::questlog::app::flush_cost {} {
+    variable SessionList
+    variable CostPending
+    variable CostFlushTimer
+    set CostFlushTimer ""
+    set batch $CostPending
+    set CostPending [dict create]
+    $SessionList refresh_cost_batch $batch
 }
 
 proc ::questlog::app::on_scan_progress {done total} {
