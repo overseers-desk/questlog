@@ -598,7 +598,7 @@ oo::class create ::questlog::ui::SessionList {
     # ---- snapshot membership -----------------------------------------
 
     method row_matches_snapshot {row} {
-        set window [my dict_or $Snapshot window 7d]
+        set window [my dict_or $Snapshot window [::questlog::config::get window_default]]
         set one_turn [my dict_or $Snapshot one_turn 1]
         set under    [my dict_or $Snapshot under {}]
         set bookmarked_only [my dict_or $Snapshot bookmarked_only 0]
@@ -606,7 +606,7 @@ oo::class create ::questlog::ui::SessionList {
         if {$bookmarked_only && !$bk} { return 0 }
         set cutoff 0
         if {$window ne "all"} {
-            set hours [dict get {24h 24 7d 168 30d 720} $window]
+            set hours [dict get [::questlog::config::get window_hours] $window]
             set cutoff [expr {[clock seconds] - $hours*3600}]
         }
         if {[dict get $row mtime] <= $cutoff && !$bk} { return 0 }
@@ -776,7 +776,7 @@ oo::class create ::questlog::ui::SessionList {
     method add_snippet {path btype content lineoff} {
         dict set Sessions $path count [expr {[dict get $Sessions $path count] + 1}]
         my redraw_header $path
-        if {[llength [dict get $Sessions $path snippets]] >= 3} return
+        if {[llength [dict get $Sessions $path snippets]] >= [::questlog::config::get snippets_per_session]} return
         set sn [dict get $Sessions $path snippets]
         lappend sn [list $btype $content $lineoff]
         dict set Sessions $path snippets $sn

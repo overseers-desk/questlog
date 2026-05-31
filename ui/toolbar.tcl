@@ -90,7 +90,7 @@ oo::class create ::questlog::ui::Toolbar {
     constructor {parent cwd} {
         set Top $parent
         set Cwd $cwd
-        set WindowVar  7d
+        set WindowVar  [::questlog::config::get window_default]
         set SearchVar  ""
         set SearchCaseVar 0
         set OneTurnVar 1
@@ -142,7 +142,7 @@ oo::class create ::questlog::ui::Toolbar {
         pack $Restrict.time.label -side left -padx {0 4}
         ttk::label $Restrict.time.rans -text "ran in the last"
         pack $Restrict.time.rans -side left -padx {0 8}
-        foreach w {24h 7d 30d all} {
+        foreach w [::questlog::config::get window_options] {
             ttk::radiobutton $Restrict.time.r$w -text $w \
                 -variable [my varname WindowVar] -value $w \
                 -command [list [self] publish]

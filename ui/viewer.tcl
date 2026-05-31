@@ -49,7 +49,7 @@ oo::class create ::questlog::ui::Viewer {
         set Top $parent
         set Shown 0
         set Path ""
-        set IdleGap 10
+        set IdleGap [::questlog::config::get viewer_idle_gap_min]
         set FindVar ""
         set FindMatches [list]
         set FindIdx 0
@@ -456,7 +456,7 @@ oo::class create ::questlog::ui::Viewer {
     method insert_quote_box {dequoted} {
         set qid [incr NextQid]
         set n [llength [split $dequoted "\n"]]
-        set limit 6
+        set limit [::questlog::config::get blockquote_preview_lines]
         set f $Text.q$qid
         # Outer container draws no box. The hover buttons are children of it,
         # pinned to the arrow cursor so they do not inherit the reading text's
@@ -568,9 +568,10 @@ oo::class create ::questlog::ui::Viewer {
         set fw [font measure [$bt cget -font] 0]
         if {$fw <= 0} { set fw 7 }
         if {$px <= 1} {
-            set cols 80
+            set cols [::questlog::config::get textbox_default_cols]
         } else {
-            set cols [expr {max(10, ($px - 60) / $fw)}]
+            set cols [expr {max([::questlog::config::get textbox_min_cols], \
+                ($px - [::questlog::config::get textbox_margin_px]) / $fw)}]
         }
         $bt configure -width $cols
         # An off-screen embedded text reports a 1px width, which would make

@@ -14,8 +14,6 @@ package require Tk
 
 namespace eval ::questlog::ui::drag {
     variable State [dict create]
-    variable Threshold 6
-    variable ScrollMs 60
 }
 
 # Begin tracking a potential drag.
@@ -37,12 +35,12 @@ proc ::questlog::ui::drag::watch {source press_x press_y payload on_drop hit pai
 
 proc ::questlog::ui::drag::motion {X Y} {
     variable State
-    variable Threshold
     if {[dict size $State] == 0} return
     if {![dict get $State active]} {
         set dx [expr {abs($X - [dict get $State x0])}]
         set dy [expr {abs($Y - [dict get $State y0])}]
-        if {$dx < $Threshold && $dy < $Threshold} return
+        set thr [::questlog::config::get drag_threshold_px]
+        if {$dx < $thr && $dy < $thr} return
         dict set State active 1
         set src [dict get $State source]
         grab set $src
@@ -56,9 +54,10 @@ proc ::questlog::ui::drag::motion {X Y} {
         set new_candidate [{*}[dict get $State hit] $X $Y]
         set ty [expr {$Y - [winfo rooty $src]}]
         set h  [winfo height $src]
-        if {$ty < 16} {
+        set band [::questlog::config::get drag_edge_band_px]
+        if {$ty < $band} {
             schedule_scroll -1
-        } elseif {$ty > $h - 16} {
+        } elseif {$ty > $h - $band} {
             schedule_scroll 1
         } else {
             cancel_scroll
@@ -100,22 +99,22 @@ proc ::questlog::ui::drag::release {X Y} {
 
 proc ::questlog::ui::drag::schedule_scroll {direction} {
     variable State
-    variable ScrollMs
     if {[dict size $State] == 0} return
     set existing [dict get $State autoscroll]
     if {$existing ne ""} return
-    set id [after $ScrollMs [list ::questlog::ui::drag::scroll_tick $direction]]
+    set id [after [::questlog::config::get drag_autoscroll_ms] \
+        [list ::questlog::ui::drag::scroll_tick $direction]]
     dict set State autoscroll $id
 }
 
 proc ::questlog::ui::drag::scroll_tick {direction} {
     variable State
-    variable ScrollMs
     if {[dict size $State] == 0} return
     if {![dict get $State active]} return
     set src [dict get $State source]
     $src yview scroll $direction units
-    set id [after $ScrollMs [list ::questlog::ui::drag::scroll_tick $direction]]
+    set id [after [::questlog::config::get drag_autoscroll_ms] \
+        [list ::questlog::ui::drag::scroll_tick $direction]]
     dict set State autoscroll $id
 }
 
