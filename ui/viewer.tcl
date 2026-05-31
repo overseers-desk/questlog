@@ -1,6 +1,33 @@
 package require Tcl 9
 package require Tk
 
+# Round-robin interleave of per-term hit-position lists, already ordered
+# rarest-term-first by the caller. Returns a flat list: the first hit of each
+# term in rarity order, then the second of each, and so on, dropping any
+# position already taken (a query term that is a substring of another at the
+# same spot). Every matched term is thus represented before any term repeats,
+# so a distinctive low-frequency term leads the match index instead of being
+# buried under a common word. Pure; unit-tested.
+proc ::questlog::ui::rarity_round_robin {term_positions} {
+    set out [list]
+    set seen [dict create]
+    set max 0
+    foreach positions $term_positions {
+        set n [llength $positions]
+        if {$n > $max} { set max $n }
+    }
+    for {set r 0} {$r < $max} {incr r} {
+        foreach positions $term_positions {
+            if {$r >= [llength $positions]} continue
+            set p [lindex $positions $r]
+            if {[dict exists $seen $p]} continue
+            dict set seen $p 1
+            lappend out $p
+        }
+    }
+    return $out
+}
+
 # ::questlog::ui::Viewer - read-only segmented session viewer.
 #
 # A single instance docked in the right pane. `show path lineno` loads a
@@ -785,8 +812,9 @@ oo::class create ::questlog::ui::Viewer {
     # ---- match index (seeded from the search query) ------------------
 
     # Highlight every literal occurrence of the search terms in the rendered
-    # transcript, remember them in document order, and show the floating match
-    # index. Terms are matched literally (the search bar is Google-style, not
+    # transcript, remember them ordered rarest-keyword-first (one hit of each
+    # term before any term repeats), and show the floating match index. Terms
+    # are matched literally (the search bar is Google-style, not
     # regex; the toolbar's pattern row is the separate regex restriction and is
     # not highlighted here). An empty query (a session opened while browsing)
     # clears the highlight and hides the index. Shares the `find` tag and
@@ -798,9 +826,16 @@ oo::class create ::questlog::ui::Viewer {
         set MatchLabels [list]
         set terms [expr {[dict exists $query terms] ? [dict get $query terms] : {}}]
         set nocase [expr {[dict exists $query nocase] ? [dict get $query nocase] : 0}]
-        set hits [list]
+
+        # Collect each distinct term's occurrences in document order, tagging
+        # every one. A term repeated in the query is counted once.
+        set per_term [list]
+        set seen_terms [dict create]
         foreach term $terms {
             if {$term eq ""} continue
+            if {[dict exists $seen_terms $term]} continue
+            dict set seen_terms $term 1
+            set positions [list]
             set start 1.0
             while {1} {
                 set len 0
@@ -812,15 +847,31 @@ oo::class create ::questlog::ui::Viewer {
                 if {$m eq ""} break
                 if {$len <= 0} { set len 1 }
                 $Text tag add find $m "$m + ${len}c"
-                lappend hits $m
+                lappend positions $m
                 set start "$m + ${len}c"
             }
+            if {[llength $positions] > 0} { lappend per_term $positions }
         }
-        foreach m [lsort -unique -command [list [self] cmp_index] $hits] {
+
+        # Order terms rarest-first (fewest occurrences, ties broken by the
+        # earlier first occurrence), then interleave round-robin so every term
+        # is represented once before any repeats. A distinctive low-frequency
+        # term thus leads the index instead of being buried under a common one.
+        set ordered [lsort -command [list [self] cmp_term_rarity] $per_term]
+        foreach m [::questlog::ui::rarity_round_robin $ordered] {
             lappend FindMatches $m
             lappend MatchLabels [my match_context $m]
         }
         my refresh_match_control
+    }
+
+    # lsort comparator over per-term position lists: fewer occurrences first,
+    # ties broken by the earlier first occurrence in the document.
+    method cmp_term_rarity {a b} {
+        set la [llength $a]
+        set lb [llength $b]
+        if {$la != $lb} { return [expr {$la < $lb ? -1 : 1}] }
+        return [my cmp_index [lindex $a 0] [lindex $b 0]]
     }
 
     # Order two text indices in document order, for lsort.
