@@ -11,10 +11,11 @@ override_dh_auto_build:
 override_dh_auto_test:
 
 override_dh_auto_install:
-	install -d $(SHARE)/lib $(SHARE)/ui $(SHARE)/data
+	install -d $(SHARE)/lib $(SHARE)/ui $(SHARE)/data $(SHARE)/assets
 	cp lib/*.tcl $(SHARE)/lib/
 	cp ui/*.tcl  $(SHARE)/ui/
 	cp data/*.csv $(SHARE)/data/
+	cp assets/questlog.svg $(SHARE)/assets/
 	install -D -m 0755 questlog $(PKGDIR)/usr/bin/questlog
 	sed -i 's|^set ROOT .*|set ROOT /usr/share/questlog|' $(PKGDIR)/usr/bin/questlog
 	install -D -m 0644 questlog.desktop \
