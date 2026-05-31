@@ -87,6 +87,7 @@ oo::class create ::questlog::ui::Toolbar {
     variable RowFrames        ;# dict kind -> widget path (present only when row exists)
     variable PopValue         ;# textvar for the add-dropdown's entry
     variable DebounceAfter    ;# after-id of the pending live-search publish, or ""
+    variable TypingUntil      ;# clock-ms deadline through which the user counts as typing
 
     constructor {parent cwd} {
         set Top $parent
@@ -103,6 +104,7 @@ oo::class create ::questlog::ui::Toolbar {
         set RowFrames [dict create]
         set PopValue ""
         set DebounceAfter ""
+        set TypingUntil 0
 
         my build
     }
@@ -231,6 +233,9 @@ oo::class create ::questlog::ui::Toolbar {
     # does not re-arm the timer.
     method on_search_change {{key ""}} {
         if {$key in {Return KP_Enter}} return
+        # The user counts as typing through the debounce window, so the browse
+        # scan can defer while they type (see scan_while_typing).
+        set TypingUntil [expr {[clock milliseconds] + [::questlog::config::get search_debounce_ms]}]
         if {$DebounceAfter ne ""} { after cancel $DebounceAfter }
         set DebounceAfter [after [::questlog::config::get search_debounce_ms] \
             [list [self] debounce_fire]]
@@ -238,6 +243,7 @@ oo::class create ::questlog::ui::Toolbar {
 
     method debounce_fire {} {
         set DebounceAfter ""
+        set TypingUntil 0
         my publish
     }
 
@@ -245,7 +251,16 @@ oo::class create ::questlog::ui::Toolbar {
     # once and the trailing KeyRelease cannot fire a second, redundant search.
     method publish_now {} {
         if {$DebounceAfter ne ""} { after cancel $DebounceAfter; set DebounceAfter "" }
+        set TypingUntil 0
         my publish
+    }
+
+    # True while the user is mid-burst of typing in the search field: a recent
+    # keystroke whose debounce window has not elapsed. The browse scan consults
+    # this (via app.tcl) to defer while typing. False under search_trigger=enter,
+    # where no keystroke advances the deadline.
+    method is_typing {} {
+        return [expr {[clock milliseconds] < $TypingUntil}]
     }
 
     # Add a value to a clause, creating the row if needed. The first user

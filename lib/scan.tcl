@@ -40,6 +40,13 @@ proc ::questlog::resume_coro {co} {
     if {[llength [info commands $co]]} { $co }
 }
 
+# Re-enter a Scan's schedule_resume from a deferred-poll `after`, but only while
+# the object still exists - so a poll pending when the Scan is destroyed (app
+# quit mid-typing) no-ops instead of calling a dead method command.
+proc ::questlog::resume_or_poll {obj co} {
+    if {[llength [info commands $obj]]} { $obj schedule_resume $co }
+}
+
 oo::class create ::questlog::Scan {
     variable Rows         ;# dict: path -> row dict
     variable Folders      ;# dict: folder basename -> resolved display path
@@ -49,8 +56,9 @@ oo::class create ::questlog::Scan {
     variable OnDone       ;# cb {scanned}
     variable OnProgress   ;# cb {done total} or {}
     variable Active       ;# 1 while a coroutine is running
+    variable IsTyping     ;# cb -> 1 while the user is typing, or {} for never
 
-    constructor {on_row on_done {on_progress {}}} {
+    constructor {on_row on_done {on_progress {}} {is_typing {}}} {
         set Rows [dict create]
         set Folders [dict create]
         set Epoch 0
@@ -59,6 +67,7 @@ oo::class create ::questlog::Scan {
         set OnDone $on_done
         set OnProgress $on_progress
         set Active 0
+        set IsTyping $is_typing
     }
 
     # Cancel any in-flight scan. Stale coroutine drains itself at the
@@ -110,7 +119,7 @@ oo::class create ::questlog::Scan {
             incr count
             if {$count % [::questlog::config::get scan_yield_files] == 0} {
                 if {$OnProgress ne ""} { {*}$OnProgress $count $total }
-                after [::questlog::config::get scan_resume_ms] [list ::questlog::resume_coro [info coroutine]]
+                my schedule_resume [info coroutine]
                 yield
                 if {$my_epoch != $Epoch} return
             }
@@ -118,6 +127,27 @@ oo::class create ::questlog::Scan {
         if {$OnProgress ne ""} { {*}$OnProgress $total $total }
         set Active 0
         if {$OnDone ne ""} { {*}$OnDone $scanned }
+    }
+
+    # Schedule the coroutine's mid-loop resume per the configured policy. The
+    # top-of-run resume stays a plain timer (it establishes the caller's vwait);
+    # only the chunk boundary routes here. When scan_while_typing is off and the
+    # injected predicate reports the user is mid-keystroke, defer by re-polling
+    # this method - never resuming a stale coroutine - until typing stops; then
+    # resume on idle or after scan_resume_ms.
+    method schedule_resume {co} {
+        if {[::questlog::config::get scan_while_typing] == 0
+            && $IsTyping ne "" && [{*}$IsTyping]} {
+            after [::questlog::config::get typing_poll_ms] \
+                [list ::questlog::resume_or_poll [self] $co]
+            return
+        }
+        if {[::questlog::config::get scan_resume] eq "idle"} {
+            after idle [list ::questlog::resume_coro $co]
+        } else {
+            after [::questlog::config::get scan_resume_ms] \
+                [list ::questlog::resume_coro $co]
+        }
     }
 
     # Build the candidate path list for a snapshot.

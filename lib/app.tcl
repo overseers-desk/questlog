@@ -114,7 +114,8 @@ proc ::questlog::app::start {root {initial_criteria {}}} {
     set Scan [::questlog::Scan new \
         [namespace code on_scan_row] \
         [namespace code on_scan_done] \
-        [namespace code on_scan_progress]]
+        [namespace code on_scan_progress] \
+        [namespace code scan_is_typing]]
 
     set Search [::questlog::Search new $Scan \
         [namespace code on_search_match] \
@@ -510,6 +511,15 @@ proc ::questlog::app::resolve_folder {folder} {
 proc ::questlog::app::lookup_session {path} {
     variable Scan
     return [$Scan lookup $path]
+}
+
+# Typing predicate the browse Scan consults for its resume policy: true while
+# the user is mid-keystroke in the search field. Delegates to the Toolbar, which
+# records the keystroke deadline; the lib never references the ui directly, the
+# prefix is injected at construction.
+proc ::questlog::app::scan_is_typing {} {
+    variable Toolbar
+    return [$Toolbar is_typing]
 }
 
 proc ::questlog::app::quit {} {
