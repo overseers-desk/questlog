@@ -90,9 +90,15 @@ oo::class create ::questlog::ui::SessionList {
     variable RenameIndex      ;# menu index of the Rename entry, enabled per running state
     variable TotalCost        ;# running sum of per-session cost in the model
     variable StatusBase       ;# last text set by set_progress/set_done
-    variable ColTabs          ;# -tabs spec for the session-header line (from the column model)
+    variable ColTabs          ;# -tabs spec for the session line (right-pinned metadata)
     variable ColRightX        ;# right-edge x px per metadata column, for header click mapping
-    variable SubjectX         ;# x px where the subject column starts
+    variable DateW
+    variable SizeW
+    variable CostW            ;# measured QLList widths of the metadata cells
+    variable ColGap           ;# gap px between metadata cells
+    variable SubjectMax       ;# px the subject may fill before the metadata block
+    variable LayoutW          ;# Text width the current layout was computed for
+    variable RelayoutPending  ;# 1 while a debounced relayout is queued
     variable SortKey          ;# active sort column id: date | size | cost
     variable SortDir          ;# desc | asc
     variable ResortPending    ;# 1 while a debounced redraw is queued under a non-default sort
@@ -124,6 +130,8 @@ oo::class create ::questlog::ui::SessionList {
         set SortKey "date"
         set SortDir "desc"
         set ResortPending 0
+        set LayoutW 0
+        set RelayoutPending 0
         my reset_model
         my build
     }
@@ -164,17 +172,30 @@ oo::class create ::questlog::ui::SessionList {
 
         ttk::frame $Top.body
         pack $Top.body -side top -fill both -expand 1
+        # The sortable column header sits in row 0 of the body grid, in the
+        # same column as the text below it, so its labels share the text's
+        # width and the right-pinned metadata columns line up. The scrollbar is
+        # beside the text only (row 1), never under the header.
+        text $Top.body.hdr -height 1 -wrap none -state disabled -takefocus 0 \
+            -exportselection 0 -borderwidth 0 -highlightthickness 0 \
+            -padx 8 -pady 1 -cursor hand2 -font QLList \
+            -background [::questlog::theme::c strip] \
+            -foreground [::questlog::theme::c muted]
         text $Top.body.t -wrap word -state disabled -exportselection 0 \
             -yscrollcommand [list [self] on_yscroll] \
             -borderwidth 0 -highlightthickness 0 -padx 8 -pady 8 -cursor arrow \
             -takefocus 0
         ttk::scrollbar $Top.body.sb -orient vertical \
             -command [list $Top.body.t yview]
-        grid $Top.body.t  -row 0 -column 0 -sticky nsew
-        grid $Top.body.sb -row 0 -column 1 -sticky ns
+        grid $Top.body.hdr -row 0 -column 0 -sticky ew
+        grid $Top.body.t   -row 1 -column 0 -sticky nsew
+        grid $Top.body.sb  -row 1 -column 1 -sticky ns
         grid columnconfigure $Top.body 0 -weight 1
-        grid rowconfigure    $Top.body 0 -weight 1
+        grid rowconfigure    $Top.body 1 -weight 1
         set Text $Top.body.t
+        # Re-pin the metadata columns and re-fit the subject ellipsis when the
+        # list is resized.
+        bind $Text <Configure> [list [self] on_text_configure %w]
         # This is a list, not editable text: make the click-drag text selection
         # invisible (it otherwise paints rows grey, active and inactive) and
         # hide the insert cursor.
@@ -202,7 +223,6 @@ oo::class create ::questlog::ui::SessionList {
     }
 
     method configure_tags {} {
-        my compute_columns
         # Folder heading: the outermost level, with a wide gap above so each
         # project group reads as a section. Proportional (QLList), like the
         # rest of the list - the design carries no fixed-width font.
@@ -215,11 +235,11 @@ oo::class create ::questlog::ui::SessionList {
         # heading), indented under its folder. Rows are separated by the gap
         # above each and the bold title colour; no background band. The
         # selected row gets a highlight for click feedback. The metadata
-        # columns align on per-tag right tab stops (ColTabs), so the line reads
-        # in the proportional QLList without a fixed-width crutch.
+        # columns align on per-tag right tab stops (set by layout_columns), so
+        # the line reads in the proportional QLList without a fixed-width crutch.
         $Text tag configure sessionhead -lmargin1 12 -lmargin2 28 \
             -spacing1 6 -spacing3 2 -foreground [::questlog::theme::c ink] \
-            -font QLList -tabs $ColTabs
+            -font QLList
         # The slug (Claude's agentName / aiTitle) renders bold inline before
         # the prompt body, so the slug acts as the headline and the prompt
         # as the deck below it. Bold weight is the only marker; brackets
@@ -245,9 +265,9 @@ oo::class create ::questlog::ui::SessionList {
         $Text tag configure type-tool_use    -foreground [::questlog::theme::c tool]        -background [::questlog::theme::c tool_bg]        -font QLBold
         $Text tag configure type-tool_result -foreground [::questlog::theme::c tool_result] -background [::questlog::theme::c tool_result_bg] -font QLBold
         $Text tag configure type-system      -foreground [::questlog::theme::c system]      -background [::questlog::theme::c system_bg]      -font QLBold
-        # Metadata cells (date, size, cost): the muted grey column run that
-        # leads each session line. Proportional QLList, aligned by the
-        # sessionhead tab stops, not a monospace font.
+        # Metadata cells (date, size, cost): the muted grey column run pinned
+        # to the right of each session line. Proportional QLList, aligned by
+        # the sessionhead right tab stops, not a monospace font.
         $Text tag configure meta -foreground [::questlog::theme::c meta]
         # Cost tiers draw the eye to the sessions that ate the budget: amber
         # from 10c, brick red from $1. Below 10c the cell keeps the muted meta
@@ -263,61 +283,92 @@ oo::class create ::questlog::ui::SessionList {
             $Text tag configure $t -background [lindex $hues $i]
             lappend HitTags $t
         }
+
+        my compute_col_widths
+        my layout_columns
     }
 
-    # Lay the metadata columns out as right tab stops in QLList from the column
-    # model: each cell's right edge sits at its stop, so the columns align down
-    # the list without a fixed-width font. ColRightX (per-column right edges)
-    # and SubjectX (where the subject begins) feed the sortable header.
-    method compute_columns {} {
-        set pad 12
-        set gap [font measure QLList "  "]
-        set x $pad
-        set ColTabs [list]
-        set ColRightX [list]
+    # Measure the metadata cells once in QLList (the proportional list font is
+    # fixed, so the widths never change at runtime). layout_columns turns these
+    # into positions; doing the measuring once keeps resize cheap.
+    method compute_col_widths {} {
+        set ColGap [font measure QLList "  "]
+        set DateW 0; set SizeW 0; set CostW 0
         foreach col [::questlog::ui::session_columns] {
-            lassign $col id label sample align
-            set x [expr {$x + [font measure QLList $sample]}]
-            lappend ColTabs $x [expr {$align eq "right" ? "right" : "left"}]
-            lappend ColRightX $x
-            set x [expr {$x + $gap}]
+            lassign $col id label sample
+            set w [font measure QLList $sample]
+            switch -- $id { date {set DateW $w} size {set SizeW $w} cost {set CostW $w} }
         }
-        set SubjectX [expr {$x + $gap}]
-        lappend ColTabs $SubjectX left
     }
 
-    # The sortable column header: a one-line strip directly above the rows,
-    # sharing the session line's font, -padx and tab stops so its labels sit
-    # over the columns. Clicking a metadata column sorts by it; clicking the
-    # active one flips the direction. The subject zone is not sortable.
+    # Pin the metadata block flush to the list's right edge for the current
+    # width: cost's right edge sits a hair inside the edge, size and date stack
+    # leftward, and the subject gets whatever room is left before them. Right
+    # tab stops put each cell's right edge on its stop. Called at build and on
+    # every resize; it only repositions (cheap), the per-row ellipsis refit is
+    # the separate relayout step.
+    method layout_columns {} {
+        set w [winfo width $Text]
+        if {$w <= 1} { set w 600 }
+        set cw [expr {$w - 16}]          ;# inside the 8px left/right -padx
+        set x3 [expr {$cw - 6}]          ;# cost right edge, a hair off the edge
+        set x2 [expr {$x3 - $CostW - $ColGap}]
+        set x1 [expr {$x2 - $SizeW - $ColGap}]
+        set ColRightX [list $x1 $x2 $x3]
+        set ColTabs [list $x1 right $x2 right $x3 right]
+        set SubjectMax [expr {$x1 - $DateW - $ColGap - 12}]
+        if {$SubjectMax < 80} { set SubjectMax 80 }
+        $Text tag configure sessionhead -tabs $ColTabs
+        if {[winfo exists $Top.body.hdr]} { $Top.body.hdr configure -tabs $ColTabs }
+    }
+
+    # Resize hook: when the width actually changes, re-pin the columns and
+    # re-fit every rendered subject's ellipsis, coalesced to one pass at idle.
+    method on_text_configure {w} {
+        if {$w == $LayoutW} return
+        set LayoutW $w
+        if {$RelayoutPending} return
+        set RelayoutPending 1
+        after idle [list [self] relayout]
+    }
+    method relayout {} {
+        set RelayoutPending 0
+        my layout_columns
+        my draw_header
+        $Text configure -state normal
+        dict for {path s} $Sessions {
+            if {[dict get $s rendered]} { my redraw_header $path }
+        }
+        $Text configure -state disabled
+    }
+
+    # The sortable column header lives in row 0 of the body grid (created in
+    # build, so it shares the text's width). It shares the session line's font
+    # and tab stops, so its right-pinned Date/Size/Cost labels sit over the
+    # columns. Clicking a metadata column sorts by it; clicking the active one
+    # flips the direction. The Session zone on the left is not sortable.
     method build_header {} {
-        set h $Top.colhdr
-        text $h -height 1 -wrap none -state disabled -takefocus 0 \
-            -exportselection 0 -borderwidth 0 -highlightthickness 0 \
-            -padx 8 -pady 1 -cursor hand2 -font QLList -tabs $ColTabs \
-            -background [::questlog::theme::c strip] \
-            -foreground [::questlog::theme::c muted]
+        set h $Top.body.hdr
         $h tag configure colactive -font QLBold -foreground [::questlog::theme::c ink]
         bind $h <Button-1> [list [self] on_header_click %x]
-        pack $h -side top -fill x -before $Top.body
         my draw_header
     }
 
     # Map a header click x (widget pixels) to a metadata column and sort by it.
-    # Columns are right-aligned at ColRightX, so the band left of each right
-    # edge belongs to that column; past the last edge is the subject.
+    # Each column occupies [right_edge - width, right_edge]; a click in the
+    # Session area or the gaps falls through and sorts nothing.
     method on_header_click {x} {
         set cx [expr {$x - 8}]
-        set i 0
-        foreach rx $ColRightX {
-            if {$cx <= $rx} break
-            incr i
-        }
         set cols [::questlog::ui::session_columns]
-        if {$i >= [llength $cols]} return
-        lassign [lindex $cols $i] id label sample align sortable
-        if {!$sortable} return
-        my set_sort $id
+        for {set i 0} {$i < [llength $cols]} {incr i} {
+            lassign [lindex $cols $i] id label sample align sortable
+            set rx [lindex $ColRightX $i]
+            set lo [expr {$rx - [font measure QLList $sample] - 6}]
+            if {$cx >= $lo && $cx <= $rx + 4} {
+                if {$sortable} { my set_sort $id }
+                return
+            }
+        }
     }
 
     # Adopt a new sort key (descending), or flip the direction when the active
@@ -333,13 +384,14 @@ oo::class create ::questlog::ui::SessionList {
         my draw_header
     }
 
-    # Paint the header labels, marking the active column with a direction arrow
-    # and bold ink. The trailing Session label names the subject column.
+    # Paint the header labels: the Session column on the left, then the
+    # right-pinned Date/Size/Cost over their columns, the active one marked with
+    # a direction arrow and bold ink.
     method draw_header {} {
-        set h $Top.colhdr
+        set h $Top.body.hdr
         $h configure -state normal
         $h delete 1.0 end
-        set line ""
+        set line "Session"
         set act_off -1
         set act_len 0
         foreach col [::questlog::ui::session_columns] {
@@ -353,7 +405,6 @@ oo::class create ::questlog::ui::SessionList {
             }
             append line $lbl
         }
-        append line "\tSession"
         $h insert 1.0 $line
         if {$act_off >= 0} {
             $h tag add colactive "1.0 + ${act_off}c" \
@@ -658,18 +709,14 @@ oo::class create ::questlog::ui::SessionList {
         set femark [dict get [dict get $Folders $folder] femark]
         set stag "s#[incr NextId]"
         set sstart [$Text index $femark]
-        set meta [my session_meta_text $path]
-        set mtext [dict get $meta text]
-        set title [my session_title_pieces $path]
-        $Text insert $femark "$mtext[dict get $title line]\n" \
+        set info [my build_session_line $path]
+        $Text insert $femark "[dict get $info line]\n" \
             [list sessionhead $stag]
-        $Text tag add meta $sstart "$sstart + [string length $mtext]c"
-        my tag_cost_tier $sstart $path $meta
-        my tag_slug_range $sstart $mtext $title
-        my tag_glyphs $sstart [string length $mtext]
-        # Rows are clipped single-line: overflow past the widget edge is
-        # simply not drawn. The full prompt is read in the viewer, which a
-        # click on the row opens.
+        my apply_line_tags $sstart $path $info
+        # Single-line rows: the subject preview is ellipsised to stop before the
+        # right-pinned metadata (build_session_line), and -wrap none guards
+        # against any residual overflow. The full prompt is read in the viewer,
+        # which a click on the row opens.
         $Text tag configure $stag -wrap none
         set smark "sm[incr NextId]"
         $Text mark set $smark $sstart
@@ -788,88 +835,111 @@ oo::class create ::questlog::ui::SessionList {
         return $cells
     }
 
-    # The metadata run that leads a session line: a tab before each cell (so
-    # the sessionhead right tab stops align them) and a trailing tab that opens
-    # the subject column. Returns the text plus the cost cell's char range, so
-    # the cost-tier colour can land on exactly that cell.
-    method session_meta_text {path} {
-        set cells [my session_meta_cells $path]
-        set text ""
-        set cost_off -1
-        set cost_len 0
-        foreach col [::questlog::ui::session_columns] {
-            lassign $col id
-            set v [dict get $cells $id]
-            append text "\t"
-            if {$id eq "cost"} {
-                set cost_off [string length $text]
-                set cost_len [string length $v]
-            }
-            append text $v
-        }
-        append text "\t"
-        return [dict create text $text cost_off $cost_off cost_len $cost_len]
-    }
-
-    # The proportional-font title: glyphs, the slug (when Claude assigned
-    # one), the first-prompt preview, and the match count when searching.
-    # Returns a dict so the caller can apply the bold slug tag to the right
-    # character range without re-measuring.
-    method session_title_pieces {path} {
+    # Build one session line: the subject on the left (status glyphs, the bold
+    # slug, the first-prompt preview, the match count), then the metadata cells
+    # (date, size, cost) pinned to the right by the sessionhead tab stops. The
+    # preview is ellipsised to SubjectMax so it never collides with the
+    # metadata; the glyphs, slug and count are kept whole. Returns the text and
+    # the char ranges the caller tags.
+    method build_session_line {path} {
         set s [dict get $Sessions $path]
+        set cells [my session_meta_cells $path]
+        set date [dict get $cells date]
+        set size [dict get $cells size]
+        set cost [dict get $cells cost]
+
         set running [dict exists $RunningSet [dict get $s uuid]]
         set bk [my session_bookmarked $path]
         set g [my glyph_cell $running $bk]
         set slug [dict get $s slug]
-        set line ""
-        if {$g ne ""} { append line "$g " }
+        set count [dict get $s count]
+        set count_str ""
+        if {$count > 0} {
+            set count_str "   ·   $count [expr {$count == 1 ? {match} : {matches}}]"
+        }
+
+        set subj ""
+        if {$g ne ""} { append subj "$g " }
         set slug_off -1
         set slug_len 0
         if {$slug ne ""} {
-            set slug_off [string length $line]
-            append line $slug
+            set slug_off [string length $subj]
+            append subj $slug
             set slug_len [string length $slug]
-            append line "  "
+            append subj "  "
         }
-        append line [dict get $s label]
-        set count [dict get $s count]
-        if {$count > 0} {
-            append line "   ·   $count [expr {$count == 1 ? {match} : {matches}}]"
+        # Fit the preview into the room left after the kept pieces.
+        set fixed 0
+        if {$g ne ""} { incr fixed [font measure QLList "$g "] }
+        if {$slug ne ""} {
+            incr fixed [expr {[font measure QLBold $slug] + [font measure QLList "  "]}]
         }
-        return [dict create line $line slug_off $slug_off slug_len $slug_len]
+        incr fixed [font measure QLList $count_str]
+        set preview [my truncate_px [dict get $s label] \
+                         [expr {$SubjectMax - $fixed}] QLList]
+        append subj $preview
+        append subj $count_str
+
+        set meta_off [string length $subj]
+        set line $subj
+        append line "\t$date\t$size\t"
+        set cost_off [string length $line]
+        set cost_len [string length $cost]
+        append line $cost
+        return [dict create line $line meta_off $meta_off \
+            slug_off $slug_off slug_len $slug_len \
+            cost_off $cost_off cost_len $cost_len]
     }
 
-    # Colour the cost cell by tier. meta carries the cost cell's char range
-    # (cost_off/cost_len from session_meta_text); the numeric cost decides the
-    # tier. Under 10c (and blank/unknown) the cell keeps the meta grey.
-    method tag_cost_tier {row_start path meta} {
-        set off [dict get $meta cost_off]
-        set len [dict get $meta cost_len]
-        if {$off < 0 || $len <= 0} return
-        set c [my dict_or [dict get $Sessions $path] cost ""]
-        if {$c eq "" || $c < 0.10} return
-        set tag [expr {$c >= 1.0 ? "cost-outlier" : "cost-mid"}]
-        $Text tag add $tag "$row_start + ${off}c" \
-            "$row_start + [expr {$off + $len}]c"
+    # Trim text to fit px in font, appending an ellipsis when it is cut. A
+    # binary search on the character count keeps it cheap for long previews.
+    method truncate_px {text px font} {
+        if {$px <= 0} { return "" }
+        if {[font measure $font $text] <= $px} { return $text }
+        set lo 0
+        set hi [string length $text]
+        while {$lo < $hi} {
+            set mid [expr {($lo + $hi + 1) / 2}]
+            set cand "[string range $text 0 [expr {$mid - 1}]]…"
+            if {[font measure $font $cand] <= $px} {
+                set lo $mid
+            } else {
+                set hi [expr {$mid - 1}]
+            }
+        }
+        return "[string range $text 0 [expr {$lo - 1}]]…"
     }
 
-    # Apply the bold slug tag to the slug's character range within a
-    # freshly-inserted header line. row_start is the text index where the
-    # whole header begins; meta is the tab-separated metadata run that
-    # precedes the title within the same line.
-    method tag_slug_range {row_start meta title} {
-        set off [dict get $title slug_off]
-        if {$off < 0} return
-        set base [expr {[string length $meta] + $off}]
-        set len  [dict get $title slug_len]
-        $Text tag add slug "$row_start + ${base}c" "$row_start + [expr {$base + $len}]c"
+    # Tag a freshly-inserted session line from its build_session_line info: the
+    # muted metadata run on the right, the bold slug, the status glyphs at the
+    # start, and the cost cell's tier colour (amber from 10c, brick red from
+    # $1; below that, and blank/unknown, keep the meta grey).
+    method apply_line_tags {row_start path info} {
+        $Text tag add meta \
+            "$row_start + [dict get $info meta_off]c" "$row_start lineend"
+        set so [dict get $info slug_off]
+        if {$so >= 0} {
+            $Text tag add slug "$row_start + ${so}c" \
+                "$row_start + [expr {$so + [dict get $info slug_len]}]c"
+        }
+        my tag_glyphs $row_start 0
+        set co [dict get $info cost_off]
+        set cl [dict get $info cost_len]
+        if {$co >= 0 && $cl > 0} {
+            set c [my dict_or [dict get $Sessions $path] cost ""]
+            if {$c ne "" && $c >= 0.10} {
+                set tag [expr {$c >= 1.0 ? "cost-outlier" : "cost-mid"}]
+                $Text tag add $tag "$row_start + ${co}c" \
+                    "$row_start + [expr {$co + $cl}]c"
+            }
+        }
     }
 
     # Colour the status glyphs at the head of a row: running ● green, bookmark
-    # ★ amber. They are the leading run of glyph chars right after the meta
-    # prefix, before the first space.
-    method tag_glyphs {row_start meta_len} {
-        set base "$row_start + ${meta_len}c"
+    # ★ amber. They are the leading run of glyph chars at the start of the
+    # subject, before the first space.
+    method tag_glyphs {row_start off} {
+        set base "$row_start + ${off}c"
         for {set i 0} {$i < 4} {incr i} {
             set ch [$Text get "$base + ${i}c"]
             if {$ch eq $::questlog::ui::GLYPH_RUNNING} {
@@ -894,16 +964,11 @@ oo::class create ::questlog::ui::SessionList {
         if {![dict get $s rendered]} return
         set smark [dict get $s smark]
         set stag  [dict get $s stag]
-        set meta [my session_meta_text $path]
-        set mtext [dict get $meta text]
-        set title [my session_title_pieces $path]
+        set info [my build_session_line $path]
         $Text delete $smark "$smark lineend"
-        $Text insert $smark "$mtext[dict get $title line]" \
+        $Text insert $smark [dict get $info line] \
             [list sessionhead $stag]
-        $Text tag add meta $smark "$smark + [string length $mtext]c"
-        my tag_cost_tier $smark $path $meta
-        my tag_slug_range $smark $mtext $title
-        my tag_glyphs $smark [string length $mtext]
+        my apply_line_tags $smark $path $info
         if {$Selected eq $path} {
             $Text tag add selected $smark [dict get $s semark]
         }
