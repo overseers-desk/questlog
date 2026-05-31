@@ -100,16 +100,10 @@ proc ::questlog::cost::compute_usd {per_model session_date} {
     return $total
 }
 
-# Compact dollar format for the list column.
-proc ::questlog::cost::format_cost {usd} {
-    if {$usd < 0 || $usd == 0} { return "" }
-    if {$usd < 0.01}            { return "<1¢" }
-    if {$usd < 1.0}             { return [format "%d¢" [expr {int(round($usd*100))}]] }
-    return [format "\$%.2f" $usd]
-}
-
-# Compact dollar format for aggregate totals (folder, status strip).
-proc ::questlog::cost::format_total {usd} {
+# Format a USD amount as $X.XX, used for the session cells, the folder totals
+# and the status strip alike. Blank for zero or unknown (negative), so an empty
+# cell reads as "no figure" rather than a misleading $0.00.
+proc ::questlog::cost::format_usd {usd} {
     if {$usd <= 0} { return "" }
     return [format "\$%.2f" $usd]
 }

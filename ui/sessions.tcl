@@ -844,7 +844,7 @@ oo::class create ::questlog::ui::SessionList {
                 cost {
                     set c [my dict_or $s cost ""]
                     set v [expr {($c ne "" && $c >= 0) \
-                                 ? [::questlog::cost::format_cost $c] : ""}]
+                                 ? [::questlog::cost::format_usd $c] : ""}]
                 }
                 default { set v "" }
             }
@@ -1041,7 +1041,7 @@ oo::class create ::questlog::ui::SessionList {
         if {$n > 0} {
             set size_sum [my fmt_size [my dict_or $f size 0]]
             set fc [my dict_or $f cost 0.0]
-            if {$fc > 0} { set cost_sum [::questlog::cost::format_total $fc] }
+            if {$fc > 0} { set cost_sum [::questlog::cost::format_usd $fc] }
         }
         # Marker joined to the label by a space; the label is truncated so it
         # never runs into the right-pinned aggregates.
@@ -1683,7 +1683,7 @@ oo::class create ::questlog::ui::SessionList {
     # a browse-mode scan (base empty) shows the dollar amount alone.
     method refresh_status {} {
         set total ""
-        if {$TotalCost > 0} { set total [::questlog::cost::format_total $TotalCost] }
+        if {$TotalCost > 0} { set total [::questlog::cost::format_usd $TotalCost] }
         if {$StatusBase ne "" && $total ne ""} {
             set StatusVar "$StatusBase · $total"
         } elseif {$total ne ""} {
