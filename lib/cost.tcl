@@ -108,6 +108,41 @@ proc ::questlog::cost::format_usd {usd} {
     return [format "\$%.2f" $usd]
 }
 
+# Wall-clock span in seconds between the first and last record timestamps,
+# stored on the row so the list can sort by it. Blank when either bound is
+# missing or the span is degenerate.
+proc ::questlog::cost::dur_secs {first_ts last_ts} {
+    set s1 [iso_to_epoch $first_ts]
+    set s2 [iso_to_epoch $last_ts]
+    if {$s1 eq "" || $s2 eq "" || $s2 < $s1} { return "" }
+    return [expr {$s2 - $s1}]
+}
+
+# A second count as MM:SS, or H:MM:SS once it passes an hour, for the Duration
+# cell. Blank for an empty/negative count so the cell reads as "no figure".
+proc ::questlog::cost::fmt_dur {secs} {
+    if {$secs eq "" || $secs < 0} { return "" }
+    set h [expr {$secs / 3600}]
+    set m [expr {($secs % 3600) / 60}]
+    set s [expr {$secs % 60}]
+    if {$h > 0} { return [format "%d:%02d:%02d" $h $m $s] }
+    return [format "%02d:%02d" $m $s]
+}
+
+# ISO-8601 UTC timestamp (e.g. 2026-04-25T10:00:00.000Z) to epoch seconds.
+# Tolerates a missing fractional part; empty on any parse failure.
+proc ::questlog::cost::iso_to_epoch {ts} {
+    if {![regexp {^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})} $ts \
+              -> y mo d h mi s]} {
+        return ""
+    }
+    if {[catch {clock scan "$y-$mo-$d $h:$mi:$s" \
+            -gmt 1 -format "%Y-%m-%d %H:%M:%S"} e]} {
+        return ""
+    }
+    return $e
+}
+
 # Sourced into each tpool worker once at creation. Worker interpreters
 # share nothing with the main interp, so the file-reading procs live here.
 set ::questlog::cost::WorkerScript {
@@ -118,14 +153,26 @@ set ::questlog::cost::WorkerScript {
     proc compute_cost {path} {
         set per_model [dict create]
         set first_ts ""
+        set last_ts ""
+        set turns 0
         if {[catch {open $path r} fh]} {
-            return [dict create per_model {} first_ts "" ok 0]
+            return [dict create per_model {} first_ts "" last_ts "" turns 0 ok 0]
         }
         chan configure $fh -encoding utf-8 -profile replace
         while {[chan gets $fh line] >= 0} {
             if {$line eq ""} continue
-            if {$first_ts eq "" && [regexp {"timestamp":"([^"]+)"} $line -> m]} {
-                set first_ts $m
+            if {[regexp {"timestamp":"([^"]+)"} $line -> m]} {
+                if {$first_ts eq ""} { set first_ts $m }
+                set last_ts $m
+            }
+            # Count conversational turns: a genuine prompt is a user message
+            # whose content is a string ("role":"user","content":"…"). Tool
+            # results come back as user records whose content is an array
+            # ("content":[…]) and are excluded, so the count is typed prompts,
+            # not the agent's own tool round-trips. (The forward scan's coarser
+            # heuristic tolerates over-counting because it only needs ≥2.)
+            if {[regexp {"role":"user","content":"} $line]} {
+                incr turns
             }
             if {![regexp {"type":"assistant"} $line]} continue
             if {[catch {::json::json2dict $line} rec]} continue
@@ -150,7 +197,8 @@ set ::questlog::cost::WorkerScript {
             }
         }
         close $fh
-        return [dict create per_model $per_model first_ts $first_ts ok 1]
+        return [dict create per_model $per_model \
+            first_ts $first_ts last_ts $last_ts turns $turns ok 1]
     }
 
     proc dispatch_main {path tid epoch} {
@@ -202,6 +250,8 @@ proc ::questlog::cost::on_worker_result {path epoch result} {
     if {![dict get $result ok]} return
     set per_model [dict get $result per_model]
     set first_ts  [dict get $result first_ts]
+    set last_ts   [dict getdef $result last_ts ""]
+    set turns     [dict getdef $result turns 0]
     set session_date [string range $first_ts 0 9]
     if {$session_date eq ""} {
         set session_date [clock format [clock seconds] -format %Y-%m-%d]
@@ -216,6 +266,7 @@ proc ::questlog::cost::on_worker_result {path epoch result} {
         cost_usd $usd \
         input_tokens $in output_tokens $out \
         cache_write_tokens $cw cache_read_tokens $cr \
-        model_breakdown $per_model]
+        model_breakdown $per_model \
+        turns $turns duration_secs [dur_secs $first_ts $last_ts]]
     if {$OnResult ne ""} { {*}$OnResult $path $cost_dict }
 }

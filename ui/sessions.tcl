@@ -6,6 +6,7 @@ package require Tk
 namespace eval ::questlog::ui {
     variable GLYPH_RUNNING  ●
     variable GLYPH_BOOKMARK ★
+    variable GLYPH_ACTIONS  ⋯
 }
 
 # The session list's metadata columns, in render order. This is the single
@@ -15,15 +16,20 @@ namespace eval ::questlog::ui {
 # header all derive from this list, so reordering or extending it is the one
 # edit that moves a column. Each row is {id label sample align sortable}.
 #
-# Today the block sits to the left of the subject. Two extensions are deferred:
-# turns and duration columns (the scan stops at the second user record and
-# computes neither), and the design's flip of this block to the right of the
-# subject (which needs per-row preview ellipsis and a resize handler).
+# The row reads subject-on-the-left, metadata right-pinned: the subject (glyphs,
+# slug, preview, match count) fills from the left and the columns below sit in a
+# fixed strip flush to the right edge, in this left-to-right order. Turns and
+# Duration are filled by the cost second pass (the forward scan stops at the
+# second user record and computes neither); the actions column carries the row's
+# "⋯" overflow control and is not sortable.
 proc ::questlog::ui::session_columns {} {
     return {
-        {date Date {Wed 30 May 12:30} right 1}
-        {size Size {999.9 M}          right 1}
-        {cost Cost {$999.99}          right 1}
+        {date     Date     {Wed 30 May 12:30} right 1}
+        {size     Size     {999.9 M}          right 1}
+        {cost     Cost     {$999.99}          right 1}
+        {turns    Turns    {9999}             right 1}
+        {duration Duration {0:00:00}          right 1}
+        {actions  {}       {⋯}                right 0}
     }
 }
 
@@ -92,9 +98,7 @@ oo::class create ::questlog::ui::SessionList {
     variable StatusBase       ;# last text set by set_progress/set_done
     variable ColTabs          ;# -tabs spec for the session line (right-pinned metadata)
     variable ColRightX        ;# right-edge x px per metadata column, for header click mapping
-    variable DateW
-    variable SizeW
-    variable CostW            ;# measured QLList widths of the metadata cells
+    variable ColW             ;# measured widths per metadata column, parallel to session_columns
     variable ColGap           ;# gap px between metadata cells
     variable SubjectMax       ;# px the subject may fill before the metadata block
     variable FolderLabelMax   ;# px the folder label may fill before its aggregates
@@ -278,6 +282,14 @@ oo::class create ::questlog::ui::SessionList {
         # tier foreground wins over it on the cost cell.
         $Text tag configure cost-mid     -foreground [::questlog::theme::c cost_mid]
         $Text tag configure cost-outlier -foreground [::questlog::theme::c cost_outlier]
+        # The per-row actions control ("⋯") in the rightmost column. It rests at
+        # the faded meta grey with the rest of the metadata and brightens to ink
+        # while its row is hovered or selected, so the menu it opens advertises
+        # itself for anyone whose trackpad refuses the right-click. The bright
+        # tag is added/removed per row over the cell's range; configured after
+        # meta so its foreground wins.
+        $Text tag configure actioncell        -foreground [::questlog::theme::c meta]
+        $Text tag configure actioncell-bright  -foreground [::questlog::theme::c ink]
         # Folder size/cost aggregates are bold (a sum, not a row value); they
         # overlay meta or a cost tier for colour, so this only sets the weight.
         $Text tag configure foldagg -font QLBold
@@ -299,34 +311,46 @@ oo::class create ::questlog::ui::SessionList {
     # into positions; doing the measuring once keeps resize cheap.
     method compute_col_widths {} {
         set ColGap [font measure QLList "  "]
-        set DateW 0; set SizeW 0; set CostW 0
+        set ColW [list]
         foreach col [::questlog::ui::session_columns] {
             lassign $col id label sample
-            set w [font measure QLList $sample]
-            switch -- $id { date {set DateW $w} size {set SizeW $w} cost {set CostW $w} }
+            # A column must be wide enough for both its widest cell (the sample)
+            # and its header label with the sort arrow, so a short-sampled column
+            # like Turns never has its "Turns ▾" heading spill into the neighbour.
+            set ws [font measure QLList $sample]
+            set wl [font measure QLBold "$label ▾"]
+            lappend ColW [expr {$ws > $wl ? $ws : $wl}]
         }
     }
 
-    # Pin the metadata block flush to the list's right edge for the current
-    # width: cost's right edge sits a hair inside the edge, size and date stack
-    # leftward, and the subject gets whatever room is left before them. Right
-    # tab stops put each cell's right edge on its stop. Called at build and on
-    # every resize; it only repositions (cheap), the per-row ellipsis refit is
-    # the separate relayout step.
+    # Pin the metadata strip flush to the list's right edge for the current
+    # width: the last column's right edge sits a hair inside the edge and each
+    # earlier column stacks leftward by its width plus a gap, so the subject
+    # gets whatever room is left before the leftmost column. Right tab stops put
+    # each cell's right edge on its stop. Called at build and on every resize; it
+    # only repositions (cheap), the per-row ellipsis refit is the separate
+    # relayout step.
     method layout_columns {} {
         set w [winfo width $Text]
         if {$w <= 1} { set w 600 }
         set cw [expr {$w - 16}]          ;# inside the 8px left/right -padx
-        set x3 [expr {$cw - 6}]          ;# cost right edge, a hair off the edge
-        set x2 [expr {$x3 - $CostW - $ColGap}]
-        set x1 [expr {$x2 - $SizeW - $ColGap}]
-        set ColRightX [list $x1 $x2 $x3]
-        set ColTabs [list $x1 right $x2 right $x3 right]
-        set SubjectMax [expr {$x1 - $DateW - $ColGap - 12}]
+        set n [llength $ColW]
+        set rights [lrepeat $n 0]
+        set edge [expr {$cw - 6}]        ;# rightmost column's right edge
+        for {set i [expr {$n - 1}]} {$i >= 0} {incr i -1} {
+            lset rights $i $edge
+            set edge [expr {$edge - [lindex $ColW $i] - $ColGap}]
+        }
+        set ColRightX $rights
+        set ColTabs [list]
+        foreach rx $rights { lappend ColTabs $rx right }
+        # Subject runs up to just before the leftmost metadata column.
+        set first_rx [lindex $rights 0]
+        set SubjectMax [expr {$first_rx - [lindex $ColW 0] - $ColGap - 12}]
         if {$SubjectMax < 80} { set SubjectMax 80 }
         # The folder label has no date cell, so it may run up to the first tab
-        # stop (x1) before its aggregates; cap it just short of that.
-        set FolderLabelMax [expr {$x1 - 16}]
+        # stop before its aggregates; cap it just short of that.
+        set FolderLabelMax [expr {$first_rx - 16}]
         if {$FolderLabelMax < 60} { set FolderLabelMax 60 }
         $Text tag configure sessionhead -tabs $ColTabs
         $Text tag configure folderhead  -tabs $ColTabs
@@ -375,7 +399,7 @@ oo::class create ::questlog::ui::SessionList {
         for {set i 0} {$i < [llength $cols]} {incr i} {
             lassign [lindex $cols $i] id label sample align sortable
             set rx [lindex $ColRightX $i]
-            set lo [expr {$rx - [font measure QLList $sample] - 6}]
+            set lo [expr {$rx - [lindex $ColW $i] - 6}]
             if {$cx >= $lo && $cx <= $rx + 4} {
                 if {$sortable} { my set_sort $id }
                 return
@@ -442,6 +466,14 @@ oo::class create ::questlog::ui::SessionList {
                     cost {
                         set v [dict getdef $s cost ""]
                         if {$v eq "" || $v < 0} { set v -1 }
+                    }
+                    turns {
+                        set v [dict getdef $s turns ""]
+                        if {$v eq ""} { set v -1 }
+                    }
+                    duration {
+                        set v [dict getdef $s duration_secs ""]
+                        if {$v eq ""} { set v -1 }
                     }
                 }
             }
@@ -705,9 +737,12 @@ oo::class create ::questlog::ui::SessionList {
         set size  [dict getdef $row size 0]
         set uuid  [dict getdef $row uuid [file rootname [file tail $path]]]
         set cost  [dict getdef $row cost_usd ""]
+        set turns [dict getdef $row turns ""]
+        set dsecs [dict getdef $row duration_secs ""]
         dict set Sessions $path [dict create \
             folder $folder label $label slug $slug ai_title $aitt \
             when $when mtime $mtime size $size uuid $uuid cost $cost \
+            turns $turns duration_secs $dsecs \
             count 0 first_lineno $first_lineno snippets [list] \
             stag "" smark "" semark "" rendered 0]
         dict lappend SessionsByFolder $folder $path
@@ -765,9 +800,9 @@ oo::class create ::questlog::ui::SessionList {
             [list [self] on_session_right $path %X %Y]
         # A whole session row is one clickable object: a hand cursor over it,
         # an arrow elsewhere. Text tags carry no -cursor, so swap the widget
-        # cursor on enter/leave.
-        $Text tag bind $stag <Enter> [list $Text configure -cursor hand2]
-        $Text tag bind $stag <Leave> [list $Text configure -cursor arrow]
+        # cursor on enter/leave; entering also brightens the row's ⋯ control.
+        $Text tag bind $stag <Enter> [list [self] on_row_enter $path]
+        $Text tag bind $stag <Leave> [list [self] on_row_leave $path]
         foreach snip [dict get $Sessions $path snippets] {
             lassign $snip btype content lineoff
             my render_snippet $path $btype $content $lineoff
@@ -838,6 +873,14 @@ oo::class create ::questlog::ui::SessionList {
                     set v [expr {($c ne "" && $c >= 0) \
                                  ? [::questlog::cost::format_usd $c] : ""}]
                 }
+                turns {
+                    set t [dict getdef $s turns ""]
+                    set v [expr {($t ne "" && $t > 0) ? $t : ""}]
+                }
+                duration {
+                    set v [::questlog::cost::fmt_dur [dict getdef $s duration_secs ""]]
+                }
+                actions { set v $::questlog::ui::GLYPH_ACTIONS }
                 default { set v "" }
             }
             dict set cells $id $v
@@ -847,16 +890,14 @@ oo::class create ::questlog::ui::SessionList {
 
     # Build one session line: the subject on the left (status glyphs, the bold
     # slug, the first-prompt preview, the match count), then the metadata cells
-    # (date, size, cost) pinned to the right by the sessionhead tab stops. The
-    # preview is ellipsised to SubjectMax so it never collides with the
-    # metadata; the glyphs, slug and count are kept whole. Returns the text and
-    # the char ranges the caller tags.
+    # pinned to the right by the sessionhead tab stops, in session_columns order.
+    # The preview is ellipsised to SubjectMax so it never collides with the
+    # metadata; the glyphs, slug and count are kept whole. Returns the text, the
+    # char ranges the caller tags, and a per-column {off len} map (offs) so the
+    # cost tier colour and the actions cell can be located.
     method build_session_line {path} {
         set s [dict get $Sessions $path]
         set cells [my session_meta_cells $path]
-        set date [dict get $cells date]
-        set size [dict get $cells size]
-        set cost [dict get $cells cost]
 
         set running [dict exists $RunningSet [dict get $s uuid]]
         set bk [my session_bookmarked $path]
@@ -892,13 +933,17 @@ oo::class create ::questlog::ui::SessionList {
 
         set meta_off [string length $subj]
         set line $subj
-        append line "\t$date\t$size\t"
-        set cost_off [string length $line]
-        set cost_len [string length $cost]
-        append line $cost
+        set offs [dict create]
+        foreach col [::questlog::ui::session_columns] {
+            lassign $col id
+            append line "\t"
+            set off [string length $line]
+            set val [dict get $cells $id]
+            append line $val
+            dict set offs $id [list $off [string length $val]]
+        }
         return [dict create line $line meta_off $meta_off \
-            slug_off $slug_off slug_len $slug_len \
-            cost_off $cost_off cost_len $cost_len]
+            slug_off $slug_off slug_len $slug_len offs $offs]
     }
 
     # Trim text to fit px in font, appending an ellipsis when it is cut. A
@@ -933,8 +978,7 @@ oo::class create ::questlog::ui::SessionList {
                 "$row_start + [expr {$so + [dict get $info slug_len]}]c"
         }
         my tag_glyphs $row_start 0
-        set co [dict get $info cost_off]
-        set cl [dict get $info cost_len]
+        lassign [dict getdef [dict get $info offs] cost {-1 0}] co cl
         if {$co >= 0 && $cl > 0} {
             set c [dict getdef [dict get $Sessions $path] cost ""]
             if {$c ne "" && $c >= 0.10} {
@@ -942,6 +986,15 @@ oo::class create ::questlog::ui::SessionList {
                 $Text tag add $tag "$row_start + ${co}c" \
                     "$row_start + [expr {$co + $cl}]c"
             }
+        }
+        # Mark the actions cell so a click on it can be told apart from a click
+        # on the row, and so it can brighten; the selected row shows it bright.
+        lassign [dict getdef [dict get $info offs] actions {-1 0}] ao al
+        if {$ao >= 0 && $al > 0} {
+            set as "$row_start + ${ao}c"
+            set ae "$row_start + [expr {$ao + $al}]c"
+            $Text tag add actioncell $as $ae
+            if {$Selected eq $path} { $Text tag add actioncell-bright $as $ae }
         }
     }
 
@@ -1180,6 +1233,10 @@ oo::class create ::questlog::ui::SessionList {
             # zero out a known number on a partial result.
             dict set Sessions $path cost $new
         }
+        # Turns and duration ride the same worker result; cache them so the new
+        # columns fill in the same redraw as cost.
+        dict set Sessions $path turns [dict getdef $cost_dict turns ""]
+        dict set Sessions $path duration_secs [dict getdef $cost_dict duration_secs ""]
         # bump_folder_cost mutates the heading line and redraw_header
         # mutates the session line — both go through $Text delete/insert,
         # so the widget must be in normal state for the duration.
@@ -1191,8 +1248,8 @@ oo::class create ::questlog::ui::SessionList {
         }
         if {[dict get $s rendered]} { my redraw_header $path }
         $Text configure -state disabled
-        # A new cost can change cost-sorted order; other keys are unaffected.
-        if {$SortKey eq "cost"} { my schedule_resort }
+        # The worker result can change cost-, turns- or duration-sorted order.
+        if {$SortKey in {cost turns duration}} { my schedule_resort }
     }
 
     method glyph_cell {running bookmarked} {
@@ -1235,6 +1292,7 @@ oo::class create ::questlog::ui::SessionList {
     # Select the whole session object - its header and any snippets - as one
     # highlighted block (the full-width region, not a text run).
     method select {path} {
+        set prev $Selected
         if {$Selected ne "" && [dict exists $Sessions $Selected] \
             && [dict get $Sessions $Selected rendered]} {
             set os [dict get $Sessions $Selected]
@@ -1245,6 +1303,9 @@ oo::class create ::questlog::ui::SessionList {
             set s [dict get $Sessions $path]
             $Text tag add selected [dict get $s smark] [dict get $s semark]
         }
+        # The selected row shows its ⋯ bright; the row losing selection re-fades.
+        if {$prev ne "" && $prev ne $path} { my action_set_bright $prev 0 }
+        my action_set_bright $path 1
     }
 
     method open_session {path {lineno -1}} {
@@ -1262,6 +1323,12 @@ oo::class create ::questlog::ui::SessionList {
     # reading view loads only on a click that stayed put. Selecting and showing
     # are the same act, so the highlight and the viewer never disagree.
     method on_session_release {path X Y} {
+        # A release on the ⋯ control raises the session menu instead of opening
+        # the session, the left-click equivalent of the right-click menu.
+        if {[my click_on_action $X $Y]} {
+            my on_session_right $path $X $Y
+            return
+        }
         set was_drag [::questlog::ui::drag::release $X $Y]
         if {$was_drag} return
         my select $path
@@ -1277,9 +1344,51 @@ oo::class create ::questlog::ui::SessionList {
     # ---- drag-to-move -------------------------------------------------
 
     method on_session_press {path X Y} {
+        # A press on the ⋯ control is a menu click, not the start of a drag.
+        if {[my click_on_action $X $Y]} return
         ::questlog::ui::drag::watch $Text $X $Y [list $path] \
             [list [self] handle_drop] \
             [list [self] drag_hit] [list [self] drag_paint]
+    }
+
+    # ---- the ⋯ actions control --------------------------------------
+
+    # The actions cell's text range for a rendered row, or {} when absent.
+    method action_range {path} {
+        if {![dict exists $Sessions $path]} { return {} }
+        set s [dict get $Sessions $path]
+        if {![dict get $s rendered]} { return {} }
+        return [$Text tag nextrange actioncell \
+                    [dict get $s smark] [dict get $s semark]]
+    }
+
+    method action_set_bright {path on} {
+        set r [my action_range $path]
+        if {[llength $r] < 2} return
+        if {$on} {
+            $Text tag add actioncell-bright {*}$r
+        } else {
+            $Text tag remove actioncell-bright {*}$r
+        }
+    }
+
+    # Whether a root-coordinate click landed on a row's ⋯ actions cell.
+    method click_on_action {X Y} {
+        set lx [expr {$X - [winfo rootx $Text]}]
+        set ly [expr {$Y - [winfo rooty $Text]}]
+        set idx [$Text index @$lx,$ly]
+        return [expr {[lsearch -exact [$Text tag names $idx] actioncell] >= 0}]
+    }
+
+    method on_row_enter {path} {
+        $Text configure -cursor hand2
+        my action_set_bright $path 1
+    }
+
+    method on_row_leave {path} {
+        $Text configure -cursor arrow
+        # Keep the ⋯ bright if this row stays selected; otherwise re-fade it.
+        my action_set_bright $path [expr {$Selected eq $path}]
     }
 
     method drag_hit {X Y} {
