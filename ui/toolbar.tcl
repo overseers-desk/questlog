@@ -112,6 +112,16 @@ oo::class create ::questlog::ui::Toolbar {
     method build {} {
         ttk::frame $Top
 
+        # Flat "−" remove controls that rest invisible (foreground = the panel
+        # background) and appear on row hover or keyboard focus, so a long
+        # criterion row never shows a control before it is wanted yet the remove
+        # is always one hover away. The two styles differ only in foreground.
+        set bg [ttk::style lookup . -background]
+        ttk::style configure Remove.TButton -relief flat -borderwidth 0 \
+            -padding {2 0} -background $bg -foreground [::questlog::theme::c muted]
+        ttk::style configure RemoveHidden.TButton -relief flat -borderwidth 0 \
+            -padding {2 0} -background $bg -foreground $bg
+
         # Search row: label, full-width entry, Aa toggle.
         ttk::frame $Top.search
         pack $Top.search -side top -fill x -padx 6 -pady {6 3}
@@ -165,7 +175,7 @@ oo::class create ::questlog::ui::Toolbar {
         set AddRail $Restrict.add
         ttk::frame $AddRail
         pack $AddRail -side top -fill x -pady {4 0}
-        ttk::label $AddRail.label -text "add:"
+        ttk::label $AddRail.label -text "Add filter"
         pack $AddRail.label -side left -padx {0 4}
         foreach {k text} {under "+ folder" pattern "+ regex" read "+ Read" \
                           wrote "+ Write" edited "+ Edit"} {
@@ -361,13 +371,19 @@ oo::class create ::questlog::ui::Toolbar {
                 -background [::questlog::theme::c crit_${t}_bg] \
                 -foreground [::questlog::theme::c crit_${t}_fg]
             pack $row.label -side left -padx {0 6} -pady 1
-            ttk::button $row.x -text "×" -width 2 \
+            ttk::button $row.x -text "−" -width 2 -style RemoveHidden.TButton \
                 -command [list [self] clear_clause $k]
             pack $row.x -side right -padx {4 0}
+            bind $row.x <FocusIn> [list [self] reveal_removes $row 1]
             ttk::frame $row.chips
             pack $row.chips -side left -fill x -expand 1
             my render_chips $k $row.chips
             pack $row -side top -fill x -before $AddRail -pady 1
+            # The remove controls fade in while the row is hovered or focused.
+            # <Leave> with detail NotifyInferior is the pointer crossing onto a
+            # child, not leaving the row, so it must not hide them.
+            bind $row <Enter> [list [self] reveal_removes $row 1]
+            bind $row <Leave> [list [self] row_maybe_hide $row %d]
             dict set RowFrames $k $row
         }
         my refresh_heading
@@ -399,9 +415,11 @@ oo::class create ::questlog::ui::Toolbar {
             ttk::frame $chip -borderwidth 1 -relief solid
             ttk::label $chip.t -text [my chip_display $kind $v]
             pack $chip.t -side left -padx {4 0}
-            ttk::button $chip.x -text "×" -width 1 \
+            ttk::button $chip.x -text "−" -width 1 -style RemoveHidden.TButton \
                 -command [list [self] remove_value $kind $v]
             pack $chip.x -side left -padx {2 4}
+            bind $chip.x <FocusIn> \
+                [list [self] reveal_removes [winfo parent $chips_frame] 1]
             pack $chip -side left
             set first 0
             incr i
@@ -430,6 +448,29 @@ oo::class create ::questlog::ui::Toolbar {
         }
     }
 
+    # Show or hide the row's remove controls (its clause "−" and each chip "−")
+    # by swapping their style. Driven by row hover and by the controls' own
+    # keyboard focus.
+    method reveal_removes {row show} {
+        set style [expr {$show ? "Remove.TButton" : "RemoveHidden.TButton"}]
+        if {[winfo exists $row.x]} { $row.x configure -style $style }
+        if {[winfo exists $row.chips]} {
+            foreach c [winfo children $row.chips] {
+                if {[winfo exists $c.x]} { $c.x configure -style $style }
+            }
+        }
+    }
+
+    # <Leave> handler: hide the remove controls unless the pointer only crossed
+    # onto a child of the row (NotifyInferior) or one of the row's widgets still
+    # holds keyboard focus.
+    method row_maybe_hide {row detail} {
+        if {$detail eq "NotifyInferior"} return
+        set f [focus]
+        if {$f ne "" && [string match $row.* $f]} return
+        my reveal_removes $row 0
+    }
+
     # ---- add-value dropdown ------------------------------------------------
 
     # Dropdown anchored under the triggering button (either an add-rail
@@ -443,6 +484,19 @@ oo::class create ::questlog::ui::Toolbar {
         destroy $pop
         ttk::frame $pop -relief solid -borderwidth 1 -padding 4
         set PopValue ""
+
+        # Subtitle phrasing the criterion as the sentence the Restrict legend
+        # promises, so "Edit" reads as a verb the session performed rather than
+        # a bare noun.
+        set desc [dict get {
+            under   "Sessions that ran in this folder"
+            read    "Sessions that read this file"
+            wrote   "Sessions that created or wrote this file"
+            edited  "Sessions that edited or created this file"
+            pattern "Sessions whose content matches this regular expression"
+        } $kind]
+        ttk::label $pop.desc -text $desc -foreground [::questlog::theme::c muted]
+        pack $pop.desc -side top -anchor w -pady {0 4}
 
         if {$kind in {wrote edited}} {
             set files [my git_modified_files]
