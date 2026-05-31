@@ -116,7 +116,10 @@ proc ::questlog::theme::set_body_family {family} {
 # section size live here. QLBody is the reading-body font: a Tk text widget
 # defaults its whole content to TkFixedFont (monospace), so the transcript body
 # names QLBody (proportional TkTextFont) explicitly and reconfigures it live
-# when the reader picks a font; fenced code keeps QLMono. The chrome's current
+# when the reader picks a font; fenced code keeps QLMono. QLList is the session
+# list's proportional chrome font: also TkTextFont, but left fixed, so the
+# reading-font chooser never disturbs the list and its tab-stop columns stay
+# valid - the list is the index, the reading font is for the transcript. The chrome's current
 # background is captured and reapplied under clam, so switching engines
 # recolours nothing visible (clam's own beige would otherwise read as a
 # change); on a platform whose background is a symbolic system colour the
@@ -125,6 +128,7 @@ proc ::questlog::theme::init {} {
     if {"QLBold" ni [font names]} {
         font create QLBold     {*}[font actual TkTextFont] -weight bold
         font create QLBody     {*}[font actual TkTextFont]
+        font create QLList     {*}[font actual TkTextFont]
         font create QLMono     {*}[font actual TkFixedFont]
         font create QLMonoBold {*}[font actual TkFixedFont] -weight bold
     }

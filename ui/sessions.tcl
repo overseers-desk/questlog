@@ -8,6 +8,25 @@ namespace eval ::questlog::ui {
     variable GLYPH_BOOKMARK ★
 }
 
+# The session list's metadata columns, in render order. This is the single
+# place that decides which columns appear, their order, the sort-header label,
+# the sample string each column's width is measured from, the alignment, and
+# whether its header sorts. The tab stops, the cost-tier cell, and the sortable
+# header all derive from this list, so reordering or extending it is the one
+# edit that moves a column. Each row is {id label sample align sortable}.
+#
+# Today the block sits to the left of the subject. Two extensions are deferred:
+# turns and duration columns (the scan stops at the second user record and
+# computes neither), and the design's flip of this block to the right of the
+# subject (which needs per-row preview ellipsis and a resize handler).
+proc ::questlog::ui::session_columns {} {
+    return {
+        {date Date {Wed 30 May 12:30} right 1}
+        {size Size {999.9 M}          right 1}
+        {cost Cost {$999.99}          right 1}
+    }
+}
+
 # ::questlog::ui::SessionList - the left pane: one read-only text widget that is
 # both the session browser and the search-result index in a single list.
 #
@@ -71,6 +90,9 @@ oo::class create ::questlog::ui::SessionList {
     variable RenameIndex      ;# menu index of the Rename entry, enabled per running state
     variable TotalCost        ;# running sum of per-session cost in the model
     variable StatusBase       ;# last text set by set_progress/set_done
+    variable ColTabs          ;# -tabs spec for the session-header line (from the column model)
+    variable ColRightX        ;# right-edge x px per metadata column, for header click mapping
+    variable SubjectX         ;# x px where the subject column starts
 
     constructor {parent resolve_cb lookup_cb on_open on_move_request \
                  on_drop_move on_bookmark_toggle on_scan_path cancel_cb \
@@ -171,19 +193,24 @@ oo::class create ::questlog::ui::SessionList {
     }
 
     method configure_tags {} {
-        # Folder heading: the outermost level, bold, with a wide gap above so
-        # each project group reads as a section.
+        my compute_columns
+        # Folder heading: the outermost level, with a wide gap above so each
+        # project group reads as a section. Proportional (QLList), like the
+        # rest of the list - the design carries no fixed-width font.
         $Text tag configure folderhead \
-            -font QLMono -foreground [::questlog::theme::c folder] \
+            -font QLList -foreground [::questlog::theme::c folder] \
             -spacing1 14 -spacing3 3
         $Text tag configure glyph-running  -foreground [::questlog::theme::c glyph_running]
         $Text tag configure glyph-bookmark -foreground [::questlog::theme::c glyph_bookmark]
         # Session header: one line, the block's "title" (like a search result
         # heading), indented under its folder. Rows are separated by the gap
         # above each and the bold title colour; no background band. The
-        # selected row gets a highlight for click feedback.
+        # selected row gets a highlight for click feedback. The metadata
+        # columns align on per-tag right tab stops (ColTabs), so the line reads
+        # in the proportional QLList without a fixed-width crutch.
         $Text tag configure sessionhead -lmargin1 12 -lmargin2 28 \
-            -spacing1 6 -spacing3 2 -foreground [::questlog::theme::c ink]
+            -spacing1 6 -spacing3 2 -foreground [::questlog::theme::c ink] \
+            -font QLList -tabs $ColTabs
         # The slug (Claude's agentName / aiTitle) renders bold inline before
         # the prompt body, so the slug acts as the headline and the prompt
         # as the deck below it. Bold weight is the only marker; brackets
@@ -193,15 +220,15 @@ oo::class create ::questlog::ui::SessionList {
         $Text tag configure drop-candidate -background [::questlog::theme::c drop]
 
         # Snippet rows: type label in a left column, content wrapping under it.
-        # Indented past the header so each block reads title-then-evidence.
-        set f [ttk::style lookup TkDefaultFont -font]
-        if {$f eq ""} { set f TkDefaultFont }
+        # Indented past the header so each block reads title-then-evidence. The
+        # column is sized to the widest rendered label ("TOOL RESULT") in its
+        # own bold font; content is the proportional QLList, like the headers.
         set lm 36
-        set tw [font measure $f "tool_result   "]
+        set tw [font measure QLBold "TOOL RESULT  "]
         set content_col [expr {$lm + $tw}]
         $Text configure -tabs [list $content_col left]
         $Text tag configure snippet -lmargin1 $lm -lmargin2 $content_col \
-            -foreground [::questlog::theme::c snippet] -spacing3 1
+            -font QLList -foreground [::questlog::theme::c snippet] -spacing3 1
         # Snippet type labels are small tinted pill badges (role foreground on a
         # pale background), matching the design's SNIPPET_COLORS.
         $Text tag configure type-user        -foreground [::questlog::theme::c user]        -background [::questlog::theme::c user_bg]        -font QLBold
@@ -209,9 +236,10 @@ oo::class create ::questlog::ui::SessionList {
         $Text tag configure type-tool_use    -foreground [::questlog::theme::c tool]        -background [::questlog::theme::c tool_bg]        -font QLBold
         $Text tag configure type-tool_result -foreground [::questlog::theme::c tool_result] -background [::questlog::theme::c tool_result_bg] -font QLBold
         $Text tag configure type-system      -foreground [::questlog::theme::c system]      -background [::questlog::theme::c system_bg]      -font QLBold
-        # Metadata prefix: a fixed-width font so the time and size columns at
-        # the front of each session line align down the list without tab math.
-        $Text tag configure meta -font QLMono -foreground [::questlog::theme::c meta]
+        # Metadata cells (date, size, cost): the muted grey column run that
+        # leads each session line. Proportional QLList, aligned by the
+        # sessionhead tab stops, not a monospace font.
+        $Text tag configure meta -foreground [::questlog::theme::c meta]
 
         set HitTags [list]
         set hues [::questlog::theme::hues]
@@ -220,6 +248,27 @@ oo::class create ::questlog::ui::SessionList {
             $Text tag configure $t -background [lindex $hues $i]
             lappend HitTags $t
         }
+    }
+
+    # Lay the metadata columns out as right tab stops in QLList from the column
+    # model: each cell's right edge sits at its stop, so the columns align down
+    # the list without a fixed-width font. ColRightX (per-column right edges)
+    # and SubjectX (where the subject begins) feed the sortable header.
+    method compute_columns {} {
+        set pad 12
+        set gap [font measure QLList "  "]
+        set x $pad
+        set ColTabs [list]
+        set ColRightX [list]
+        foreach col [::questlog::ui::session_columns] {
+            lassign $col id label sample align
+            set x [expr {$x + [font measure QLList $sample]}]
+            lappend ColTabs $x [expr {$align eq "right" ? "right" : "left"}]
+            lappend ColRightX $x
+            set x [expr {$x + $gap}]
+        }
+        set SubjectX [expr {$x + $gap}]
+        lappend ColTabs $SubjectX left
     }
 
     method build_menu {} {
@@ -465,12 +514,13 @@ oo::class create ::questlog::ui::SessionList {
         set stag "s#[incr NextId]"
         set sstart [$Text index $femark]
         set meta [my session_meta_text $path]
+        set mtext [dict get $meta text]
         set title [my session_title_pieces $path]
-        $Text insert $femark "$meta[dict get $title line]\n" \
+        $Text insert $femark "$mtext[dict get $title line]\n" \
             [list sessionhead $stag]
-        $Text tag add meta $sstart "$sstart + [string length $meta]c"
-        my tag_slug_range $sstart $meta $title
-        my tag_glyphs $sstart [string length $meta]
+        $Text tag add meta $sstart "$sstart + [string length $mtext]c"
+        my tag_slug_range $sstart $mtext $title
+        my tag_glyphs $sstart [string length $mtext]
         # Rows are clipped single-line: overflow past the widget edge is
         # simply not drawn. The full prompt is read in the viewer, which a
         # click on the row opens.
@@ -569,18 +619,50 @@ oo::class create ::questlog::ui::SessionList {
         return $body
     }
 
-    # The fixed-width metadata prefix (monospace tag): time, size, cost,
-    # each in a constant character column so they align down the list. Cost
-    # is blank until the second-pass worker fills it in; an unknown model
-    # (no row in the rate table) stays blank.
-    method session_meta_text {path} {
+    # The metadata cell values for a row, keyed by column id. Cost is blank
+    # until the second-pass worker fills it in; an unknown model (negative
+    # cost) stays blank.
+    method session_meta_cells {path} {
         set s [dict get $Sessions $path]
-        set when [dict get $s when]
-        set size [my fmt_size [dict get $s size]]
-        set cost [my dict_or $s cost ""]
-        set ctxt ""
-        if {$cost ne "" && $cost >= 0} { set ctxt [::questlog::cost::format_cost $cost] }
-        return [format "%-16s %7s %6s   " $when $size $ctxt]
+        set cells [dict create]
+        foreach col [::questlog::ui::session_columns] {
+            lassign $col id
+            switch -- $id {
+                date { set v [dict get $s when] }
+                size { set v [my fmt_size [dict get $s size]] }
+                cost {
+                    set c [my dict_or $s cost ""]
+                    set v [expr {($c ne "" && $c >= 0) \
+                                 ? [::questlog::cost::format_cost $c] : ""}]
+                }
+                default { set v "" }
+            }
+            dict set cells $id $v
+        }
+        return $cells
+    }
+
+    # The metadata run that leads a session line: a tab before each cell (so
+    # the sessionhead right tab stops align them) and a trailing tab that opens
+    # the subject column. Returns the text plus the cost cell's char range, so
+    # the cost-tier colour can land on exactly that cell.
+    method session_meta_text {path} {
+        set cells [my session_meta_cells $path]
+        set text ""
+        set cost_off -1
+        set cost_len 0
+        foreach col [::questlog::ui::session_columns] {
+            lassign $col id
+            set v [dict get $cells $id]
+            append text "\t"
+            if {$id eq "cost"} {
+                set cost_off [string length $text]
+                set cost_len [string length $v]
+            }
+            append text $v
+        }
+        append text "\t"
+        return [dict create text $text cost_off $cost_off cost_len $cost_len]
     }
 
     # The proportional-font title: glyphs, the slug (when Claude assigned
@@ -613,7 +695,7 @@ oo::class create ::questlog::ui::SessionList {
 
     # Apply the bold slug tag to the slug's character range within a
     # freshly-inserted header line. row_start is the text index where the
-    # whole header begins; meta is the fixed-width metadata prefix that
+    # whole header begins; meta is the tab-separated metadata run that
     # precedes the title within the same line.
     method tag_slug_range {row_start meta title} {
         set off [dict get $title slug_off]
@@ -653,13 +735,14 @@ oo::class create ::questlog::ui::SessionList {
         set smark [dict get $s smark]
         set stag  [dict get $s stag]
         set meta [my session_meta_text $path]
+        set mtext [dict get $meta text]
         set title [my session_title_pieces $path]
         $Text delete $smark "$smark lineend"
-        $Text insert $smark "$meta[dict get $title line]" \
+        $Text insert $smark "$mtext[dict get $title line]" \
             [list sessionhead $stag]
-        $Text tag add meta $smark "$smark + [string length $meta]c"
-        my tag_slug_range $smark $meta $title
-        my tag_glyphs $smark [string length $meta]
+        $Text tag add meta $smark "$smark + [string length $mtext]c"
+        my tag_slug_range $smark $mtext $title
+        my tag_glyphs $smark [string length $mtext]
         if {$Selected eq $path} {
             $Text tag add selected $smark [dict get $s semark]
         }
