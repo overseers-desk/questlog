@@ -51,6 +51,8 @@ See [docs/installation.md](docs/installation.md) for the Debian, Fedora, Homebre
 ./questlog edit lib/scan.tcl                      # launch pre-seeded with an edit criterion
 ./questlog edit foo.tcl regex "bar"               # several criteria, AND-joined
 ./questlog -regex "pattern"                       # prefill a single regex criterion
+./questlog --search "california michael"          # prefill the search bar (plain words, not regex)
+./questlog --window 30d                            # open on a time window other than the 7d default
 ```
 
 `./questlog` opens the main window immediately and streams rows in. The default seven-day window populates in under a second; switching to "all" extends incrementally with the tree growing as files are scanned. Scan progress is reported in the bottom status bar.

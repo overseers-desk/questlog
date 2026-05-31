@@ -202,6 +202,22 @@ oo::class create ::questlog::ui::Toolbar {
         lappend Subscribers $cb
     }
 
+    # Pre-fill the search field (a launch --search). The value is the raw query
+    # string the search bar would hold; the one startup publish runs it.
+    method set_search {text} { set SearchVar $text }
+
+    # Pre-select the time window (a launch --window). An unknown option is
+    # ignored with a warning so a typo falls back to the default rather than
+    # leaving the radio set with no selection.
+    method set_window {opt} {
+        if {$opt in [::questlog::config::get window_options]} {
+            set WindowVar $opt
+        } else {
+            puts stderr "questlog: ignoring unknown --window '$opt'\
+                (want one of: [::questlog::config::get window_options])"
+        }
+    }
+
     method snapshot {} {
         return [dict create \
             window         $WindowVar \

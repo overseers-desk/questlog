@@ -33,7 +33,7 @@ namespace eval ::questlog::app {
     variable CostFlushTimer   ;# after-id of the pending cost flush, or ""
 }
 
-proc ::questlog::app::start {root {initial_criteria {}}} {
+proc ::questlog::app::start {root {initial_criteria {}} {init_window ""} {init_search ""}} {
     variable Scan
     variable Search
     variable Toolbar
@@ -160,12 +160,18 @@ proc ::questlog::app::start {root {initial_criteria {}}} {
             $Toolbar add_value [dict get $cli_kind $t] [dict get $c value]
         }
     }
+    # Launch pre-fills: --window pre-selects the time radio, --search pre-fills
+    # the search field. Applied before the first publish so the opening search
+    # runs with them already in place.
+    if {$init_window ne ""} { $Toolbar set_window $init_window }
+    if {$init_search ne ""} { $Toolbar set_search $init_search }
+
     # Launch from inside a known project: seed an `under` chip with that
     # folder and flag it as auto-applied, so the Show-all banner can
     # reveal that the result set is being narrowed on the user's behalf.
-    # Skipped when CLI criteria were given — the user is asking for a
-    # specific query, not a default scope.
-    if {[llength $initial_criteria] == 0} {
+    # Skipped when CLI criteria or a --search query were given, since the user
+    # is then asking for a specific query rather than a default scope.
+    if {[llength $initial_criteria] == 0 && $init_search eq ""} {
         set launch_cwd [::questlog::path::launch_cwd]
         set folder [::questlog::path::encode_cwd $launch_cwd]
         set proj [file join [::questlog::path::projects_root] $folder]
