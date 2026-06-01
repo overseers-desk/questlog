@@ -117,7 +117,9 @@ proc ::questlog::app::start {root {initial_criteria {}} {init_window ""} {init_s
         [namespace code on_bookmark_toggle] \
         [namespace code on_scan_path] \
         [namespace code on_search_cancel] \
-        [namespace code on_show_all]]
+        [namespace code on_show_all] \
+        [namespace code on_subagents] \
+        [namespace code on_subagent_cost]]
     pack $list_frame.s -side top -fill both -expand 1
     $PW add $list_frame -weight 58
 
@@ -639,6 +641,20 @@ proc ::questlog::app::on_bookmark_toggle {path} {
 proc ::questlog::app::on_scan_path {path} {
     variable Scan
     return [$Scan scan_path $path]
+}
+
+# A session's subagents as child row dicts, for the list to render under it on
+# expand (issue #13). A pure read; children never enter Rows.
+proc ::questlog::app::on_subagents {path} {
+    variable Scan
+    return [$Scan subagents_for $path]
+}
+
+# Trigger the cost second pass for one subagent file. The result returns through
+# on_cost_result; update_cost no-ops there (the child is not in Rows) and the
+# session list's refresh_cost routes it to the child row.
+proc ::questlog::app::on_subagent_cost {path} {
+    ::questlog::cost::start_one $path
 }
 
 # ---- shared helpers exposed to UI components --------------------------

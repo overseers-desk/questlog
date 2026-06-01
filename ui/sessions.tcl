@@ -92,6 +92,8 @@ oo::class create ::questlog::ui::SessionList {
     variable Menu
     variable MenuPath
     variable MenuTarget
+    variable CMenu            ;# the reduced right-click menu for subagent child rows
+    variable ChildMenuPath    ;# child path the child menu acts on
     variable BookmarkIndex    ;# menu index of the Bookmark entry (its label mutates)
     variable RenameIndex      ;# menu index of the Rename entry, enabled per running state
     variable TotalCost        ;# running sum of per-session cost in the model
@@ -107,10 +109,13 @@ oo::class create ::questlog::ui::SessionList {
     variable SortKey          ;# active sort column id: date | size | cost
     variable SortDir          ;# desc | asc
     variable ResortPending    ;# 1 while a debounced redraw is queued under a non-default sort
+    variable Children         ;# child path -> subagent model dict (issue #13)
+    variable OnSubagents      ;# cb: parent path -> list of child row dicts
+    variable OnSubagentCost   ;# cb: child path -> start the cost pass for it
 
     constructor {parent resolve_cb lookup_cb on_open on_move_request \
                  on_drop_move on_bookmark_toggle on_scan_path cancel_cb \
-                 on_show_all} {
+                 on_show_all on_subagents on_subagent_cost} {
         set Top $parent
         set ResolveFolder $resolve_cb
         set LookupSession $lookup_cb
@@ -121,6 +126,8 @@ oo::class create ::questlog::ui::SessionList {
         set OnScanPath $on_scan_path
         set CancelCb $cancel_cb
         set OnShowAll $on_show_all
+        set OnSubagents $on_subagents
+        set OnSubagentCost $on_subagent_cost
         set StatusVar "Idle"
         set StatusBase ""
         set TotalCost 0.0
@@ -146,6 +153,7 @@ oo::class create ::questlog::ui::SessionList {
         set FolderOrder [list]
         set SessionsByFolder [dict create]
         set Sessions [dict create]
+        set Children [dict create]
         set HtagFolder [dict create]
         set Selected ""
     }
@@ -225,6 +233,7 @@ oo::class create ::questlog::ui::SessionList {
             bind $Text $ev break
         }
         my build_menu
+        my build_child_menu
     }
 
     method configure_tags {} {
@@ -277,6 +286,22 @@ oo::class create ::questlog::ui::SessionList {
             -tabs [list $content_col left] -wrap none \
             -font QLList -foreground [::questlog::theme::c snippet] -spacing3 1
         $Text tag configure snippetbar -foreground [::questlog::theme::c snippet_guide]
+        # Subagent child rows (issue #13): a session-header-style line one indent
+        # deeper than the parent, on the same metadata tab stops (set by
+        # layout_columns) so date/size/cost/turns/duration sit under the parent's
+        # columns. The leading spine reuses the snippet guide colour as the tree
+        # connector, so a session's children read as one grouped run.
+        $Text tag configure childhead -lmargin1 30 -lmargin2 46 \
+            -spacing1 2 -spacing3 2 -wrap none \
+            -foreground [::questlog::theme::c ink] -font QLList
+        $Text tag configure childbar -foreground [::questlog::theme::c snippet_guide]
+        # A subagent's matched line, beneath its child row, indented past the
+        # child so the hit reads at full width (its own line, not cramped into the
+        # metadata strip). Same look as a parent snippet, one level deeper.
+        $Text tag configure childsnip -lmargin1 40 -lmargin2 40 -wrap none \
+            -font QLList -foreground [::questlog::theme::c snippet] -spacing3 1
+        # The expand/collapse chevron at the head of a session that has subagents.
+        $Text tag configure chevron -foreground [::questlog::theme::c meta]
         # Metadata cells (date, size, cost): the muted grey column run pinned
         # to the right of each session line. Proportional QLList, aligned by
         # the sessionhead right tab stops, not a monospace font.
@@ -359,6 +384,7 @@ oo::class create ::questlog::ui::SessionList {
         if {$FolderLabelMax < 60} { set FolderLabelMax 60 }
         $Text tag configure sessionhead -tabs $ColTabs
         $Text tag configure folderhead  -tabs $ColTabs
+        $Text tag configure childhead   -tabs $ColTabs
         if {[winfo exists $Top.body.hdr]} { $Top.body.hdr configure -tabs $ColTabs }
     }
 
@@ -378,7 +404,10 @@ oo::class create ::questlog::ui::SessionList {
         $Text configure -state normal
         foreach folder $FolderOrder { my redraw_folder_heading $folder }
         dict for {path s} $Sessions {
-            if {[dict get $s rendered]} { my redraw_header $path }
+            if {[dict get $s rendered]} {
+                my redraw_header $path
+                if {[dict get $s expanded]} { my rerender_children $path }
+            }
         }
         $Text configure -state disabled
     }
@@ -526,6 +555,10 @@ oo::class create ::questlog::ui::SessionList {
             -command [list [self] menu_copy_path]
         $Menu add command -label "Copy last assistant output" \
             -command [list [self] menu_copy_last_assistant]
+        $Menu add command -label "Copy session as Markdown" \
+            -command [list [self] menu_copy_markdown]
+        $Menu add command -label "Export to .md..." \
+            -command [list [self] menu_export_markdown]
         $Menu add separator
         $Menu add command -label "Resume in new terminal tab" \
             -command [list [self] menu_resume 0]
@@ -588,13 +621,14 @@ oo::class create ::questlog::ui::SessionList {
     method purge_tags_and_marks {} {
         foreach t [$Text tag names] {
             if {[string match "s#*" $t] || [string match "f#*" $t] \
-                || [string match "n#*" $t]} {
+                || [string match "n#*" $t] || [string match "c#*" $t]} {
                 $Text tag delete $t
             }
         }
         foreach m [$Text mark names] {
             if {[string match "sm*" $m] || [string match "se*" $m] \
-                || [string match "fm*" $m] || [string match "fe*" $m]} {
+                || [string match "fm*" $m] || [string match "fe*" $m] \
+                || [string match "ch*" $m]} {
                 $Text mark unset $m
             }
         }
@@ -694,6 +728,12 @@ oo::class create ::questlog::ui::SessionList {
     # bracket a whole slice of sessions once (see app.tcl flush_search).
     method render_session_matches {matches} {
         set first [lindex $matches 0]
+        # Subagent matches attach to the parent session (issue #13 cases B and C);
+        # a session's own matches take the path below.
+        if {[dict getdef $first is_child 0]} {
+            my add_subagent_matches $matches
+            return
+        }
         set path  [dict get $first path]
         if {![dict exists $Sessions $path]} {
             set row [{*}$LookupSession $path]
@@ -749,6 +789,9 @@ oo::class create ::questlog::ui::SessionList {
             when $when mtime $mtime size $size uuid $uuid cost $cost \
             turns $turns duration_secs $dsecs \
             count 0 first_lineno $first_lineno snippets [list] \
+            has_subagents [dict getdef $row has_subagents 0] \
+            expanded 0 sub_paths [list] sub_total 0 \
+            children_listed 0 all_child_paths [list] chmark "" \
             stag "" smark "" semark "" rendered 0]
         dict lappend SessionsByFolder $folder $path
         # Count and size accrue together (size is known at scan time); fold both
@@ -812,6 +855,7 @@ oo::class create ::questlog::ui::SessionList {
             lassign $snip btype content lineoff
             my render_snippet $path $btype $content $lineoff
         }
+        if {[dict get $Sessions $path expanded]} { my render_children $path }
         if {$Selected eq $path} {
             $Text tag add selected $smark "$smark lineend"
         }
@@ -885,6 +929,357 @@ oo::class create ::questlog::ui::SessionList {
         return $b
     }
 
+    # ---- subagent child rows (issue #13) ------------------------------
+    #
+    # A session with subagents shows a chevron; expanding renders its subagents
+    # as indented child rows under its header, pinned to the same metadata
+    # columns. In browse the children are enumerated on demand (all of them); in
+    # search the matched children attach as their matches arrive (sub_paths), and
+    # the parent auto-expands when only its subagents matched (case B). Children
+    # live in their own model (Children) and never enter Scan's Rows; their cost
+    # rides the same second pass as a session's, triggered when first drawn.
+
+    method toggle_subagents {path} {
+        if {![dict exists $Sessions $path]} return
+        if {![dict get $Sessions $path has_subagents]} return
+        set exp [expr {![dict get $Sessions $path expanded]}]
+        dict set Sessions $path expanded $exp
+        $Text configure -state normal
+        my anchor_save
+        if {$exp} { my expand_subagents $path } else { my collapse_subagents $path }
+        if {[dict get $Sessions $path rendered]} { my redraw_header $path }
+        my anchor_restore
+        $Text configure -state disabled
+    }
+
+    # Render a session's children. With no attached set yet (browse, or a search
+    # case-A session whose subagents did not match), enumerate them all; otherwise
+    # render the attached set (sub_paths, the matched children in search).
+    method expand_subagents {path} {
+        if {[llength [dict get $Sessions $path sub_paths]] == 0} {
+            my ensure_children_enumerated $path
+            dict set Sessions $path sub_paths \
+                [dict get $Sessions $path all_child_paths]
+        }
+        my render_children $path
+    }
+
+    method collapse_subagents {path} {
+        set chm [dict getdef [dict get $Sessions $path] chmark ""]
+        if {$chm ne ""} {
+            catch {$Text delete $chm [dict get $Sessions $path semark]}
+            dict set Sessions $path chmark ""
+        }
+        foreach cp [dict get $Sessions $path sub_paths] {
+            if {[dict exists $Children $cp]} {
+                dict set Children $cp rendered 0
+                dict set Children $cp ctag ""
+            }
+        }
+    }
+
+    # Ask the scanner for every subagent of this session and seed their models
+    # (meta only, no hits). Once per session; the matched-children set is built
+    # separately as search matches arrive.
+    method ensure_children_enumerated {path} {
+        if {[dict get $Sessions $path children_listed]} return
+        set listed [list]
+        foreach crow [{*}$OnSubagents $path] {
+            my child_add_model $crow
+            lappend listed [dict get $crow path]
+        }
+        dict set Sessions $path all_child_paths $listed
+        dict set Sessions $path children_listed 1
+    }
+
+    # Seed a child's model from a row dict (from the scanner or a search match),
+    # meta only. Guarded so a later re-enumeration cannot wipe hits already
+    # attached from a match.
+    method child_add_model {crow} {
+        set cp [dict get $crow path]
+        if {[dict exists $Children $cp]} return
+        set label [dict getdef $crow description ""]
+        if {$label eq ""} { set label [dict getdef $crow agent_type ""] }
+        if {$label eq ""} {
+            set label [dict getdef $crow agent_id [file rootname [file tail $cp]]]
+        }
+        dict set Children $cp [dict create \
+            parent_path [dict getdef $crow parent_path ""] \
+            folder [dict getdef $crow folder ""] \
+            when [my fmt_time [dict getdef $crow mtime 0]] \
+            mtime [dict getdef $crow mtime 0] \
+            size [dict getdef $crow size 0] \
+            cost "" turns "" duration_secs "" \
+            agent_type [dict getdef $crow agent_type ""] \
+            agent_id [dict getdef $crow agent_id [file rootname [file tail $cp]]] \
+            label $label hits [list] open_lineoff 0 \
+            rendered 0 ctag ""]
+    }
+
+    method render_children {path} {
+        if {![dict get $Sessions $path rendered]} return
+        foreach cp [dict get $Sessions $path sub_paths] {
+            if {![dict exists $Children $cp]} continue
+            if {[dict get $Children $cp rendered]} continue
+            my render_child $path $cp
+        }
+    }
+
+    # Drop and redraw a session's whole children block (cheap: subagents per
+    # session are few). Used when a child's cost arrives, so the new cell lands
+    # without per-row mark surgery.
+    method rerender_children {path} {
+        if {![dict exists $Sessions $path]} return
+        if {![dict get $Sessions $path rendered]} return
+        set chm [dict getdef [dict get $Sessions $path] chmark ""]
+        if {$chm eq ""} return
+        $Text delete $chm [dict get $Sessions $path semark]
+        dict set Sessions $path chmark ""
+        foreach cp [dict get $Sessions $path sub_paths] {
+            if {[dict exists $Children $cp]} {
+                dict set Children $cp rendered 0
+                dict set Children $cp ctag ""
+            }
+        }
+        my render_children $path
+    }
+
+    # Draw one subagent under its parent: a tree-spine header line carrying the
+    # agent type, the subagent's description, and date/size/cost/turns/duration
+    # pinned in the parent's columns; then, in search, its matched lines as
+    # full-width snippet rows beneath (capped at snippets_per_subagent already).
+    method render_child {path cp} {
+        if {![dict exists $Children $cp]} return
+        if {[dict get $Children $cp rendered]} return
+        set c [dict get $Children $cp]
+        set semark [dict get $Sessions $path semark]
+        if {[dict getdef [dict get $Sessions $path] chmark ""] eq ""} {
+            set chm "ch[incr NextId]"
+            $Text mark set $chm [$Text index $semark]
+            $Text mark gravity $chm left
+            dict set Sessions $path chmark $chm
+        }
+        set ctag "c#[incr NextId]"
+        set info [my build_child_line $cp]
+        set tmp tmpchild
+        $Text mark set $tmp [$Text index $semark]
+        $Text mark gravity $tmp right
+        set rstart [$Text index $tmp]
+        $Text insert $tmp "[dict get $info line]\n" [list childhead $ctag]
+        my apply_child_tags $rstart $cp $info
+        $Text mark set $semark [$Text index $tmp]
+        $Text mark unset $tmp
+        foreach h [dict get $c hits] {
+            lassign $h btype content lineoff
+            my render_child_snippet $path $cp $content $lineoff
+        }
+        set folder [dict get $Sessions $path folder]
+        if {[dict exists $Folders $folder]} {
+            $Text mark set [dict get [dict get $Folders $folder] femark] \
+                [$Text index $semark]
+        }
+        set lineoff 0
+        if {[llength [dict get $c hits]] > 0} {
+            set lineoff [lindex [lindex [dict get $c hits] 0] 2]
+        }
+        dict set Children $cp ctag $ctag
+        dict set Children $cp open_lineoff $lineoff
+        dict set Children $cp rendered 1
+        $Text tag bind $ctag <ButtonRelease-1> [list [self] on_child_release $cp]
+        $Text tag bind $ctag <<ContextMenu>> [list [self] on_child_right $cp %X %Y]
+        $Text tag bind $ctag <Enter> [list $Text configure -cursor hand2]
+        $Text tag bind $ctag <Leave> [list $Text configure -cursor arrow]
+        # Cost rides the same second pass as a session's; trigger it once (when
+        # the child has no cost yet), so a re-render after the result does not
+        # re-queue it.
+        if {[dict get $c cost] eq ""} { {*}$OnSubagentCost $cp }
+    }
+
+    # A subagent's matched line, beneath its child header, opening the subagent's
+    # own transcript at the hit (issue #13 chose per-file open over a unified
+    # parent+child view). Lighter than a parent snippet (no badge widget): a
+    # deeper spine then the hit-centred content with the terms emboldened.
+    method render_child_snippet {path cp content lineoff} {
+        set semark [dict get $Sessions $path semark]
+        set ntag "c#[incr NextId]"
+        set tmp tmpcsnip
+        $Text mark set $tmp [$Text index $semark]
+        $Text mark gravity $tmp right
+        $Text insert $tmp "▏  " [list childsnip childbar $ntag]
+        set cstart [$Text index $tmp]
+        $Text insert $tmp $content [list childsnip $ntag]
+        set cend [$Text index $tmp]
+        $Text insert $tmp "\n" [list childsnip $ntag]
+        my tag_hits_in_range $cstart $cend $content
+        $Text tag bind $ntag <ButtonRelease-1> [list [self] on_child_open_at $cp $lineoff]
+        $Text tag bind $ntag <<ContextMenu>> [list [self] on_child_right $cp %X %Y]
+        $Text tag bind $ntag <Enter> [list $Text configure -cursor hand2]
+        $Text tag bind $ntag <Leave> [list $Text configure -cursor arrow]
+        $Text mark set $semark [$Text index $tmp]
+        $Text mark unset $tmp
+    }
+
+    # Build a subagent's header row: the tree spine, the bold agent type, the
+    # description, and the right-pinned metadata cells.
+    method build_child_line {cp} {
+        set c [dict get $Children $cp]
+        set cells [my meta_cells $c]
+        set spine "▏  "
+        set subj $spine
+        set atype [dict get $c agent_type]
+        set atype_off -1
+        set atype_len 0
+        if {$atype ne ""} {
+            set atype_off [string length $subj]
+            append subj $atype
+            set atype_len [string length $atype]
+            append subj "  "
+        }
+        set body [dict get $c label]
+        set fixed [font measure QLList $spine]
+        if {$atype ne ""} {
+            incr fixed [expr {[font measure QLBold $atype] + [font measure QLList "  "]}]
+        }
+        set body [my truncate_px $body [expr {$SubjectMax - $fixed}] QLList]
+        set body_off [string length $subj]
+        append subj $body
+        set meta_off [string length $subj]
+        set line $subj
+        set offs [dict create]
+        foreach col [::questlog::ui::session_columns] {
+            lassign $col id
+            append line "\t"
+            set off [string length $line]
+            set val [dict get $cells $id]
+            append line $val
+            dict set offs $id [list $off [string length $val]]
+        }
+        return [dict create line $line spine_len [string length $spine] \
+            atype_off $atype_off atype_len $atype_len \
+            body_off $body_off body $body meta_off $meta_off offs $offs]
+    }
+
+    method on_child_open_at {cp lineoff} { {*}$OnOpen $cp $lineoff }
+
+    method apply_child_tags {row_start cp info} {
+        $Text tag add childbar $row_start \
+            "$row_start + [dict get $info spine_len]c"
+        set ao [dict get $info atype_off]
+        if {$ao >= 0} {
+            $Text tag add slug "$row_start + ${ao}c" \
+                "$row_start + [expr {$ao + [dict get $info atype_len]}]c"
+        }
+        $Text tag add meta \
+            "$row_start + [dict get $info meta_off]c" "$row_start lineend"
+        lassign [dict getdef [dict get $info offs] actions {-1 0}] aco acl
+        if {$aco >= 0 && $acl > 0} {
+            $Text tag add actioncell "$row_start + ${aco}c" \
+                "$row_start + [expr {$aco + $acl}]c"
+        }
+        lassign [dict getdef [dict get $info offs] cost {-1 0}] co cl
+        if {$co >= 0 && $cl > 0} {
+            set cst [dict getdef [dict get $Children $cp] cost ""]
+            if {$cst ne "" && $cst >= 0.10} {
+                set tag [expr {$cst >= 1.0 ? "cost-outlier" : "cost-mid"}]
+                $Text tag add $tag "$row_start + ${co}c" \
+                    "$row_start + [expr {$co + $cl}]c"
+            }
+        }
+    }
+
+    method on_child_release {cp} {
+        if {![dict exists $Children $cp]} return
+        {*}$OnOpen $cp [dict getdef [dict get $Children $cp] open_lineoff 0]
+    }
+
+    # The reduced menu for a subagent child row: a subagent is not a resumable
+    # session (it has no session id of its own and no project cwd of its own), so
+    # the resume / move / rename / bookmark verbs do not apply; only open, copy
+    # path, copy last output, and reveal remain.
+    method build_child_menu {} {
+        set CMenu $Top.ccmenu
+        menu $CMenu -tearoff 0
+        $CMenu add command -label "Open in viewer" \
+            -command [list [self] child_menu_open]
+        $CMenu add separator
+        $CMenu add command -label "Copy session path" \
+            -command [list [self] child_menu_copy_path]
+        $CMenu add command -label "Copy last assistant output" \
+            -command [list [self] child_menu_copy_last_assistant]
+        $CMenu add separator
+        $CMenu add command -label "Reveal folder" \
+            -command [list [self] child_menu_reveal]
+        set ChildMenuPath ""
+    }
+
+    method on_child_right {cp X Y} {
+        set ChildMenuPath $cp
+        tk_popup $CMenu $X $Y
+    }
+    method child_menu_open {} { my on_child_release $ChildMenuPath }
+    method child_menu_copy_path {} { my clipboard_set $ChildMenuPath }
+    method child_menu_copy_last_assistant {} {
+        my clipboard_set [::questlog::jsonl::last_assistant_text $ChildMenuPath]
+    }
+    method child_menu_reveal {} {
+        set dir [file dirname $ChildMenuPath]
+        set opener [expr {$::tcl_platform(os) eq "Darwin" ? "open" : "xdg-open"}]
+        if {[catch {exec $opener $dir &} err]} {
+            puts stderr "questlog: $opener failed: $err"
+        }
+    }
+
+    # Attach a subagent's matches to its parent session (issue #13 cases B and C).
+    # Creates the parent card if the parent itself had no match (case B), seeds
+    # the child models, attaches this child's hits (capped at
+    # snippets_per_subagent), counts them for the parent's pip, and either
+    # auto-expands (case B: no direct match) or leaves collapsed with the pip.
+    method add_subagent_matches {matches} {
+        set first [lindex $matches 0]
+        set cp     [dict get $first path]
+        set parent [dict get $first parent_path]
+        set folder [dict get $first folder]
+        if {![dict exists $Sessions $parent]} {
+            set row [{*}$LookupSession $parent]
+            if {$row eq ""} { set row [dict create folder $folder] }
+            my model_add_session $parent $row
+        }
+        dict set Sessions $parent has_subagents 1
+        if {[my folder_expanded [dict get $Sessions $parent folder]] \
+            && ![dict get $Sessions $parent rendered]} {
+            my render_session $parent
+        }
+        my ensure_children_enumerated $parent
+        if {![dict exists $Children $cp]} {
+            my child_add_model [dict create path $cp parent_path $parent \
+                folder $folder agent_id [dict getdef $first agent_id ""]]
+        }
+        set cap [::questlog::config::get snippets_per_subagent]
+        set hits [dict get $Children $cp hits]
+        foreach m $matches {
+            dict set Sessions $parent sub_total \
+                [expr {[dict get $Sessions $parent sub_total] + 1}]
+            if {[llength $hits] < $cap} {
+                lappend hits [list [dict get $m btype] \
+                    [dict get $m content] [dict get $m lineoff]]
+            }
+        }
+        dict set Children $cp hits $hits
+        if {$cp ni [dict get $Sessions $parent sub_paths]} {
+            dict lappend Sessions $parent sub_paths $cp
+        }
+        # Case B (no direct hit in the parent) auto-expands so the matched
+        # subagents are visible; case C keeps the parent collapsed with the pip.
+        if {[dict get $Sessions $parent count] == 0} {
+            dict set Sessions $parent expanded 1
+        }
+        if {[dict get $Sessions $parent expanded] \
+            && [dict get $Sessions $parent rendered]} {
+            my render_child $parent $cp
+        }
+        if {[dict get $Sessions $parent rendered]} { my redraw_header $parent }
+    }
+
     method session_label {path row} {
         set body [dict getdef $row first_user ""]
         if {$body eq ""} { set body [dict getdef $row uuid [file rootname [file tail $path]]] }
@@ -895,13 +1290,18 @@ oo::class create ::questlog::ui::SessionList {
     # until the second-pass worker fills it in; an unknown model (negative
     # cost) stays blank.
     method session_meta_cells {path} {
-        set s [dict get $Sessions $path]
+        return [my meta_cells [dict get $Sessions $path]]
+    }
+
+    # The metadata cell values for a row dict (a session or a subagent child),
+    # keyed by column id, so parent and child lines pin the same columns.
+    method meta_cells {s} {
         set cells [dict create]
         foreach col [::questlog::ui::session_columns] {
             lassign $col id
             switch -- $id {
-                date { set v [dict get $s when] }
-                size { set v [my fmt_size [dict get $s size]] }
+                date { set v [dict getdef $s when ""] }
+                size { set v [my fmt_size [dict getdef $s size 0]] }
                 cost {
                     set c [dict getdef $s cost ""]
                     set v [expr {($c ne "" && $c >= 0) \
@@ -938,12 +1338,30 @@ oo::class create ::questlog::ui::SessionList {
         set g [my glyph_cell $running $bk]
         set slug [dict get $s slug]
         set count [dict get $s count]
+        set subt  [dict get $s sub_total]
+        # Match-count tail: direct matches, plus a "+N in subagents" pip when the
+        # session's subagents also matched (case C); or the case-B line when only
+        # subagents matched, so the parent surfaces with no hit of its own.
         set count_str ""
         if {$count > 0} {
             set count_str "   ·   $count [expr {$count == 1 ? {match} : {matches}}]"
+            if {$subt > 0} { append count_str "   ·   +$subt in subagents" }
+        } elseif {$subt > 0} {
+            set count_str "   ·   no match in this session · $subt in subagents below"
         }
 
         set subj ""
+        # A session with subagents leads with an expand/collapse chevron. It is a
+        # separate click target (toggle, not open), so its char range is recorded
+        # in offs and tagged; glyph_off marks where the status glyphs begin so
+        # tag_glyphs colours them past the chevron.
+        set chev_off -1
+        if {[dict get $s has_subagents]} {
+            set chev_off 0
+            append subj [expr {[dict get $s expanded] ? "▾" : "▸"}]
+            append subj " "
+        }
+        set glyph_off [string length $subj]
         if {$g ne ""} { append subj "$g " }
         set slug_off -1
         set slug_len 0
@@ -955,6 +1373,7 @@ oo::class create ::questlog::ui::SessionList {
         }
         # Fit the preview into the room left after the kept pieces.
         set fixed 0
+        if {$chev_off >= 0} { incr fixed [font measure QLList "▸ "] }
         if {$g ne ""} { incr fixed [font measure QLList "$g "] }
         if {$slug ne ""} {
             incr fixed [expr {[font measure QLBold $slug] + [font measure QLList "  "]}]
@@ -968,6 +1387,7 @@ oo::class create ::questlog::ui::SessionList {
         set meta_off [string length $subj]
         set line $subj
         set offs [dict create]
+        if {$chev_off >= 0} { dict set offs chevron [list $chev_off 1] }
         foreach col [::questlog::ui::session_columns] {
             lassign $col id
             append line "\t"
@@ -976,7 +1396,7 @@ oo::class create ::questlog::ui::SessionList {
             append line $val
             dict set offs $id [list $off [string length $val]]
         }
-        return [dict create line $line meta_off $meta_off \
+        return [dict create line $line meta_off $meta_off glyph_off $glyph_off \
             slug_off $slug_off slug_len $slug_len offs $offs]
     }
 
@@ -1011,7 +1431,12 @@ oo::class create ::questlog::ui::SessionList {
             $Text tag add slug "$row_start + ${so}c" \
                 "$row_start + [expr {$so + [dict get $info slug_len]}]c"
         }
-        my tag_glyphs $row_start 0
+        lassign [dict getdef [dict get $info offs] chevron {-1 0}] cho chl
+        if {$cho >= 0 && $chl > 0} {
+            $Text tag add chevron "$row_start + ${cho}c" \
+                "$row_start + [expr {$cho + $chl}]c"
+        }
+        my tag_glyphs $row_start [dict getdef $info glyph_off 0]
         lassign [dict getdef [dict get $info offs] cost {-1 0}] co cl
         if {$co >= 0 && $cl > 0} {
             set c [dict getdef [dict get $Sessions $path] cost ""]
@@ -1209,14 +1634,27 @@ oo::class create ::questlog::ui::SessionList {
             if {![dict get $Sessions $path rendered]} continue
             catch {$Text mark unset [dict get $Sessions $path smark] \
                                     [dict get $Sessions $path semark]}
+            set chm [dict getdef [dict get $Sessions $path] chmark ""]
+            if {$chm ne ""} { catch {$Text mark unset $chm} }
             dict set Sessions $path rendered 0
             dict set Sessions $path stag ""
             dict set Sessions $path smark ""
             dict set Sessions $path semark ""
+            dict set Sessions $path chmark ""
+            # The children's render marks vanished with the body; reset their
+            # flags so a later expand redraws them.
+            foreach cp [dict get $Sessions $path sub_paths] {
+                if {[dict exists $Children $cp]} {
+                    dict set Children $cp rendered 0
+                    dict set Children $cp ctag ""
+                }
+            }
         }
-        # Drop the now-empty per-session / per-snippet tags left by the delete.
+        # Drop the now-empty per-session / per-snippet / per-child tags left by
+        # the delete.
         foreach tg [$Text tag names] {
-            if {([string match "s#*" $tg] || [string match "n#*" $tg]) \
+            if {([string match "s#*" $tg] || [string match "n#*" $tg] \
+                 || [string match "c#*" $tg]) \
                 && [llength [$Text tag ranges $tg]] == 0} {
                 $Text tag delete $tg
             }
@@ -1252,6 +1690,11 @@ oo::class create ::questlog::ui::SessionList {
     # updates the Sessions cell, bumps the folder aggregate and the running
     # total, then redraws the row's meta region in place.
     method refresh_cost {path cost_dict} {
+        # A subagent's cost lands on its child row, not a session row.
+        if {[dict exists $Children $path]} {
+            my refresh_child_cost $path $cost_dict
+            return
+        }
         if {![dict exists $Sessions $path]} return
         set s [dict get $Sessions $path]
         set old [dict getdef $s cost ""]
@@ -1284,6 +1727,23 @@ oo::class create ::questlog::ui::SessionList {
         $Text configure -state disabled
         # The worker result can change cost-, turns- or duration-sorted order.
         if {$SortKey in {cost turns duration}} { my schedule_resort }
+    }
+
+    # A subagent's cost/turns/duration arriving from the second pass. Stored on
+    # the child and shown on its own row only; subagent cost is not folded into
+    # the folder aggregate or the running total (those sum sessions). Redraws the
+    # parent's children block so the new cells land.
+    method refresh_child_cost {cp cost_dict} {
+        if {![dict exists $Children $cp]} return
+        dict set Children $cp cost [dict get $cost_dict cost_usd]
+        dict set Children $cp turns [dict getdef $cost_dict turns ""]
+        dict set Children $cp duration_secs [dict getdef $cost_dict duration_secs ""]
+        set parent [dict get $Children $cp parent_path]
+        if {[dict exists $Sessions $parent] && [dict get $Children $cp rendered]} {
+            $Text configure -state normal
+            my rerender_children $parent
+            $Text configure -state disabled
+        }
     }
 
     method glyph_cell {running bookmarked} {
@@ -1363,6 +1823,11 @@ oo::class create ::questlog::ui::SessionList {
             my on_session_right $path $X $Y
             return
         }
+        # A release on the chevron expands or collapses the session's subagents.
+        if {[my click_on_chevron $X $Y]} {
+            my toggle_subagents $path
+            return
+        }
         set was_drag [::questlog::ui::drag::release $X $Y]
         if {$was_drag} return
         my select $path
@@ -1378,8 +1843,9 @@ oo::class create ::questlog::ui::SessionList {
     # ---- drag-to-move -------------------------------------------------
 
     method on_session_press {path X Y} {
-        # A press on the ⋯ control is a menu click, not the start of a drag.
+        # A press on the ⋯ control or the chevron is a control click, not a drag.
         if {[my click_on_action $X $Y]} return
+        if {[my click_on_chevron $X $Y]} return
         ::questlog::ui::drag::watch $Text $X $Y [list $path] \
             [list [self] handle_drop] \
             [list [self] drag_hit] [list [self] drag_paint]
@@ -1412,6 +1878,14 @@ oo::class create ::questlog::ui::SessionList {
         set ly [expr {$Y - [winfo rooty $Text]}]
         set idx [$Text index @$lx,$ly]
         return [expr {[lsearch -exact [$Text tag names $idx] actioncell] >= 0}]
+    }
+
+    # Whether a root-coordinate click landed on a session's expand chevron.
+    method click_on_chevron {X Y} {
+        set lx [expr {$X - [winfo rootx $Text]}]
+        set ly [expr {$Y - [winfo rooty $Text]}]
+        set idx [$Text index @$lx,$ly]
+        return [expr {[lsearch -exact [$Text tag names $idx] chevron] >= 0}]
     }
 
     method on_row_enter {path} {
@@ -1495,6 +1969,33 @@ oo::class create ::questlog::ui::SessionList {
     method menu_copy_path {} { my clipboard_set $MenuPath }
     method menu_copy_last_assistant {} {
         my clipboard_set [::questlog::jsonl::last_assistant_text [my menu_target_get path]]
+    }
+    # The whole session as Markdown on the clipboard: the text-only transcript
+    # (USER/ASSISTANT/SYSTEM turns, segmented at compaction boundaries and idle
+    # gaps the way the viewer breaks it). Tool calls are out of scope by design.
+    method menu_copy_markdown {} {
+        my clipboard_set \
+            [::questlog::markdown::export_session [my menu_target_get path]]
+    }
+    # The same Markdown to a file the reader picks. A cancelled dialog returns
+    # empty and does nothing; a write failure is surfaced rather than swallowed.
+    method menu_export_markdown {} {
+        set path [my menu_target_get path]
+        set initial "[file rootname [file tail $path]].md"
+        set dest [tk_getSaveFile -parent $Top -title "Export session to Markdown" \
+            -defaultextension .md -initialfile $initial \
+            -filetypes {{Markdown {.md}} {{All files} *}}]
+        if {$dest eq ""} return
+        set md [::questlog::markdown::export_session $path]
+        if {[catch {
+            set fh [open $dest w]
+            chan configure $fh -encoding utf-8
+            puts -nonewline $fh $md
+            close $fh
+        } err]} {
+            tk_messageBox -parent $Top -icon error -title "Export session" \
+                -message "Could not write $dest" -detail $err
+        }
     }
     method menu_resume {fork} {
         ::questlog::terminal::launch_tab [my menu_target_get cwd] \

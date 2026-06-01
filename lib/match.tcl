@@ -245,6 +245,19 @@ proc ::questlog::match::scan_file {path clauses {tick ""} {yield_lines 0}} {
     }
 
     set folder [file tail [file dirname $path]]
+    # A subagent transcript lives at <folder>/<uuid>/subagents/agent-<id>.jsonl.
+    # Its hits belong to the parent session, so attribute the row and every match
+    # to the parent's folder and path; the list groups them under it (issue #13).
+    set is_child 0
+    set parent_path ""
+    set parent_uuid ""
+    if {$folder eq "subagents"} {
+        set is_child 1
+        set sessdir [file dirname [file dirname $path]]
+        set parent_uuid [file tail $sessdir]
+        set folder [file tail [file dirname $sessdir]]
+        set parent_path [file join [file dirname $sessdir] $parent_uuid.jsonl]
+    }
     set users 0
     set first_user ""
     set cwd_hint ""
@@ -316,6 +329,17 @@ proc ::questlog::match::scan_file {path clauses {tick ""} {yield_lines 0}} {
     close $fh
     if {[catch {file mtime $path} mt]} { set mt 0 }
     if {[catch {file size  $path} sz]} { set sz 0 }
+    # Does this session have subagents? Computed here too (not only in
+    # scan_one), so a search row carries the flag: it both drives the chevron on
+    # a session whose subagents did not match (case A) and keeps publish_row from
+    # overwriting the browse flag when search republishes the row.
+    set has_sub 0
+    if {!$is_child} {
+        set sa_uuid [file rootname [file tail $path]]
+        set sa_dir [file join [file dirname $path] $sa_uuid subagents]
+        set has_sub [expr {[file isdirectory $sa_dir]
+            && [llength [glob -nocomplain -directory $sa_dir -- agent-*.jsonl]] > 0}]
+    }
     set row [dict create \
         path $path \
         mtime $mt \
@@ -326,14 +350,21 @@ proc ::questlog::match::scan_file {path clauses {tick ""} {yield_lines 0}} {
         is_multi [expr {$users >= 2}] \
         first_user [::questlog::match::clean_preview $first_user] \
         bookmarked [file executable $path] \
+        has_subagents $has_sub \
+        is_child $is_child \
+        parent_path $parent_path \
+        parent_uuid $parent_uuid \
         cwd_hint $cwd_hint]
     set matches [list]
     if {$all_terms_seen && $pat_sat && $read_sat
         && $wrote_sat && $edited_sat && [llength $buffer] > 0} {
+        set agent_id [file rootname [file tail $path]]
         foreach ev $buffer {
             lassign $ev evlineno evbtype evcontent
             lappend matches [dict create path $path lineoff $evlineno \
-                ts $first_ts btype $evbtype content $evcontent folder $folder]
+                ts $first_ts btype $evbtype content $evcontent folder $folder \
+                is_child $is_child parent_path $parent_path \
+                parent_uuid $parent_uuid agent_id $agent_id]
         }
     }
     return [list $row $matches]

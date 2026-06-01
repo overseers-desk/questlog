@@ -115,6 +115,11 @@ namespace eval ::questlog::config {
     dict set Config tool_param_cap  60
     # Snippets shown per matching session card.
     dict set Config snippets_per_session 3
+    # Snippets shown per matching subagent (a session's child rows). Lower than
+    # snippets_per_session so a parent with several matching subagents is not
+    # buried under their evidence: one representative line per subagent, with the
+    # subagent's own label carrying the rest of the identification.
+    dict set Config snippets_per_subagent 1
     # A viewer blockquote longer than this gets a Collapse toggle.
     dict set Config blockquote_preview_lines 6
     # Minutes of silence that mark a secondary idle-gap divider in the viewer.

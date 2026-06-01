@@ -215,7 +215,7 @@ oo::class create ::questlog::Search {
         if {$my_epoch != $Epoch} return
 
         set clauses [::questlog::search::build_clauses $snapshot]
-        set paths [$Scan list_paths_for $snapshot]
+        set paths [$Scan list_paths_for $snapshot 1]
         set total [llength $paths]
         dict set Counts total $total
         set count 0
@@ -235,8 +235,10 @@ oo::class create ::questlog::Search {
                 dict set Counts done $count
                 continue
             }
-            # Publish row data back to Scan as a free side-effect.
-            $Scan publish_row $row
+            # Publish row data back to Scan as a free side-effect. Subagent
+            # files are not browse sessions, so their rows are never published
+            # (the list owns the child model); their matches still flow to OnFile.
+            if {![dict getdef $row is_child 0]} { $Scan publish_row $row }
             # A session qualifies only when every clause is satisfied (scan_file
             # returns no matches otherwise); deliver the whole match list at once
             # so the session renders in one pass.
@@ -285,7 +287,7 @@ oo::class create ::questlog::Search {
         set MatchedSessions [dict create]
         set Counts [dict create done 0 total 0 matches 0]
 
-        set paths   [$Scan list_paths_for $snapshot]
+        set paths   [$Scan list_paths_for $snapshot 1]
         set total   [llength $paths]
         dict set Counts total $total
 
@@ -325,7 +327,9 @@ oo::class create ::questlog::Search {
     # authoritative rather than relying on it.
     method on_worker_file {epoch row matches} {
         if {$epoch != $Epoch} return
-        $Scan publish_row $row
+        # Subagent files are not browse sessions: their rows are not published
+        # (the list owns the child model); their matches still flow to OnFile.
+        if {![dict getdef $row is_child 0]} { $Scan publish_row $row }
         dict incr Counts done
         set d [dict get $Counts done]
         set t [dict get $Counts total]

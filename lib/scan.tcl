@@ -151,10 +151,13 @@ oo::class create ::questlog::Scan {
     }
 
     # Build the candidate path list for a snapshot.
-    # Depth-2 glob only - never recurses into <folder>/<uuid>/subagents/
-    # which holds internal subagent records (not user sessions).
+    # Depth-2 glob for the browse list: <folder>/<uuid>/subagents/ holds
+    # internal subagent records (not user sessions) and is never a browse row;
+    # the chevron surfaces them lazily on expand (subagents_for). The search
+    # corpus is the one consumer that needs them up front, so include_subagents
+    # appends each kept session's subagent files (issue #13, search case B/C).
     # Pre-sorted by mtime DESC so consumers see rows in display order.
-    method list_paths_for {snapshot} {
+    method list_paths_for {snapshot {include_subagents 0}} {
         set root [::questlog::path::projects_root]
         if {![file isdirectory $root]} { return [list] }
         set cutoff [::questlog::filter::cutoff_for $snapshot]
@@ -166,6 +169,16 @@ oo::class create ::questlog::Scan {
                 # so it always enters Rows and can be surfaced as a pin.
                 if {$m <= $cutoff && ![file executable $f]} continue
                 lappend pairs [list $f $m]
+                # A subagent belongs to its parent session, so it enters the
+                # search corpus whenever the parent is in window, regardless of
+                # its own mtime.
+                if {$include_subagents} {
+                    set uuid [file rootname [file tail $f]]
+                    set subdir [file join $folder $uuid subagents]
+                    foreach sf [glob -nocomplain -directory $subdir -- agent-*.jsonl] {
+                        lappend pairs [list $sf [file mtime $sf]]
+                    }
+                }
             }
         }
         # Sort by mtime DESC.
@@ -173,6 +186,58 @@ oo::class create ::questlog::Scan {
         set out [list]
         foreach p $sorted { lappend out [lindex $p 0] }
         return $out
+    }
+
+    # The subagents of one session, as child row dicts, built on demand when the
+    # list expands a session's chevron. Pure: globs the session's subagents dir,
+    # stats and reads the small meta sidecar of each, and returns them mtime DESC.
+    # Children never enter Rows (they are not browse sessions); the list owns
+    # their model and their cost is computed on render, like a parent's.
+    method subagents_for {parent_path} {
+        set uuid [file rootname [file tail $parent_path]]
+        set subdir [file join [file dirname $parent_path] $uuid subagents]
+        set out [list]
+        foreach f [glob -nocomplain -directory $subdir -- agent-*.jsonl] {
+            lappend out [my subagent_row $f]
+        }
+        return [lsort -decreasing -command ::questlog::scan::cmp_mtime $out]
+    }
+
+    # One subagent's row dict, from its file path. The parent identity is the
+    # directory structure (<root>/<folder>/<uuid>/subagents/agent-<id>.jsonl), so
+    # everything is derived from the path; the label fields come from the meta
+    # sidecar Claude writes beside the transcript (agentType, description). Read
+    # with simple field regex, the same idiom scan_one uses on the jsonl itself.
+    method subagent_row {child_path} {
+        set subdir   [file dirname $child_path]   ;# <root>/<folder>/<uuid>/subagents
+        set sessdir  [file dirname $subdir]       ;# <root>/<folder>/<uuid>
+        set parent_uuid [file tail $sessdir]
+        set folder   [file tail [file dirname $sessdir]]
+        set parent_path [file join [file dirname $sessdir] $parent_uuid.jsonl]
+        set agent_id [file rootname [file tail $child_path]]
+        if {[catch {file mtime $child_path} mtime]} { set mtime 0 }
+        if {[catch {file size  $child_path} size]}  { set size 0 }
+        set agent_type ""
+        set description ""
+        set meta [file rootname $child_path].meta.json
+        if {![catch {open $meta r} fh]} {
+            chan configure $fh -encoding utf-8 -profile replace
+            set blob [read $fh]
+            close $fh
+            regexp {"agentType":"([^"]*)"} $blob -> agent_type
+            regexp {"description":"([^"]*)"} $blob -> description
+        }
+        return [dict create \
+            path $child_path \
+            mtime $mtime \
+            size $size \
+            folder $folder \
+            parent_path $parent_path \
+            parent_uuid $parent_uuid \
+            agent_id $agent_id \
+            agent_type $agent_type \
+            description $description \
+            is_child 1]
     }
 
     # scan_one path - read the file line by line, extract the multi-turn
@@ -243,6 +308,12 @@ oo::class create ::questlog::Scan {
         set uuid   [file rootname [file tail $path]]
         set first_clean [::questlog::match::clean_preview $first]
         set slug [expr {$agent_name ne "" ? $agent_name : $ai_title}]
+        # Does this session have subagents? A cheap directory probe (no file
+        # reads): the chevron in the list is drawn from this flag, and the
+        # children themselves are enumerated lazily on expand (subagents_for).
+        set subdir [file join [file dirname $path] $uuid subagents]
+        set has_sub [expr {[file isdirectory $subdir]
+            && [llength [glob -nocomplain -directory $subdir -- agent-*.jsonl]] > 0}]
         return [dict create \
             path $path \
             mtime $mtime \
@@ -254,6 +325,7 @@ oo::class create ::questlog::Scan {
             first_user $first_clean \
             slug $slug \
             ai_title $ai_title \
+            has_subagents $has_sub \
             bookmarked [file executable $path] \
             cwd_hint $cwd]
     }

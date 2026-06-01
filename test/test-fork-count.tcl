@@ -50,7 +50,8 @@ set ::Scan [::questlog::Scan new [list apply {{r} { $::SL on_scan_row $r }}] noo
 proc lookup {path}   { return [$::Scan lookup $path] }
 proc scanpath {path} { return [$::Scan scan_path $path] }
 proc resolvef {f}    { return "/tmp/proj" }
-set SL [::questlog::ui::SessionList new .s resolvef lookup noop noop noop noop scanpath noop noop]
+proc subagentsf {path} { return [$::Scan subagents_for $path] }
+set SL [::questlog::ui::SessionList new .s resolvef lookup noop noop noop noop scanpath noop noop subagentsf noop]
 pack .s -fill both -expand 1
 $SL apply_filter [dict create window 7d one_turn 1]
 
