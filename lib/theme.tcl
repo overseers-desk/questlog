@@ -216,14 +216,22 @@ proc ::questlog::theme::build_chrome {} {
     set r  [expr {max(5, int($ch * 0.30))}]
     set B  [expr {$r + 2}]              ;# 9-patch fixed-corner inset, image px
     set w  [expr {2 * $B + 8}]          ;# min width; the middle stretches
-    # add-rail ghost button: white fill, hairline border, darker on hover.
+    # No control sets -background: clam's default fill already equals the toolbar
+    # panel, so the pill images' transparent corners blend in with nothing to
+    # tune. The element -padding is forced to 0 — it otherwise defaults to
+    # -border, which would inset the label a second time over the style -padding.
+    # add-rail ghost button: white fill, hairline border that darkens on hover.
+    # Hover changes only the border (both images keep the white fill), and the
+    # inherited -background state map is cleared so the window fill stays the
+    # panel colour in every state — otherwise the active-state fill would show
+    # through the image's transparent corners as a square on hover.
     rrect_img qlGhostN $w $ch $r [c chip_bg] [c ctrl_border]    1
-    rrect_img qlGhostA $w $ch $r [c strip]   [c ctrl_border_hi] 1
+    rrect_img qlGhostA $w $ch $r [c chip_bg] [c ctrl_border_hi] 1
     ttk::style element create Ghost.bg image [list qlGhostN active qlGhostA] \
-        -border $B -sticky nsew
+        -border $B -padding 0 -sticky nsew
     ttk::style configure RGhost.TButton -relief flat -borderwidth 0 \
-        -background [c strip] -foreground [c ink] -anchor center \
-        -padding {12 3} -focuscolor [c strip]
+        -foreground [c ink] -anchor center -padding {12 3}
+    ttk::style map RGhost.TButton -background {}
     ttk::style layout RGhost.TButton \
         {Ghost.bg -sticky nsew -children {Button.padding -sticky nsew \
             -children {Button.label -sticky nsew}}}
@@ -240,15 +248,16 @@ proc ::questlog::theme::build_chrome {} {
     # tinted type pill all share the type's hairline tint.
     foreach t {under read write edit regex} {
         rrect_img qlChip_$t $w $ch $r [c chip_bg] [c crit_${t}_bd] 1
-        ttk::style element create Chip_$t.bg image qlChip_$t -border $B -sticky nsew
+        ttk::style element create Chip_$t.bg image qlChip_$t \
+            -border $B -padding 0 -sticky nsew
         ttk::style layout Crit_$t.TFrame [list Chip_$t.bg -sticky nsew]
-        ttk::style configure Crit_$t.TFrame -background [c chip_bg]
 
-        rrect_img qlOr_$t $w $ch $r [c chip_bg] [c crit_${t}_fg] 1 0.8 "3,2"
-        ttk::style element create Or_$t.bg image qlOr_$t -border $B -sticky nsew
+        rrect_img qlOr_$t $w $ch $r none [c crit_${t}_fg] 1 0.8 "3,2"
+        ttk::style element create Or_$t.bg image qlOr_$t \
+            -border $B -padding 0 -sticky nsew
         ttk::style configure ROr_$t.TButton -relief flat -borderwidth 0 \
-            -background [c chip_bg] -foreground [c crit_${t}_fg] -anchor center \
-            -padding {10 3} -focuscolor [c chip_bg]
+            -foreground [c crit_${t}_fg] -anchor center -padding {10 3}
+        ttk::style map ROr_$t.TButton -background {}
         ttk::style layout ROr_$t.TButton \
             [list Or_$t.bg -sticky nsew -children {Button.padding -sticky nsew \
                 -children {Button.label -sticky nsew}}]
