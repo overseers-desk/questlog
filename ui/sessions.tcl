@@ -344,9 +344,34 @@ oo::class create ::questlog::ui::SessionList {
     # row tags, so folder headings, session headers and child rows all align
     # their metadata under the header (engine hook, called from layout_columns).
     method apply_column_tabs {tabs} {
-        $Text tag configure sessionhead -tabs $tabs
-        $Text tag configure folderhead  -tabs $tabs
-        $Text tag configure childhead   -tabs $tabs
+        # Session rows get a leading left tab stop for the title so every slug
+        # aligns past the marker gutter (the chevron and status glyphs); folder
+        # and child rows keep the plain metadata tabs. This reuses the same
+        # column-tab mechanism the right-pinned metadata already rides on.
+        #
+        # The stops arrive already sane (positive, strictly increasing) from
+        # layout_columns. Add the leading title stop only when it fits inside the
+        # first metadata stop; in a degenerate narrow layout it does not fit and
+        # the slug just tabs to the first column (a build-time state, replaced
+        # once the window maps).
+        set first [lindex $tabs 0]
+        set title_x [expr {12 + [my title_gutter_w]}]
+        if {$first ne "" && $title_x < $first} {
+            $Text tag configure sessionhead -tabs [list $title_x left {*}$tabs]
+        } else {
+            $Text tag configure sessionhead -tabs $tabs
+        }
+        $Text tag configure folderhead -tabs $tabs
+        $Text tag configure childhead  -tabs $tabs
+    }
+
+    # The fixed left gutter on a session row, measured past sessionhead's
+    # lmargin1 (12): the widest marker cluster (chevron, running circle, bookmark
+    # star) plus a small gap, so a fully-marked gutter never reaches the title
+    # stop. session_subject budgets the preview past this same width.
+    method title_gutter_w {} {
+        return [expr {[font measure QLList \
+            "▾ $::questlog::ui::GLYPH_RUNNING$::questlog::ui::GLYPH_BOOKMARK"] + 8}]
     }
 
     # Re-fit every rendered row's ellipsis after a width change (engine hook,
@@ -1259,7 +1284,6 @@ oo::class create ::questlog::ui::SessionList {
         set path [my node_field $node key]
         set running [dict exists $RunningSet [dict get $s uuid]]
         set bk [my session_bookmarked $path]
-        set g [my glyph_cell $running $bk]
         set slug [dict get $s slug]
         set count [dict get $s count]
         set subt  [dict get $s sub_total]
@@ -1276,29 +1300,37 @@ oo::class create ::questlog::ui::SessionList {
 
         set tags [list]
         set subj ""
-        # A session with subagents leads with an expand/collapse chevron, a
-        # separate click target (toggle, not open) tagged so click_on_chevron can
-        # tell it apart.
-        set has_chev [dict get $s has_subagents]
-        if {$has_chev} {
-            lappend tags [list chevron 0 1]
+        # Every session title starts at the same x. The chevron and status
+        # glyphs (running circle, bookmark star) sit in a fixed left gutter, then
+        # a tab sends the slug to the title stop apply_column_tabs adds to the
+        # sessionhead tabs - the same column-tab mechanism the right-pinned
+        # metadata uses. Only present markers are drawn, so an empty gutter shows
+        # nothing and the title still lands on the stop. The chevron is the only
+        # marker click_on_chevron tests, so a plain gutter has no chevron tag and
+        # a click in it just opens the session.
+        if {[dict get $s has_subagents]} {
+            lappend tags [list chevron [string length $subj] 1]
             append subj [expr {[my node_field $node expanded] ? "▾" : "▸"}]
             append subj " "
         }
-        # The status glyphs sit just past the chevron; tag each one its colour.
-        set gpos [string length $subj]
-        if {$running}    { lappend tags [list glyph-running $gpos 1]; incr gpos }
-        if {$bk}         { lappend tags [list glyph-bookmark $gpos 1] }
-        if {$g ne ""} { append subj "$g " }
+        if {$running} {
+            lappend tags [list glyph-running [string length $subj] 1]
+            append subj $::questlog::ui::GLYPH_RUNNING
+        }
+        if {$bk} {
+            lappend tags [list glyph-bookmark [string length $subj] 1]
+            append subj $::questlog::ui::GLYPH_BOOKMARK
+        }
+        append subj "\t"
         if {$slug ne ""} {
             lappend tags [list slug [string length $subj] [string length $slug]]
             append subj $slug
             append subj "  "
         }
-        # Fit the preview into the room left after the kept pieces.
-        set fixed 0
-        if {$has_chev} { incr fixed [font measure QLList "▸ "] }
-        if {$g ne ""} { incr fixed [font measure QLList "$g "] }
+        # The preview fills the room between the title stop and the metadata
+        # block: past the gutter the title is tabbed over, then the slug and the
+        # match count.
+        set fixed [my title_gutter_w]
         if {$slug ne ""} {
             incr fixed [expr {[font measure QLBold $slug] + [font measure QLList "  "]}]
         }
