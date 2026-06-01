@@ -1,5 +1,5 @@
 Name:           questlog
-Version:        1.0.2
+Version:        1.1.0
 Release:        1%{?dist}
 Summary:        GUI for finding, reading, and reopening past Claude Code sessions
 License:        MIT
@@ -58,6 +58,27 @@ install -D -m 0644 assets/questlog-512.png \
 %{_datadir}/icons/hicolor/512x512/apps/questlog.png
 
 %changelog
+* Sun Jun 01 2026 Weiwu Zhang <a@colourful.land> - 1.1.0-1
+- Subagents surface under their parent session in the list and search
+- Tool-call audit timeline in the session viewer
+- Export a session as Markdown
+- Turns and Duration columns; per-session actions menu (⋯)
+- Sortable column headers for date, size, and cost; cost cells colour-coded by tier
+- Folder cost totals shown in the cost column
+- First-run welcome banner
+- Search results batch-rendered at idle for a smooth fill; scan pauses while typing
+- Launcher --window and --search prefill flags
+- Ctrl+B folds the list column for focused reading
+- Rounded controls, badges, and SVG criterion buttons
+- Filter label and criterion subtitles; hover-reveal remove button on active criteria
+- Proportional reading font with a chooser and --font flag
+- Session grouping spine beside search-result snippets
+- Match index ordered rarest-keyword-first
+- Bold, italic, and inline-code rendering in the reading pane
+- Left-ruled blockquotes with hover Copy and Collapse in the session viewer
+- config.tcl consolidates all tuning constants (render slice, display caps, drag thresholds)
+- Single-file image: arm64 archive-name token normalised; static self-contained interpreter
+
 * Sat May 30 2026 Weiwu Zhang <a@colourful.land> - 1.0.2-1
 - Fix: session list could hang over a large recent history; a session file
   above 64 KB aborted the scan under Tcl 9 strict UTF-8 decoding

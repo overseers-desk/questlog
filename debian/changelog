@@ -1,3 +1,29 @@
+questlog (1.1.0) unstable; urgency=medium
+
+  * Subagents surface under their parent session in the list and search.
+  * Tool-call audit timeline in the session viewer.
+  * Export a session as Markdown.
+  * Turns and Duration columns; per-session actions menu (⋯).
+  * Sortable column headers for date, size, and cost; cost cells colour-coded by
+    tier; folder cost totals shown.
+  * First-run welcome banner.
+  * Search results batch-rendered at idle for a smooth fill; scan pauses while
+    typing.
+  * Launcher --window and --search prefill flags.
+  * Ctrl+B folds the list column for focused reading.
+  * Rounded controls, badges, and SVG criterion buttons.
+  * Filter label and criterion subtitles; hover-reveal remove on active criteria.
+  * Proportional reading font with a chooser and --font flag.
+  * Session grouping spine beside search-result snippets.
+  * Match index ordered rarest-keyword-first.
+  * Bold, italic, and inline-code rendering in the reading pane.
+  * Left-ruled blockquotes with hover Copy and Collapse in the session viewer.
+  * config.tcl consolidates all tuning constants.
+  * Single-file image: arm64 archive-name token normalised; static
+    self-contained interpreter.
+
+ -- Weiwu Zhang <a@colourful.land>  Sun, 01 Jun 2026 00:00:00 +0000
+
 questlog (1.0.2) unstable; urgency=medium
 
   * Fix: the session list could hang after a few rows over a large recent
