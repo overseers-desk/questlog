@@ -55,19 +55,17 @@ set SL [::questlog::ui::SessionList new .s resolvef lookup noop noop noop noop s
 pack .s -fill both -expand 1
 $SL apply_filter [dict create window 7d one_turn 1]
 
-set ns [info object namespace $SL]
 set fails 0
 proc check {label expected} {
-    global ns FOLDER fails
-    set SBF [set ${ns}::SessionsByFolder]
-    set n 0; set d 0
-    if {[dict exists $SBF $FOLDER]} {
-        set l [dict get $SBF $FOLDER]; set n [llength $l]; set d [llength [lsort -unique $l]]
-    }
+    global SL FOLDER fails
+    # The folder's session paths come from its node's children (the public
+    # folder_session_paths accessor); its count from folder_payload.
+    set l [$SL folder_session_paths $FOLDER]
+    set n [llength $l]
+    set d [llength [lsort -unique $l]]
     set c 0
-    if {[dict exists [set ${ns}::Folders] $FOLDER]} {
-        set c [dict get [dict get [set ${ns}::Folders] $FOLDER] count]
-    }
+    set fp [$SL folder_payload $FOLDER]
+    if {$fp ne ""} { set c [dict get $fp count] }
     set ok [expr {$n == $d && $d == $c && $c == $expected}]
     if {!$ok} { incr fails }
     puts [format "%s %-34s entries=%s distinct=%s count=%s (want %s)" \

@@ -86,14 +86,14 @@ check "subagent cost queued" [llength $::cost_calls] 1
 set child_path [lindex $::cost_calls 0]
 
 # Check initial values of parent (before cost is parsed)
-set s [dict get [set ${ns}::Sessions] $F]
+set s [$SL session_payload $F]
 check "parent initially has subagents flag" [dict get $s has_subagents] 1
 
 # 2. Simulate arrival of parent cost:
 # Input: 100, Output: 50 => $0.00105
 $SL refresh_cost $F [dict create cost_usd 0.00105 input_tokens 100 output_tokens 50 turns 1 duration_secs 5 model_breakdown {}]
 
-set s [dict get [set ${ns}::Sessions] $F]
+set s [$SL session_payload $F]
 check "parent own_cost set" [dict get $s own_cost] 0.00105
 check "parent total cost matches own_cost initially" [dict get $s cost] 0.00105
 check "parent total turns matches own_turns initially" [dict get $s turns] 1
@@ -104,7 +104,7 @@ check "parent total duration matches own_duration initially" [dict get $s durati
 $SL refresh_cost $child_path [dict create cost_usd 0.0018 input_tokens 200 output_tokens 80 turns 1 duration_secs 5 model_breakdown {}]
 
 # Check aggregated totals on parent session!
-set s [dict get [set ${ns}::Sessions] $F]
+set s [$SL session_payload $F]
 check "parent own_cost remains unchanged" [dict get $s own_cost] 0.00105
 check "parent aggregated cost summed up" [dict get $s cost] 0.00285
 check "parent aggregated turns summed up" [dict get $s turns] 2
@@ -114,7 +114,7 @@ check "parent aggregated duration summed up" [dict get $s duration_secs] 10
 check "running TotalCost summed up" [set ${ns}::TotalCost] 0.00285
 
 # Check folder cost
-set folder_info [dict get [set ${ns}::Folders] $FOLDER]
+set folder_info [$SL folder_payload $FOLDER]
 check "folder cost summed up" [dict get $folder_info cost] 0.00285
 
 ::questlog::path::_real_file delete -force $SAND

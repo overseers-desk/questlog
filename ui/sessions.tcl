@@ -48,15 +48,24 @@ proc ::questlog::ui::session_columns {} {
 # its snippets. A single click opens the session in the docked viewer and
 # anchors it to the relevant line.
 #
-# A text widget is the list; position is tracked with text marks:
-#   TailMark   right-gravity, always just before the implicit final newline.
-#   <folder>   fmark right-gravity at the heading start; femark left-gravity
-#              at the end of the folder's session group (new sessions land
-#              here); htag, a per-folder tag on the heading line for drop
-#              hit-testing.
-#   <session>  smark left-gravity at the header start; semark right-gravity
-#              at the session's end (new snippets land here); stag, a
-#              per-session tag carrying the click/drag bindings.
+# The list is one generic tree of nodes drawn into a single text widget. A
+# node is a folder, a session, or a subagent; each carries the position marks
+# and tag that locate it in the widget, plus a domain payload. Folders are the
+# roots; a session's subagents are its child nodes, appended at the session's
+# end region exactly as snippet and child rows render between a header and its
+# append point.
+#
+# A text widget is the list; each node tracks its position with two marks:
+#   node.start  the mark at the node's first char.
+#               Folders: right gravity (heading start). Sessions and subagents:
+#               left gravity (header start).
+#   node.end    the mark just past the node's last descendant line, the append
+#               point where the node's children and content land.
+#               Folders and sessions: left gravity.
+#   node.tag    the per-node text tag carrying the heading's drop hit-test
+#               (folders) or the row's click/drag bindings (sessions, subagents).
+# Plus TailMark: right gravity, always just before the implicit final newline,
+# the append point for new folder headings.
 # Gravity makes a mid-document insert push every mark to its right along
 # with it, so folder grouping streams without bespoke shuffling.
 #
@@ -82,11 +91,16 @@ oo::class create ::questlog::ui::SessionList {
     variable RunningSet       ;# dict uuid -> 1, replaced wholesale each tick
     variable Query            ;# {terms <list> nocase 0|1} for hit highlighting
     variable HitTags
-    variable Folders          ;# folder -> {fmark femark htag}
-    variable FolderOrder      ;# folders in arrival (mtime-desc) order
-    variable SessionsByFolder ;# folder -> ordered list of paths
-    variable Sessions         ;# path -> session dict (see model_add_session)
-    variable HtagFolder       ;# htag -> folder, for drop hit-testing
+    # The generic node store. Nodes maps a node id to its dict
+    # {parent kind expanded rendered start end tag children payload}; Roots is
+    # the ordered list of root (folder) node ids, in arrival (mtime-desc) order.
+    variable Nodes
+    variable Roots
+    # Domain indices into the node store: a folder name or a session/subagent
+    # path to its node id.
+    variable FolderNode       ;# folder name -> node id
+    variable PathNode         ;# session path OR subagent path -> node id
+    variable TagNode          ;# folder node.tag -> node id, for drop hit-testing
     variable Selected         ;# currently selected session path, or ""
     variable NextId
     variable Menu
@@ -109,7 +123,6 @@ oo::class create ::questlog::ui::SessionList {
     variable SortKey          ;# active sort column id: date | size | cost
     variable SortDir          ;# desc | asc
     variable ResortPending    ;# 1 while a debounced redraw is queued under a non-default sort
-    variable Children         ;# child path -> subagent model dict (issue #13)
     variable OnSubagents      ;# cb: parent path -> list of child row dicts
     variable OnSubagentCost   ;# cb: child path -> start the cost pass for it
 
@@ -149,14 +162,82 @@ oo::class create ::questlog::ui::SessionList {
     }
 
     method reset_model {} {
-        set Folders [dict create]
-        set FolderOrder [list]
-        set SessionsByFolder [dict create]
-        set Sessions [dict create]
-        set Children [dict create]
-        set HtagFolder [dict create]
+        set Nodes [dict create]
+        set Roots [list]
+        set FolderNode [dict create]
+        set PathNode [dict create]
+        set TagNode [dict create]
         set Selected ""
     }
+
+    # ---- generic node store ------------------------------------------
+    #
+    # A node id is allocated from NextId; the store keeps the structural fields
+    # (parent/kind/expanded/rendered/start/end/tag/children) generic and hangs
+    # the domain dict off `payload`. The accessors below are the single door to
+    # the store so every folder/session/subagent operation reads and writes
+    # node state the same way.
+
+    method node_new {kind parent key payload} {
+        set id "node[incr NextId]"
+        # `key` is the node's domain key (folder name for folders, file path for
+        # sessions and subagents): the reverse lookup from a node id back to the
+        # FolderNode / PathNode index, kept out of payload so payload stays the
+        # pristine per-entity dict.
+        dict set Nodes $id [dict create \
+            parent $parent kind $kind key $key expanded 0 rendered 0 \
+            start "" end "" tag "" children [list] payload $payload]
+        return $id
+    }
+    method node_exists {id} { return [dict exists $Nodes $id] }
+    method node_get {id} { return [dict get $Nodes $id] }
+    method node_field {id field} { return [dict get [dict get $Nodes $id] $field] }
+    method node_set {id field value} { dict set Nodes $id $field $value }
+    method node_payload {id} { return [dict get [dict get $Nodes $id] payload] }
+    method node_pget {id key {dflt ""}} {
+        return [dict getdef [dict get [dict get $Nodes $id] payload] $key $dflt]
+    }
+    method node_pset {id key value} {
+        dict set Nodes $id payload [dict replace \
+            [dict get [dict get $Nodes $id] payload] $key $value]
+    }
+
+    # ---- public payload accessors (white-box tests, and any caller that
+    # wants a read-only snapshot of a row's domain dict) -----------------
+
+    method session_payload {path} {
+        if {![dict exists $PathNode $path]} { return "" }
+        return [my node_payload [dict get $PathNode $path]]
+    }
+    method folder_payload {folder} {
+        if {![dict exists $FolderNode $folder]} { return "" }
+        return [my node_payload [dict get $FolderNode $folder]]
+    }
+
+    # ---- domain-keyed shims over the node store ----------------------
+    #
+    # Folder/session/subagent operations name their target by domain key
+    # (folder name or file path). These shims turn that key into a node id and
+    # read or write the structural and payload fields, so the bodies below read
+    # the same way they did against the old per-entity dicts.
+
+    method has_session {path} { return [dict exists $PathNode $path] }
+    method has_child {path}   { return [dict exists $PathNode $path] }
+    method has_folder {folder} { return [dict exists $FolderNode $folder] }
+
+    method sid {path} { return [dict get $PathNode $path] }
+    method fid {folder} { return [dict get $FolderNode $folder] }
+
+    method sget {path key {dflt ""}} { my node_pget [my sid $path] $key $dflt }
+    method sset {path key value} { my node_pset [my sid $path] $key $value }
+    method sflag {path field} { my node_field [my sid $path] $field }
+    method sflagset {path field value} { my node_set [my sid $path] $field $value }
+
+    method cget_field {path key {dflt ""}} { my node_pget [my sid $path] $key $dflt }
+    method cset {path key value} { my node_pset [my sid $path] $key $value }
+
+    method fget {folder key {dflt ""}} { my node_pget [my fid $folder] $key $dflt }
+    method fset {folder key value} { my node_pset [my fid $folder] $key $value }
 
     method build {} {
         ttk::frame $Top
@@ -402,11 +483,14 @@ oo::class create ::questlog::ui::SessionList {
         my layout_columns
         my draw_header
         $Text configure -state normal
-        foreach folder $FolderOrder { my redraw_folder_heading $folder }
-        dict for {path s} $Sessions {
-            if {[dict get $s rendered]} {
-                my redraw_header $path
-                if {[dict get $s expanded]} { my rerender_children $path }
+        foreach fid $Roots {
+            my redraw_folder_heading [my node_field $fid key]
+            foreach sid [my node_field $fid children] {
+                if {[my node_field $sid rendered]} {
+                    set path [my node_field $sid key]
+                    my redraw_header $path
+                    if {[my node_field $sid expanded]} { my rerender_children $path }
+                }
             }
         }
         $Text configure -state disabled
@@ -685,7 +769,7 @@ oo::class create ::questlog::ui::SessionList {
         if {$CriteriaActive} return
         if {![my row_matches_snapshot $row]} return
         set path [dict get $row path]
-        if {[dict exists $Sessions $path]} return
+        if {[dict exists $PathNode $path]} return
         $Text configure -state normal
         my anchor_save
         my model_add_session $path $row
@@ -735,37 +819,37 @@ oo::class create ::questlog::ui::SessionList {
             return
         }
         set path  [dict get $first path]
-        if {![dict exists $Sessions $path]} {
+        if {![my has_session $path]} {
             set row [{*}$LookupSession $path]
             if {$row eq ""} { set row [dict create folder [dict get $first folder]] }
             my model_add_session $path $row [dict get $first lineoff]
         }
         # Search folders are expanded, so render the session if it is not yet.
-        if {[my folder_expanded [dict get $Sessions $path folder]] \
-            && ![dict get $Sessions $path rendered]} {
+        if {[my folder_expanded [my sget $path folder]] \
+            && ![my sflag $path rendered]} {
             my render_session $path
         }
         set cap [::questlog::config::get snippets_per_session]
         foreach m $matches {
-            dict set Sessions $path count [expr {[dict get $Sessions $path count] + 1}]
-            if {[llength [dict get $Sessions $path snippets]] < $cap} {
+            my sset $path count [expr {[my sget $path count] + 1}]
+            if {[llength [my sget $path snippets]] < $cap} {
                 set btype   [dict get $m btype]
                 set content [dict get $m content]
                 set lineoff [dict get $m lineoff]
-                set sn [dict get $Sessions $path snippets]
+                set sn [my sget $path snippets]
                 lappend sn [list $btype $content $lineoff]
-                dict set Sessions $path snippets $sn
-                if {[dict get $Sessions $path rendered]} {
+                my sset $path snippets $sn
+                if {[my sflag $path rendered]} {
                     my render_snippet $path $btype $content $lineoff
                 }
             }
         }
-        if {[dict get $Sessions $path rendered]} { my redraw_header $path }
+        if {[my sflag $path rendered]} { my redraw_header $path }
     }
 
     method folder_expanded {folder} {
-        if {![dict exists $Folders $folder]} { return 0 }
-        return [dict get [dict get $Folders $folder] expanded]
+        if {![dict exists $FolderNode $folder]} { return 0 }
+        return [my node_field [dict get $FolderNode $folder] expanded]
     }
 
     # Record a session in the model without drawing it. A collapsed folder
@@ -784,31 +868,32 @@ oo::class create ::questlog::ui::SessionList {
         set cost  [dict getdef $row cost_usd ""]
         set turns [dict getdef $row turns ""]
         set dsecs [dict getdef $row duration_secs ""]
-        dict set Sessions $path [dict create \
+        # The session node: payload carries the per-session domain dict; the
+        # node's expanded/rendered flags, start/end marks, tag and children
+        # (the attached subagent nodes) live alongside it in the store.
+        set fid [my fid $folder]
+        set sid [my node_new session $fid $path [dict create \
             folder $folder label $label slug $slug ai_title $aitt \
             when $when mtime $mtime size $size uuid $uuid cost $cost \
             turns $turns duration_secs $dsecs \
             own_cost $cost own_turns $turns own_duration_secs $dsecs \
             count 0 first_lineno $first_lineno snippets [list] \
             has_subagents [dict getdef $row has_subagents 0] \
-            expanded 0 sub_paths [list] sub_total 0 \
-            children_listed 0 all_child_paths [list] chmark "" \
-            stag "" smark "" semark "" rendered 0]
-        dict lappend SessionsByFolder $folder $path
+            sub_total 0 children_listed 0 all_child_paths [list]]]
+        dict set PathNode $path $sid
+        my node_set $fid children [linsert [my node_field $fid children] end $sid]
 
         # Enumerate and trigger subagents' cost if there are any
         if {[dict getdef $row has_subagents 0]} {
             my ensure_children_enumerated $path
             my recompute_parent_totals $path
-            set cost [dict get [dict get $Sessions $path] cost]
+            set cost [my sget $path cost]
         }
 
         # Count and size accrue together (size is known at scan time); fold both
         # into one heading redraw. Cost arrives later, on its own redraw.
-        dict set Folders $folder count \
-            [expr {[dict get [dict get $Folders $folder] count] + 1}]
-        dict set Folders $folder size \
-            [expr {[dict getdef [dict get $Folders $folder] size 0] + $size}]
+        my fset $folder count [expr {[my fget $folder count] + 1}]
+        my fset $folder size [expr {[my fget $folder size 0] + $size}]
         my redraw_folder_heading $folder
         if {$cost ne "" && $cost > 0} {
             my bump_folder_cost $folder $cost
@@ -820,9 +905,10 @@ oo::class create ::questlog::ui::SessionList {
     # Draw a session that the model already knows, inserting its header (and
     # any stored snippets) at the folder's append point. Idempotent.
     method render_session {path} {
-        if {[dict get $Sessions $path rendered]} return
-        set folder [dict get $Sessions $path folder]
-        set femark [dict get [dict get $Folders $folder] femark]
+        set sid [my sid $path]
+        if {[my node_field $sid rendered]} return
+        set folder [my sget $path folder]
+        set femark [my node_field [my fid $folder] end]
         set stag "s#[incr NextId]"
         set sstart [$Text index $femark]
         set info [my build_session_line $path]
@@ -842,10 +928,10 @@ oo::class create ::questlog::ui::SessionList {
         $Text mark set $semark $send
         $Text mark gravity $semark left
         $Text mark set $femark $send
-        dict set Sessions $path stag $stag
-        dict set Sessions $path smark $smark
-        dict set Sessions $path semark $semark
-        dict set Sessions $path rendered 1
+        my node_set $sid tag $stag
+        my node_set $sid start $smark
+        my node_set $sid end $semark
+        my node_set $sid rendered 1
         $Text tag bind $stag <ButtonPress-1> \
             [list [self] on_session_press $path %X %Y]
         $Text tag bind $stag <ButtonRelease-1> \
@@ -860,18 +946,18 @@ oo::class create ::questlog::ui::SessionList {
         # cursor on enter/leave; entering also brightens the row's ⋯ control.
         $Text tag bind $stag <Enter> [list [self] on_row_enter $path]
         $Text tag bind $stag <Leave> [list [self] on_row_leave $path]
-        foreach snip [dict get $Sessions $path snippets] {
+        foreach snip [my sget $path snippets] {
             lassign $snip btype content lineoff
             my render_snippet $path $btype $content $lineoff
         }
-        if {[dict get $Sessions $path expanded]} { my render_children $path }
+        if {[my node_field $sid expanded]} { my render_children $path }
         if {$Selected eq $path} {
             $Text tag add selected $smark "$smark lineend"
         }
     }
 
     method render_snippet {path btype content lineoff} {
-        set semark [dict get $Sessions $path semark]
+        set semark [my node_field [my sid $path] end]
         set ntag "n#[incr NextId]"
         # Normalise to a type with a known badge pill; an unknown block type
         # falls back to the neutral system pill.
@@ -888,9 +974,10 @@ oo::class create ::questlog::ui::SessionList {
         $Text insert $tmp "▏" [list snippet snippetbar $ntag]
         # Rounded type badge: a label drawing the type name centred over the
         # shared pill image (Tk's SVG cannot render text itself). It is created
-        # lazily through -create so only the on-screen badges become real widgets
-        # — a whole-corpus search can list thousands of snippets, and eagerly
-        # building a widget per badge pegs a core; -create keeps it to a screenful.
+        # lazily through -create so only the on-screen badges become real
+        # widgets: a whole-corpus search can list thousands of snippets, and
+        # eagerly building a widget per badge pegs a core; -create keeps it to a
+        # screenful.
         set wstart [$Text index $tmp]
         $Text window create $tmp -align center -pady 1 -padx 3 \
             -create [list [self] make_badge $bt $fgrole $path $lineoff]
@@ -916,9 +1003,9 @@ oo::class create ::questlog::ui::SessionList {
         # snippet (the session receiving snippets is always its folder's last).
         $Text mark set $semark [$Text index $tmp]
         $Text mark unset $tmp
-        set folder [dict get $Sessions $path folder]
-        if {[dict exists $Folders $folder]} {
-            $Text mark set [dict get [dict get $Folders $folder] femark] \
+        set folder [my sget $path folder]
+        if {[my has_folder $folder]} {
+            $Text mark set [my node_field [my fid $folder] end] \
                 [$Text index $semark]
         }
     }
@@ -949,14 +1036,15 @@ oo::class create ::questlog::ui::SessionList {
     # rides the same second pass as a session's, triggered when first drawn.
 
     method toggle_subagents {path} {
-        if {![dict exists $Sessions $path]} return
-        if {![dict get $Sessions $path has_subagents]} return
-        set exp [expr {![dict get $Sessions $path expanded]}]
-        dict set Sessions $path expanded $exp
+        if {![my has_session $path]} return
+        if {![my sget $path has_subagents]} return
+        set sid [my sid $path]
+        set exp [expr {![my node_field $sid expanded]}]
+        my node_set $sid expanded $exp
         $Text configure -state normal
         my anchor_save
         if {$exp} { my expand_subagents $path } else { my collapse_subagents $path }
-        if {[dict get $Sessions $path rendered]} { my redraw_header $path }
+        if {[my node_field $sid rendered]} { my redraw_header $path }
         my anchor_restore
         $Text configure -state disabled
     }
@@ -964,55 +1052,97 @@ oo::class create ::questlog::ui::SessionList {
     # Render a session's children. With no attached set yet (browse, or a search
     # case-A session whose subagents did not match), enumerate them all; otherwise
     # render the attached set (sub_paths, the matched children in search).
+    # The attached subagent subset, as child paths in render order, derived from
+    # the session node's children (the node ids of the attached subagents).
+    method session_child_paths {path} {
+        set out [list]
+        foreach cid [my node_field [my sid $path] children] {
+            lappend out [my node_field $cid key]
+        }
+        return $out
+    }
+
+    # The start mark of a session's children block, or "" when no child is
+    # rendered: the first rendered child node's start mark. This is where the
+    # old transient chmark sat (left gravity at the session's append point when
+    # the first child went in), so deleting from here to the session end drops
+    # the whole children run.
+    method children_region_start {path} {
+        foreach cid [my node_field [my sid $path] children] {
+            if {[my node_field $cid rendered]} {
+                return [my node_field $cid start]
+            }
+        }
+        return ""
+    }
+
+    # Attach a subagent path to the session node's children (the rendered
+    # subset), preserving arrival order and skipping a path already attached.
+    method attach_child {path cp} {
+        set sid [my sid $path]
+        set cid [my sid $cp]
+        if {$cid in [my node_field $sid children]} return
+        my node_set $sid children [linsert [my node_field $sid children] end $cid]
+    }
+
     method expand_subagents {path} {
-        if {[llength [dict get $Sessions $path sub_paths]] == 0} {
+        if {[llength [my node_field [my sid $path] children]] == 0} {
             my ensure_children_enumerated $path
-            dict set Sessions $path sub_paths \
-                [dict get $Sessions $path all_child_paths]
+            foreach cp [my sget $path all_child_paths] { my attach_child $path $cp }
         }
         my render_children $path
     }
 
     method collapse_subagents {path} {
-        set chm [dict getdef [dict get $Sessions $path] chmark ""]
+        set chm [my children_region_start $path]
         if {$chm ne ""} {
-            catch {$Text delete $chm [dict get $Sessions $path semark]}
-            dict set Sessions $path chmark ""
+            catch {$Text delete $chm [my node_field [my sid $path] end]}
         }
-        foreach cp [dict get $Sessions $path sub_paths] {
-            if {[dict exists $Children $cp]} {
-                dict set Children $cp rendered 0
-                dict set Children $cp ctag ""
-            }
+        foreach cp [my session_child_paths $path] {
+            if {[my has_child $cp]} { my reset_child_render $cp }
         }
+    }
+
+    # Drop a subagent's render state: its rendered flag, tag, and the start/end
+    # marks left behind by a deleted children block (so the "ch" marks do not
+    # accumulate across collapse/rerender cycles).
+    method reset_child_render {cp} {
+        set cid [my sid $cp]
+        catch {$Text mark unset [my node_field $cid start]}
+        catch {$Text mark unset [my node_field $cid end]}
+        my node_set $cid rendered 0
+        my node_set $cid tag ""
+        my node_set $cid start ""
+        my node_set $cid end ""
     }
 
     # Ask the scanner for every subagent of this session and seed their models
     # (meta only, no hits). Once per session; the matched-children set is built
     # separately as search matches arrive.
     method ensure_children_enumerated {path} {
-        if {[dict get $Sessions $path children_listed]} return
+        if {[my sget $path children_listed]} return
         set listed [list]
         foreach crow [{*}$OnSubagents $path] {
-            my child_add_model $crow
+            my child_add_model $path $crow
             lappend listed [dict get $crow path]
         }
-        dict set Sessions $path all_child_paths $listed
-        dict set Sessions $path children_listed 1
+        my sset $path all_child_paths $listed
+        my sset $path children_listed 1
     }
 
-    # Seed a child's model from a row dict (from the scanner or a search match),
-    # meta only. Guarded so a later re-enumeration cannot wipe hits already
-    # attached from a match.
-    method child_add_model {crow} {
+    # Seed a subagent node from a row dict (from the scanner or a search match),
+    # meta only, parented to its session node but not yet attached to the
+    # rendered subset (that is the session node's children). Guarded so a later
+    # re-enumeration cannot wipe hits already attached from a match.
+    method child_add_model {parent crow} {
         set cp [dict get $crow path]
-        if {[dict exists $Children $cp]} return
+        if {[my has_child $cp]} return
         set label [dict getdef $crow description ""]
         if {$label eq ""} { set label [dict getdef $crow agent_type ""] }
         if {$label eq ""} {
             set label [dict getdef $crow agent_id [file rootname [file tail $cp]]]
         }
-        dict set Children $cp [dict create \
+        set cid [my node_new subagent [my sid $parent] $cp [dict create \
             parent_path [dict getdef $crow parent_path ""] \
             folder [dict getdef $crow folder ""] \
             when [my fmt_time [dict getdef $crow mtime 0]] \
@@ -1021,17 +1151,17 @@ oo::class create ::questlog::ui::SessionList {
             cost "" turns "" duration_secs "" \
             agent_type [dict getdef $crow agent_type ""] \
             agent_id [dict getdef $crow agent_id [file rootname [file tail $cp]]] \
-            label $label hits [list] open_lineoff 0 \
-            rendered 0 ctag ""]
+            label $label hits [list] open_lineoff 0]]
+        dict set PathNode $cp $cid
         # Trigger the cost pass for the subagent immediately.
         {*}$OnSubagentCost $cp
     }
 
     method render_children {path} {
-        if {![dict get $Sessions $path rendered]} return
-        foreach cp [dict get $Sessions $path sub_paths] {
-            if {![dict exists $Children $cp]} continue
-            if {[dict get $Children $cp rendered]} continue
+        if {![my sflag $path rendered]} return
+        foreach cp [my session_child_paths $path] {
+            if {![my has_child $cp]} continue
+            if {[my node_field [my sid $cp] rendered]} continue
             my render_child $path $cp
         }
     }
@@ -1040,17 +1170,13 @@ oo::class create ::questlog::ui::SessionList {
     # session are few). Used when a child's cost arrives, so the new cell lands
     # without per-row mark surgery.
     method rerender_children {path} {
-        if {![dict exists $Sessions $path]} return
-        if {![dict get $Sessions $path rendered]} return
-        set chm [dict getdef [dict get $Sessions $path] chmark ""]
+        if {![my has_session $path]} return
+        if {![my sflag $path rendered]} return
+        set chm [my children_region_start $path]
         if {$chm eq ""} return
-        $Text delete $chm [dict get $Sessions $path semark]
-        dict set Sessions $path chmark ""
-        foreach cp [dict get $Sessions $path sub_paths] {
-            if {[dict exists $Children $cp]} {
-                dict set Children $cp rendered 0
-                dict set Children $cp ctag ""
-            }
+        $Text delete $chm [my node_field [my sid $path] end]
+        foreach cp [my session_child_paths $path] {
+            if {[my has_child $cp]} { my reset_child_render $cp }
         }
         my render_children $path
     }
@@ -1060,16 +1186,18 @@ oo::class create ::questlog::ui::SessionList {
     # pinned in the parent's columns; then, in search, its matched lines as
     # full-width snippet rows beneath (capped at snippets_per_subagent already).
     method render_child {path cp} {
-        if {![dict exists $Children $cp]} return
-        if {[dict get $Children $cp rendered]} return
-        set c [dict get $Children $cp]
-        set semark [dict get $Sessions $path semark]
-        if {[dict getdef [dict get $Sessions $path] chmark ""] eq ""} {
-            set chm "ch[incr NextId]"
-            $Text mark set $chm [$Text index $semark]
-            $Text mark gravity $chm left
-            dict set Sessions $path chmark $chm
-        }
+        if {![my has_child $cp]} return
+        set cid [my sid $cp]
+        if {[my node_field $cid rendered]} return
+        set semark [my node_field [my sid $path] end]
+        # The subagent node's start mark sits at its row's first char, left
+        # gravity, so an insert at the session append point (right of it) keeps
+        # it pinned to this row. The first child's start mark is the children
+        # block start (where the old transient chmark sat), the anchor
+        # children_region_start hands collapse/rerender to delete from.
+        set cstart "ch[incr NextId]"
+        $Text mark set $cstart [$Text index $semark]
+        $Text mark gravity $cstart left
         set ctag "c#[incr NextId]"
         set info [my build_child_line $cp]
         set tmp tmpchild
@@ -1080,22 +1208,31 @@ oo::class create ::questlog::ui::SessionList {
         my apply_child_tags $rstart $cp $info
         $Text mark set $semark [$Text index $tmp]
         $Text mark unset $tmp
+        # The child node's end advances past its own rows so its region nests
+        # inside the session's; render_child_snippet keeps moving both forward.
+        set cend "ch[incr NextId]"
+        $Text mark set $cend [$Text index $semark]
+        $Text mark gravity $cend left
+        my node_set $cid start $cstart
+        my node_set $cid end $cend
+        set c [my node_payload $cid]
         foreach h [dict get $c hits] {
             lassign $h btype content lineoff
             my render_child_snippet $path $cp $content $lineoff
         }
-        set folder [dict get $Sessions $path folder]
-        if {[dict exists $Folders $folder]} {
-            $Text mark set [dict get [dict get $Folders $folder] femark] \
+        $Text mark set $cend [$Text index $semark]
+        set folder [my sget $path folder]
+        if {[my has_folder $folder]} {
+            $Text mark set [my node_field [my fid $folder] end] \
                 [$Text index $semark]
         }
         set lineoff 0
         if {[llength [dict get $c hits]] > 0} {
             set lineoff [lindex [lindex [dict get $c hits] 0] 2]
         }
-        dict set Children $cp ctag $ctag
-        dict set Children $cp open_lineoff $lineoff
-        dict set Children $cp rendered 1
+        my node_set $cid tag $ctag
+        my node_pset $cid open_lineoff $lineoff
+        my node_set $cid rendered 1
         $Text tag bind $ctag <ButtonRelease-1> [list [self] on_child_release $cp]
         $Text tag bind $ctag <<ContextMenu>> [list [self] on_child_right $cp %X %Y]
         $Text tag bind $ctag <Enter> [list $Text configure -cursor hand2]
@@ -1111,7 +1248,7 @@ oo::class create ::questlog::ui::SessionList {
     # parent+child view). Lighter than a parent snippet (no badge widget): a
     # deeper spine then the hit-centred content with the terms emboldened.
     method render_child_snippet {path cp content lineoff} {
-        set semark [dict get $Sessions $path semark]
+        set semark [my node_field [my sid $path] end]
         set ntag "c#[incr NextId]"
         set tmp tmpcsnip
         $Text mark set $tmp [$Text index $semark]
@@ -1133,7 +1270,7 @@ oo::class create ::questlog::ui::SessionList {
     # Build a subagent's header row: the tree spine, the bold agent type, the
     # description, and the right-pinned metadata cells.
     method build_child_line {cp} {
-        set c [dict get $Children $cp]
+        set c [my node_payload [my sid $cp]]
         set cells [my meta_cells $c]
         set spine "▏  "
         set subj $spine
@@ -1189,7 +1326,7 @@ oo::class create ::questlog::ui::SessionList {
         }
         lassign [dict getdef [dict get $info offs] cost {-1 0}] co cl
         if {$co >= 0 && $cl > 0} {
-            set cst [dict getdef [dict get $Children $cp] cost ""]
+            set cst [my cget_field $cp cost ""]
             if {$cst ne "" && $cst >= 0.10} {
                 set tag [expr {$cst >= 1.0 ? "cost-outlier" : "cost-mid"}]
                 $Text tag add $tag "$row_start + ${co}c" \
@@ -1199,8 +1336,8 @@ oo::class create ::questlog::ui::SessionList {
     }
 
     method on_child_release {cp} {
-        if {![dict exists $Children $cp]} return
-        {*}$OnOpen $cp [dict getdef [dict get $Children $cp] open_lineoff 0]
+        if {![my has_child $cp]} return
+        {*}$OnOpen $cp [my cget_field $cp open_lineoff 0]
     }
 
     # The reduced menu for a subagent child row: a subagent is not a resumable
@@ -1250,45 +1387,42 @@ oo::class create ::questlog::ui::SessionList {
         set cp     [dict get $first path]
         set parent [dict get $first parent_path]
         set folder [dict get $first folder]
-        if {![dict exists $Sessions $parent]} {
+        if {![my has_session $parent]} {
             set row [{*}$LookupSession $parent]
             if {$row eq ""} { set row [dict create folder $folder] }
             my model_add_session $parent $row
         }
-        dict set Sessions $parent has_subagents 1
-        if {[my folder_expanded [dict get $Sessions $parent folder]] \
-            && ![dict get $Sessions $parent rendered]} {
+        my sset $parent has_subagents 1
+        if {[my folder_expanded [my sget $parent folder]] \
+            && ![my sflag $parent rendered]} {
             my render_session $parent
         }
         my ensure_children_enumerated $parent
-        if {![dict exists $Children $cp]} {
-            my child_add_model [dict create path $cp parent_path $parent \
+        if {![my has_child $cp]} {
+            my child_add_model $parent [dict create path $cp parent_path $parent \
                 folder $folder agent_id [dict getdef $first agent_id ""]]
         }
         set cap [::questlog::config::get snippets_per_subagent]
-        set hits [dict get $Children $cp hits]
+        set hits [my cget_field $cp hits]
         foreach m $matches {
-            dict set Sessions $parent sub_total \
-                [expr {[dict get $Sessions $parent sub_total] + 1}]
+            my sset $parent sub_total [expr {[my sget $parent sub_total] + 1}]
             if {[llength $hits] < $cap} {
                 lappend hits [list [dict get $m btype] \
                     [dict get $m content] [dict get $m lineoff]]
             }
         }
-        dict set Children $cp hits $hits
-        if {$cp ni [dict get $Sessions $parent sub_paths]} {
-            dict lappend Sessions $parent sub_paths $cp
-        }
+        my cset $cp hits $hits
+        my attach_child $parent $cp
         # Case B (no direct hit in the parent) auto-expands so the matched
         # subagents are visible; case C keeps the parent collapsed with the pip.
-        if {[dict get $Sessions $parent count] == 0} {
-            dict set Sessions $parent expanded 1
+        if {[my sget $parent count] == 0} {
+            my node_set [my sid $parent] expanded 1
         }
-        if {[dict get $Sessions $parent expanded] \
-            && [dict get $Sessions $parent rendered]} {
+        if {[my node_field [my sid $parent] expanded] \
+            && [my sflag $parent rendered]} {
             my render_child $parent $cp
         }
-        if {[dict get $Sessions $parent rendered]} { my redraw_header $parent }
+        if {[my sflag $parent rendered]} { my redraw_header $parent }
     }
 
     method session_label {path row} {
@@ -1301,7 +1435,7 @@ oo::class create ::questlog::ui::SessionList {
     # until the second-pass worker fills it in; an unknown model (negative
     # cost) stays blank.
     method session_meta_cells {path} {
-        return [my meta_cells [dict get $Sessions $path]]
+        return [my meta_cells [my session_payload $path]]
     }
 
     # The metadata cell values for a row dict (a session or a subagent child),
@@ -1341,7 +1475,7 @@ oo::class create ::questlog::ui::SessionList {
     # char ranges the caller tags, and a per-column {off len} map (offs) so the
     # cost tier colour and the actions cell can be located.
     method build_session_line {path} {
-        set s [dict get $Sessions $path]
+        set s [my session_payload $path]
         set cells [my session_meta_cells $path]
 
         set running [dict exists $RunningSet [dict get $s uuid]]
@@ -1369,7 +1503,7 @@ oo::class create ::questlog::ui::SessionList {
         set chev_off -1
         if {[dict get $s has_subagents]} {
             set chev_off 0
-            append subj [expr {[dict get $s expanded] ? "▾" : "▸"}]
+            append subj [expr {[my sflag $path expanded] ? "▾" : "▸"}]
             append subj " "
         }
         set glyph_off [string length $subj]
@@ -1450,7 +1584,7 @@ oo::class create ::questlog::ui::SessionList {
         my tag_glyphs $row_start [dict getdef $info glyph_off 0]
         lassign [dict getdef [dict get $info offs] cost {-1 0}] co cl
         if {$co >= 0 && $cl > 0} {
-            set c [dict getdef [dict get $Sessions $path] cost ""]
+            set c [my sget $path cost]
             if {$c ne "" && $c >= 0.10} {
                 set tag [expr {$c >= 1.0 ? "cost-outlier" : "cost-mid"}]
                 $Text tag add $tag "$row_start + ${co}c" \
@@ -1493,17 +1627,17 @@ oo::class create ::questlog::ui::SessionList {
     # surrounding lines untouched, so a per-tick glyph refresh never shifts
     # the view.
     method redraw_header {path} {
-        set s [dict get $Sessions $path]
-        if {![dict get $s rendered]} return
-        set smark [dict get $s smark]
-        set stag  [dict get $s stag]
+        set sid [my sid $path]
+        if {![my node_field $sid rendered]} return
+        set smark [my node_field $sid start]
+        set stag  [my node_field $sid tag]
         set info [my build_session_line $path]
         $Text delete $smark "$smark lineend"
         $Text insert $smark [dict get $info line] \
             [list sessionhead $stag]
         my apply_line_tags $smark $path $info
         if {$Selected eq $path} {
-            $Text tag add selected $smark [dict get $s semark]
+            $Text tag add selected $smark [my node_field $sid end]
         }
     }
 
@@ -1513,7 +1647,7 @@ oo::class create ::questlog::ui::SessionList {
     }
 
     method ensure_folder {folder} {
-        if {[dict exists $Folders $folder]} return
+        if {[my has_folder $folder]} return
         set label [::questlog::path::display_label [{*}$ResolveFolder $folder] $folder]
         set htag  "f#[incr NextId]"
         # Browsing opens folders collapsed (an overview of projects); a search
@@ -1523,8 +1657,16 @@ oo::class create ::questlog::ui::SessionList {
         set expanded [expr {$CriteriaActive ? 1 : 0}]
         set fmark  "fm[incr NextId]"
         set femark "fe[incr NextId]"
-        dict set Folders $folder [dict create fmark $fmark femark $femark \
-            htag $htag label $label count 0 cost 0.0 size 0 expanded $expanded]
+        # The folder node: a root, payload {label count cost size}; its start
+        # mark is the heading start (fmark), its end the folder's append point
+        # (femark, where new sessions land), its tag the heading's drop hit-test.
+        set fid [my node_new folder "" $folder \
+            [dict create label $label count 0 cost 0.0 size 0]]
+        my node_set $fid tag $htag
+        my node_set $fid start $fmark
+        my node_set $fid end $femark
+        my node_set $fid expanded $expanded
+        dict set FolderNode $folder $fid
         set fstart [$Text index TailMark]
         set info [my folder_heading_info $folder]
         $Text insert TailMark "[dict get $info line]\n" \
@@ -1534,9 +1676,8 @@ oo::class create ::questlog::ui::SessionList {
         $Text mark gravity $fmark right
         $Text mark set $femark [$Text index TailMark]
         $Text mark gravity $femark left
-        dict set HtagFolder $htag $folder
-        dict set SessionsByFolder $folder [list]
-        lappend FolderOrder $folder
+        dict set TagNode $htag $fid
+        lappend Roots $fid
         $Text tag bind $htag <Button-1> [list [self] toggle_folder $folder]
     }
 
@@ -1546,8 +1687,8 @@ oo::class create ::questlog::ui::SessionList {
     # date cell, so a double tab opens straight into the size column. Returns the
     # line and the char ranges apply_folder_tags bolds.
     method folder_heading_info {folder} {
-        set f [dict get $Folders $folder]
-        set marker [expr {[dict get $f expanded] ? "▾" : "▸"}]
+        set f [my folder_payload $folder]
+        set marker [expr {[my node_field [my fid $folder] expanded] ? "▾" : "▸"}]
         set n [dict get $f count]
         set count_str [expr {$n > 0 ? " ($n)" : ""}]
         set size_sum ""
@@ -1604,23 +1745,24 @@ oo::class create ::questlog::ui::SessionList {
     }
 
     method redraw_folder_heading {folder} {
-        if {![dict exists $Folders $folder]} return
-        set f [dict get $Folders $folder]
-        set fmark [dict get $f fmark]
+        if {![my has_folder $folder]} return
+        set fid [my fid $folder]
+        set fmark [my node_field $fid start]
         set info [my folder_heading_info $folder]
         $Text delete $fmark "$fmark lineend"
         # Temporarily set gravity to left so the insert does not push fmark
         $Text mark gravity $fmark left
         $Text insert $fmark [dict get $info line] \
-            [list folderhead [dict get $f htag]]
+            [list folderhead [my node_field $fid tag]]
         $Text mark gravity $fmark right
         my apply_folder_tags $fmark $info
     }
 
     method toggle_folder {folder} {
-        if {![dict exists $Folders $folder]} return
-        set exp [expr {![dict get [dict get $Folders $folder] expanded]}]
-        dict set Folders $folder expanded $exp
+        if {![my has_folder $folder]} return
+        set fid [my fid $folder]
+        set exp [expr {![my node_field $fid expanded]}]
+        my node_set $fid expanded $exp
         $Text configure -state normal
         if {$exp} { my expand_folder $folder } else { my collapse_folder $folder }
         my redraw_folder_heading $folder
@@ -1628,41 +1770,56 @@ oo::class create ::questlog::ui::SessionList {
     }
 
     method expand_folder {folder} {
-        foreach path [my sort_paths [dict getdef $SessionsByFolder $folder {}] $Sessions] {
+        foreach path [my sort_paths [my folder_session_paths $folder] [my folder_session_src $folder]] {
             my render_session $path
         }
+    }
+
+    # A folder's session paths, in the order they sit under the folder node.
+    method folder_session_paths {folder} {
+        if {![my has_folder $folder]} { return [list] }
+        set out [list]
+        foreach sid [my node_field [my fid $folder] children] {
+            lappend out [my node_field $sid key]
+        }
+        return $out
+    }
+
+    # A path->payload map over a folder's sessions, the source sort_paths reads
+    # its key fields (mtime/size/cost/turns/duration_secs) from.
+    method folder_session_src {folder} {
+        set src [dict create]
+        foreach path [my folder_session_paths $folder] {
+            dict set src $path [my session_payload $path]
+        }
+        return $src
     }
 
     # Delete every rendered line of the folder's body and drop the per-session
     # render marks; the sessions remain in the model and redraw on the next
     # expand. No hidden text is left behind.
     method collapse_folder {folder} {
-        set f [dict get $Folders $folder]
-        set fmark [dict get $f fmark]
-        set femark [dict get $f femark]
+        set fid [my fid $folder]
+        set fmark [my node_field $fid start]
+        set femark [my node_field $fid end]
         set bodystart [$Text index "$fmark lineend +1c"]
         $Text delete $bodystart $femark
         $Text mark set $femark $bodystart
-        foreach path [dict getdef $SessionsByFolder $folder {}] {
-            if {![dict exists $Sessions $path]} continue
-            if {![dict get $Sessions $path rendered]} continue
-            catch {$Text mark unset [dict get $Sessions $path smark] \
-                                    [dict get $Sessions $path semark]}
-            set chm [dict getdef [dict get $Sessions $path] chmark ""]
-            if {$chm ne ""} { catch {$Text mark unset $chm} }
-            dict set Sessions $path rendered 0
-            dict set Sessions $path stag ""
-            dict set Sessions $path smark ""
-            dict set Sessions $path semark ""
-            dict set Sessions $path chmark ""
+        foreach path [my folder_session_paths $folder] {
+            if {![my has_session $path]} continue
+            set sid [my sid $path]
+            if {![my node_field $sid rendered]} continue
+            catch {$Text mark unset [my node_field $sid start] \
+                                    [my node_field $sid end]}
             # The children's render marks vanished with the body; reset their
-            # flags so a later expand redraws them.
-            foreach cp [dict get $Sessions $path sub_paths] {
-                if {[dict exists $Children $cp]} {
-                    dict set Children $cp rendered 0
-                    dict set Children $cp ctag ""
-                }
+            # flags and drop their marks so a later expand redraws them.
+            foreach cp [my session_child_paths $path] {
+                if {[my has_child $cp]} { my reset_child_render $cp }
             }
+            my node_set $sid rendered 0
+            my node_set $sid tag ""
+            my node_set $sid start ""
+            my node_set $sid end ""
         }
         # Drop the now-empty per-session / per-snippet / per-child tags left by
         # the delete.
@@ -1676,16 +1833,14 @@ oo::class create ::questlog::ui::SessionList {
     }
 
     method bump_folder_count {folder delta} {
-        if {![dict exists $Folders $folder]} return
-        dict set Folders $folder count \
-            [expr {[dict get [dict get $Folders $folder] count] + $delta}]
+        if {![my has_folder $folder]} return
+        my fset $folder count [expr {[my fget $folder count] + $delta}]
         my redraw_folder_heading $folder
     }
 
     method bump_folder_cost {folder delta} {
-        if {![dict exists $Folders $folder]} return
-        dict set Folders $folder cost \
-            [expr {[dict getdef [dict get $Folders $folder] cost 0.0] + $delta}]
+        if {![my has_folder $folder]} return
+        my fset $folder cost [expr {[my fget $folder cost 0.0] + $delta}]
         my redraw_folder_heading $folder
     }
 
@@ -1704,36 +1859,35 @@ oo::class create ::questlog::ui::SessionList {
     # updates the Sessions cell, bumps the folder aggregate and the running
     # total, then redraws the row's meta region in place.
     method refresh_cost {path cost_dict} {
+        if {![dict exists $PathNode $path]} return
         # A subagent's cost lands on its child row, not a session row.
-        if {[dict exists $Children $path]} {
+        if {[my node_field [my sid $path] kind] eq "subagent"} {
             my refresh_child_cost $path $cost_dict
             return
         }
-        if {![dict exists $Sessions $path]} return
-        set s [dict get $Sessions $path]
-        set old_cost [dict getdef $s cost ""]
+        set folder [my sget $path folder]
+        set old_cost [my sget $path cost]
         if {$old_cost eq "" || $old_cost < 0} { set old_cost 0.0 }
-        set own_new [dict get $cost_dict cost_usd]
-        dict set Sessions $path own_cost $own_new
-        dict set Sessions $path own_turns [dict getdef $cost_dict turns ""]
-        dict set Sessions $path own_duration_secs [dict getdef $cost_dict duration_secs ""]
+        my sset $path own_cost [dict get $cost_dict cost_usd]
+        my sset $path own_turns [dict getdef $cost_dict turns ""]
+        my sset $path own_duration_secs [dict getdef $cost_dict duration_secs ""]
 
         my recompute_parent_totals $path
 
-        set new_cost [dict get [dict get $Sessions $path] cost]
+        set new_cost [my sget $path cost]
         if {$new_cost eq "" || $new_cost < 0} { set new_cost 0.0 }
         set delta [expr {$new_cost - $old_cost}]
 
         # bump_folder_cost mutates the heading line and redraw_header
-        # mutates the session line — both go through $Text delete/insert,
+        # mutates the session line: both go through $Text delete/insert,
         # so the widget must be in normal state for the duration.
         $Text configure -state normal
         if {$delta != 0} {
-            my bump_folder_cost [dict get $s folder] $delta
+            my bump_folder_cost $folder $delta
             set TotalCost [expr {$TotalCost + $delta}]
             my refresh_status
         }
-        if {[dict get $s rendered]} { my redraw_header $path }
+        if {[my sflag $path rendered]} { my redraw_header $path }
         $Text configure -state disabled
         # The worker result can change cost-, turns- or duration-sorted order.
         if {$SortKey in {cost turns duration}} { my schedule_resort }
@@ -1744,32 +1898,32 @@ oo::class create ::questlog::ui::SessionList {
     # session level. Redraws the parent's children block and updates the parent
     # row.
     method refresh_child_cost {cp cost_dict} {
-        if {![dict exists $Children $cp]} return
-        dict set Children $cp cost [dict get $cost_dict cost_usd]
-        dict set Children $cp turns [dict getdef $cost_dict turns ""]
-        dict set Children $cp duration_secs [dict getdef $cost_dict duration_secs ""]
-        set parent [dict get $Children $cp parent_path]
-        if {[dict exists $Sessions $parent]} {
-            set s [dict get $Sessions $parent]
-            set old_cost [dict getdef $s cost ""]
+        if {![my has_child $cp]} return
+        my cset $cp cost [dict get $cost_dict cost_usd]
+        my cset $cp turns [dict getdef $cost_dict turns ""]
+        my cset $cp duration_secs [dict getdef $cost_dict duration_secs ""]
+        set parent [my cget_field $cp parent_path]
+        if {[my has_session $parent]} {
+            set folder [my sget $parent folder]
+            set old_cost [my sget $parent cost]
             if {$old_cost eq "" || $old_cost < 0} { set old_cost 0.0 }
 
             my recompute_parent_totals $parent
 
-            set new_cost [dict get [dict get $Sessions $parent] cost]
+            set new_cost [my sget $parent cost]
             if {$new_cost eq "" || $new_cost < 0} { set new_cost 0.0 }
             set delta [expr {$new_cost - $old_cost}]
 
             $Text configure -state normal
             if {$delta != 0} {
-                my bump_folder_cost [dict get $s folder] $delta
+                my bump_folder_cost $folder $delta
                 set TotalCost [expr {$TotalCost + $delta}]
                 my refresh_status
             }
-            if {[dict get $s rendered]} {
+            if {[my sflag $parent rendered]} {
                 my redraw_header $parent
             }
-            if {[dict get $Children $cp rendered]} {
+            if {[my node_field [my sid $cp] rendered]} {
                 my rerender_children $parent
             }
             $Text configure -state disabled
@@ -1781,8 +1935,8 @@ oo::class create ::questlog::ui::SessionList {
     # Recomputes the parent session's aggregated totals from its own raw values
     # plus the computed metrics of all its subagents.
     method recompute_parent_totals {path} {
-        if {![dict exists $Sessions $path]} return
-        set s [dict get $Sessions $path]
+        if {![my has_session $path]} return
+        set s [my session_payload $path]
 
         set has_any_cost 0
         set has_any_turns 0
@@ -1816,8 +1970,8 @@ oo::class create ::questlog::ui::SessionList {
         }
 
         foreach cp [dict get $s all_child_paths] {
-            if {[dict exists $Children $cp]} {
-                set c [dict get $Children $cp]
+            if {[my has_child $cp]} {
+                set c [my node_payload [my sid $cp]]
                 set cc [dict getdef $c cost ""]
                 if {$cc ne "" && $cc >= 0} {
                     set sum_cost [expr {$sum_cost + $cc}]
@@ -1836,9 +1990,9 @@ oo::class create ::questlog::ui::SessionList {
             }
         }
 
-        dict set Sessions $path cost [expr {$has_any_cost ? $sum_cost : ""}]
-        dict set Sessions $path turns [expr {$has_any_turns ? $sum_turns : ""}]
-        dict set Sessions $path duration_secs [expr {$has_any_duration ? $sum_duration : ""}]
+        my sset $path cost [expr {$has_any_cost ? $sum_cost : ""}]
+        my sset $path turns [expr {$has_any_turns ? $sum_turns : ""}]
+        my sset $path duration_secs [expr {$has_any_duration ? $sum_duration : ""}]
     }
 
     method glyph_cell {running bookmarked} {
@@ -1882,15 +2036,16 @@ oo::class create ::questlog::ui::SessionList {
     # highlighted block (the full-width region, not a text run).
     method select {path} {
         set prev $Selected
-        if {$Selected ne "" && [dict exists $Sessions $Selected] \
-            && [dict get $Sessions $Selected rendered]} {
-            set os [dict get $Sessions $Selected]
-            catch {$Text tag remove selected [dict get $os smark] [dict get $os semark]}
+        if {$Selected ne "" && [my has_session $Selected] \
+            && [my sflag $Selected rendered]} {
+            set osid [my sid $Selected]
+            catch {$Text tag remove selected [my node_field $osid start] \
+                                             [my node_field $osid end]}
         }
         set Selected $path
-        if {[dict exists $Sessions $path] && [dict get $Sessions $path rendered]} {
-            set s [dict get $Sessions $path]
-            $Text tag add selected [dict get $s smark] [dict get $s semark]
+        if {[my has_session $path] && [my sflag $path rendered]} {
+            set sid [my sid $path]
+            $Text tag add selected [my node_field $sid start] [my node_field $sid end]
         }
         # The selected row shows its ⋯ bright; the row losing selection re-fades.
         if {$prev ne "" && $prev ne $path} { my action_set_bright $prev 0 }
@@ -1900,8 +2055,8 @@ oo::class create ::questlog::ui::SessionList {
     method open_session {path {lineno -1}} {
         if {$lineno < 0} {
             set lineno 0
-            if {[dict exists $Sessions $path]} {
-                set lineno [dict get [dict get $Sessions $path] first_lineno]
+            if {[my has_session $path]} {
+                set lineno [my sget $path first_lineno]
             }
         }
         {*}$OnOpen $path $lineno
@@ -1950,11 +2105,11 @@ oo::class create ::questlog::ui::SessionList {
 
     # The actions cell's text range for a rendered row, or {} when absent.
     method action_range {path} {
-        if {![dict exists $Sessions $path]} { return {} }
-        set s [dict get $Sessions $path]
-        if {![dict get $s rendered]} { return {} }
+        if {![my has_session $path]} { return {} }
+        set sid [my sid $path]
+        if {![my node_field $sid rendered]} { return {} }
         return [$Text tag nextrange actioncell \
-                    [dict get $s smark] [dict get $s semark]]
+                    [my node_field $sid start] [my node_field $sid end]]
     }
 
     method action_set_bright {path on} {
@@ -1999,18 +2154,20 @@ oo::class create ::questlog::ui::SessionList {
         set ly [expr {$Y - [winfo rooty $Text]}]
         set idx [$Text index @$lx,$ly]
         foreach t [$Text tag names $idx] {
-            if {[dict exists $HtagFolder $t]} { return [dict get $HtagFolder $t] }
+            if {[dict exists $TagNode $t]} {
+                return [my node_field [dict get $TagNode $t] key]
+            }
         }
         return ""
     }
 
     method drag_paint {old new} {
-        if {$old ne "" && [dict exists $Folders $old]} {
-            set fm [dict get [dict get $Folders $old] fmark]
+        if {$old ne "" && [my has_folder $old]} {
+            set fm [my node_field [my fid $old] start]
             catch {$Text tag remove drop-candidate $fm "$fm lineend"}
         }
-        if {$new ne "" && [dict exists $Folders $new]} {
-            set fm [dict get [dict get $Folders $new] fmark]
+        if {$new ne "" && [my has_folder $new]} {
+            set fm [my node_field [my fid $new] start]
             $Text tag add drop-candidate $fm "$fm lineend"
         }
     }
@@ -2030,8 +2187,8 @@ oo::class create ::questlog::ui::SessionList {
             set folder [dict getdef $row folder ""]
             set uuid [dict getdef $row uuid $uuid]
         }
-        if {$folder eq "" && [dict exists $Sessions $path]} {
-            set folder [dict get [dict get $Sessions $path] folder]
+        if {$folder eq "" && [my has_session $path]} {
+            set folder [my sget $path folder]
         }
         if {$folder ne ""} { set cwd [{*}$ResolveFolder $folder] }
         set MenuPath $path
@@ -2112,19 +2269,18 @@ oo::class create ::questlog::ui::SessionList {
     # rename records (custom-title and agent-name) to the jsonl, so the
     # title survives an app restart and shows up in claude's own picker.
     method menu_rename {} {
-        if {![dict exists $Sessions $MenuPath]} return
-        set s [dict get $Sessions $MenuPath]
-        set uuid [dict get $s uuid]
-        set current [dict get $s slug]
-        set aitt [dict getdef $s ai_title ""]
+        if {![my has_session $MenuPath]} return
+        set uuid [my sget $MenuPath uuid]
+        set current [my sget $MenuPath slug]
+        set aitt [my sget $MenuPath ai_title ""]
         set entered [my prompt_rename $current]
         if {$entered eq "<cancelled>"} return
         if {$entered eq ""} {
             ::questlog::ui::title_writer::clear_custom $MenuPath $uuid $aitt
-            dict set Sessions $MenuPath slug $aitt
+            my sset $MenuPath slug $aitt
         } else {
             ::questlog::ui::title_writer::set_custom $MenuPath $uuid $entered
-            dict set Sessions $MenuPath slug $entered
+            my sset $MenuPath slug $entered
         }
         $Text configure -state normal
         my redraw_header $MenuPath
@@ -2186,13 +2342,13 @@ oo::class create ::questlog::ui::SessionList {
         set RunningSet $running
         set running_only    [dict getdef $Snapshot running_only 0]
         set bookmarked_only [dict getdef $Snapshot bookmarked_only 0]
-        set before [dict size $Sessions]
+        set before [my session_count]
 
         $Text configure -state normal
         my anchor_save
         if {$running_only || !$CriteriaActive} {
             dict for {uuid path} $running {
-                if {[dict exists $Sessions $path]} continue
+                if {[my has_session $path]} continue
                 set row [{*}$LookupSession $path]
                 if {$row eq "" && [file isfile $path]} {
                     set row [{*}$OnScanPath $path]
@@ -2204,7 +2360,7 @@ oo::class create ::questlog::ui::SessionList {
                 # not add it a second time. A running session that on_scan_row
                 # filtered out (out of window / one-turn) is still absent here
                 # and is added below, so running sessions always surface.
-                if {[dict exists $Sessions $path]} continue
+                if {[my has_session $path]} continue
                 my model_add_session $path $row
                 if {[my folder_expanded [dict get $row folder]]} {
                     my render_session $path
@@ -2212,8 +2368,8 @@ oo::class create ::questlog::ui::SessionList {
             }
         }
         foreach path [my all_session_paths] {
-            if {![dict exists $Sessions $path]} continue
-            set uuid [dict get [dict get $Sessions $path] uuid]
+            if {![my has_session $path]} continue
+            set uuid [my sget $path uuid]
             set is_running [dict exists $running $uuid]
             # A session that is not running and whose backing jsonl is gone is
             # a phantom in every mode - a Resume-forked session quit before any
@@ -2245,11 +2401,19 @@ oo::class create ::questlog::ui::SessionList {
         $Text configure -state disabled
         # Surfacing or dropping running sessions changes the set, so a
         # non-default sort needs a re-render to reseat them.
-        if {[dict size $Sessions] != $before} { my schedule_resort }
+        if {[my session_count] != $before} { my schedule_resort }
+    }
+
+    # The number of session nodes in the model (subagents excluded), so a
+    # reconcile pass can tell whether the displayed session set changed.
+    method session_count {} {
+        set n 0
+        foreach fid $Roots { incr n [llength [my node_field $fid children]] }
+        return $n
     }
 
     method reconcile_one {path} {
-        if {![dict exists $Sessions $path]} return
+        if {![my has_session $path]} return
         $Text configure -state normal
         my redraw_header $path
         $Text configure -state disabled
@@ -2257,8 +2421,10 @@ oo::class create ::questlog::ui::SessionList {
 
     method all_session_paths {} {
         set out [list]
-        foreach folder $FolderOrder {
-            foreach path [dict getdef $SessionsByFolder $folder {}] { lappend out $path }
+        foreach fid $Roots {
+            foreach sid [my node_field $fid children] {
+                lappend out [my node_field $sid key]
+            }
         }
         return $out
     }
@@ -2266,69 +2432,88 @@ oo::class create ::questlog::ui::SessionList {
     # ---- removal / relocation ----------------------------------------
 
     method forget_session {path} {
-        if {![dict exists $Sessions $path]} return
-        set s [dict get $Sessions $path]
-        set folder [dict get $s folder]
-        if {[dict get $s rendered]} {
-            $Text delete [dict get $s smark] [dict get $s semark]
-            catch {$Text mark unset [dict get $s smark] [dict get $s semark]}
+        if {![my has_session $path]} return
+        set sid [my sid $path]
+        set fid [my node_field $sid parent]
+        set folder [my node_field $fid key]
+        if {[my node_field $sid rendered]} {
+            $Text delete [my node_field $sid start] [my node_field $sid end]
+            catch {$Text mark unset [my node_field $sid start] \
+                                    [my node_field $sid end]}
         }
         # Subtract this session's cost and size from the folder aggregates and
-        # the running total before the dict entry vanishes, so a later sum over
+        # the running total before the node vanishes, so a later sum over
         # remaining sessions stays exact.
-        set cost [dict getdef $s cost ""]
+        set cost [my sget $path cost]
+        set size [my sget $path size 0]
         if {$cost ne "" && $cost > 0} {
             my bump_folder_cost $folder [expr {-$cost}]
             set TotalCost [expr {$TotalCost - $cost}]
             my refresh_status
         }
-        dict unset Sessions $path
+        # Drop the session node and any subagent nodes parented to it.
+        foreach cid [my node_field $sid children] {
+            set cp [my node_field $cid key]
+            dict unset PathNode $cp
+            dict unset Nodes $cid
+        }
+        foreach cp [my node_pget $sid all_child_paths] {
+            if {[dict exists $PathNode $cp]} {
+                dict unset Nodes [dict get $PathNode $cp]
+                dict unset PathNode $cp
+            }
+        }
+        dict unset Nodes $sid
+        dict unset PathNode $path
+        my node_set $fid children \
+            [lsearch -all -inline -not -exact [my node_field $fid children] $sid]
         if {$Selected eq $path} { set Selected "" }
-        set lst [dict getdef $SessionsByFolder $folder {}]
-        set i [lsearch -exact $lst $path]
-        if {$i >= 0} { dict set SessionsByFolder $folder [lreplace $lst $i $i] }
-        if {[llength [dict getdef $SessionsByFolder $folder {}]] == 0} {
+        if {[llength [my node_field $fid children]] == 0} {
             my forget_folder $folder
         } else {
-            dict set Folders $folder size \
-                [expr {[dict getdef [dict get $Folders $folder] size 0] \
-                       - [dict getdef $s size 0]}]
+            my fset $folder size [expr {[my fget $folder size 0] - $size}]
             my bump_folder_count $folder -1
         }
     }
 
     method forget_folder {folder} {
-        if {![dict exists $Folders $folder]} return
-        set f [dict get $Folders $folder]
-        set fmark [dict get $f fmark]
-        set femark [dict get $f femark]
+        if {![my has_folder $folder]} return
+        set fid [my fid $folder]
+        set fmark [my node_field $fid start]
+        set femark [my node_field $fid end]
         $Text delete $fmark $femark
         catch {$Text mark unset $fmark $femark}
-        dict unset HtagFolder [dict get $f htag]
-        dict unset Folders $folder
-        dict unset SessionsByFolder $folder
-        set i [lsearch -exact $FolderOrder $folder]
-        if {$i >= 0} { set FolderOrder [lreplace $FolderOrder $i $i] }
+        dict unset TagNode [my node_field $fid tag]
+        dict unset FolderNode $folder
+        dict unset Nodes $fid
+        set Roots [lsearch -all -inline -not -exact $Roots $fid]
     }
 
     # After a move renames the file, re-key the model and rebuild the view
     # so the session appears under its new folder. A full rebuild keeps the
     # mark scheme consistent; moves are rare, so the cost is not on a hot path.
     method relocate_card {old_path new_path new_folder} {
-        if {![dict exists $Sessions $old_path]} return
-        set s [dict get $Sessions $old_path]
-        set old_folder [dict get $s folder]
-        dict set s folder $new_folder
-        dict unset Sessions $old_path
-        dict set Sessions $new_path $s
-        set lst [dict getdef $SessionsByFolder $old_folder {}]
-        set i [lsearch -exact $lst $old_path]
-        if {$i >= 0} { dict set SessionsByFolder $old_folder [lreplace $lst $i $i] }
-        if {![dict exists $SessionsByFolder $new_folder]} {
-            dict set SessionsByFolder $new_folder [list]
-            lappend FolderOrder $new_folder
+        if {![my has_session $old_path]} return
+        set sid [my sid $old_path]
+        my node_pset $sid folder $new_folder
+        my node_set $sid key $new_path
+        dict unset PathNode $old_path
+        dict set PathNode $new_path $sid
+        set old_fid [my node_field $sid parent]
+        my node_set $old_fid children \
+            [lsearch -all -inline -not -exact [my node_field $old_fid children] $sid]
+        # Add the destination folder structurally (no drawing) when new; the
+        # redraw_all below rebuilds the model from the node store and draws it.
+        if {![my has_folder $new_folder]} {
+            set new_fid [my node_new folder "" $new_folder \
+                [dict create label "" count 0 cost 0.0 size 0]]
+            my node_set $new_fid expanded [expr {$CriteriaActive ? 1 : 0}]
+            dict set FolderNode $new_folder $new_fid
+            lappend Roots $new_fid
         }
-        dict lappend SessionsByFolder $new_folder $new_path
+        set new_fid [my fid $new_folder]
+        my node_set $sid parent $new_fid
+        my node_set $new_fid children [linsert [my node_field $new_fid children] end $sid]
         if {$Selected eq $old_path} { set Selected $new_path }
         my redraw_all
     }
@@ -2340,27 +2525,33 @@ oo::class create ::questlog::ui::SessionList {
         my purge_tags_and_marks
         $Text mark set TailMark "end-1c"
         $Text mark gravity TailMark right
-        # Snapshot the model, remember each folder's expanded state, then
-        # rebuild the model and re-render only the expanded folders' bodies.
-        set saved $Sessions
-        set order $FolderOrder
-        set byfolder $SessionsByFolder
+        # Snapshot the model from the node store, remember each folder's
+        # expanded state, then reset the store and rebuild it, re-rendering only
+        # the expanded folders' bodies.
+        set order [list]                 ;# folder names in arrival order
+        set byfolder [dict create]       ;# folder name -> ordered session paths
+        set saved [dict create]          ;# session path -> payload snapshot
         set wasexp [dict create]
         set foldercost [dict create]
-        dict for {f fd} $Folders {
-            dict set wasexp $f [dict get $fd expanded]
-            dict set foldercost $f [dict getdef $fd cost 0.0]
+        foreach fid $Roots {
+            set folder [my node_field $fid key]
+            lappend order $folder
+            dict set wasexp $folder [my node_field $fid expanded]
+            dict set foldercost $folder [my node_pget $fid cost 0.0]
+            set paths [list]
+            foreach sid [my node_field $fid children] {
+                set path [my node_field $sid key]
+                lappend paths $path
+                dict set saved $path [my node_payload $sid]
+            }
+            dict set byfolder $folder $paths
         }
         # Sorting by cost reorders the folders by their aggregate too; the other
         # keys keep the folders in arrival order.
         if {$SortKey eq "cost"} { set order [my sort_folders $order $foldercost] }
-        set Folders [dict create]
-        set FolderOrder [list]
-        set SessionsByFolder [dict create]
-        set HtagFolder [dict create]
-        set Sessions [dict create]
-        # Folders.cost was wiped above; reset TotalCost too so the bumps in
-        # model_add_session re-establish both consistently.
+        my reset_model
+        # Folder costs were dropped with the model; reset TotalCost too so the
+        # bumps in model_add_session re-establish both consistently.
         set TotalCost 0.0
         foreach folder $order {
             foreach path [my sort_paths [dict getdef $byfolder $folder {}] $saved] {
@@ -2375,26 +2566,27 @@ oo::class create ::questlog::ui::SessionList {
                          ai_title [dict getdef $s ai_title ""] \
                          cost_usd [dict getdef $s cost ""]] \
                     [dict get $s first_lineno]
-                dict set Sessions $path label [dict get $s label]
-                dict set Sessions $path when [dict get $s when]
-                dict set Sessions $path snippets [dict get $s snippets]
-                dict set Sessions $path count [dict get $s count]
+                my sset $path label [dict get $s label]
+                my sset $path when [dict get $s when]
+                my sset $path snippets [dict get $s snippets]
+                my sset $path count [dict get $s count]
             }
-            if {[dict exists $wasexp $folder] && [dict exists $Folders $folder]} {
-                dict set Folders $folder expanded [dict get $wasexp $folder]
+            if {[dict exists $wasexp $folder] && [my has_folder $folder]} {
+                my node_set [my fid $folder] expanded [dict get $wasexp $folder]
             }
         }
-        foreach folder $FolderOrder {
-            if {[dict get [dict get $Folders $folder] expanded]} {
-                foreach path [dict getdef $SessionsByFolder $folder {}] {
+        foreach fid $Roots {
+            set folder [my node_field $fid key]
+            if {[my node_field $fid expanded]} {
+                foreach path [my folder_session_paths $folder] {
                     my render_session $path
                 }
             }
             my redraw_folder_heading $folder
         }
-        if {$Selected ne "" && [dict exists $Sessions $Selected] \
-            && [dict get $Sessions $Selected rendered]} {
-            set sm [dict get [dict get $Sessions $Selected] smark]
+        if {$Selected ne "" && [my has_session $Selected] \
+            && [my sflag $Selected rendered]} {
+            set sm [my node_field [my sid $Selected] start]
             $Text tag add selected $sm "$sm lineend"
         }
         my anchor_restore
