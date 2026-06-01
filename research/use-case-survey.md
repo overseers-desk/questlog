@@ -1,84 +1,53 @@
-# Use Case Survey: Claude Code session history in 2025-2026
+# Use Case Survey: Claude Code session management, 2025-2026
 
 Snapshot taken May 2026. Re-snapshot trigger: a major Anthropic feature release affecting local session storage, or six months elapsed.
 
-Sources: r/ClaudeAI and r/ClaudeCode (the densest signal, full of "I built X" launch posts), the `anthropics/claude-code` issue tracker, Hacker News, developer blogs, product pages. USP numbers cross-reference `usp-ranking.md`.
+Sources: r/ClaudeAI and r/ClaudeCode (the densest signal, full of "I built X" launch posts), the `anthropics/claude-code` issue tracker, Hacker News, developer blogs, product pages.
 
-The organizing question of this survey is not "what features do session tools have" but **why a developer goes back to a session that is already finished.** That question separates the work questlog is uniquely needed for from the work the ecosystem already handles another way.
+This file is the index for the folder. It defines the pain taxonomy: the distinct pains developers voice about living with Claude Code session history, numbered once here. `voices.md` maps each quote to a pain number, `competitive-landscape.md` records what the field supplies for each, and `status.md` records which questlog covers. The numbers are stable identifiers, not a ranking.
 
-## Why you return to a finished session
+## The pain taxonomy
 
-Seven distinct motivations appear in the evidence. The decisive axis is not how loudly each is voiced but whether it is **forward-preventable**: could the developer have avoided the return by writing state to a file at the time. The motivations that are forward-preventable are already owned by the community's memory-system culture. The ones that are not are where a backward-looking reader of the session archive is the only answer.
+- **P1 Context loss at compaction or session end.** State the developer needs is summarised away by `/compact` or lost when a session hits its context limit.
+- **P2 Finding a past session and reading it without grepping JSONL.** Locating one session among hundreds, then reading it in something other than a wall of JSON.
+- **P3 Resuming and forking.** Picking a session back up (and branching from it) without hunting for its working directory, and without a surprise cost spike.
+- **P4 Finding which session touched a file.** "Which conversation last edited `registry.py`, and why."
+- **P5 Seeing which of many parallel sessions is live and needs input.** Across many terminals and tabs, which is thinking, which is waiting.
+- **P6 Organising sessions: grouping, moving, naming.** Keeping the session list legible: grouped by project, movable when folders are reorganised, and meaningfully named.
+- **P7 Bookmarking important sessions.** Marking a few sessions for quick return out of a list of hundreds.
+- **P8 A native, non-Electron tool, on Linux.** A desktop tool for the platform the official Desktop app does not serve, without a web engine's memory weight.
+- **P9 Reusing decisions and solutions from past sessions.** Not re-explaining the architecture every morning, and not having the agent redo a decision settled last week.
+- **P10 Session history as a record: prove a regression, audit what happened.** Going back to the archive as evidence, to prove the model changed or to check what the agent actually did versus what it claimed.
+- **P11 Token and cost analytics.** Understanding where tokens and money went, per session and in aggregate.
+- **P12 Export, sharing, and cross-device or cross-client portability.** Carrying a session's content out, or seeing one account's sessions across CLI, Desktop, Web, and machines.
+- **P13 Branching with merge-back, and autonomous context handoff.** Side-questing from a main thread and merging back, or handing context from one session to the next without manual setup.
 
-| Why you return | How often voiced | Forward-preventable? | questlog fit |
+## Demand by pain
+
+Demand is the frequency and intensity with which the pain is voiced in the corpus. Read it with the two caveats below.
+
+| Pain | Demand signal | Evidence (voices.md) | Field supply (competitive-landscape.md) |
 |---|---|---|---|
-| Continue interrupted work | Dominant | Yes (handoff docs, CLAUDE.md, memory MCPs) | #3, #9 |
-| Reference a decision or fact | Dominant memory-discussion pain | Yes (memory systems persist the decision) | #9, #6 |
-| Reuse a past solution | Real (~3-5 posts) | Yes (write-on-solve at the moment of the fix) | #9 |
-| **Close a loop you left open** (forgot to send the result, commit, file the report) | Real (~5-8 posts), tools built | **No**: the need was unforeseeable at session time | #9 find, #3 resume |
-| **Defend a conclusion that was challenged** (go back to verify the source) | First-party; publicly near-silent | **No**: you could not know it would be challenged | #1, #6 |
-| Prove the model regressed against a baseline | Strong, high-score | Partly (some log every session forward) | #9, #6 (but bulk-analytical) |
-| Audit what the agent did versus claimed | Real pain | Mostly forward (in-session hooks) | #1, #6 (partial) |
+| P1 Context loss | High; one post at score 736, another at 249 | §1 | Forward memory systems and hooks; no local reader recovers server-side compacted content |
+| P2 Finding and reading | Dominant; "99 sessions and I kept losing them" | §2 | The crowded centre: most search tools |
+| P3 Resume and fork | Very high; the cache-cost post scored 1,002 | §3 | Table-stakes everywhere |
+| P4 Which session touched a file | Real, lighter volume | §4 | Rare; agent-side index tools, one low-traction VS Code extension |
+| P5 Live status | High; three monitor launches at 155-315 | §5 | Common; many monitors, each seeing only its own sessions |
+| P6 Organising | Moderate to high; folder-rename loss recurs | §6 | Rare; a few group or relocate |
+| P7 Bookmarking | Moderate; GitHub-only, thin verbatim | §7 | Rare; only one competitor pins |
+| P8 Native on Linux | Real on Linux; a counter-segment wants no GUI | §8 | Rare; native tools are macOS-first or embed a WebView |
+| P9 Reusing decisions | Dominant memory-discussion pain | §9 | Forward memory systems own it |
+| P10 History as record | Strong, high-engagement; 6,852-session post at 1,915 | §10 | Partial; cost-cluster tools for the bulk form |
+| P11 Cost analytics | Largest by tool count; loud (ccusage 480-879) | §11 | A whole cluster |
+| P12 Portability and sharing | Real, thin verbatim | §11 | Sparse |
+| P13 Branching and handoff | Thin | §11 | Sparse |
 
-The forward-preventable rows are settled territory. Every high-engagement thread on continuity, reference, and reuse resolves to the same answer: capture state at the moment, so a future session never has to look back. `/ce:compound`, CLAUDE.md, AgentWorkingMemory, Mem0, and a dozen others exist for this, and direct session-history search has negligible traction as the advocated fix. questlog does not win by fighting on this ground.
+## Two caveats on reading demand
 
-The two rows marked "No" are different in kind. You cannot write a note at session time against a need you do not yet have. You did not know, when you finished the analysis, that you would forget to send it, or that a client would challenge the figure in a meeting three days later. When that need arrives, the only artefact is the finished session, and the only move is to go back into it. This is the ground questlog holds alone, and it is the ground the public corpus shows least, because the moment is private and consequence-driven rather than a thing people post about.
+- **The posting population is builders and bug-reporters.** Consequence-driven professional use leaves little public trace: nobody posts "I forgot to send the result" or "I had to prove where the number came from." Ranking purely by public-post frequency undercounts the pains whose moment is private.
+- **The coping culture is forward, not backward.** The loud solutions push state into files (memory systems, CLAUDE.md). This both serves the reuse and reference pains (P9) and hides them, so the visible demand under-represents how often developers would look back if looking back were easy.
 
-### First-party owner cases
-
-Two motivations are documented from the project owner's own use rather than from public posts. They are marked n=1 and kept out of `voices.md` (a public-quote corpus); they carry weight as the lived experience of the tool's primary user, not as measured market demand.
-
-- **Close a loop.** An analysis was run over an hour of work. Days later, after the session was quit, the owner realised the result was never sent by email, which was the entire point of running it. The session had to be found again to issue the final instruction or to write the message. This is the single most frequent personal use of the tool.
-- **Defend a conclusion.** A conclusion reached in a session was later challenged in the real world. The owner returned to the session to verify the source and reasoning behind the figure, in order to defend or correct it.
-
-Both are irreducibly backward: neither could have been pre-empted by forward state-keeping, because the trigger was unknowable at session time.
-
-## What the field builds (the mechanics in demand)
-
-The tooling people actually ship clusters around a few mechanics; the detail and per-tool capabilities live in `competitive-landscape.md`.
-
-- **Cross-session search** is the most-built feature (Chronicle, flex, search-sessions, claude-history, searchat).
-- **Live monitoring of parallel sessions** is among the highest-scoring launch posts (Agent Deck, Claude Control, Maestro): which of fifteen tabs is running, which waits for input.
-- **Resume**, with the working directory restored, is table-stakes and the named friction.
-- **Token/cost analytics** over the same JSONL is a whole cluster (ccusage, Claud-ometer, budi, cc-lens).
-- **MCP-surfaced history for the agent itself** (flex, searchat) lets the running agent recall its own past work, a category questlog does not occupy.
-
-## What public forums can and cannot show
-
-Two structural biases shape this corpus and are stated here so the rankings are read correctly.
-
-- **The posting population is builders and bug-reporters.** Consequence-driven professional returns (close a loop, defend a conclusion) leave almost no public trace: nobody posts "I forgot to send the email" or "I had to prove where Claude got that number." Ranking purely by public-post frequency therefore undervalues exactly the returns that forward hygiene cannot prevent.
-- **The coping culture is forward, not backward.** The loud, high-volume solutions push state into files. This both pre-empts the forward-preventable returns and hides them, which means the visible demand under-represents how often people would look backward if looking backward were easy.
-
-## Verdict on the 12 USPs
-
-**Broad demand, multiple independent sources:**
-
-- USP #9 (cross-session search): the most-built feature in the field.
-- USP #8 (live status of running sessions): three of the highest-scoring launch posts are monitors; questlog's read-only any-terminal detection is the distinct form.
-- USP #3 (resume / fork): confirmed everywhere; cwd restoration is the named friction.
-
-**High value, low public volume (the backward core):**
-
-- USP #1 (tool-use file-path search) plus USP #6 (the segmented reading pane): together these serve the two irreducibly-backward returns, finding the session that touched a file and reading its reasoning and sources. A direct file-touch competitor exists (a VS Code extension) but at negligible traction.
-
-**Niche but real:**
-
-- USP #10 (move / drag between folders) and USP #7 (per-repo scope): organising the tree; folder-rename loss is the sharp edge.
-- USP #4 (bookmark): real need (#55291), thin verbatim base; only Chronicle offers any bookmark, and the `u+x` storage is implementation, not the competitive point.
-- USP #12 (native Linux, no Electron): real on Linux where the official Desktop does not run.
-
-**Solves a problem few ask about explicitly:**
-
-- USP #5 (streaming snippets) and USP #11 (coroutine responsiveness): quality and implementation, not voiced as feature requests.
-
-**Gap versus demand:**
-
-- Token/cost analytics, MCP-surfaced history for the agent, session export/sharing, cross-device and cross-client unification: all voiced, none in questlog.
-
-## Bottom line
-
-questlog is strongest, and least substitutable, on the returns that cannot be prevented by writing state forward: closing a loop you did not know you had left open, and defending a conclusion you did not know would be challenged. The ecosystem has converged on forward memory systems for continuity, reference, and reuse, so questlog should not contest that ground; it should own the backward-looking returns, where the finished session is the only record and a fast way back into it is the whole value. The most-built things questlog does not do (cost analytics, MCP history for the agent, parallel-session orchestration) are real demand but a different product.
+On P9 specifically: the community largely answers reuse and reference by writing state forward at the time, rather than by reopening old sessions, so a share of that demand is absorbed by memory tools before any backward search is attempted.
 
 ## Sources
 
@@ -93,5 +62,5 @@ questlog is strongest, and least substitutable, on the returns that cannot be pr
 - r/ClaudeCode, "PSA: two cache bugs" (resume cost), https://old.reddit.com/r/ClaudeCode/comments/1s7mitf/psa_claude_code_has_two_cache_bugs_that_can/
 - r/ClaudeCode, "developed an organizer for my Claude sessions" (organise/move), https://old.reddit.com/r/ClaudeCode/comments/1t8a6qv/developed_an_organizer_for_my_claude_sessions/
 - r/ClaudeCode, "Claude Code just got a full desktop redesign" (Linux gap), https://old.reddit.com/r/ClaudeCode/comments/1sljk0t/claude_code_just_got_a_full_desktop_redesign/
-- GitHub #8701, #25130, #38494, #49095, #49775, #55291, #56067, #27967, #36937, #40981. https://github.com/anthropics/claude-code/issues/
+- GitHub #8701, #25130, #38494, #49095, #49775, #55291, #56067, #27967, #36937, #40981, #57704. https://github.com/anthropics/claude-code/issues/
 - Claude Code docs, manage sessions, https://code.claude.com/docs/en/sessions

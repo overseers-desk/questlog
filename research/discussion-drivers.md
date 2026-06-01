@@ -1,6 +1,6 @@
 # What drives discussion volume on Claude Code session-tool posts
 
-Snapshot taken May 2026. Companion question to `use-case-survey.md`. That file asks why developers go back to a finished session. This one asks why a launch post for a session manager attracts twenty comments while an Anthropic usage-limit complaint attracts six hundred, and what the asymmetry says about positioning.
+Snapshot taken May 2026. Companion to `use-case-survey.md`. That file surveys the pains developers voice about session management. This one asks why a launch post for a session manager attracts twenty comments while an Anthropic usage-limit complaint attracts six hundred, and what the asymmetry says about how the session-tool space is discussed.
 
 The data comes from searching r/ClaudeCode and r/ClaudeAI (sort=top, time=year, May 2026) for the tool names in `competitive-landscape.md` plus the queries "session", "session manager", "session viewer". Tool-relevant posts retained. Score, comment count, and the comments-per-score ratio are recorded together because comments-per-score is the discussion intensity signal: upvotes measure passing approval, comments measure engagement.
 
@@ -73,23 +73,11 @@ The absence on the low-comment side: nothing to argue about. CCManager's launch,
 
 Cost is collective. Everyone pays Anthropic, watches the same limits, asks the same "did they nerf it" question, sees the same usage screen. A ccusage release lands inside that running shared discussion: the comment section is already loaded with context, and a reader needs no specific experience to have an opinion. ccusage launch and integration posts pull 60 to 130 comments at 480 to 880 score.
 
-Session management is private. The pain a session viewer answers (close a loop you forgot to close, defend a conclusion that has been challenged) is consequence-driven and personal. The user does not yet know they are the user; once the moment arrives, they reach for the tool quietly. A launch post can demo the search box but cannot stage the moment that justifies it. CCManager, the custom session manager, and the opcode/Claudia launches sit in the 10 to 25 comment band.
+Session management is private. The pain a session viewer answers is consequence-driven and personal: the user does not yet know they are the user, and once the moment arrives they reach for the tool quietly. A launch post can demo the search box but cannot stage the moment that justifies it. CCManager, the custom session manager, and the opcode/Claudia launches sit in the 10 to 25 comment band.
 
 The cluster split is not about quality. ccusage and CCManager are both well-built; the difference is the visibility of the problem each solves. Cost is loud, session loss is silent, and the comment counts track that exactly.
 
-## Implications for positioning
-
-The findings sharpen the existing thesis in `usp-ranking.md` rather than overturn it. The backward-return value (closing a loop, defending a conclusion) is questlog's least-substitutable strength, and the data here confirms it is also the quietest in the public record: the moments that would generate the testimony are private and consequence-driven, so they leave no comment trail. A launch post that leads with "find the session that touched this file" will draw approving upvotes and few replies, because the reader cannot rehearse the moment that justifies the tool.
-
-Three positioning moves follow.
-
-First, ride a loud lane to get attention onto a quiet one. The single venue where session-tool posts cross 50 comments is when they intersect cost, model regression, or usage-limit anxiety. "TUI to see where Claude Code tokens actually go" pulled 879 score and 100 comments by attaching to the cost lane. questlog is not a cost tool, but the segmentation by compaction boundary and the live-process detection both touch the same "what is my session actually doing" question that powers the cost-cluster threads. A launch framed around audit ("see what the session actually did", "what the model did vs what it claimed") borrows the cost-cluster's loaded comment section.
-
-Second, lead with a numeric claim. "I built a session viewer" pulls fewer replies than "67% dumber across 6,852 sessions" did. questlog ships with measurable claims available: streaming snippets land in N milliseconds across M sessions; the git-status picker reduces a search to one click instead of typing a path. A number invites the comment section to run the test.
-
-Third, frame as a question that takes a side. The opcode "why not try a different UX?" launch pulled 0.78 comments per upvote on a small audience. "Should Claude Code session search live in the IDE or in a native GUI?" or "Why does the Linux side ship without a desktop tool?" puts the reader in the chair.
-
-The corpus offers no precedent for a session-viewer launch crossing 150 comments without an Anthropic-grievance hook or a numeric controversy. Pure feature announcements top out around 25 comments. Plan accordingly.
+The corpus offers no precedent for a session-viewer launch crossing 150 comments without an Anthropic-grievance hook or a numeric controversy; pure feature announcements top out around 25. The positioning moves these findings imply are recorded in `status.md`, since they are product strategy rather than market fact.
 
 ## Method note
 

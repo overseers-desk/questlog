@@ -6,13 +6,13 @@ Snapshot taken May 2026. Records why the project is called questlog, after two p
 
 The prior names both made claims the tool does not deliver. "Session manager" sets the expectation that the tool launches, supervises, and orchestrates parallel sessions; `competitive-landscape.md` lists five confirmed competitors (Agent Deck, Maestro, Claude Control, ccmanager, claude-squad) that actually do that. The tool here does not. It also does not expose session history to the running agent over MCP (flex, searchat, claude-code-tools do), does not export or share sessions, does not unify history across devices or clients, and does not orchestrate parallel work. Those are voiced as real demand in `use-case-survey.md`, but each is a different product.
 
-`find-my-session` narrowed the claim to retrieval but missed the rest of what the tool actually does in practice: read a past session in a segmented viewer, account for what each session cost in tokens, defend a conclusion against challenge by going back to its source. Retrieval is one verb among several.
+`find-my-session` narrowed the claim to retrieval but missed the rest of what the tool does in practice: reading a past session in a segmented viewer, and accounting for what each session cost in tokens. Retrieval is one verb among several.
 
-## What the tool actually does
+## What the tool does
 
-Browse past sessions grouped by project. Search across them by content or by which files the agent read, wrote, or edited. Read a selected session in a docked viewer that segments long transcripts by compaction boundary and idle gap. See per-session token cost as a column. Resume or fork a session in a new terminal tab. Bookmark or move a session between project folders.
+In brief: it browses past sessions grouped by project, searches across them by content or by which files the agent read, wrote, or edited, reads a selected session in a docked viewer that segments long transcripts by compaction boundary and idle gap, shows per-session token cost as a column, resumes or forks a session in a new terminal tab, and bookmarks or moves a session between project folders. `status.md` is the authoritative list of what the tool does and where in the code.
 
-The unifying frame is backward-looking: the user returns to a session that is already finished, with a need that was not foreseeable when the session ended (`use-case-survey.md` thesis). The tool is the way back in.
+The unifying frame is the past session: finding, reading, costing, and resuming work that is already on disk.
 
 ## Why questlog
 

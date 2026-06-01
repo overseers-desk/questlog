@@ -1,19 +1,21 @@
 # Research
 
-Verbatim user voices and competitive evidence backing the feature claims in the project README and any future landing-page copy. Nothing in this folder is canonical product spec, only the basis for it. Feature copy should use words taken from `voices.md` so the project speaks to users in the language they already use.
+Verbatim user voices and competitive evidence about Claude Code session management, plus a record of what questlog covers. The market files (voices, competitive-landscape, use-case-survey, discussion-drivers) are the basis for feature and landing-page copy, drawn from the field rather than from the code; feature copy should use words taken from `voices.md` so the project speaks to users in the language they already use. `status.md` is the one code-grounded file: it records which pains questlog covers and where in the source.
 
-The folder is organized around one question: why a developer goes back to a session that is already finished. `use-case-survey.md` sorts those reasons by whether writing state forward could have prevented the return. That line is the thesis of the research: the ecosystem's memory systems already serve the forward-preventable returns, so questlog's least-substitutable value is the returns that cannot be foreseen at session time, closing a loop you did not know you left open and defending a conclusion you did not know would be challenged.
+The folder is organized around the session-management pain points developers voice, and what the field supplies for each. `use-case-survey.md` defines the pain taxonomy (P1-P13) and holds the canonical numbers; `voices.md`, `competitive-landscape.md`, and `discussion-drivers.md` map their evidence to those numbers, and `status.md` maps each pain to questlog's coverage.
 
 ## Files
 
-- `voices.md`: quotebook of user pain-points by category. Each entry is a verbatim quote (or a clearly marked paraphrase) with link, date, context, and the USP it maps to. The corpus from which feature copy is written in words users already think in.
-- `competitive-landscape.md`: feature matrix of Claude Code session viewers, managers, and adjacent tools, plus a per-USP differentiation verdict. Dated snapshot.
-- `use-case-survey.md`: survey of what people do with Claude Code session history, ranked by frequency of evidence. Dated snapshot.
-- `usp-ranking.md`: synthesis of the above into a re-ranked USP list and a list of confirmed gaps.
+- `voices.md`: quotebook of user pain-points by category. Each entry is a verbatim quote (or a clearly marked paraphrase) with link, date, context, and the pain it maps to. The corpus from which feature copy is written in words users already think in.
+- `competitive-landscape.md`: feature matrix of Claude Code session viewers, managers, and adjacent tools (the field), plus a per-pain supply note. Dated snapshot. questlog is not in the matrix; its coverage is in `status.md`.
+- `use-case-survey.md`: the pain taxonomy and per-pain demand signal. Holds the canonical pain numbers. Dated snapshot.
+- `discussion-drivers.md`: what drives comment volume on session-tool posts, and why cost posts outpoll session-tool posts. Dated snapshot.
+- `naming.md`: why the project is called questlog, and the rename history.
+- `status.md`: questlog's coverage of each pain, its differentiation against the field, the gaps, and the positioning that follows. The only file written from the code.
 
-## The USP numbering
+## The pain-category numbering
 
-The twelve USPs are numbered once, in `usp-ranking.md`, and every entry in the other three files maps to a USP number or labels itself `gap` (real demand, no current feature). The numbers are stable identifiers, not a ranking; the ranking is a separate table inside `usp-ranking.md`.
+The thirteen pains are numbered once, in `use-case-survey.md`, and every entry in the market files maps to a pain number. The numbers are stable identifiers, not a ranking.
 
 ## Conventions
 
@@ -30,6 +32,6 @@ The May 2026 snapshot draws verbatim material chiefly from Reddit (r/ClaudeAI, r
 
 ## Growing the folder
 
-Add new quotes to `voices.md` under the matching category. A new category is fine once it has at least two entries; until then keep the singleton in the closest sibling category. Re-snapshot `competitive-landscape.md` and `use-case-survey.md` when the field changes meaningfully: a new session tool reaches the top tier, an existing one is abandoned, or Anthropic ships a feature that changes local session storage.
+Add new quotes to `voices.md` under the matching category. A new category is fine once it has at least two entries; until then keep the singleton in the closest sibling category. Re-snapshot `competitive-landscape.md`, `use-case-survey.md`, and `discussion-drivers.md` when the field changes meaningfully: a new session tool reaches the top tier, an existing one is abandoned, or Anthropic ships a feature that changes local session storage. Update `status.md` when questlog's code changes.
 
-When a USP changes (added, removed, renumbered), update the cross-reference in `voices.md`, `competitive-landscape.md`, `use-case-survey.md`, and `usp-ranking.md` together.
+When a pain category changes (added, removed, renumbered), update the cross-reference in `voices.md`, `competitive-landscape.md`, `use-case-survey.md`, and `status.md` together.

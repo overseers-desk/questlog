@@ -2,15 +2,14 @@
 
 Snapshot taken May 2026. Survey scope: CLI baselines, TUI browsers, web and native desktop viewers, search indexers, multi-session orchestrators, and cost dashboards that read `~/.claude/projects/*/*.jsonl`. The field is crowded and young: most entries are 2025-2026 launch posts on r/ClaudeCode and GitHub.
 
-Capabilities for the community tools are as their authors describe them in launch posts and READMEs, not independently re-verified; cells that could not be confirmed read "unconfirmed". Star counts and last-active dates are approximate and omitted where unknown. USP numbers cross-reference `usp-ranking.md`.
+Capabilities are as their authors describe them in launch posts and READMEs, not independently re-verified; cells that could not be confirmed read "unconfirmed". Star counts and last-active dates are approximate and omitted where unknown. Pain numbers (P1-P13) cross-reference `use-case-survey.md`. questlog's own coverage is not in this file; it lives in `status.md`.
 
 ## Feature matrix
 
 Cells: Yes / No / Partial / unconfirmed, with a short note.
 
-| Tool | Platform / UI | Cross-session search (#9) | Tool-use path search (#1) | Resume / fork (#3) | Bookmark (#4) | Live status (#8) | Compaction + idle segmentation (#6) | Move / organise (#10) |
+| Tool | Platform / UI | Cross-session search (P2) | Tool-use path search (P4) | Resume / fork (P3) | Bookmark (P7) | Live status (P5) | Compaction + idle segmentation (P1) | Move / organise (P6) |
 |---|---|---|---|---|---|---|---|---|
-| **questlog** (SmartLayer) | Tcl/Tk native Linux GUI | Yes (regex, streaming snippets) | Yes (Read/Write/Edit filter + git-status picker) | Yes (resume, fork, new tab) | Yes (no sidecar DB) | Yes (process-table, any terminal) | Yes (compaction boundary + 10-min idle) | Yes (move / drag between folders) |
 | Claude Code CLI built-in | Node.js terminal picker | Partial (name/summary filter) | No | Yes (`--resume`, `--fork-session`, `/branch`) | No | No | No (compaction is silent) | No |
 | Claude Code Desktop | Electron (macOS/Windows) | Partial (sidebar summary) | No | Yes | No | Yes (sidebar live status) | No | No |
 | Chronicle (claude-history-manager) | macOS native | Yes (full-text index) | No | Yes (one-click, restores cwd) | Partial (pin / tag) | No | No | No |
@@ -33,56 +32,38 @@ Cells: Yes / No / Partial / unconfirmed, with a short note.
 | CCM (dr5hn) | Bash CLI | Yes | No | Partial | No | No | No | Yes (relocate on move) |
 | ccusage | CLI (reports) | No | No | No | No | No | No | No |
 
-Tool links: SmartLayer/questlog; code.claude.com/docs/en/sessions (CLI) and /desktop; github.com/JosephYaduvanshi/claude-history-manager (Chronicle); jazzyalex.github.io/agent-sessions; github.com/asheshgoplani/agent-deck; github.com/sverrirsig/claude-control; github.com/damiandelmas/flex; github.com/Process-Point-Technologies-Corporation/searchat; github.com/pchalasani/claude-code-tools; github.com/raine/claude-history; github.com/d-kimuson/claude-code-viewer; github.com/winfunc/opcode; github.com/kbwo/ccmanager; github.com/smtg-ai/claude-squad; github.com/sinzin91/search-sessions; github.com/daaain/claude-code-log; github.com/dr5hn/ccm; github.com/ryoppippi/ccusage.
+Tool links: code.claude.com/docs/en/sessions (CLI) and /desktop; github.com/JosephYaduvanshi/claude-history-manager (Chronicle); jazzyalex.github.io/agent-sessions; github.com/asheshgoplani/agent-deck; github.com/sverrirsig/claude-control; github.com/damiandelmas/flex; github.com/Process-Point-Technologies-Corporation/searchat; github.com/pchalasani/claude-code-tools; github.com/raine/claude-history; github.com/d-kimuson/claude-code-viewer; github.com/winfunc/opcode; github.com/kbwo/ccmanager; github.com/smtg-ai/claude-squad; github.com/sinzin91/search-sessions; github.com/daaain/claude-code-log; github.com/dr5hn/ccm; github.com/ryoppippi/ccusage.
 
-## Per-USP differentiation verdict
+## Field supply by pain
 
-**USP #1, tool-use path search. Rare.** flex queries file edits and tool calls over a SQL index, and searchat plus claude-code-tools expose session history to the agent via MCP for the "what did I do to this file last time" lookup. Those answer the same question from the agent side. A VS Code extension (nypaavsalt) does surface "find the past conversation that edited this file" directly in a human UI, the closest analog to questlog's filter, but at negligible traction (single-digit score). questlog is the only one keyed to a git-status picker (see USP #2), which turns the query from typing a path into clicking a changed file.
+How much of the field serves each pain, and how.
 
-**USP #2, git-status file picker in search criteria. Unique.** No tool turns the current repo's `git status` into selectable session-search criteria. This is the part of the file-level search story that no competitor touches.
+**P1, context loss at compaction.** Forward memory systems and hooks dominate the coping culture. For reading the archive, segmentation is rare: claude-compaction-viewer surfaces compaction boundaries in a TUI, and opcode shows a timeline that is not compaction-aware. No tool segments a session into readable chapters by both compaction and idle gap inside a reading pane. Ceiling: `/compact` runs server-side and is not written back to the JSONL, so a local reader segments around boundaries rather than recovering compacted content.
 
-**USP #3, resume and fork. Common.** Table-stakes: the built-in CLI, Chronicle, claude-history, Agent Deck, opcode, search-sessions and others resume; fork exists in the CLI (`--fork-session`, `/branch`), claude-history, and Agent Deck. Chronicle additionally restores the working directory, the specific friction users name. questlog's three modes in one right-click menu is convenience, not a capability gap.
+**P2, cross-session search.** The crowded centre of the field: Chronicle, Agent Sessions, claude-history, search-sessions, flex, searchat, claude-code-tools, opcode, and claude-code-viewer all search across sessions. Regex specifically is less universal; many use fuzzy, FTS, or semantic search. A no-autoscroll anchor as hits stream in is documented in none of the surveyed tools.
 
-**USP #4, bookmark important sessions. Rare.** Chronicle's pin/tag is the only competitor with any bookmark concept, so the differentiator is offering bookmarking at all, not how it is stored. questlog encodes the mark in the file's `u+x` bit (no sidecar, scriptable, survives a move and a copy to another machine); that is an implementation property, not a competitive edge, since a DB-backed pin survives moves too.
+**P3, resume and fork.** Table-stakes: the built-in CLI, Chronicle, claude-history, Agent Deck, opcode, and search-sessions resume; fork exists in the CLI (`--fork-session`, `/branch`), claude-history, and Agent Deck. Chronicle additionally restores the working directory, the specific friction users name. The resume cache-cost spike is an Anthropic-side issue no tool resolves.
 
-**USP #5, hit-centred streaming snippets with non-scrolling insert. Rare.** Many tools show results; the no-autoscroll anchor as hits stream in is documented only in questlog.
+**P4, tool-use path search.** Rare. flex queries file edits and tool calls over a SQL index; searchat and claude-code-tools expose session history to the agent over MCP for the "what did I do to this file last time" lookup, answering it from the agent side. A VS Code extension (nypaavsalt) surfaces "find the past conversation that edited this file" directly in a human UI, the closest analog, but at negligible traction (single-digit score). No tool in the field turns the current repo's `git status` into selectable session-search criteria.
 
-**USP #6, viewer segmenting by compaction boundary and 10-min idle gap. Rare.** claude-compaction-viewer surfaces compaction boundaries in a TUI; opcode shows a timeline that is not compaction-aware. No other tool segments a session into readable chapters by both signals inside a reading pane. Note the ceiling: `/compact` runs server-side and is not written back to the JSONL, so a local reader segments around boundaries rather than recovering compacted content.
+**P5, live status.** A common feature: Agent Deck, Claude Control, Maestro, ccmanager, claude-squad, the d-kimuson viewer, and the Desktop sidebar all show it. In every case "live" means a session that tool launched or supervises. Detecting any running session from the process table, read-only, regardless of which terminal launched it, is absent from the field.
 
-**USP #7, "this cwd only" auto-detection. Common.** The built-in picker defaults to the current worktree; flow and others scope per project. Expected behaviour.
+**P6, organise: group, move, name.** The built-in picker defaults to the current worktree, and flow and others scope per project, so cwd-scoping is expected behaviour. Moving is rarer: flow and Agent Deck group sessions, CCM relocates on a move, but GUI drag-to-move of the session file between project folders, preserving a mark, is absent from the rest of the field. Folder-rename loses sessions is the recurring unsolved pain.
 
-**USP #8, live status of running sessions. Common feature, distinct angle.** Live status is now one of the most-built features: Agent Deck, Claude Control, Maestro, ccmanager, claude-squad, the d-kimuson viewer, and the Desktop sidebar all show it. In every case "live" means a session that tool launched or supervises. questlog detects live processes from the process table, so it sees sessions started in any terminal, read-only, on Linux. That angle is unduplicated.
+**P7, bookmark.** Rare. Chronicle's pin/tag is the only competitor with any bookmark concept.
 
-**USP #9, cross-session full-text search. Common.** The crowded centre of the field: Chronicle, Agent Sessions, claude-history, search-sessions, flex, searchat, claude-code-tools, opcode, claude-code-viewer all search across sessions. Regex specifically is less universal (many use fuzzy, FTS, or semantic), but the capability is table-stakes.
+**P8, native, no web engine, on Linux.** Rare and demanded. Chronicle, Agent Sessions, and Claude Control are macOS-native; opcode and the Tauri viewers embed a WebView; the official Desktop is Electron and macOS/Windows only, leaving Linux on the CLI. The demand is voiced ("not supported on Linux yet", and a standing dislike of Electron memory weight), against a counter-segment that wants no GUI at all.
 
-**USP #10, move / drag between project folders. Rare.** flow and Agent Deck group sessions; CCM relocates on a move. Actual GUI drag-to-move of the session file between project folders, preserving the bookmark, is questlog's. Reframing-on-move is the recurring unsolved pain (folder rename loses sessions).
+**P9, reuse decisions and solutions.** Owned by forward memory systems (Mem0, AgentWorkingMemory, CLAUDE.md workflows, `/ce:compound`) rather than by session-history readers. searchat, flex, and claude-code-tools approach it from the agent side via MCP self-lookup.
 
-**USP #11, coroutine responsiveness. Implementation detail.** No tool markets its concurrency model.
+**P10, history as a record.** Bulk regression analysis is done with one-off parsing scripts (the 6,852-session study); the did-vs-claimed audit is answered by in-session hooks (TruthGuard). No surveyed tool offers a step-by-step tool-call replay timeline in a reading pane.
 
-**USP #12, native Tk, no Electron, no web view. Rare and demanded.** Chronicle, Agent Sessions, and Claude Control are macOS-native; opcode and the Tauri viewers embed a WebView; the official Desktop is Electron and macOS/Windows only, leaving Linux on the CLI. questlog is the only first-class Linux native desktop tool in the survey with no web engine. The demand is voiced ("not supported on Linux yet", and a standing dislike of Electron memory weight), against a counter-segment that wants no GUI at all.
+**P11, token and cost analytics.** A whole cluster reads the same JSONL for spend: ccusage, Claud-ometer, cc-lens, budi, Claudest, claude-code-conversation-analyzer. Live monitoring dashboards and statusline integration are the most-built form.
 
-## Top moats
+**P12, export, sharing, portability.** Sparse. `/export` to Markdown exists in the core; cross-client unification (CLI, Desktop, VS Code, Web in one place) is unaddressed and open (issue #49775); cross-device sync of the `.claude` folder does not surface history in the sidebar.
 
-1. **GUI tool-use path search with the git-status picker (USP #1 + #2).** The file-level "which session touched X" query is now contested from the agent side by flex and searchat, but the human-GUI form, and the git-status picker that makes it a click, are questlog's alone.
-2. **Native Linux desktop (USP #12) with read-only, any-terminal live detection (USP #8).** Native GUIs here are macOS-first; live monitors only see sessions they launched. questlog is the only tool that is both native on Linux and able to see any running session by process inspection.
-3. **Move / drag-to-move (USP #10) with bookmarking (USP #4).** Organising the session tree, with a bookmark that survives the move, against the loud folder-rename-loses-sessions pain that no competitor and not the core address.
+**P13, branching with merge-back, autonomous handoff.** Sparse. The orchestrators (Agent Deck, Maestro, Claude Control, ccmanager, claude-squad) launch and supervise parallel worktree sessions, but merge-back of a branched thread and reliable autonomous context handoff remain unsolved.
 
-## Top table-stakes
+## Cross-agent reach
 
-1. **Cross-session search (USP #9):** the crowded centre of the field.
-2. **Resume / fork (USP #3):** every serious tool has it.
-3. **Live status (USP #8) as a feature:** common, though questlog's read-only any-terminal angle is not.
-
-## Features competitors have that questlog lacks
-
-- **Token / cost analytics.** A whole cluster reads the same JSONL for spend: ccusage, Claud-ometer, cc-lens, budi, Claudest, claude-code-conversation-analyzer. questlog shows no cost.
-- **MCP-surfaced session history for the agent itself.** flex, searchat, and claude-code-tools let the running agent query its own past sessions mid-task. questlog is a human-facing GUI, not an MCP server.
-- **Cross-agent support.** Agent Sessions, searchat, and claude-history read Codex CLI and other agents' logs; questlog is Claude Code only.
-- **Multi-session orchestration.** Agent Deck, Maestro, Claude Control, ccmanager, claude-squad launch and supervise parallel worktree sessions; questlog is a passive browser and launcher.
-- **Windows and macOS desktop, and mobile/remote.** questlog is Linux desktop only.
-- **Semantic search, checkpoints, diffs.** claude-history (semantic), opcode (checkpoint restore, diffs) have these; questlog does not.
-- **In-place session rename.** The built-in picker renames; questlog does not.
-
-## What no competitor positions around
-
-The field competes on mechanics: search, resume, live status, cost. None positions around why a developer returns to a finished session, and none separates the returns that forward state-keeping cannot prevent (closing a loop, defending a conclusion) from the forward-preventable ones that memory systems already serve. That framing is unclaimed.
+Agent Sessions, searchat, and claude-history read Codex CLI and other agents' logs as well as Claude Code; most of the field is Claude Code only.
