@@ -112,15 +112,11 @@ oo::class create ::questlog::ui::Toolbar {
     method build {} {
         ttk::frame $Top
 
-        # Flat "−" remove controls that rest invisible (foreground = the panel
-        # background) and appear on row hover or keyboard focus, so a long
-        # criterion row never shows a control before it is wanted yet the remove
-        # is always one hover away. The two styles differ only in foreground.
-        set bg [ttk::style lookup . -background]
-        ttk::style configure Remove.TButton -relief flat -borderwidth 0 \
-            -padding {2 0} -background $bg -foreground [::questlog::theme::c muted]
-        ttk::style configure RemoveHidden.TButton -relief flat -borderwidth 0 \
-            -padding {2 0} -background $bg -foreground $bg
+        # The criterion controls (white value chip with a faint ×, the dashed
+        # "+ or", the tinted type pill, the ghost add buttons) draw through the
+        # rounded image-element styles built once in theme::build_chrome:
+        # RGhost.TButton, ROr_<t>.TButton, Crit_<t>.TFrame, ChipX.TButton, and
+        # the qlPill_<t> pill images.
 
         # Search row: label, full-width entry, Aa toggle.
         ttk::frame $Top.search
@@ -179,7 +175,7 @@ oo::class create ::questlog::ui::Toolbar {
         pack $AddRail.label -side left -padx {0 4}
         foreach {k text} {under "+ folder" pattern "+ regex" read "+ Read" \
                           wrote "+ Write" edited "+ Edit"} {
-            ttk::button $AddRail.b$k -text $text \
+            ttk::button $AddRail.b$k -text $text -style RGhost.TButton \
                 -command [list [self] open_add $k]
             pack $AddRail.b$k -side left -padx {0 4}
         }
@@ -315,14 +311,6 @@ oo::class create ::questlog::ui::Toolbar {
         my publish
     }
 
-    method clear_clause {kind} {
-        dict set Clauses $kind [list]
-        if {$kind eq "under"} { set UnderAuto 0 }
-        my rebuild_clause_rows
-        my refresh_add_rail
-        my publish
-    }
-
     # Seed the `under` row with the launch cwd. Marks UnderAuto so the
     # Show-all banner knows the chip was not user-typed. Any later edit
     # clears the flag.
@@ -364,26 +352,18 @@ oo::class create ::questlog::ui::Toolbar {
             set t [dict get $ctype $k]
             set row $Restrict.row_$k
             ttk::frame $row
-            # The type tag is a small tinted pill, colour-coded per type
-            # (tk label so -background takes).
-            label $row.label -text $t -width 8 -anchor center -padx 4 \
-                -borderwidth 1 -relief solid \
-                -background [::questlog::theme::c crit_${t}_bg] \
+            # The type tag is a rounded tinted pill: the qlPill_<t> image gives
+            # the shape and fill, the type name is drawn centred over it, and the
+            # label background matches the panel so the pill's corners blend.
+            label $row.label -image qlPill_$t -compound center \
+                -text $t -anchor center -borderwidth 0 \
+                -background [ttk::style lookup . -background] \
                 -foreground [::questlog::theme::c crit_${t}_fg]
             pack $row.label -side left -padx {0 6} -pady 1
-            ttk::button $row.x -text "−" -width 2 -style RemoveHidden.TButton \
-                -command [list [self] clear_clause $k]
-            pack $row.x -side right -padx {4 0}
-            bind $row.x <FocusIn> [list [self] reveal_removes $row 1]
             ttk::frame $row.chips
             pack $row.chips -side left -fill x -expand 1
-            my render_chips $k $row.chips
+            my render_chips $k $t $row.chips
             pack $row -side top -fill x -before $AddRail -pady 1
-            # The remove controls fade in while the row is hovered or focused.
-            # <Leave> with detail NotifyInferior is the pointer crossing onto a
-            # child, not leaving the row, so it must not hide them.
-            bind $row <Enter> [list [self] reveal_removes $row 1]
-            bind $row <Leave> [list [self] row_maybe_hide $row %d]
             dict set RowFrames $k $row
         }
         my refresh_heading
@@ -401,7 +381,8 @@ oo::class create ::questlog::ui::Toolbar {
         $RestrictHd configure -text $txt
     }
 
-    method render_chips {kind chips_frame} {
+    method render_chips {kind type chips_frame} {
+        set white [::questlog::theme::c chip_bg]
         set vals [dict get $Clauses $kind]
         set first 1
         set i 0
@@ -411,20 +392,21 @@ oo::class create ::questlog::ui::Toolbar {
                     -foreground [::questlog::theme::c chip_or]
                 pack $chips_frame.or$i -side left -padx 4
             }
+            # White chip with a hairline type-tinted border: the value in the
+            # fixed-width face (it is literal text the user typed), then a faint ×.
             set chip $chips_frame.c$i
-            ttk::frame $chip -borderwidth 1 -relief solid
-            ttk::label $chip.t -text [my chip_display $kind $v]
-            pack $chip.t -side left -padx {4 0}
-            ttk::button $chip.x -text "−" -width 1 -style RemoveHidden.TButton \
+            ttk::frame $chip -style Crit_$type.TFrame -padding {6 1}
+            label $chip.t -text [my chip_display $kind $v] \
+                -background $white -foreground [::questlog::theme::c ink] -font QLMono
+            pack $chip.t -side left
+            ttk::button $chip.x -text "×" -width 2 -style ChipX.TButton \
                 -command [list [self] remove_value $kind $v]
-            pack $chip.x -side left -padx {2 4}
-            bind $chip.x <FocusIn> \
-                [list [self] reveal_removes [winfo parent $chips_frame] 1]
+            pack $chip.x -side left -padx {2 0}
             pack $chip -side left
             set first 0
             incr i
         }
-        ttk::button $chips_frame.add -text "+ or" \
+        ttk::button $chips_frame.add -text "+ or" -style ROr_$type.TButton \
             -command [list [self] open_add $kind]
         pack $chips_frame.add -side left -padx 4
     }
@@ -446,29 +428,6 @@ oo::class create ::questlog::ui::Toolbar {
                 pack $btn -side left -padx {0 4}
             }
         }
-    }
-
-    # Show or hide the row's remove controls (its clause "−" and each chip "−")
-    # by swapping their style. Driven by row hover and by the controls' own
-    # keyboard focus.
-    method reveal_removes {row show} {
-        set style [expr {$show ? "Remove.TButton" : "RemoveHidden.TButton"}]
-        if {[winfo exists $row.x]} { $row.x configure -style $style }
-        if {[winfo exists $row.chips]} {
-            foreach c [winfo children $row.chips] {
-                if {[winfo exists $c.x]} { $c.x configure -style $style }
-            }
-        }
-    }
-
-    # <Leave> handler: hide the remove controls unless the pointer only crossed
-    # onto a child of the row (NotifyInferior) or one of the row's widgets still
-    # holds keyboard focus.
-    method row_maybe_hide {row detail} {
-        if {$detail eq "NotifyInferior"} return
-        set f [focus]
-        if {$f ne "" && [string match $row.* $f]} return
-        my reveal_removes $row 0
     }
 
     # ---- add-value dropdown ------------------------------------------------

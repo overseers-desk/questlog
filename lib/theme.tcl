@@ -53,6 +53,9 @@ namespace eval ::questlog::theme {
         recap           #f6ead4
         find            #ffec70
         strip           #ececec
+        chip_bg         #ffffff
+        ctrl_border     #c4c4c4
+        ctrl_border_hi  #9a9a9a
         banner_bg       #fff5c2
         banner_fg       #5a4a0a
         banner_border   #e6d36a
@@ -82,6 +85,9 @@ namespace eval ::questlog::theme {
     # Hit highlight: the design marks a match with one pale yellow and no bold.
     # The list snippet mark is #fff59c; the viewer `find` mark is #ffec70.
     variable Hues {#fff59c}
+    # type -> shared rounded-pill photo for the session-list snippet badge,
+    # filled once in build_chrome and looked up by render_snippet.
+    variable BadgePill {}
 }
 
 # Colour for a role. Errors loudly on an unknown role rather than returning a
@@ -165,4 +171,102 @@ proc ::questlog::theme::init {} {
     set bg [. cget -background]
     ttk::style theme use clam
     catch {ttk::style configure . -background $bg}
+    ::questlog::theme::build_chrome
+}
+
+# A rounded-rectangle SVG string, authored directly in pixels (so it rasterises
+# crisp at the display's physical resolution, no compositor upscaling). `sop` is
+# the stroke opacity; a non-empty `dash` emits a dashed outline.
+proc ::questlog::theme::rrect_svg {w h r fill stroke sw {sop 1} {dash ""}} {
+    set o [expr {$sw / 2.0}]
+    set dattr [expr {$dash ne "" ? "stroke-dasharray=\"$dash\"" : ""}]
+    set fattr [expr {$fill eq "none" ? "fill=\"none\"" : "fill=\"$fill\""}]
+    return "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"$w\" height=\"$h\">\
+<rect x=\"$o\" y=\"$o\" width=\"[expr {$w - $sw}]\" height=\"[expr {$h - $sw}]\"\
+ rx=\"$r\" ry=\"$r\" $fattr stroke=\"$stroke\" stroke-width=\"$sw\"\
+ stroke-opacity=\"$sop\" $dattr/></svg>"
+}
+
+# Create (or replace) a named photo from a rounded-rect SVG. Named Tk images
+# persist for the interpreter's life, so the elements and badges that reference
+# them stay drawn without a separate variable holding them.
+proc ::questlog::theme::rrect_img {name w h r fill stroke sw {sop 1} {dash ""}} {
+    set svg [::questlog::theme::rrect_svg $w $h $r $fill $stroke $sw $sop $dash]
+    if {$name in [image names]} { image delete $name }
+    image create photo $name -data $svg -format svg
+    return $name
+}
+
+# The shared snippet-badge pill for one block type.
+proc ::questlog::theme::badge_pill {type} {
+    variable BadgePill
+    return [dict getdef $BadgePill $type [dict get $BadgePill system]]
+}
+
+# Build the rounded image-element styles (toolbar) and the snippet-badge pills.
+# ttk has no corner radius, but it composes image elements, and Tk 9 renders SVG
+# in core; a 9-patch `-border` pins the rounded corners while the middle of the
+# image stretches to the label, so one small SVG serves any button width. Sizes
+# track font metrics so the controls match the text at any DPI. Run once from
+# init, after the clam switch and the named fonts.
+proc ::questlog::theme::build_chrome {} {
+    variable BadgePill
+    # ---- rounded toolbar controls -----------------------------------------
+    set ch [expr {[font metrics TkDefaultFont -linespace] + 10}]
+    set r  [expr {max(5, int($ch * 0.30))}]
+    set B  [expr {$r + 2}]              ;# 9-patch fixed-corner inset, image px
+    set w  [expr {2 * $B + 8}]          ;# min width; the middle stretches
+    # add-rail ghost button: white fill, hairline border, darker on hover.
+    rrect_img qlGhostN $w $ch $r [c chip_bg] [c ctrl_border]    1
+    rrect_img qlGhostA $w $ch $r [c strip]   [c ctrl_border_hi] 1
+    ttk::style element create Ghost.bg image [list qlGhostN active qlGhostA] \
+        -border $B -sticky nsew
+    ttk::style configure RGhost.TButton -relief flat -borderwidth 0 \
+        -background [c strip] -foreground [c ink] -anchor center \
+        -padding {12 3} -focuscolor [c strip]
+    ttk::style layout RGhost.TButton \
+        {Ghost.bg -sticky nsew -children {Button.padding -sticky nsew \
+            -children {Button.label -sticky nsew}}}
+    # faint × that removes one chip; no rounding needed.
+    ttk::style configure ChipX.TButton -relief flat -borderwidth 0 \
+        -padding {2 0} -background [c chip_bg] -foreground [c faint] \
+        -focuscolor [c chip_bg]
+    ttk::style map ChipX.TButton \
+        -foreground [list active [c ink]] -background [list active [c chip_bg]]
+    # The type pill is a fixed-size label image (text drawn centred over it), so
+    # it is sized to the widest type word, not stretched like the 9-patch chips.
+    set pw [expr {[font measure TkDefaultFont "regex"] + 20}]
+    # per criterion type: the white value chip, the dashed "+ or", and the
+    # tinted type pill all share the type's hairline tint.
+    foreach t {under read write edit regex} {
+        rrect_img qlChip_$t $w $ch $r [c chip_bg] [c crit_${t}_bd] 1
+        ttk::style element create Chip_$t.bg image qlChip_$t -border $B -sticky nsew
+        ttk::style layout Crit_$t.TFrame [list Chip_$t.bg -sticky nsew]
+        ttk::style configure Crit_$t.TFrame -background [c chip_bg]
+
+        rrect_img qlOr_$t $w $ch $r [c chip_bg] [c crit_${t}_fg] 1 0.8 "3,2"
+        ttk::style element create Or_$t.bg image qlOr_$t -border $B -sticky nsew
+        ttk::style configure ROr_$t.TButton -relief flat -borderwidth 0 \
+            -background [c chip_bg] -foreground [c crit_${t}_fg] -anchor center \
+            -padding {10 3} -focuscolor [c chip_bg]
+        ttk::style layout ROr_$t.TButton \
+            [list Or_$t.bg -sticky nsew -children {Button.padding -sticky nsew \
+                -children {Button.label -sticky nsew}}]
+
+        rrect_img qlPill_$t $pw $ch $r [c crit_${t}_bg] [c crit_${t}_bd] 1
+    }
+    # ---- rounded snippet-badge pills (shape only; Tk draws the label) ------
+    set bh [font metrics QLBold -linespace]
+    set bw [expr {[font measure QLBold "TOOL RESULT"] + 16}]
+    set br [expr {max(4, int($bh * 0.34))}]
+    foreach {t bgrole fgrole} {
+        user        user_bg        user
+        assistant   assistant_bg   assistant
+        tool_use    tool_bg        tool
+        tool_result tool_result_bg tool_result
+        system      system_bg      system
+    } {
+        rrect_img qlBadge_$t $bw $bh $br [c $bgrole] [c $fgrole] 1 0.30
+        dict set BadgePill $t qlBadge_$t
+    }
 }
