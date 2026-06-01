@@ -3,8 +3,8 @@ package require json
 
 namespace eval ::questlog::jsonl {
     namespace export extract_text extract_blocks record_tool_uses \
-        is_compact_boundary record_timestamp first_cwd segment_blockquotes \
-        parse_inline
+        is_compact_boundary record_timestamp parse_iso fmt_gap first_cwd \
+        segment_blockquotes parse_inline
 }
 
 # Parse one JSONL line into a Tcl dict. Returns "" on parse failure.
@@ -419,6 +419,36 @@ proc ::questlog::jsonl::is_compact_boundary {rec} {
 # ISO timestamp string from a record (.timestamp). Empty if absent.
 proc ::questlog::jsonl::record_timestamp {rec} {
     return [dict getdef $rec timestamp ""]
+}
+
+# Epoch seconds from a Claude ISO timestamp, 0 on an empty or unparseable
+# stamp. The session viewer's section dividers and the markdown export both
+# segment on the same clock, so this is their one parser.
+# Claude stamps millisecond precision (2026-05-24T22:29:21.279Z); clock scan
+# has no fractional-second specifier, so the fraction is dropped before the Z
+# and the second-resolution remainder is parsed as UTC.
+proc ::questlog::jsonl::parse_iso {ts_iso} {
+    if {$ts_iso eq ""} { return 0 }
+    regsub {\.[0-9]+Z$} $ts_iso {Z} ts_iso
+    if {[catch {clock scan $ts_iso -format "%Y-%m-%dT%H:%M:%SZ" -gmt 1} e]} {
+        return 0
+    }
+    return $e
+}
+
+# A silence span in minutes rendered for an idle-gap divider ("12 min",
+# "2 hr 5 min", "3 day(s)"). Shared by the viewer's divider and the markdown
+# export so a gap reads identically in both.
+proc ::questlog::jsonl::fmt_gap {minutes} {
+    if {$minutes < 60} { return "${minutes} min" }
+    if {$minutes < 60*24} {
+        set h [expr {$minutes / 60}]
+        set m [expr {$minutes % 60}]
+        if {$m == 0} { return "${h} hr" }
+        return "${h} hr $m min"
+    }
+    set d [expr {$minutes / (60*24)}]
+    return "${d} day(s)"
 }
 
 # Last non-empty assistant text body in a session jsonl. Empty string if
