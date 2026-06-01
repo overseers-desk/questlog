@@ -2,24 +2,24 @@
 
 The single record of what questlog does, and the only file in `research/` written from the code rather than from the field. The sibling files describe the market: the pain taxonomy in `use-case-survey.md`, the verbatim quotes in `voices.md`, the competitor supply in `competitive-landscape.md`, the discussion dynamics in `discussion-drivers.md`. This file says which of those pains questlog covers, how, and where in the code. Update it when the code changes; update the siblings when the field changes. Pain numbers (P1-P13) are defined in `use-case-survey.md`.
 
-Snapshot May 2026.
+Snapshot June 2026.
 
 ## Coverage
 
 | Pain | Coverage | How | Code |
 |---|---|---|---|
 | P1 Context loss at compaction / session end | Partial | The viewer segments the transcript at `compact_boundary` records and 10-minute idle gaps, so a reader lands at the boundary and reads up to it | `ui/viewer.tcl`. Ceiling: `/compact` runs server-side and is not written back to the JSONL, so no local reader can recover compacted content |
-| P2 Finding a past session and reading it | Solved | Cross-session regex search, hit-centred streaming snippets, and the segmented viewer | `lib/search.tcl`, `lib/scan.tcl`, `ui/sessions.tcl`, `ui/viewer.tcl` |
+| P2 Finding a past session and reading it | Solved | Cross-session regex search, hit-centred streaming snippets, and the segmented viewer; subagent transcripts are searched as first-class targets and listed under their parent session | `lib/search.tcl`, `lib/scan.tcl`, `ui/sessions.tcl`, `ui/viewer.tcl` |
 | P3 Resuming and forking | Solved | Resume, fork, and resume-in-new-terminal-tab from the right-click menu, in the session's original cwd | `lib/terminal.tcl`, `ui/sessions.tcl:1475`. The resume cache-cost spike is Anthropic-side and out of reach |
-| P4 Finding which session touched a file | Solved; picker partial | Tool-use path search over Read/Write/Edit records (bare filename matches any directory by suffix), with a git-status file picker | `lib/match.tcl`, `lib/jsonl.tcl`, `lib/search.tcl`; picker `ui/toolbar.tcl:479-563`. The git listbox populates the Write and Edit dropdowns only; the Read dropdown has a file chooser and manual entry but no git list |
+| P4 Finding which session touched a file | Solved | Tool-use path search over Read/Write/Edit records (bare filename matches any directory by suffix), with a git-status file picker | `lib/match.tcl`, `lib/jsonl.tcl`, `lib/search.tcl`; picker `ui/toolbar.tcl:479-563`. The git listbox seeds the Write and Edit dropdowns; the Read dropdown keeps its file chooser and manual entry without a git list, since git status reports changed files (a write/edit signal), not reads (issue #16) |
 | P5 Seeing which of many sessions is live | Solved | A "running only" filter reads live Claude processes from the process table, validated against `/proc`, so it sees sessions from any terminal | `lib/live.tcl` |
 | P6 Organising: grouping, moving, naming | Solved | Group by project folder; move and drag-to-move between folders preserving the bookmark; in-place rename writing Claude's native title records | `lib/path.tcl`, `ui/move_dialog.tcl`, `ui/drag.tcl`; rename `ui/sessions.tcl:1494-1512`, `lib/title_writer.tcl` |
 | P7 Bookmarking | Solved | The bookmark is the file's `u+x` permission bit (no sidecar), so it survives a move and a copy | `lib/path.tcl` |
 | P8 A native, non-Electron tool on Linux | Solved | A Tcl/Tk GUI with no embedded web engine | `questlog` entry script, `ui/*.tcl` |
 | P9 Reusing decisions and solutions | Partial (retrieval) | Search and the segmented viewer retrieve the earlier decision when asked | `lib/search.tcl`, `ui/viewer.tcl`. Persisting state forward so a future session never has to look back is a memory-system function questlog does not perform |
-| P10 Session history as a record (prove regression, audit) | Partial | Per-session audit through tool-use path search and viewer segmentation | `lib/match.tcl`, `ui/viewer.tcl`. No step-by-step tool-call replay timeline; no bulk cross-session regression analytics |
+| P10 Session history as a record (prove regression, audit) | Partial | Per-session audit through tool-use path search, viewer segmentation, and a tool-call timeline in the viewer (each call as time/tool/path, click-to-jump) for the did-versus-claimed check | `lib/match.tcl`, `ui/viewer.tcl`, `lib/jsonl.tcl`. No bulk cross-session regression analytics |
 | P11 Token and cost analytics | Partial | Per-session USD cost cell (a second-pass thread pool over token usage against a dated rate table), per-folder cost aggregates, a running total, sort-by-cost, and cost-tier colouring; a duration cell | `lib/cost.tcl`, `lib/app.tcl`, `lib/scan.tcl`, `ui/sessions.tcl`. No time-series or budget dashboards, live spend monitoring, statusline integration, or model-over-time breakdown |
-| P12 Export, sharing, cross-device and cross-client portability | None | (no feature) | Reads local JSONL only; no export surface, no cross-device or cross-client unification |
+| P12 Export, sharing, cross-device and cross-client portability | Partial | Copy session as Markdown and Export to .md from the right-click menu (USER/ASSISTANT/SYSTEM turns, segmented by compaction boundary and idle gap like the viewer) | `lib/markdown.tcl`, `ui/sessions.tcl`. Export and share only; cross-device and cross-client unification stay out of reach (server-held sessions) |
 | P13 Branching with merge-back; autonomous handoff | None | Fork starts a branch (P3); there is no merge-back and no autonomous handoff | `lib/terminal.tcl` (fork only) |
 
 ## Feature catalogue
@@ -32,11 +32,14 @@ The features behind the coverage above, each with its code home and the pains it
 - Bookmark via the `u+x` bit: `lib/path.tcl`. Serves P7.
 - Hit-centred streaming snippets with non-scrolling insert: `ui/sessions.tcl`. Serves P2.
 - Segmented session viewer (compaction boundary and 10-minute idle gap): `ui/viewer.tcl`. Serves P1, P2, P9, P10.
+- Tool-call audit timeline in the viewer (each call as time/tool/path, click-to-jump): `ui/viewer.tcl`, `lib/jsonl.tcl`. Serves P10.
 - "This cwd only" auto-detection: `ui/toolbar.tcl`, `lib/app.tcl`. Serves P6 (scope).
 - "Running only" live-process filter: `lib/live.tcl`. Serves P5.
 - Cross-session regex search, streamed: `lib/search.tcl`, `lib/scan.tcl`. Serves P2, P9.
+- Subagents listed under their parent (expand chevron, indented child rows with their own metadata) and searched as first-class targets attributed to the parent: `lib/scan.tcl`, `lib/match.tcl`, `lib/search.tcl`, `ui/sessions.tcl`. Serves P2, P4, P10.
 - Move and drag-to-move between folders: `lib/path.tcl`, `ui/move_dialog.tcl`, `ui/drag.tcl`. Serves P6.
 - In-place rename writing Claude's native title records: `ui/sessions.tcl`, `lib/title_writer.tcl`. Serves P6.
+- Markdown session export (copy as Markdown or save to .md, segmented like the viewer): `lib/markdown.tcl`, `ui/sessions.tcl`. Serves P12.
 - Per-session cost accounting: `lib/cost.tcl`, `lib/app.tcl`. Serves P11.
 - Coroutine-driven responsiveness (scanner and searcher yield to the Tk event loop; O(1) cancellation): `lib/scan.tcl`. A quality property, not tied to one pain.
 - Native Linux Tk GUI, no web engine: `questlog`. Serves P8.
@@ -70,15 +73,13 @@ Architectural limits, given that questlog reads local JSONL and is a human GUI:
 Not built, but feasible within the architecture:
 
 - Cost analytics beyond the per-session column: time-series, budgets, live spend monitoring, statusline integration (P11).
-- Session export and sharing (P12).
-- A step-by-step tool-call audit timeline (P10).
-- Subagent-sidechain rendering in the viewer (GitHub issue #13).
+- Interleaving a parent's subagent turns inline in one viewer (issue #13 deferred; subagents are listed and searched, and a subagent hit opens its own transcript).
 - Bulk cross-session regression analytics (P10).
 
 ## Known viewer issues
 
 - A diagnostic block tied to issue #4 in the viewer source logs mouse events and binds F8 to dump Tk state; text selection in the viewer is in a transitional state and should be re-checked against the code before viewer work proceeds.
-- Subagent sidechains are not yet rendered as their own turns (issue #13).
+- The viewer does not interleave a parent's subagent turns inline; subagents are listed and searched under the parent, and opening a subagent hit loads that subagent's own transcript (issue #13, unified view deferred).
 - A full-height persistent viewer is proposed in `design/issues/viewer-full-height-persistent.md`; the pane currently appears only after the first session is opened.
 
 ## Positioning
