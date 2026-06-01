@@ -270,3 +270,68 @@ proc ::questlog::cost::on_worker_result {path epoch result} {
         turns $turns duration_secs [dur_secs $first_ts $last_ts]]
     if {$OnResult ne ""} { {*}$OnResult $path $cost_dict }
 }
+
+# Synchronously compute USD cost and stats for a session file (in-thread).
+# Reuses the exact parsing logic of the threaded workers.
+proc ::questlog::cost::compute_cost_sync {path} {
+    set per_model [dict create]
+    set first_ts ""
+    set last_ts ""
+    set turns 0
+    if {[catch {open $path r} fh]} {
+        return [dict create cost_usd 0.0 turns 0 duration_secs 0 input_tokens 0 output_tokens 0 cache_write_tokens 0 cache_read_tokens 0 model_breakdown {}]
+    }
+    chan configure $fh -encoding utf-8 -profile replace
+    while {[chan gets $fh line] >= 0} {
+        if {$line eq ""} continue
+        if {[regexp {"timestamp":"([^"]+)"} $line -> m]} {
+            if {$first_ts eq ""} { set first_ts $m }
+            set last_ts $m
+        }
+        if {[regexp {"role":"user","content":"} $line]} {
+            incr turns
+        }
+        if {![regexp {"type":"assistant"} $line]} continue
+        if {[catch {::json::json2dict $line} rec]} continue
+        if {![dict exists $rec message]} continue
+        set msg [dict get $rec message]
+        set model ""
+        if {[dict exists $msg model]} { set model [dict get $msg model] }
+        if {![dict exists $msg usage]} continue
+        set u [dict get $msg usage]
+        set in_t  [expr {[dict exists $u input_tokens] ? [dict get $u input_tokens] : 0}]
+        set out_t [expr {[dict exists $u output_tokens] ? [dict get $u output_tokens] : 0}]
+        set cw_t  [expr {[dict exists $u cache_creation_input_tokens] ? [dict get $u cache_creation_input_tokens] : 0}]
+        set cr_t  [expr {[dict exists $u cache_read_input_tokens] ? [dict get $u cache_read_input_tokens] : 0}]
+        if {$model eq ""} { set model unknown }
+        if {[dict exists $per_model $model]} {
+            lassign [dict get $per_model $model] pi po pw pr
+            dict set per_model $model [list \
+                [expr {$pi+$in_t}] [expr {$po+$out_t}] \
+                [expr {$pw+$cw_t}] [expr {$pr+$cr_t}]]
+        } else {
+            dict set per_model $model [list $in_t $out_t $cw_t $cr_t]
+        }
+    }
+    close $fh
+    set session_date [string range $first_ts 0 9]
+    if {$session_date eq ""} {
+        set session_date [clock format [clock seconds] -format %Y-%m-%d]
+    }
+    set usd [compute_usd $per_model $session_date]
+    set in 0; set out 0; set cw 0; set cr 0
+    dict for {_ c} $per_model {
+        lassign $c i o w r
+        incr in $i; incr out $o; incr cw $w; incr cr $r
+    }
+    return [dict create \
+        cost_usd $usd \
+        input_tokens $in \
+        output_tokens $out \
+        cache_write_tokens $cw \
+        cache_read_tokens $cr \
+        model_breakdown $per_model \
+        turns $turns \
+        duration_secs [dur_secs $first_ts $last_ts]]
+}
+

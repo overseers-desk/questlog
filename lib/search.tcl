@@ -34,10 +34,33 @@ source [list [file join $root lib match.tcl]]
 # the matcher consumes: tokenised search terms, the regex patterns from the
 # pattern row, and the path lists from the read/wrote/edited rows. Each
 # value list is the user's input with empty entries stripped.
+# Tokenise the search field's contents. Space-separated; double-quoted runs
+# preserve a phrase. Trailing/leading whitespace ignored. Empty input yields
+# an empty list.
+proc ::questlog::search::search_terms {s} {
+    set out [list]
+    set buf ""
+    set in_quotes 0
+    foreach ch [split $s ""] {
+        if {$ch eq "\""} { set in_quotes [expr {!$in_quotes}]; continue }
+        if {$ch eq " " && !$in_quotes} {
+            if {$buf ne ""} { lappend out $buf; set buf "" }
+            continue
+        }
+        append buf $ch
+    }
+    if {$buf ne ""} { lappend out $buf }
+    return $out
+}
+
+# build_clauses snapshot - normalise the toolbar's snapshot into the form
+# the matcher consumes: tokenised search terms, the regex patterns from the
+# pattern row, and the path lists from the read/wrote/edited rows. Each
+# value list is the user's input with empty entries stripped.
 proc ::questlog::search::build_clauses {snapshot} {
     set search ""
     if {[dict exists $snapshot search]} { set search [dict get $snapshot search] }
-    set terms [::questlog::ui::search_terms $search]
+    set terms [::questlog::search::search_terms $search]
     set search_case 0
     if {[dict exists $snapshot search_case]} {
         set search_case [dict get $snapshot search_case]

@@ -2,13 +2,28 @@
 # questlog - entry script.
 
 package require Tcl 9
-package require Tk
-package require ttk
 
 set QUESTLOG_VERSION 1.1.0
 if {[lindex $argv 0] in {--version -v}} {
     puts "questlog $QUESTLOG_VERSION"
     exit 0
+}
+
+# Detect CLI mode early before Tk starts
+set CLI_MODE 0
+if {"--cli" in $argv || "--cmd" in $argv} {
+    set CLI_MODE 1
+}
+
+# Hide the root window immediately if Tk was loaded via wish
+if {$CLI_MODE && [info commands wm] ne ""} {
+    wm withdraw .
+}
+
+# Only load GUI packages if NOT in CLI mode
+if {!$CLI_MODE} {
+    package require Tk
+    package require ttk
 }
 
 # --font <family|spec> sets the session viewer's reading font. Pulled out of
@@ -17,34 +32,50 @@ if {[lindex $argv 0] in {--version -v}} {
 set VIEWER_FONT ""
 set INIT_WINDOW ""
 set INIT_SEARCH ""
-set kept [list]
-for {set i 0} {$i < [llength $argv]} {incr i} {
-    switch -- [lindex $argv $i] {
-        --font   { set VIEWER_FONT [lindex $argv [incr i]] }
-        --window { set INIT_WINDOW [lindex $argv [incr i]] }
-        --search { set INIT_SEARCH [lindex $argv [incr i]] }
-        default  { lappend kept [lindex $argv $i] }
+if {!$CLI_MODE} {
+    set kept [list]
+    for {set i 0} {$i < [llength $argv]} {incr i} {
+        switch -- [lindex $argv $i] {
+            --font   { set VIEWER_FONT [lindex $argv [incr i]] }
+            --window { set INIT_WINDOW [lindex $argv [incr i]] }
+            --search { set INIT_SEARCH [lindex $argv [incr i]] }
+            default  { lappend kept [lindex $argv $i] }
+        }
     }
+    set argv $kept
 }
-set argv $kept
 
 set ROOT [file dirname [file normalize [info script]]]
 
 source [file join $ROOT config.tcl]
-source [file join $ROOT lib theme.tcl]
 source [file join $ROOT lib path.tcl]
 source [file join $ROOT lib filter.tcl]
 source [file join $ROOT lib state.tcl]
 source [file join $ROOT lib jsonl.tcl]
-source [file join $ROOT lib markdown.tcl]
 source [file join $ROOT lib match.tcl]
-source [file join $ROOT lib terminal.tcl]
-source [file join $ROOT lib live.tcl]
 source [file join $ROOT lib scan.tcl]
 source [file join $ROOT lib cost.tcl]
-source [file join $ROOT lib title_writer.tcl]
 source [file join $ROOT lib search.tcl]
 source [file join $ROOT lib cli.tcl]
+source [file join $ROOT lib cli_mode.tcl]
+
+# In CLI mode, set up matcher caps and execute directly, bypassing the UI completely
+if {$CLI_MODE} {
+    ::questlog::match::set_caps [dict create \
+        content_cap     [::questlog::config::get content_cap] \
+        snippet_radius  [::questlog::config::get snippet_radius] \
+        tool_param_cap  [::questlog::config::get tool_param_cap] \
+        tool_render_cap [::questlog::config::get tool_render_cap]]
+    ::questlog::cli_mode::run $argv
+    exit 0
+}
+
+# Otherwise, load remaining GUI libraries and start GUI application
+source [file join $ROOT lib theme.tcl]
+source [file join $ROOT lib markdown.tcl]
+source [file join $ROOT lib terminal.tcl]
+source [file join $ROOT lib live.tcl]
+source [file join $ROOT lib title_writer.tcl]
 source [file join $ROOT ui  drag.tcl]
 source [file join $ROOT ui  toolbar.tcl]
 source [file join $ROOT ui  sessions.tcl]
@@ -80,3 +111,4 @@ if {[::questlog::cli::is_cli $argv]} {
 ::questlog::theme::init
 if {$VIEWER_FONT ne ""} { ::questlog::theme::set_body_family $VIEWER_FONT }
 ::questlog::app::start $ROOT $initial_criteria $INIT_WINDOW $INIT_SEARCH
+
