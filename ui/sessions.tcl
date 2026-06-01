@@ -26,7 +26,7 @@ proc ::questlog::ui::session_columns {} {
     return {
         {date     Date     {Wed 30 May 12:30} right 1}
         {size     Size     {999.9 M}          right 1}
-        {cost     Cost     {$999.99}          right 1}
+        {cost     Cost     {$9999.99}         right 1}
         {turns    Turns    {9999}             right 1}
         {duration Duration {0:00:00}          right 1}
         {actions  {}       {⋯}                right 0}
