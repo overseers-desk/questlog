@@ -378,11 +378,15 @@ proc ::questlog::jsonl::tool_result_text {blk} {
 }
 
 # Walk an assistant record's tool_use blocks. Returns one dict per block:
-#   {name <tool>  path <file_path|notebook_path|"">  rendered <NAME(args)>}
+#   {name <tool>  path <file_path|notebook_path|"">  rendered <NAME(args)>
+#    text <uncapped argument values, whitespace-collapsed>}
 # Path is the file the built-in tool acted on, read off the parsed input
 # rather than the rendered string, so it carries the full untruncated path
-# and the NotebookEdit notebook_path. Used by Search to satisfy
-# read/write/edit criteria structurally. Empty for non-assistant records.
+# and the NotebookEdit notebook_path; the `file` criterion matches it by
+# suffix. `text` is the uncapped join of the input values, which the `tool`
+# criterion matches a key against by substring - so a key past tool_render_cap
+# is still found, and a path inside a Bash redirect (`gen.py > out.json`) is
+# caught. `rendered` is the capped display form. Empty for non-assistant records.
 proc ::questlog::jsonl::record_tool_uses {rec} {
     set out [list]
     if {[dict getdef $rec type ""] ne "assistant"} { return $out }
@@ -396,15 +400,23 @@ proc ::questlog::jsonl::record_tool_uses {rec} {
         set name  [dict getdef $blk name ""]
         set input [dict getdef $blk input [dict create]]
         set path ""
+        set vals [list]
         if {![catch {dict size $input}]} {
             if {[dict exists $input file_path]} {
                 set path [dict get $input file_path]
             } elseif {[dict exists $input notebook_path]} {
                 set path [dict get $input notebook_path]
             }
+            # Uncapped searchable text: the values only (not the keys, which
+            # would match every use of a tool). Tcl's value duck-typing renders
+            # a nested object as a string, same as format_tool_use treats it.
+            foreach k [dict keys $input] {
+                lappend vals [regsub -all {[\s]+} [dict get $input $k] " "]
+            }
         }
         lappend out [dict create name $name path $path \
-                         rendered [::questlog::match::format_tool_use $name $input]]
+                         rendered [::questlog::match::format_tool_use $name $input] \
+                         text [string trim [join $vals " "]]]
     }
     return $out
 }
