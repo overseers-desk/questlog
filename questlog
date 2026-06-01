@@ -1,4 +1,4 @@
-#!/usr/bin/env wish9.0
+#!/usr/bin/env tclsh9.0
 # questlog - entry script.
 
 package require Tcl 9
@@ -9,21 +9,12 @@ if {[lindex $argv 0] in {--version -v}} {
     exit 0
 }
 
-# Detect CLI mode early before Tk starts
+# Detect CLI mode before any library is sourced. The interpreter is tclsh, so
+# Tk is absent until a GUI file requires it: CLI mode never loads Tk and runs
+# without a display, while GUI mode pulls Tk in through the GUI layer below.
 set CLI_MODE 0
 if {"--json" in $argv || "--cmd" in $argv || "--help" in $argv || "-h" in $argv} {
     set CLI_MODE 1
-}
-
-# Hide the root window immediately if Tk was loaded via wish
-if {$CLI_MODE && [info commands wm] ne ""} {
-    wm withdraw .
-}
-
-# Only load GUI packages if NOT in CLI mode
-if {!$CLI_MODE} {
-    package require Tk
-    package require ttk
 }
 
 # --font <family|spec> sets the session viewer's reading font. Pulled out of
@@ -69,7 +60,9 @@ if {$CLI_MODE} {
     exit 0
 }
 
-# Otherwise, load remaining GUI libraries and start GUI application
+# GUI mode: source the GUI layer. Tk (and with it ttk) enters the process here,
+# required by theme.tcl and the ui/ classes; the entry script never requires Tk
+# itself, so CLI mode above stays Tk-free.
 source [file join $ROOT lib theme.tcl]
 source [file join $ROOT lib markdown.tcl]
 source [file join $ROOT lib terminal.tcl]

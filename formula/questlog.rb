@@ -15,13 +15,14 @@ class Questlog < Formula
   def install
     pkgshare.install "lib", "ui", "data"
 
-    # questlog sources lib/ and ui/ relative to ROOT and runs under wish. Point ROOT
-    # at the installed tree, and pin the shebang to Homebrew's keg-only wish9.0
-    # (not on PATH, so #!/usr/bin/env wish9.0 would not resolve).
-    wish = Formula["tcl-tk"].opt_bin/"wish9.0"
+    # questlog sources lib/ and ui/ relative to ROOT and runs under tclsh, loading
+    # Tk only in GUI mode. Point ROOT at the installed tree, and pin the shebang to
+    # Homebrew's keg-only tclsh9.0 (not on PATH, so #!/usr/bin/env tclsh9.0 would
+    # not resolve); GUI mode's package require Tk resolves against the same keg.
+    tclsh = Formula["tcl-tk"].opt_bin/"tclsh9.0"
     cp "questlog", "questlog.install"
     inreplace "questlog.install" do |s|
-      s.sub!(/\A#![^\n]*/, "#!#{wish}")
+      s.sub!(/\A#![^\n]*/, "#!#{tclsh}")
       s.gsub!(/^set ROOT .*$/, "set ROOT #{pkgshare}")
     end
     libexec.install "questlog.install" => "questlog"
