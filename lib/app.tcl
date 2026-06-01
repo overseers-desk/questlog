@@ -33,6 +33,9 @@ namespace eval ::questlog::app {
     variable CostFlushTimer   ;# after-id of the pending cost flush, or ""
     variable SearchPending    ;# list of per-file match lists buffered for an idle flush
     variable SearchFlushTimer ;# after-id of the pending search-render flush, or ""
+    variable CostPool         ;# Thread pool for background cost calculation
+    variable CostEpoch        ;# Epoch to drop stale results after a filter change
+    variable CostWorkerScript ;# Script evaluated in each cost worker
 }
 
 proc ::questlog::app::start {root {initial_criteria {}} {init_window ""} {init_search ""}} {
@@ -54,6 +57,9 @@ proc ::questlog::app::start {root {initial_criteria {}} {init_window ""} {init_s
     variable CostFlushTimer
     variable SearchPending
     variable SearchFlushTimer
+    variable CostPool
+    variable CostEpoch
+    variable CostWorkerScript
 
     set Root $root
     set StatusVar [scope_status]
@@ -65,6 +71,17 @@ proc ::questlog::app::start {root {initial_criteria {}} {init_window ""} {init_s
     set CostFlushTimer ""
     set SearchPending [list]
     set SearchFlushTimer ""
+    set CostPool ""
+    set CostEpoch 0
+    set CostWorkerScript {
+        package require Tcl 9
+        package require Thread
+        proc dispatch_main {path tid epoch} {
+            set r [::questlog::cost::parse_file $path]
+            thread::send -async $tid \
+                [list ::questlog::app::on_cost_worker_result $path $epoch $r]
+        }
+    }
 
     # The <<ContextMenu>> virtual event already covers Button-2 on Aqua and
     # Button-3 on X11/Windows. Tk does not include Control-Click in it on
@@ -156,7 +173,7 @@ proc ::questlog::app::start {root {initial_criteria {}} {init_window ""} {init_s
     # token sum. Load rates first so the first worker has them; init the
     # pool before any on_scan_row fires.
     ::questlog::cost::load_rates $Root
-    ::questlog::cost::init [namespace code on_cost_result]
+    init_cost_pool
 
     $Toolbar subscribe [namespace code on_filter]
     # cli::parse already normalised each criterion to a canonical toolbar clause
@@ -358,7 +375,7 @@ proc ::questlog::app::on_scan_row {row} {
     # Queue a cost task only for rows that don't yet carry one. A
     # memoised row republished on a filter change already has its cost.
     if {![dict exists $row cost_usd]} {
-        ::questlog::cost::start_one [dict get $row path]
+        start_cost_one [dict get $row path]
     }
 }
 
@@ -654,7 +671,7 @@ proc ::questlog::app::on_subagents {path} {
 # on_cost_result; update_cost no-ops there (the child is not in Rows) and the
 # session list's refresh_cost routes it to the child row.
 proc ::questlog::app::on_subagent_cost {path} {
-    ::questlog::cost::start_one $path
+    start_cost_one $path
 }
 
 # ---- shared helpers exposed to UI components --------------------------
@@ -694,8 +711,43 @@ proc ::questlog::app::quit {} {
     # Stop the cost pass before tearing down Scan: a worker result still in
     # flight would otherwise reach on_cost_result -> $Scan update_cost after the
     # object is gone. The epoch bump makes on_worker_result drop those results.
-    ::questlog::cost::cancel
+    cancel_cost
     if {[info exists Search] && $Search ne ""} { catch {$Search destroy} }
     if {[info exists Scan]   && $Scan ne ""}   { catch {$Scan destroy} }
     exit 0
+}
+
+# ---- background cost queue ---------------------------------------------
+
+proc ::questlog::app::init_cost_pool {} {
+    variable CostPool
+    variable CostWorkerScript
+    variable Root
+    package require Thread
+    set initcmd "source [list [file join $Root lib cost.tcl]]\n$CostWorkerScript"
+    set CostPool [tpool::create \
+        -minworkers [::questlog::config::get cost_workers_min] \
+        -maxworkers [::questlog::config::get cost_workers_max] \
+        -initcmd $initcmd]
+}
+
+proc ::questlog::app::start_cost_one {path} {
+    variable CostPool
+    variable CostEpoch
+    if {$CostPool eq ""} return
+    tpool::post -nowait $CostPool [list dispatch_main $path [thread::id] $CostEpoch]
+}
+
+proc ::questlog::app::cancel_cost {} {
+    variable CostEpoch
+    incr CostEpoch
+}
+
+proc ::questlog::app::on_cost_worker_result {path epoch result} {
+    variable CostEpoch
+    if {$epoch != $CostEpoch} return
+    if {![dict get $result ok]} return
+    
+    set cost_dict [::questlog::cost::build_cost_dict $result]
+    on_cost_result $path $cost_dict
 }

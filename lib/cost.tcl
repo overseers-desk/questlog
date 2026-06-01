@@ -1,34 +1,13 @@
 package require Tcl 9
-package require Thread
 package require json
 
 # ::questlog::cost - per-session token cost computation.
 #
-# Runs as a second pass after the main scan. The scan keeps its early-break
-# on first-prompt extraction; cost needs every assistant turn, so it ships
-# the work to a tpool of worker threads. One worker job per JSONL: open,
-# regex the lines whose `"type":"assistant"` matters, JSON-parse those,
-# accumulate per-model {input,output,cache_creation_input,cache_read_input}
-# token counts. Workers send results back to the main thread via
-# thread::send -async; on_worker_result updates Scan.Rows + the list row.
-#
-# A late result from a prior cancel is discarded by epoch.
-#
-# Singleton; one running app needs one cost scanner. Held in namespace
-# variables, not a class, because all three of the issue-67 criteria
-# (named globals, joint state, tell-don't-ask) collapse to one named
-# global that meaningfully mutates (Epoch), so a class would be
-# scaffolding around what is essentially four procs over an epoch.
+# Pure domain module. Computes cost and durations.
 
 namespace eval ::questlog::cost {
     variable Rates [dict create]
     variable Loaded 0
-    variable WorkerScript ""
-
-    variable Pool ""
-    variable MainTid ""
-    variable Epoch 0
-    variable OnResult ""
 }
 
 # Load the rate table. CSV columns:
@@ -143,143 +122,13 @@ proc ::questlog::cost::iso_to_epoch {ts} {
     return $e
 }
 
-# Sourced into each tpool worker once at creation. Worker interpreters
-# share nothing with the main interp, so the file-reading procs live here.
-set ::questlog::cost::WorkerScript {
-    package require Tcl 9
-    package require Thread
-    package require json
-
-    proc compute_cost {path} {
-        set per_model [dict create]
-        set first_ts ""
-        set last_ts ""
-        set turns 0
-        if {[catch {open $path r} fh]} {
-            return [dict create per_model {} first_ts "" last_ts "" turns 0 ok 0]
-        }
-        chan configure $fh -encoding utf-8 -profile replace
-        while {[chan gets $fh line] >= 0} {
-            if {$line eq ""} continue
-            if {[regexp {"timestamp":"([^"]+)"} $line -> m]} {
-                if {$first_ts eq ""} { set first_ts $m }
-                set last_ts $m
-            }
-            # Count conversational turns: a genuine prompt is a user message
-            # whose content is a string ("role":"user","content":"…"). Tool
-            # results come back as user records whose content is an array
-            # ("content":[…]) and are excluded, so the count is typed prompts,
-            # not the agent's own tool round-trips. (The forward scan's coarser
-            # heuristic tolerates over-counting because it only needs ≥2.)
-            if {[regexp {"role":"user","content":"} $line]} {
-                incr turns
-            }
-            if {![regexp {"type":"assistant"} $line]} continue
-            if {[catch {::json::json2dict $line} rec]} continue
-            if {![dict exists $rec message]} continue
-            set msg [dict get $rec message]
-            set model ""
-            if {[dict exists $msg model]} { set model [dict get $msg model] }
-            if {![dict exists $msg usage]} continue
-            set u [dict get $msg usage]
-            set in_t  [expr {[dict exists $u input_tokens] ? [dict get $u input_tokens] : 0}]
-            set out_t [expr {[dict exists $u output_tokens] ? [dict get $u output_tokens] : 0}]
-            set cw_t  [expr {[dict exists $u cache_creation_input_tokens] ? [dict get $u cache_creation_input_tokens] : 0}]
-            set cr_t  [expr {[dict exists $u cache_read_input_tokens] ? [dict get $u cache_read_input_tokens] : 0}]
-            if {$model eq ""} { set model unknown }
-            if {[dict exists $per_model $model]} {
-                lassign [dict get $per_model $model] pi po pw pr
-                dict set per_model $model [list \
-                    [expr {$pi+$in_t}] [expr {$po+$out_t}] \
-                    [expr {$pw+$cw_t}] [expr {$pr+$cr_t}]]
-            } else {
-                dict set per_model $model [list $in_t $out_t $cw_t $cr_t]
-            }
-        }
-        close $fh
-        return [dict create per_model $per_model \
-            first_ts $first_ts last_ts $last_ts turns $turns ok 1]
-    }
-
-    proc dispatch_main {path tid epoch} {
-        set r [compute_cost $path]
-        thread::send -async $tid \
-            [list ::questlog::cost::on_worker_result $path $epoch $r]
-    }
-}
-
-# Initialise the singleton scanner. Called once at app start, after
-# load_rates so the rate table is in place before any worker fires.
-proc ::questlog::cost::init {on_result} {
-    variable Pool
-    variable MainTid
-    variable Epoch
-    variable OnResult
-    variable WorkerScript
-    set OnResult $on_result
-    set Epoch 0
-    set MainTid [thread::id]
-    set Pool [tpool::create \
-        -minworkers [::questlog::config::get cost_workers_min] \
-        -maxworkers [::questlog::config::get cost_workers_max] \
-        -initcmd $WorkerScript]
-}
-
-# Queue a cost task for one session path. Returns immediately; the
-# result arrives later on the main thread via on_worker_result.
-proc ::questlog::cost::start_one {path} {
-    variable Pool
-    variable MainTid
-    variable Epoch
-    if {$Pool eq ""} return
-    tpool::post -nowait $Pool [list dispatch_main $path $MainTid $Epoch]
-}
-
-# Bump epoch so late results from prior posts are discarded. The pool
-# stays alive; the next start_one carries the new epoch.
-proc ::questlog::cost::cancel {} {
-    variable Epoch
-    incr Epoch
-}
-
-# Worker callback - eval'd in the main thread from thread::send -async.
-proc ::questlog::cost::on_worker_result {path epoch result} {
-    variable Epoch
-    variable OnResult
-    if {$epoch != $Epoch} return
-    if {![dict get $result ok]} return
-    set per_model [dict get $result per_model]
-    set first_ts  [dict get $result first_ts]
-    set last_ts   [dict getdef $result last_ts ""]
-    set turns     [dict getdef $result turns 0]
-    set session_date [string range $first_ts 0 9]
-    if {$session_date eq ""} {
-        set session_date [clock format [clock seconds] -format %Y-%m-%d]
-    }
-    set usd [compute_usd $per_model $session_date]
-    set in 0; set out 0; set cw 0; set cr 0
-    dict for {_ c} $per_model {
-        lassign $c i o w r
-        incr in $i; incr out $o; incr cw $w; incr cr $r
-    }
-    set cost_dict [dict create \
-        cost_usd $usd \
-        input_tokens $in output_tokens $out \
-        cache_write_tokens $cw cache_read_tokens $cr \
-        model_breakdown $per_model \
-        turns $turns duration_secs [dur_secs $first_ts $last_ts]]
-    if {$OnResult ne ""} { {*}$OnResult $path $cost_dict }
-}
-
-# Synchronously compute USD cost and stats for a session file (in-thread).
-# Reuses the exact parsing logic of the threaded workers.
-proc ::questlog::cost::compute_cost_sync {path} {
+proc ::questlog::cost::parse_file {path} {
     set per_model [dict create]
     set first_ts ""
     set last_ts ""
     set turns 0
     if {[catch {open $path r} fh]} {
-        return [dict create cost_usd 0.0 turns 0 duration_secs 0 input_tokens 0 output_tokens 0 cache_write_tokens 0 cache_read_tokens 0 model_breakdown {}]
+        return [dict create per_model {} first_ts "" last_ts "" turns 0 ok 0]
     }
     chan configure $fh -encoding utf-8 -profile replace
     while {[chan gets $fh line] >= 0} {
@@ -314,6 +163,19 @@ proc ::questlog::cost::compute_cost_sync {path} {
         }
     }
     close $fh
+    return [dict create per_model $per_model \
+        first_ts $first_ts last_ts $last_ts turns $turns ok 1]
+}
+
+proc ::questlog::cost::build_cost_dict {res} {
+    if {![dict get $res ok]} {
+        return [dict create cost_usd 0.0 turns 0 duration_secs 0 input_tokens 0 output_tokens 0 cache_write_tokens 0 cache_read_tokens 0 model_breakdown {}]
+    }
+    set per_model [dict get $res per_model]
+    set first_ts [dict get $res first_ts]
+    set last_ts [dict get $res last_ts]
+    set turns [dict get $res turns]
+
     set session_date [string range $first_ts 0 9]
     if {$session_date eq ""} {
         set session_date [clock format [clock seconds] -format %Y-%m-%d]
@@ -335,3 +197,7 @@ proc ::questlog::cost::compute_cost_sync {path} {
         duration_secs [dur_secs $first_ts $last_ts]]
 }
 
+proc ::questlog::cost::compute_cost_sync {path} {
+    set res [parse_file $path]
+    return [build_cost_dict $res]
+}
