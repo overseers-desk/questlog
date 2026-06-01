@@ -127,35 +127,63 @@ proc ::questlog::match::_order_tool_keys {name keys} {
     return $out
 }
 
-# record_hits rec clauses - the evidence a parsed record gives for each
-# clause. Returns a dict:
-#   hits        list of {btype content} snippets to flush if the session passes
-#   rec_text    concatenated text of every block in this record (for the
-#               cross-record "all search terms appear somewhere" check)
-#   pat_hit     1 iff any pattern matched any block in this record
-#   read_hit    1 iff a Read tool_use referenced a path in paths_read
-#   wrote_hit   1 iff a Write tool_use referenced a path in paths_wrote
-#   edited_hit  1 iff an Edit/MultiEdit/NotebookEdit referenced a path in paths_edited
+# op_toolset op - the tool names a file `op` matches. `wrote` is the created-
+# or-edited merge the GUI presents; the finer `write` and `edit` are the ops the
+# CLI keeps; `either` is the union. An unknown op falls back to the union, the
+# widest set.
+proc ::questlog::match::op_toolset {op} {
+    switch -- $op {
+        read    { return {Read} }
+        write   { return {Write} }
+        edit    { return {Edit MultiEdit NotebookEdit} }
+        wrote   { return {Write Edit MultiEdit NotebookEdit} }
+        default { return {Read Write Edit MultiEdit NotebookEdit} }
+    }
+}
+
+# btype_in_scope btype scope - 1 iff a block of this type is inside the search
+# scope. `text` is what was said (user + assistant), `tool-call` what was
+# invoked, `tool-output` what came back; `anywhere` (and any unknown scope) is
+# every line type.
+proc ::questlog::match::btype_in_scope {btype scope} {
+    switch -- $scope {
+        text        { return [expr {$btype in {user assistant}}] }
+        tool-call   { return [expr {$btype eq "tool_use"}] }
+        tool-output { return [expr {$btype eq "tool_result"}] }
+        default     { return 1 }
+    }
+}
+
+# record_hits rec clauses - the evidence a parsed record gives for each clause.
+# Returns a dict:
+#   hits      list of {btype content} snippets to flush if the session passes
+#   rec_text  concatenated text of the in-scope blocks of this record (for the
+#             cross-record "all search terms appear somewhere" check)
+#   pat_hit   1 iff any regex pattern matched any block in this record
+#   file_hit  1 iff any {op path} file value matched a tool_use here, by the
+#             op's tool set and a path suffix
+#   tool_hit  1 iff any {name key} tool value matched a tool_use here, by name
+#             with the key empty or a substring of the invocation text
 proc ::questlog::match::record_hits {rec clauses} {
-    set patterns     [dict get $clauses patterns]
-    set terms        [dict get $clauses terms]
-    set nocase       [dict get $clauses nocase]
-    set paths_read   [dict get $clauses paths_read]
-    set paths_wrote  [dict get $clauses paths_wrote]
-    set paths_edited [dict get $clauses paths_edited]
+    set patterns [dict get $clauses patterns]
+    set terms    [dict get $clauses terms]
+    set nocase   [dict get $clauses nocase]
+    set scope    [dict get $clauses scope]
+    set files    [dict get $clauses files]
+    set tools    [dict get $clauses tools]
 
     set hits [list]
     set rec_text ""
     set pat_hit 0
-    set read_hit 0
-    set wrote_hit 0
-    set edited_hit 0
+    set file_hit 0
+    set tool_hit 0
 
     set need_blocks [expr {[llength $terms] > 0 || [llength $patterns] > 0}]
     if {$need_blocks} {
         set blocks [::questlog::jsonl::extract_blocks $rec]
         foreach {btype content} $blocks {
-            append rec_text " " $content
+            # Regex is the structured pattern row and matches anywhere; the
+            # search terms honour the scope selector that rides on the search box.
             foreach p $patterns {
                 if {[regexp -- $p $content]} {
                     set pat_hit 1
@@ -163,6 +191,8 @@ proc ::questlog::match::record_hits {rec clauses} {
                         [::questlog::match::snippet_window $content $p ""]]
                 }
             }
+            if {![::questlog::match::btype_in_scope $btype $scope]} continue
+            append rec_text " " $content
             foreach t $terms {
                 set needle [expr {$nocase ? [string tolower $t] : $t}]
                 set hay    [expr {$nocase ? [string tolower $content] : $content}]
@@ -175,42 +205,45 @@ proc ::questlog::match::record_hits {rec clauses} {
         }
     }
 
-    set need_tools [expr {[llength $paths_read]   > 0
-                        || [llength $paths_wrote]  > 0
-                        || [llength $paths_edited] > 0}]
+    set need_tools [expr {[llength $files] > 0 || [llength $tools] > 0}]
     if {$need_tools} {
-        set tools [::questlog::jsonl::record_tool_uses $rec]
-        set toolsets [dict create \
-            read   {Read} \
-            wrote  {Write} \
-            edited {Edit MultiEdit NotebookEdit}]
-        foreach {kind paths_var} {read paths_read wrote paths_wrote edited paths_edited} {
-            set paths [set $paths_var]
-            if {[llength $paths] == 0} continue
-            set toolset [dict get $toolsets $kind]
-            foreach t $tools {
+        set tooluses [::questlog::jsonl::record_tool_uses $rec]
+        # File values OR within the one file row: a hit on any {op path} sets
+        # file_hit. The path is matched by suffix, so a bare filename finds it in
+        # any directory; `file` rides only on the file-touching tools.
+        foreach fv $files {
+            lassign $fv op val
+            set toolset [::questlog::match::op_toolset $op]
+            foreach t $tooluses {
                 if {[dict get $t name] ni $toolset} continue
                 set tp [dict get $t path]
-                foreach val $paths {
-                    set off [expr {[string length $tp] - [string length $val]}]
-                    if {$off >= 0 && [string range $tp $off end] eq $val} {
-                        switch -- $kind {
-                            read   { set read_hit 1 }
-                            wrote  { set wrote_hit 1 }
-                            edited { set edited_hit 1 }
-                        }
-                        lappend hits [list tool_use \
-                            [::questlog::match::clean_text [dict get $t rendered]]]
-                        break
-                    }
+                set off [expr {[string length $tp] - [string length $val]}]
+                if {$off >= 0 && [string range $tp $off end] eq $val} {
+                    set file_hit 1
+                    lappend hits [list tool_use \
+                        [::questlog::match::clean_text [dict get $t rendered]]]
+                    break
+                }
+            }
+        }
+        # Tool values OR within the one tool row: a use of the named tool whose
+        # invocation text contains the key (empty key = any use of that tool).
+        foreach tv $tools {
+            lassign $tv tname key
+            foreach t $tooluses {
+                if {[dict get $t name] ne $tname} continue
+                if {$key eq "" || [string first $key [dict get $t text]] >= 0} {
+                    set tool_hit 1
+                    lappend hits [list tool_use \
+                        [::questlog::match::clean_text [dict get $t rendered]]]
+                    break
                 }
             }
         }
     }
 
     return [dict create hits $hits rec_text $rec_text \
-        pat_hit $pat_hit read_hit $read_hit \
-        wrote_hit $wrote_hit edited_hit $edited_hit]
+        pat_hit $pat_hit file_hit $file_hit tool_hit $tool_hit]
 }
 
 # Scan one session file against a built clauses dict. Pure except for reading
@@ -229,16 +262,23 @@ proc ::questlog::match::record_hits {rec clauses} {
 # epoch drop on arrival); the coroutine path passes a tick that yields and
 # reports epoch change, so a re-typed search lands without finishing a big file.
 proc ::questlog::match::scan_file {path clauses {tick ""} {yield_lines 0}} {
-    set terms        [dict get $clauses terms]
-    set patterns     [dict get $clauses patterns]
-    set paths_read   [dict get $clauses paths_read]
-    set paths_wrote  [dict get $clauses paths_wrote]
-    set paths_edited [dict get $clauses paths_edited]
-    set nocase       [dict get $clauses nocase]
+    set terms    [dict get $clauses terms]
+    set patterns [dict get $clauses patterns]
+    set files    [dict get $clauses files]
+    set tools    [dict get $clauses tools]
+    set nocase   [dict get $clauses nocase]
 
     # Per-line pre-filter literals: a record needs parsing only when its raw
-    # text contains a candidate substring for at least one clause.
-    set path_substrs [concat $paths_read $paths_wrote $paths_edited]
+    # text contains a candidate substring for at least one clause. A file value
+    # contributes its path; a tool value its key, or its tool name when the key
+    # is empty (the name appears verbatim in the tool_use JSON), so a "used this
+    # tool" clause still skips lines that cannot contribute.
+    set path_substrs [list]
+    foreach fv $files { lappend path_substrs [lindex $fv 1] }
+    foreach tv $tools {
+        lassign $tv tname key
+        lappend path_substrs [expr {$key ne "" ? $key : $tname}]
+    }
     set term_needles [list]
     foreach t $terms {
         lappend term_needles [expr {$nocase ? [string tolower $t] : $t}]
@@ -265,10 +305,9 @@ proc ::questlog::match::scan_file {path clauses {tick ""} {yield_lines 0}} {
     set lineno 0
     set seen_terms [dict create]
     set all_terms_seen [expr {[llength $terms] == 0}]
-    set pat_sat    [expr {[llength $patterns]     == 0}]
-    set read_sat   [expr {[llength $paths_read]   == 0}]
-    set wrote_sat  [expr {[llength $paths_wrote]  == 0}]
-    set edited_sat [expr {[llength $paths_edited] == 0}]
+    set pat_sat  [expr {[llength $patterns] == 0}]
+    set file_sat [expr {[llength $files]    == 0}]
+    set tool_sat [expr {[llength $tools]    == 0}]
     set buffer [list]
     set seen [dict create]
     if {[catch {open $path r} fh]} { return [list "" {}] }
@@ -301,10 +340,9 @@ proc ::questlog::match::scan_file {path clauses {tick ""} {yield_lines 0}} {
         }
         if {$candidate && ![catch {::json::json2dict $line} rec]} {
             set r [::questlog::match::record_hits $rec $clauses]
-            if {[dict get $r pat_hit]}    { set pat_sat 1 }
-            if {[dict get $r read_hit]}   { set read_sat 1 }
-            if {[dict get $r wrote_hit]}  { set wrote_sat 1 }
-            if {[dict get $r edited_hit]} { set edited_sat 1 }
+            if {[dict get $r pat_hit]}  { set pat_sat 1 }
+            if {[dict get $r file_hit]} { set file_sat 1 }
+            if {[dict get $r tool_hit]} { set tool_sat 1 }
             if {!$all_terms_seen} {
                 set rec_text [dict get $r rec_text]
                 if {$nocase} { set rec_text [string tolower $rec_text] }
@@ -356,8 +394,8 @@ proc ::questlog::match::scan_file {path clauses {tick ""} {yield_lines 0}} {
         parent_uuid $parent_uuid \
         cwd_hint $cwd_hint]
     set matches [list]
-    if {$all_terms_seen && $pat_sat && $read_sat
-        && $wrote_sat && $edited_sat && [llength $buffer] > 0} {
+    if {$all_terms_seen && $pat_sat && $file_sat
+        && $tool_sat && [llength $buffer] > 0} {
         set agent_id [file rootname [file tail $path]]
         foreach ev $buffer {
             lassign $ev evlineno evbtype evcontent

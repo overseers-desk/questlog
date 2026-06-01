@@ -50,8 +50,7 @@ puts $fh "{\"type\":\"user\",\"message\":{\"content\":\"second turn\"}}"
 close $fh
 
 proc mk_clauses {args} {
-    set c [dict create terms {} nocase 1 patterns {} \
-        paths_read {} paths_wrote {} paths_edited {}]
+    set c [dict create terms {} nocase 1 patterns {} scope anywhere files {} tools {}]
     foreach {k v} $args { dict set c $k $v }
     return $c
 }
@@ -62,8 +61,9 @@ set tid [thread::create $wscript]
 
 foreach {name clauses} [list \
     terms_only     [mk_clauses terms NEEDLE] \
-    edited_path    [mk_clauses paths_edited b.tcl] \
-    terms_and_edit [mk_clauses terms NEEDLE paths_edited /a/b.tcl] \
+    file_wrote     [mk_clauses files {{wrote b.tcl}}] \
+    terms_and_file [mk_clauses terms NEEDLE files {{wrote /a/b.tcl}}] \
+    tool_bash      [mk_clauses tools {{Bash NEEDLE}}] \
     no_match       [mk_clauses terms ZZZNOPE]] {
     set main_res   [::questlog::match::scan_file $fix $clauses]
     set worker_res [thread::send $tid [list ::questlog::match::scan_file $fix $clauses]]

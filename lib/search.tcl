@@ -30,10 +30,6 @@ source [list [file join $root lib match.tcl]]
 "
 }
 
-# build_clauses snapshot - normalise the toolbar's snapshot into the form
-# the matcher consumes: tokenised search terms, the regex patterns from the
-# pattern row, and the path lists from the read/wrote/edited rows. Each
-# value list is the user's input with empty entries stripped.
 # Tokenise the search field's contents. Space-separated; double-quoted runs
 # preserve a phrase. Trailing/leading whitespace ignored. Empty input yields
 # an empty list.
@@ -53,10 +49,11 @@ proc ::questlog::search::search_terms {s} {
     return $out
 }
 
-# build_clauses snapshot - normalise the toolbar's snapshot into the form
-# the matcher consumes: tokenised search terms, the regex patterns from the
-# pattern row, and the path lists from the read/wrote/edited rows. Each
-# value list is the user's input with empty entries stripped.
+# build_clauses snapshot - normalise the toolbar's snapshot into the form the
+# matcher consumes: tokenised search terms, the search scope, the regex
+# patterns from the pattern row, the {op path} file values and the {name key}
+# tool values. File pairs keep only a non-empty path, tool pairs a non-empty
+# name; empty entries are stripped.
 proc ::questlog::search::build_clauses {snapshot} {
     set search ""
     if {[dict exists $snapshot search]} { set search [dict get $snapshot search] }
@@ -66,12 +63,12 @@ proc ::questlog::search::build_clauses {snapshot} {
         set search_case [dict get $snapshot search_case]
     }
     set out [dict create \
-        terms        $terms \
-        nocase       [expr {!$search_case}] \
-        patterns     [::questlog::search::trim_values [dict getdef $snapshot pattern {}]] \
-        paths_read   [::questlog::search::trim_values [dict getdef $snapshot read    {}]] \
-        paths_wrote  [::questlog::search::trim_values [dict getdef $snapshot wrote   {}]] \
-        paths_edited [::questlog::search::trim_values [dict getdef $snapshot edited  {}]]]
+        terms    $terms \
+        nocase   [expr {!$search_case}] \
+        scope    [dict getdef $snapshot search_scope anywhere] \
+        patterns [::questlog::search::trim_values [dict getdef $snapshot pattern {}]] \
+        files    [::questlog::search::trim_pairs  [dict getdef $snapshot file {}] 1] \
+        tools    [::questlog::search::trim_pairs  [dict getdef $snapshot tool {}] 0]]
     return $out
 }
 
@@ -81,10 +78,36 @@ proc ::questlog::search::trim_values {vs} {
     return $out
 }
 
+# Keep only pairs whose element at $keep is non-empty: a file pair {op path}
+# survives a non-empty path (keep 1); a tool pair {name key} a non-empty name
+# (keep 0). The matcher iterates the survivors directly.
+proc ::questlog::search::trim_pairs {pairs keep} {
+    set out [list]
+    foreach p $pairs { if {[lindex $p $keep] ne ""} { lappend out $p } }
+    return $out
+}
+
+# Map a CLI / launcher `tool:<selector>` token to a clause. Returns {file <op>}
+# when the selector is a file op (read / write / edit / file), else {tool <name>}
+# with the tool name canonicalised - the known built-ins title-cased, an unknown
+# selector (an MCP tool, or an exact name) passing through verbatim. The caller
+# appends the user's value: a path suffix for file, a key for tool. One home for
+# the selector vocabulary the headless CLI and the GUI launcher both parse.
+proc ::questlog::search::tool_selector {selector} {
+    set file_ops {read read  write write  edit edit  file either}
+    set tool_names {bash Bash  grep Grep  glob Glob  read Read  write Write \
+        edit Edit  websearch WebSearch  webfetch WebFetch  task Task}
+    if {[dict exists $file_ops $selector]} {
+        return [list file [dict get $file_ops $selector]]
+    }
+    return [list tool [dict getdef $tool_names [string tolower $selector] $selector]]
+}
+
 # clauses_any clauses - 1 iff any clause has at least one value. Used by
-# the matcher to early-exit when the user clears every filter.
+# the matcher to early-exit when the user clears every filter. Scope is never
+# a clause on its own: it only narrows where the terms land.
 proc ::questlog::search::clauses_any {clauses} {
-    foreach k {terms patterns paths_read paths_wrote paths_edited} {
+    foreach k {terms patterns files tools} {
         if {[llength [dict get $clauses $k]] > 0} { return 1 }
     }
     return 0
@@ -123,18 +146,21 @@ set ::questlog::search::WorkerScript {
 # fan-out by default; QUESTLOG_SEARCH_THREADS tunes the worker count, or 0
 # selects the single-thread coroutine path.
 #
-# A search is a list of criteria, each {type pattern|read|wrote|edited value}.
-# A session qualifies when every criterion is satisfied somewhere in it
-# (AND at session scope). A regex criterion is satisfied by a content
-# block matching its pattern; a read/write/edit criterion by a tool_use
-# whose tool name is in the type's set and whose file path ends with the
-# value, so a bare filename matches that file in any directory.
+# The criteria are the search terms (with a scope: anywhere, the said text,
+# tool calls, or tool output), the regex patterns, the {op path} file values
+# and the {name key} tool values. A session qualifies when every active
+# criterion is satisfied somewhere in it (AND at session scope; values within
+# the file row or the tool row OR among themselves). A regex matches a content
+# block; a file value matches a tool_use whose tool name is in the op's set and
+# whose path ends with the value, so a bare filename matches that file in any
+# directory; a tool value matches a use of the named tool whose invocation text
+# contains the key (empty key = any use).
 #
-# Per file: pre-filter each raw line by any criterion's literal (the
-# pattern for regex, the path substring for a path type) so the JSON parse
-# is skipped on lines that cannot contribute; on a candidate line, parse
-# once and collect the record's hits via record_hits, marking criteria
-# satisfied and buffering evidence rows. At end of file, if every
+# Per file: pre-filter each raw line by any criterion's literal (the pattern
+# for regex, the path for a file value, the key or tool name for a tool value)
+# so the JSON parse is skipped on lines that cannot contribute; on a candidate
+# line, parse once and collect the record's hits via record_hits, marking
+# criteria satisfied and buffering evidence rows. At end of file, if every
 # criterion is satisfied, deliver the file's row and its match list (in line
 # order) together through OnFile; each match is a dict {path lineoff ts btype
 # content folder}.

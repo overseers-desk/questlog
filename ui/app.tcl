@@ -176,8 +176,9 @@ proc ::questlog::ui::app::start {root {initial_criteria {}} {init_window ""} {in
     init_cost_pool
 
     $Toolbar subscribe [namespace code on_filter]
-    # cli::parse already normalised each criterion to a canonical toolbar clause
-    # kind (pattern/read/wrote/edited), so seed the toolbar directly.
+    # The launcher normalised each criterion to a toolbar clause kind
+    # (file/tool/pattern) with its value - a {op path} or {name key} pair for
+    # file and tool - so seed the toolbar directly.
     foreach c $initial_criteria {
         $Toolbar add_value [dict get $c type] [dict get $c value]
     }

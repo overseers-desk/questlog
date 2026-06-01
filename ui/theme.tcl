@@ -69,18 +69,21 @@ namespace eval ::questlog::ui::theme {
         crit_under_bg   #ece2f5
         crit_under_fg   #4a3677
         crit_under_bd   #c6b3df
-        crit_read_bg    #d9ebff
-        crit_read_fg    #1e4b80
-        crit_read_bd    #9bbfe6
-        crit_write_bg   #ffd9d9
-        crit_write_fg   #8a2828
-        crit_write_bd   #e6a3a3
-        crit_edit_bg    #dff5d9
-        crit_edit_fg    #2a5e1e
-        crit_edit_bd    #a5d495
+        crit_file_bg    #e5e5e5
+        crit_file_fg    #5a5f66
+        crit_file_bd    #ccd1d7
+        crit_tool_bg    #fce8ce
+        crit_tool_fg    #7a4a14
+        crit_tool_bd    #e6c79a
         crit_regex_bg   #fff4d6
         crit_regex_fg   #7a5d00
         crit_regex_bd   #e8c870
+        op_either_bg    #edeef0
+        op_either_fg    #5a5f66
+        op_read_bg      #d9ebff
+        op_read_fg      #1e4b80
+        op_wrote_bg     #dff0d6
+        op_wrote_fg     #2a5e1e
     }
     # Hit highlight: the design marks a match with one pale yellow and no bold.
     # The list snippet mark is #fff59c; the viewer `find` mark is #ffec70.
@@ -244,23 +247,13 @@ proc ::questlog::ui::theme::build_chrome {} {
     # The type pill is a fixed-size label image (text drawn centred over it), so
     # it is sized to the widest type word, not stretched like the 9-patch chips.
     set pw [expr {[font measure TkDefaultFont "regex"] + 20}]
-    # per criterion type: the white value chip, the dashed "+ or", and the
-    # tinted type pill all share the type's hairline tint.
-    foreach t {under read write edit regex} {
+    # per criterion type: the white value chip and the tinted type pill share
+    # the type's hairline tint.
+    foreach t {under file tool regex} {
         rrect_img qlChip_$t $w $ch $r [c chip_bg] [c crit_${t}_bd] 1
         ttk::style element create Chip_$t.bg image qlChip_$t \
             -border $B -padding 0 -sticky nsew
         ttk::style layout Crit_$t.TFrame [list Chip_$t.bg -sticky nsew]
-
-        rrect_img qlOr_$t $w $ch $r none [c crit_${t}_fg] 1 0.8 "3,2"
-        ttk::style element create Or_$t.bg image qlOr_$t \
-            -border $B -padding 0 -sticky nsew
-        ttk::style configure ROr_$t.TButton -relief flat -borderwidth 0 \
-            -foreground [c crit_${t}_fg] -anchor center -padding {10 3}
-        ttk::style map ROr_$t.TButton -background {}
-        ttk::style layout ROr_$t.TButton \
-            [list Or_$t.bg -sticky nsew -children {Button.padding -sticky nsew \
-                -children {Button.label -sticky nsew}}]
 
         rrect_img qlPill_$t $pw $ch $r [c crit_${t}_bg] [c crit_${t}_bd] 1
     }

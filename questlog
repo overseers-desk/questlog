@@ -75,29 +75,37 @@ source [file join $ROOT ui  viewer.tcl]
 source [file join $ROOT ui  move_dialog.tcl]
 source [file join $ROOT ui  app.tcl]
 
-# A leading criterion-type token (pattern|read|wrote|edited) launches the GUI
-# pre-seeded with that criteria chain; otherwise the -regex flag prefills a
-# pattern criterion. Either way the GUI opens normally.
+# A leading criterion token launches the GUI pre-seeded with that criteria
+# chain, in <type> <value> pairs: the file/tool family is tool:<selector>
+# (tool:read|write|edit|file <path>, or tool:<name> <key>), and a regex is
+# pattern <re>. Otherwise the -regex flag prefills a pattern criterion. Either
+# way the GUI opens normally.
 set initial_criteria [list]
-set arg_kinds [dict create \
-    pattern pattern  regex pattern \
-    read    read \
-    wrote   wrote    write wrote \
-    edited  edited   edit  edited]
+proc questlog_seed_usage {} {
+    puts stderr "usage: questlog <type> <value> \[<type> <value> ...\]"
+    puts stderr "  type: tool:read | tool:write | tool:edit | tool:file | tool:<name> | pattern"
+    exit 2
+}
 
-if {[llength $argv] > 0 && [dict exists $arg_kinds [lindex $argv 0]]} {
-    if {[llength $argv] % 2 != 0} {
-        puts stderr "usage: questlog <type> <value> \[<type> <value> ...\]"
-        puts stderr "  type: pattern | read | wrote | edited  (aliases: regex, write, edit)"
-        exit 2
-    }
+set first [lindex $argv 0]
+if {[llength $argv] > 0 && ([string match tool:* $first] || $first in {pattern regex})} {
+    if {[llength $argv] % 2 != 0} { questlog_seed_usage }
     foreach {type value} $argv {
-        if {![dict exists $arg_kinds $type] || $value eq ""} {
-            puts stderr "usage: questlog <type> <value> \[<type> <value> ...\]"
-            puts stderr "  type: pattern | read | wrote | edited  (aliases: regex, write, edit)"
-            exit 2
+        if {$value eq ""} { questlog_seed_usage }
+        if {[string match tool:* $type]} {
+            set selector [string range $type [string length "tool:"] end]
+            lassign [::questlog::search::tool_selector $selector] kind spec
+            if {$kind eq "file"} {
+                # The GUI op pill speaks either/read/wrote (wrote = created-or-
+                # edited), so the finer write/edit selectors collapse onto wrote.
+                set spec [dict getdef {write wrote  edit wrote} $spec $spec]
+            }
+            lappend initial_criteria [dict create type $kind value [list $spec $value]]
+        } elseif {$type in {pattern regex}} {
+            lappend initial_criteria [dict create type pattern value $value]
+        } else {
+            questlog_seed_usage
         }
-        lappend initial_criteria [dict create type [dict get $arg_kinds $type] value $value]
     }
 } else {
     for {set i 0} {$i < [llength $argv]} {incr i} {

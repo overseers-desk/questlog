@@ -93,46 +93,94 @@ check tools_mixed        {Edit:/a/b.tcl Read:/a/r.tcl} [np $r_mixed]
 check tools_user_empty   {}                         [np $user_str]
 
 # record_hits: per-record evidence for search criteria. Asserts against the
-# current dict contract (pat_hit, read_hit, wrote_hit, edited_hit booleans).
-# hit_flags returns a list of the set boolean keys for compact assertions.
-# mk_clauses builds a clauses dict with all required keys defaulted.
+# dict contract (pat_hit, file_hit, tool_hit booleans). hit_flags returns the
+# set boolean keys for compact assertions; nhits counts emitted snippets, for
+# the scope tests where the flags are not the subject. mk_clauses builds a
+# clauses dict with all required keys defaulted.
 proc hit_flags {result} {
     set out [list]
-    foreach k {pat_hit read_hit wrote_hit edited_hit} {
+    foreach k {pat_hit file_hit tool_hit} {
         if {[dict get $result $k]} { lappend out $k }
     }
     return $out
 }
+proc nhits {result} { return [llength [dict get $result hits]] }
 proc mk_clauses {args} {
-    set c [dict create terms {} nocase 1 patterns {} \
-        paths_read {} paths_wrote {} paths_edited {}]
+    set c [dict create terms {} nocase 1 patterns {} scope anywhere files {} tools {}]
     foreach {k v} $args { dict set c $k $v }
     return $c
 }
 
-check hits_mixed        {pat_hit read_hit edited_hit} \
+check hits_mixed         {pat_hit file_hit} \
     [hit_flags [::questlog::match::record_hits $r_mixed \
-        [mk_clauses patterns {first} paths_read {/a/r.tcl /a/b.tcl} paths_edited {/a/b.tcl}]]]
-check hits_edit_only    {edited_hit} \
+        [mk_clauses patterns {first} files {{read /a/r.tcl} {wrote /a/b.tcl}}]]]
+check hits_file_edit     {file_hit} \
     [hit_flags [::questlog::match::record_hits $r_edit \
-        [mk_clauses paths_edited {/a/b.tcl}]]]
-check hits_read_not_edit {} \
+        [mk_clauses files {{wrote /a/b.tcl}}]]]
+check hits_wrote_not_read {} \
     [hit_flags [::questlog::match::record_hits $r_read \
-        [mk_clauses paths_edited {/a/r.tcl}]]]
+        [mk_clauses files {{wrote /a/r.tcl}}]]]
 
-# Path criteria match by path suffix: a bare or partial filename matches
-# the file in any directory; a non-suffix fragment does not (ends-with,
-# not contains).
-set r_spar [::questlog::jsonl::parse_line {{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Edit","input":{"file_path":"/a/spar-manager.spar-dispatcher-initcmd.tcl","old_string":"x","new_string":"y"}}]}}}]
-check hits_suffix_basename  {edited_hit} \
+# `either` spans read and write; `wrote` is created-or-edited (Write + Edit +
+# MultiEdit + NotebookEdit); the finer CLI ops `write` and `edit` each match
+# only their own tools.
+check hits_either_read    {file_hit} \
+    [hit_flags [::questlog::match::record_hits $r_read \
+        [mk_clauses files {{either /a/r.tcl}}]]]
+check hits_either_edit    {file_hit} \
     [hit_flags [::questlog::match::record_hits $r_edit \
-        [mk_clauses paths_edited {b.tcl}]]]
-check hits_partial_basename {edited_hit} \
+        [mk_clauses files {{either /a/b.tcl}}]]]
+check hits_write_not_edit {} \
+    [hit_flags [::questlog::match::record_hits $r_edit \
+        [mk_clauses files {{write /a/b.tcl}}]]]
+check hits_edit_not_write {} \
+    [hit_flags [::questlog::match::record_hits $r_write \
+        [mk_clauses files {{edit /a/w.tcl}}]]]
+
+# tool values match by tool name; an empty key means any use, a non-empty key
+# is a substring of the invocation text - which catches a Bash redirect target.
+set r_grep [::questlog::jsonl::parse_line {{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Grep","input":{"pattern":"NEEDLE","path":"/a"}}]}}}]
+set r_bashredir [::questlog::jsonl::parse_line {{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"python gen.py > sub/out.json"}}]}}}]
+check hits_tool_any        {tool_hit} \
+    [hit_flags [::questlog::match::record_hits $r_grep \
+        [mk_clauses tools {{Grep {}}}]]]
+check hits_tool_key        {tool_hit} \
+    [hit_flags [::questlog::match::record_hits $r_grep \
+        [mk_clauses tools {{Grep NEEDLE}}]]]
+check hits_tool_key_miss   {} \
+    [hit_flags [::questlog::match::record_hits $r_grep \
+        [mk_clauses tools {{Grep ZZZ}}]]]
+check hits_tool_redirect   {tool_hit} \
+    [hit_flags [::questlog::match::record_hits $r_bashredir \
+        [mk_clauses tools {{Bash out.json}}]]]
+check hits_tool_wrong_name {} \
+    [hit_flags [::questlog::match::record_hits $r_grep \
+        [mk_clauses tools {{Bash NEEDLE}}]]]
+
+# File paths match by suffix: a bare or partial filename matches the file in any
+# directory; a non-suffix fragment does not (ends-with, not contains).
+set r_spar [::questlog::jsonl::parse_line {{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Edit","input":{"file_path":"/a/spar-manager.spar-dispatcher-initcmd.tcl","old_string":"x","new_string":"y"}}]}}}]
+check hits_suffix_basename  {file_hit} \
+    [hit_flags [::questlog::match::record_hits $r_edit \
+        [mk_clauses files {{wrote b.tcl}}]]]
+check hits_partial_basename {file_hit} \
     [hit_flags [::questlog::match::record_hits $r_spar \
-        [mk_clauses paths_edited {spar-dispatcher-initcmd.tcl}]]]
+        [mk_clauses files {{wrote spar-dispatcher-initcmd.tcl}}]]]
 check hits_not_substring    {} \
     [hit_flags [::questlog::match::record_hits $r_spar \
-        [mk_clauses paths_edited {spar-manager}]]]
+        [mk_clauses files {{wrote spar-manager}}]]]
+
+# Search scope gates the terms (and the snippets they emit) by block type;
+# regex stays unscoped because the scope selector belongs to the search box.
+set r_scope [::questlog::jsonl::parse_line {{"type":"assistant","message":{"content":[{"type":"text","text":"alpha says hello"},{"type":"tool_use","name":"Bash","input":{"command":"echo bravo"}}]}}}]
+check scope_text_in_text     1 [expr {[nhits [::questlog::match::record_hits $r_scope [mk_clauses terms alpha scope text]]] > 0}]
+check scope_text_not_call    0 [expr {[nhits [::questlog::match::record_hits $r_scope [mk_clauses terms alpha scope tool-call]]] > 0}]
+check scope_call_in_call     1 [expr {[nhits [::questlog::match::record_hits $r_scope [mk_clauses terms bravo scope tool-call]]] > 0}]
+check scope_call_not_text    0 [expr {[nhits [::questlog::match::record_hits $r_scope [mk_clauses terms bravo scope text]]] > 0}]
+check scope_output_in_result 1 [expr {[nhits [::questlog::match::record_hits $user_tool_result [mk_clauses terms questlog scope tool-output]]] > 0}]
+check scope_output_not_text  0 [expr {[nhits [::questlog::match::record_hits $user_tool_result [mk_clauses terms questlog scope text]]] > 0}]
+check scope_regex_unscoped   {pat_hit} \
+    [hit_flags [::questlog::match::record_hits $r_scope [mk_clauses patterns alpha scope tool-call]]]
 
 # segment_blockquotes: split a body into ordered {kind text} segments,
 # de-quoting one leading "> "/">" per blockquote line, strict blank split.

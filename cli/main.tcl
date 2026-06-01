@@ -70,13 +70,15 @@ proc ::questlog::cli::main::usage {} {
     puts stderr "  --limit <N>             Limit the number of returned sessions (default: 50, use 0 for unlimited)"
     puts stderr "  --limit-matches <N>     Limit matched snippets per session/subagent (0 = none)"
     puts stderr "  --search <key>          Search for a key in session contents"
-    puts stderr "  --pattern <regex>       Filter sessions by regex content pattern (aliases: --regex)"
-    puts stderr "  --read <file>           Filter sessions by read file"
-    puts stderr "  --wrote <file>          Filter sessions by written file (aliases: --write)"
-    puts stderr "  --edited <file>         Filter sessions by edited file (aliases: --edit)"
+    puts stderr "  --scope <where>         Restrict the search to: anywhere | text | tool-call | tool-output"
+    puts stderr "  --pattern <regex>       Filter sessions by regex content pattern (alias: --regex)"
+    puts stderr "  --tool:read <file>      Filter sessions that read a file (by path suffix)"
+    puts stderr "  --tool:write <file>     Filter sessions that wrote a file"
+    puts stderr "  --tool:edit <file>      Filter sessions that edited a file"
+    puts stderr "  --tool:file <file>      Filter sessions that touched a file (read, wrote, or created)"
+    puts stderr "  --tool:<name> <key>     Filter sessions that used a tool (Bash, Grep, ...) whose"
+    puts stderr "                          invocation contains the key (empty key = any use)"
     puts stderr "  --under <dir>           Filter sessions located under the specified directory"
-    puts stderr "alternative positional filters:"
-    puts stderr "  questlog --json \[pattern <regex>\] \[read <file>\] \[wrote <file>\] \[edited <file>\]"
     exit 2
 }
 
@@ -109,41 +111,37 @@ proc ::questlog::cli::main::run {argv} {
     set limit_matches -1
     set search_key ""
     set pattern ""
-    set read ""
-    set wrote ""
-    set edited ""
     set under ""
+    set files [list]   ;# {op path} pairs feeding the file clause
+    set tools [list]   ;# {name key} pairs feeding the tool clause
+    set scope anywhere
 
     for {set i 0} {$i < [llength $argv]} {incr i} {
         set arg [lindex $argv $i]
-        switch -exact -- $arg {
+        switch -glob -- $arg {
             --json - --cmd {}
-            --help - -h {
-                ::questlog::cli::main::usage
-            }
+            --help - -h { ::questlog::cli::main::usage }
             --limit         { set limit [lindex $argv [incr i]] }
             --limit-matches { set limit_matches [lindex $argv [incr i]] }
             --search        { set search_key [lindex $argv [incr i]] }
             --pattern - --regex { set pattern [lindex $argv [incr i]] }
-            --read          { set read [lindex $argv [incr i]] }
-            --wrote - --write { set wrote [lindex $argv [incr i]] }
-            --edited - --edit { set edited [lindex $argv [incr i]] }
+            --scope         { set scope [lindex $argv [incr i]] }
             --under         { set under [lindex $argv [incr i]] }
-            default {
-                if {[string match "-*" $arg]} {
-                    puts stderr "Unknown option: $arg"
-                    ::questlog::cli::main::usage
-                }
-                set next [lindex $argv [expr {$i + 1}]]
-                set map [dict create regex pattern write wrote edit edited]
-                set canonical_type [dict getdef $map $arg $arg]
-                if {$canonical_type in {pattern read wrote edited} && $next ne ""} {
-                    set $canonical_type $next
-                    incr i
+            --tool:* {
+                set selector [string range $arg [string length "--tool:"] end]
+                set val [lindex $argv [incr i]]
+                lassign [::questlog::search::tool_selector $selector] kind spec
+                if {$kind eq "file"} {
+                    lappend files [list $spec $val]
                 } else {
-                    set search_key $arg
+                    lappend tools [list $spec $val]
                 }
             }
+            -* {
+                puts stderr "Unknown option: $arg"
+                ::questlog::cli::main::usage
+            }
+            default { set search_key $arg }
         }
     }
     if {$limit eq "all"} { set limit 0 }
@@ -161,11 +159,11 @@ proc ::questlog::cli::main::run {argv} {
     set snapshot [dict create \
         search $search_key \
         search_case 0 \
+        search_scope $scope \
         pattern [expr {$pattern eq "" ? {} : [list $pattern]}] \
-        read    [expr {$read    eq "" ? {} : [list $read]}] \
-        wrote   [expr {$wrote   eq "" ? {} : [list $wrote]}] \
-        edited  [expr {$edited  eq "" ? {} : [list $edited]}] \
-        under   [expr {$under   eq "" ? {} : [list $under]}] \
+        file  $files \
+        tool  $tools \
+        under [expr {$under eq "" ? {} : [list $under]}] \
         window all \
         one_turn 0]
 

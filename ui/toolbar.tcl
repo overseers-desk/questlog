@@ -8,10 +8,11 @@ package require Tk
 #   window           24h | 7d | 30d | all
 #   search           string (user's typed search; empty when blank)
 #   search_case      0 | 1   (Aa toggle next to the search field)
+#   search_scope     anywhere | text | tool-call | tool-output
 #   under            list of absolute paths  (OR within, AND across clauses)
-#   read             list of absolute paths
-#   wrote            list of absolute paths
-#   edited           list of absolute paths
+#   file             list of {op path} pairs (op: either | read | wrote)
+#   tool             list of {name key} pairs (key matches the invocation text;
+#                    empty key = any use of the tool)
 #   pattern          list of regex strings   (case-sensitive, always)
 #   under_auto       1 iff `under` is the launch-seeded chip, untouched
 #   one_turn         0 | 1   (exclude one-turn sessions)
@@ -22,17 +23,17 @@ package require Tk
 namespace eval ::questlog::ui {}
 
 # any_criteria snapshot - true iff the snapshot carries a content-matching
-# clause (search text, regex pattern, or a read/wrote/edited path). The
-# `under` clause is a row-level scope, not a content match, so it does not
-# count here; treating it as a criterion flips sessions.tcl into result-
-# index mode and Search.start returns immediately because there is nothing
-# to match, leaving the list empty. Shared by app.tcl (search start/cancel)
-# and sessions.tcl (CriteriaActive flag: browse versus result-index mode).
+# clause (search text, regex pattern, or a file/tool clause). The `under`
+# clause is a row-level scope, not a content match, so it does not count here;
+# treating it as a criterion flips sessions.tcl into result-index mode and
+# Search.start returns immediately because there is nothing to match, leaving
+# the list empty. Shared by app.tcl (search start/cancel) and sessions.tcl
+# (CriteriaActive flag: browse versus result-index mode).
 proc ::questlog::ui::any_criteria {snapshot} {
     if {[dict exists $snapshot search] && [dict get $snapshot search] ne ""} {
         return 1
     }
-    foreach k {read wrote edited pattern} {
+    foreach k {file tool pattern} {
         if {[dict exists $snapshot $k] && [llength [dict get $snapshot $k]] > 0} {
             return 1
         }
@@ -76,16 +77,20 @@ oo::class create ::questlog::ui::Toolbar {
     variable WindowVar
     variable SearchVar
     variable SearchCaseVar
+    variable SearchScopeVar   ;# anywhere | text | tool-call | tool-output
+    variable ScopeLabelVar    ;# the menubutton's friendly label for the scope
     variable OneTurnVar
     variable RunningOnlyVar
     variable BookmarkedOnlyVar
-    variable Clauses          ;# dict kind -> list of values
+    variable Clauses          ;# dict kind -> list of values; file/tool are pairs
     variable UnderAuto        ;# 1 iff `under` is exactly the launch-seeded chip
     variable Restrict         ;# the padded content frame holding the restrict rows
     variable RestrictHd       ;# the heading label above that frame (the legend)
     variable AddRail          ;# the "add:" rail frame inside Restrict
     variable RowFrames        ;# dict kind -> widget path (present only when row exists)
-    variable PopValue         ;# textvar for the add-dropdown's entry
+    variable TailShown        ;# dict kind -> 1 for tail rows (tool/pattern) revealed
+    variable AddText          ;# array kind -> the add-entry's pending text
+    variable AddOp            ;# op for the next file value added (either|read|wrote)
     variable DebounceAfter    ;# after-id of the pending live-search publish, or ""
     variable TypingUntil      ;# clock-ms deadline through which the user counts as typing
 
@@ -95,14 +100,18 @@ oo::class create ::questlog::ui::Toolbar {
         set WindowVar  [::questlog::config::get window_default]
         set SearchVar  ""
         set SearchCaseVar 0
+        set SearchScopeVar anywhere
+        set ScopeLabelVar "anywhere"
         set OneTurnVar 1
         set RunningOnlyVar    0
         set BookmarkedOnlyVar 0
-        set Clauses [dict create under {} read {} wrote {} edited {} pattern {}]
+        set Clauses [dict create under {} file {} tool {} pattern {}]
         set UnderAuto 0
         set Subscribers [list]
         set RowFrames [dict create]
-        set PopValue ""
+        set TailShown [dict create]
+        array set AddText {under {} file {} tool {} pattern {}}
+        set AddOp either
         set DebounceAfter ""
         set TypingUntil 0
 
@@ -112,13 +121,13 @@ oo::class create ::questlog::ui::Toolbar {
     method build {} {
         ttk::frame $Top
 
-        # The criterion controls (white value chip with a faint ×, the dashed
-        # "+ or", the tinted type pill, the ghost add buttons) draw through the
-        # rounded image-element styles built once in theme::build_chrome:
-        # RGhost.TButton, ROr_<t>.TButton, Crit_<t>.TFrame, ChipX.TButton, and
-        # the qlPill_<t> pill images.
+        # The criterion controls (white value chip with a faint ×, the tinted
+        # type pill, the colored op pill on each file chip, the ghost add
+        # buttons) draw through the rounded image-element styles built once in
+        # theme::build_chrome: RGhost.TButton, Crit_<t>.TFrame, ChipX.TButton,
+        # the qlPill_<t> pill images, and the op_<op>_{bg,fg} palette colours.
 
-        # Search row: label, full-width entry, Aa toggle.
+        # Search row: label, full-width entry, scope picker, Aa toggle.
         ttk::frame $Top.search
         pack $Top.search -side top -fill x -padx 6 -pady {6 3}
         ttk::label $Top.search.label -text "Search:"
@@ -139,6 +148,12 @@ oo::class create ::questlog::ui::Toolbar {
         if {$live} {
             bind $Top.search.e <KeyRelease> [list [self] on_search_change %K]
         }
+        # Scope picker: where the search terms must appear. A menubutton posts
+        # its menu anchored to itself - no transient popup, so nothing nests.
+        ttk::label $Top.search.inlbl -text "in"
+        pack $Top.search.inlbl -side left -padx {6 2}
+        my build_scope_menu $Top.search.scope
+        pack $Top.search.scope -side left
         ttk::checkbutton $Top.search.aa -text "Aa" \
             -variable [my varname SearchCaseVar] \
             -command [list [self] publish]
@@ -146,7 +161,8 @@ oo::class create ::questlog::ui::Toolbar {
 
         # Restrict group: a lightly-bordered box whose first inner line is the
         # heading (the legend sits inside, at the top, as in the design), then
-        # the time row, the clause rows, and the add rail.
+        # the time row, the persistent folder/file rows, any revealed tail rows,
+        # and the add rail.
         ttk::frame $Top.restrict -relief solid -borderwidth 1 -padding {8 5}
         pack $Top.restrict -side top -fill x -padx 6 -pady {2 2}
         set Restrict $Top.restrict
@@ -173,10 +189,9 @@ oo::class create ::questlog::ui::Toolbar {
         pack $AddRail -side top -fill x -pady {4 0}
         ttk::label $AddRail.label -text "Add filter"
         pack $AddRail.label -side left -padx {0 4}
-        foreach {k text} {under "+ folder" pattern "+ regex" read "+ Read" \
-                          wrote "+ Write" edited "+ Edit"} {
+        foreach {k text} {pattern "+ regex" tool "+ tool"} {
             ttk::button $AddRail.b$k -text $text -style RGhost.TButton \
-                -command [list [self] open_add $k]
+                -command [list [self] show_tail $k]
             pack $AddRail.b$k -side left -padx {0 4}
         }
 
@@ -195,6 +210,29 @@ oo::class create ::questlog::ui::Toolbar {
             -variable [my varname BookmarkedOnlyVar] \
             -command [list [self] publish]
         pack $Top.row2.booked -side left -padx {16 0}
+
+        # Render the persistent folder/file rows up front.
+        my rebuild_clause_rows
+        my refresh_add_rail
+    }
+
+    # The search-scope picker. The value is the matcher scope token; the label
+    # is the friendly word shown on the button.
+    method build_scope_menu {w} {
+        ttk::menubutton $w -textvariable [my varname ScopeLabelVar] \
+            -menu $w.m -direction below
+        menu $w.m -tearoff 0
+        foreach {val label} {anywhere "anywhere" text "user + asst" \
+                             tool-call "tool calls" tool-output "tool output"} {
+            $w.m add command -label $label \
+                -command [list [self] set_scope $val $label]
+        }
+    }
+
+    method set_scope {val label} {
+        set SearchScopeVar $val
+        set ScopeLabelVar $label
+        my publish
     }
 
     # ---- public API --------------------------------------------------------
@@ -229,10 +267,10 @@ oo::class create ::questlog::ui::Toolbar {
             window         $WindowVar \
             search         $SearchVar \
             search_case    $SearchCaseVar \
+            search_scope   $SearchScopeVar \
             under          [dict get $Clauses under] \
-            read           [dict get $Clauses read] \
-            wrote          [dict get $Clauses wrote] \
-            edited         [dict get $Clauses edited] \
+            file           [dict get $Clauses file] \
+            tool           [dict get $Clauses tool] \
             pattern        [dict get $Clauses pattern] \
             under_auto     $UnderAuto \
             one_turn       $OneTurnVar \
@@ -285,15 +323,17 @@ oo::class create ::questlog::ui::Toolbar {
         return [expr {[clock milliseconds] < $TypingUntil}]
     }
 
-    # Add a value to a clause, creating the row if needed. The first user
-    # action on `under` clears the auto-applied flag, since the user is now
-    # editing the row.
+    # Add a value to a clause, creating/revealing the row as needed. For file
+    # the value is an {op path} pair, for tool a {name key} pair, for under and
+    # pattern a plain string. The first user action on `under` clears the auto
+    # flag, since the user is now editing the row.
     method add_value {kind value} {
         set vals [dict get $Clauses $kind]
         if {$value in $vals} return
         lappend vals $value
         dict set Clauses $kind $vals
         if {$kind eq "under"} { set UnderAuto 0 }
+        if {$kind in {tool pattern}} { dict set TailShown $kind 1 }
         my rebuild_clause_rows
         my refresh_add_rail
         my publish
@@ -310,6 +350,74 @@ oo::class create ::questlog::ui::Toolbar {
         my refresh_add_rail
         my publish
     }
+
+    # Change the operation on the file value at index $idx (the op pill on a
+    # chip). Republishes since the matched tool set changes.
+    method set_file_op {idx op} {
+        set vals [dict get $Clauses file]
+        if {$idx < 0 || $idx >= [llength $vals]} return
+        set pair [lindex $vals $idx]
+        lset pair 0 $op
+        lset vals $idx $pair
+        dict set Clauses file $vals
+        my rebuild_clause_rows
+        my publish
+    }
+
+    # The op for the next file value added. Bound to the add-area op pill's
+    # label, so no rebuild is needed to reflect the change.
+    method set_add_op {op} { set AddOp $op }
+
+    # Reveal a tail row (regex or tool) and focus its add entry.
+    method show_tail {kind} {
+        dict set TailShown $kind 1
+        my rebuild_clause_rows
+        my refresh_add_rail
+        catch {focus [dict get $RowFrames $kind].chips.add.e}
+    }
+
+    # ---- add-entry commit handlers (popup-free; inline in each row) ---------
+
+    method commit_folder_add {} {
+        set v [string trim $AddText(under)]
+        if {$v eq ""} return
+        set AddText(under) ""
+        my add_value under $v
+    }
+
+    method commit_file_add {} {
+        set v [string trim $AddText(file)]
+        if {$v eq ""} return
+        set AddText(file) ""
+        my add_value file [list $AddOp $v]
+    }
+
+    method commit_pattern_add {} {
+        set v [string trim $AddText(pattern)]
+        if {$v eq ""} return
+        set AddText(pattern) ""
+        my add_value pattern $v
+    }
+
+    # name "" reads the typed tool name; the quick-pick menu passes the name in.
+    method commit_tool_add {{name ""}} {
+        if {$name eq ""} { set name [string trim $AddText(tool)] }
+        if {$name eq ""} return
+        set AddText(tool) ""
+        my add_value tool [list $name ""]
+    }
+
+    method browse_folder {} {
+        set d [tk_chooseDirectory -initialdir $Cwd -mustexist 1]
+        if {$d ne ""} { my add_value under $d }
+    }
+
+    method browse_file {} {
+        set f [tk_getOpenFile -initialdir $Cwd]
+        if {$f ne ""} { my add_value file [list $AddOp $f] }
+    }
+
+    method add_recent_file {path} { my add_value file [list $AddOp $path] }
 
     # Seed the `under` row with the launch cwd. Marks UnderAuto so the
     # Show-all banner knows the chip was not user-typed. Any later edit
@@ -335,20 +443,24 @@ oo::class create ::questlog::ui::Toolbar {
     # ---- row management ----------------------------------------------------
 
     # Destroy every clause-row frame and reconstruct the present ones in
-    # canonical reading order between the time row and the add rail.
+    # canonical reading order between the time row and the add rail. The folder
+    # and file rows are persistent (always shown, with a ghost add entry when
+    # empty); the tool and pattern tail rows show once revealed or non-empty.
     method rebuild_clause_rows {} {
-        foreach k {under read wrote edited pattern} {
+        foreach k {under file tool pattern} {
             if {[dict exists $RowFrames $k]} {
                 destroy [dict get $RowFrames $k]
                 dict unset RowFrames $k
             }
         }
-        # type -> design criterion colour family (wrote=write, edited=edit,
-        # pattern=regex).
-        set ctype {under under read read wrote write edited edit pattern regex}
-        foreach k {under read wrote edited pattern} {
+        # kind -> styling type; pattern draws in the regex tint.
+        set ctype {under under file file tool tool pattern regex}
+        foreach k {under file pattern tool} {
             set vals [dict get $Clauses $k]
-            if {[llength $vals] == 0} continue
+            set persistent [expr {$k in {under file}}]
+            set shown [expr {$persistent || [dict getdef $TailShown $k 0] \
+                             || [llength $vals] > 0}]
+            if {!$shown} continue
             set t [dict get $ctype $k]
             set row $Restrict.row_$k
             ttk::frame $row
@@ -360,6 +472,10 @@ oo::class create ::questlog::ui::Toolbar {
                 -background [ttk::style lookup . -background] \
                 -foreground [::questlog::ui::theme::c crit_${t}_fg]
             pack $row.label -side left -padx {0 6} -pady 1
+            ttk::label $row.conn -text [dict get {
+                under "ran under" file "touched" tool "used" pattern "matches"
+            } $k]
+            pack $row.conn -side left -padx {0 6}
             ttk::frame $row.chips
             pack $row.chips -side left -fill x -expand 1
             my render_chips $k $t $row.chips
@@ -373,7 +489,7 @@ oo::class create ::questlog::ui::Toolbar {
     # reads "Restrict to sessions that…  N active" (count omitted at zero).
     method refresh_heading {} {
         set n 0
-        foreach k {under read wrote edited pattern} {
+        foreach k {under file tool pattern} {
             if {[llength [dict get $Clauses $k]] > 0} { incr n }
         }
         set txt "Restrict to sessions that…"
@@ -381,150 +497,143 @@ oo::class create ::questlog::ui::Toolbar {
         $RestrictHd configure -text $txt
     }
 
-    method render_chips {kind type chips_frame} {
+    # Render a row's value chips into $cf, then the inline add affordance. A
+    # file chip carries an op pill; a tool chip shows its name (and key, if any).
+    method render_chips {kind type cf} {
         set white [::questlog::ui::theme::c chip_bg]
         set vals [dict get $Clauses $kind]
-        set first 1
         set i 0
         foreach v $vals {
-            if {!$first} {
-                ttk::label $chips_frame.or$i -text "or" \
+            if {$i > 0} {
+                ttk::label $cf.or$i -text "or" \
                     -foreground [::questlog::ui::theme::c chip_or]
-                pack $chips_frame.or$i -side left -padx 4
+                pack $cf.or$i -side left -padx 4
             }
-            # White chip with a hairline type-tinted border: the value in the
-            # fixed-width face (it is literal text the user typed), then a faint ×.
-            set chip $chips_frame.c$i
-            ttk::frame $chip -style Crit_$type.TFrame -padding {6 1}
-            label $chip.t -text [my chip_display $kind $v] \
-                -background $white -foreground [::questlog::ui::theme::c ink] -font QLMono
+            set chip $cf.c$i
+            ttk::frame $chip -style Crit_$type.TFrame -padding {4 1}
+            if {$kind eq "file"} {
+                lassign $v op path
+                my op_pill $chip.op $op [list [self] set_file_op $i]
+                pack $chip.op -side left -padx {0 4}
+                label $chip.t -text [::questlog::path::pretty_home $path] \
+                    -background $white -foreground [::questlog::ui::theme::c ink] -font QLMono
+            } else {
+                label $chip.t -text [my chip_display $kind $v] \
+                    -background $white -foreground [::questlog::ui::theme::c ink] -font QLMono
+            }
             pack $chip.t -side left
             ttk::button $chip.x -text "×" -width 2 -style ChipX.TButton \
                 -command [list [self] remove_value $kind $v]
             pack $chip.x -side left -padx {2 0}
             pack $chip -side left
-            set first 0
             incr i
         }
-        ttk::button $chips_frame.add -text "+ or" -style ROr_$type.TButton \
-            -command [list [self] open_add $kind]
-        pack $chips_frame.add -side left -padx 4
+        my render_add $kind $cf
     }
 
-    # Path-kind chips render as ~-abbreviated; pattern and others render raw.
-    method chip_display {kind value} {
-        if {$kind in {under read wrote edited}} {
-            return [::questlog::path::pretty_home $value]
+    # The inline add affordance for a row: an entry committed on Return, plus
+    # the kind's controls (an op pill and a browse menu for file, a browse menu
+    # for folder, a tool quick-pick for tool). No transient popup is involved.
+    method render_add {kind cf} {
+        set ae $cf.add
+        ttk::frame $ae
+        if {$kind eq "file"} {
+            my op_pill $ae.op $AddOp [list [self] set_add_op] [my varname AddOp]
+            pack $ae.op -side left -padx {0 3}
         }
-        return $value
+        set mono [expr {$kind eq "pattern"}]
+        ttk::entry $ae.e -textvariable [my varname AddText]($kind) -width 22 \
+            -font [expr {$mono ? "QLMono" : "TkTextFont"}]
+        pack $ae.e -side left
+        set commit [switch -- $kind {
+            under   { list [self] commit_folder_add }
+            file    { list [self] commit_file_add }
+            pattern { list [self] commit_pattern_add }
+            tool    { list [self] commit_tool_add }
+        }]
+        bind $ae.e <Return> $commit
+        switch -- $kind {
+            under {
+                ttk::button $ae.b -text "open…" -style RGhost.TButton \
+                    -command [list [self] browse_folder]
+                pack $ae.b -side left -padx {3 0}
+            }
+            file {
+                my build_file_menu $ae.b
+                pack $ae.b -side left -padx {3 0}
+            }
+            tool {
+                my build_tool_menu $ae.b
+                pack $ae.b -side left -padx {3 0}
+            }
+        }
+        pack $ae -side left -padx {4 0}
+    }
+
+    # A colored operation pill on a file chip (or the add area). It posts a menu
+    # anchored to itself; selecting an op runs $cmdprefix with the op appended.
+    # When $tvar is given the label tracks that variable (the add-area pill);
+    # otherwise the label is the fixed $op of an existing chip.
+    method op_pill {w op cmdprefix {tvar ""}} {
+        set bg [::questlog::ui::theme::c op_${op}_bg]
+        set fg [::questlog::ui::theme::c op_${op}_fg]
+        menubutton $w -menu $w.m -indicatoron 1 -relief raised -borderwidth 1 \
+            -background $bg -foreground $fg -activebackground $bg \
+            -activeforeground $fg -padx 4 -pady 0 -font QLList -takefocus 1
+        if {$tvar ne ""} { $w configure -textvariable $tvar } else { $w configure -text $op }
+        menu $w.m -tearoff 0
+        foreach o {either read wrote} {
+            $w.m add command -label $o -command [concat $cmdprefix [list $o]]
+        }
+    }
+
+    method build_file_menu {w} {
+        ttk::menubutton $w -text "⋯" -menu $w.m -direction below
+        menu $w.m -tearoff 0
+        $w.m add command -label "Open file…" -command [list [self] browse_file]
+        set files [my git_modified_files]
+        if {[llength $files] > 0} {
+            $w.m add separator
+            foreach f $files {
+                $w.m add command -label [::questlog::path::pretty_home $f] \
+                    -command [list [self] add_recent_file $f]
+            }
+        }
+    }
+
+    method build_tool_menu {w} {
+        ttk::menubutton $w -text "pick ▾" -menu $w.m -direction below
+        menu $w.m -tearoff 0
+        foreach name {Bash Read Edit Write Grep Glob WebSearch WebFetch Task} {
+            $w.m add command -label $name \
+                -command [list [self] commit_tool_add $name]
+        }
+    }
+
+    # under chips render ~-abbreviated; tool shows name (and key, if set);
+    # pattern renders the raw regex. file chips are handled in render_chips.
+    method chip_display {kind value} {
+        switch -- $kind {
+            under { return [::questlog::path::pretty_home $value] }
+            tool {
+                lassign $value name key
+                return [expr {$key eq "" ? $name : "$name: $key"}]
+            }
+            default { return $value }
+        }
     }
 
     method refresh_add_rail {} {
-        foreach k {under pattern read wrote edited} {
+        foreach k {pattern tool} {
             set btn $AddRail.b$k
-            if {[llength [dict get $Clauses $k]] > 0} {
+            set shown [expr {[dict getdef $TailShown $k 0] \
+                             || [llength [dict get $Clauses $k]] > 0}]
+            if {$shown} {
                 pack forget $btn
             } else {
                 pack $btn -side left -padx {0 4}
             }
         }
-    }
-
-    # ---- add-value dropdown ------------------------------------------------
-
-    # Dropdown anchored under the triggering button (either an add-rail
-    # button or a chip-row's inline "+ or" button). For under/read/wrote/edited
-    # the user can pick from the launch repo's working-tree changes (where
-    # applicable) or open a file picker. For pattern the entry is the only
-    # input.
-    method open_add {kind} {
-        set host [winfo toplevel $Top]
-        set pop [expr {$host eq "." ? ".addpop" : "$host.addpop"}]
-        destroy $pop
-        ttk::frame $pop -relief solid -borderwidth 1 -padding 4
-        set PopValue ""
-
-        # Subtitle phrasing the criterion as the sentence the Restrict legend
-        # promises, so "Edit" reads as a verb the session performed rather than
-        # a bare noun.
-        set desc [dict get {
-            under   "Sessions that ran in this folder"
-            read    "Sessions that read this file"
-            wrote   "Sessions that created or wrote this file"
-            edited  "Sessions that edited or created this file"
-            pattern "Sessions whose content matches this regular expression"
-        } $kind]
-        ttk::label $pop.desc -text $desc -foreground [::questlog::ui::theme::c muted]
-        pack $pop.desc -side top -anchor w -pady {0 4}
-
-        if {$kind in {wrote edited}} {
-            set files [my git_modified_files]
-            if {[llength $files] > 0} {
-                set lb $pop.lb
-                set n [llength $files]
-                listbox $lb -height [expr {$n < 8 ? $n : 8}] -width 48 \
-                    -activestyle none
-                foreach f $files { $lb insert end $f }
-                pack $lb -side top -fill x
-                bind $lb <<ListboxSelect>> \
-                    [list [self] dropdown_pick $kind $lb $pop]
-                ttk::separator $pop.sep -orient horizontal
-                pack $pop.sep -side top -fill x -pady 4
-            }
-        }
-
-        ttk::frame $pop.row
-        ttk::entry $pop.row.e -textvariable [my varname PopValue] -width 40
-        pack $pop.row.e -side left -fill x -expand 1
-        if {$kind in {under read wrote edited}} {
-            ttk::button $pop.row.open -text "open…" \
-                -command [list [self] pick_file $kind $pop]
-            pack $pop.row.open -side left -padx {4 0}
-        }
-        ttk::button $pop.row.add -text "add" \
-            -command [list [self] dropdown_add_entry $kind $pop]
-        pack $pop.row.add -side left -padx {4 0}
-        pack $pop.row -side top -fill x
-        bind $pop.row.e <Return> [list [self] dropdown_add_entry $kind $pop]
-        bind $pop <Escape> [list destroy $pop]
-
-        set btn [my anchor_widget $kind]
-        set rx [expr {[winfo rootx $btn] - [winfo rootx $host]}]
-        set ry [expr {[winfo rooty $btn] - [winfo rooty $host] \
-                      + [winfo height $btn]}]
-        place $pop -x $rx -y $ry
-        raise $pop
-        focus $pop.row.e
-    }
-
-    # Anchor for the dropdown: the add-rail chip-button if no row exists,
-    # otherwise the row's inline "+ or" button.
-    method anchor_widget {kind} {
-        if {[dict exists $RowFrames $kind]} {
-            return [dict get $RowFrames $kind].chips.add
-        }
-        return $AddRail.b$kind
-    }
-
-    method dropdown_pick {kind lb pop} {
-        set sel [$lb curselection]
-        if {[llength $sel] == 0} return
-        set val [$lb get [lindex $sel 0]]
-        destroy $pop
-        my add_value $kind $val
-    }
-
-    method dropdown_add_entry {kind pop} {
-        set val [string trim $PopValue]
-        destroy $pop
-        if {$val ne ""} { my add_value $kind $val }
-    }
-
-    method pick_file {kind pop} {
-        set f [tk_getOpenFile -initialdir $Cwd]
-        if {$f eq ""} return
-        destroy $pop
-        my add_value $kind $f
     }
 
     method git_modified_files {} {
