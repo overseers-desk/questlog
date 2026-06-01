@@ -11,7 +11,7 @@ if {[lindex $argv 0] in {--version -v}} {
 
 # Detect CLI mode early before Tk starts
 set CLI_MODE 0
-if {"--cli" in $argv || "--cmd" in $argv} {
+if {"--json" in $argv || "--cmd" in $argv || "--help" in $argv || "-h" in $argv} {
     set CLI_MODE 1
 }
 
