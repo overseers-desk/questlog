@@ -1,8 +1,8 @@
 #!/usr/bin/env wish9.0
-# Unit / Integration test for subagent cost/turns/duration aggregation.
-# Checks that when a subagent's cost is computed, it is folded up into the
-# parent session's columns, updating the session totals, folder aggregates,
-# and running totals.
+# Unit / Integration test for subagent cost/turns aggregation. Checks that
+# when a subagent's cost is computed, its cost and turns fold up into the
+# parent session's columns (updating session totals, folder aggregates, and
+# running totals), while the parent's Duration stays its own active time.
 
 package require Tcl 9
 package require Tk
@@ -108,7 +108,7 @@ set s [$SL session_payload $F]
 check "parent own_cost remains unchanged" [dict get $s own_cost] 0.00105
 check "parent aggregated cost summed up" [dict get $s cost] 0.00285
 check "parent aggregated turns summed up" [dict get $s turns] 2
-check "parent aggregated duration summed up" [dict get $s duration_secs] 10
+check "parent duration stays own, subagent durations not summed" [dict get $s duration_secs] 5
 
 # Check running total Cost
 check "running TotalCost summed up" [set ${ns}::TotalCost] 0.00285

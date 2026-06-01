@@ -1615,7 +1615,6 @@ oo::class create ::questlog::ui::SessionList {
 
         set has_any_cost 0
         set has_any_turns 0
-        set has_any_duration 0
 
         # Sum cost
         set own_cost [dict getdef $s own_cost ""]
@@ -1635,15 +1634,6 @@ oo::class create ::questlog::ui::SessionList {
             set sum_turns 0
         }
 
-        # Sum duration
-        set own_duration [dict getdef $s own_duration_secs ""]
-        if {$own_duration ne "" && $own_duration >= 0} {
-            set sum_duration $own_duration
-            set has_any_duration 1
-        } else {
-            set sum_duration 0
-        }
-
         foreach cp [dict get $s all_child_paths] {
             if {[my has_child $cp]} {
                 set c [my node_payload [my sid $cp]]
@@ -1657,17 +1647,21 @@ oo::class create ::questlog::ui::SessionList {
                     set sum_turns [expr {$sum_turns + $ct}]
                     set has_any_turns 1
                 }
-                set cd [dict getdef $c duration_secs ""]
-                if {$cd ne "" && $cd >= 0} {
-                    set sum_duration [expr {$sum_duration + $cd}]
-                    set has_any_duration 1
-                }
             }
         }
 
+        # Duration is the parent's own active time alone. Subagent durations
+        # are not added in: the parent's active span already overlaps the
+        # wall-clock during which its subagents ran (they run inside the
+        # parent's turns), and parallel subagents would push the figure past
+        # real time, so summing would double count.
+        set own_duration [dict getdef $s own_duration_secs ""]
+        set dur [expr {($own_duration ne "" && $own_duration >= 0) \
+                       ? $own_duration : ""}]
+
         my sset $path cost [expr {$has_any_cost ? $sum_cost : ""}]
         my sset $path turns [expr {$has_any_turns ? $sum_turns : ""}]
-        my sset $path duration_secs [expr {$has_any_duration ? $sum_duration : ""}]
+        my sset $path duration_secs $dur
     }
 
     method glyph_cell {running bookmarked} {

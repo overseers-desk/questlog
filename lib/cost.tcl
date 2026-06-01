@@ -87,14 +87,25 @@ proc ::questlog::cost::format_usd {usd} {
     return [format "\$%.2f" $usd]
 }
 
-# Wall-clock span in seconds between the first and last record timestamps,
-# stored on the row so the list can sort by it. Blank when either bound is
-# missing or the span is degenerate.
-proc ::questlog::cost::dur_secs {first_ts last_ts} {
-    set s1 [iso_to_epoch $first_ts]
-    set s2 [iso_to_epoch $last_ts]
-    if {$s1 eq "" || $s2 eq "" || $s2 < $s1} { return "" }
-    return [expr {$s2 - $s1}]
+# Active work seconds: the wall-clock span with idle gaps removed. The gap
+# between two consecutive records is idle when the later record is a typed
+# human prompt, meaning the assistant had finished its turn and the session
+# sat waiting for the user. Resuming a session after hours or days adds one
+# such gap, so it contributes nothing; only the time the session was actually
+# working (including the minutes a tool or subagent ran inside a turn) is
+# counted. `stamps` is a list of {epoch is_human_prompt} pairs in any order.
+# Blank when fewer than two records carry a timestamp.
+proc ::questlog::cost::active_secs {stamps} {
+    if {[llength $stamps] < 2} { return "" }
+    set stamps [lsort -integer -index 0 $stamps]
+    set active 0
+    set prev [lindex [lindex $stamps 0] 0]
+    foreach pair [lrange $stamps 1 end] {
+        lassign $pair e is_human
+        if {!$is_human} { incr active [expr {$e - $prev}] }
+        set prev $e
+    }
+    return $active
 }
 
 # A second count as MM:SS, or H:MM:SS once it passes an hour, for the Duration
@@ -128,17 +139,31 @@ proc ::questlog::cost::parse_file {path} {
     set first_ts ""
     set last_ts ""
     set turns 0
+    set stamps [list]
     if {[catch {open $path r} fh]} {
-        return [dict create per_model {} first_ts "" last_ts "" turns 0 ok 0]
+        return [dict create per_model {} first_ts "" last_ts "" turns 0 stamps {} ok 0]
     }
     chan configure $fh -encoding utf-8 -profile replace
     while {[chan gets $fh line] >= 0} {
         if {$line eq ""} continue
+        set user_prompt [regexp {"role":"user","content":"} $line]
+        if {$user_prompt} { incr turns }
         if {[regexp {"timestamp":"([^"]+)"} $line -> m]} {
             if {$first_ts eq ""} { set first_ts $m }
             set last_ts $m
+            set e [iso_to_epoch $m]
+            if {$e ne ""} {
+                # Idle time is the gap before a human turn: a user record that
+                # is neither a tool result nor a subagent's own (sidechain)
+                # prompt. Its content may be a string or an array (text plus a
+                # pasted block), so key on the role and exclude tool-result and
+                # sidechain records rather than on the string-content shape.
+                set is_human [expr {[regexp {"role":"user"} $line] \
+                    && ![regexp {"type":"tool_result"} $line] \
+                    && ![regexp {"isSidechain":true} $line]}]
+                lappend stamps [list $e $is_human]
+            }
         }
-        if {[regexp {"role":"user","content":"} $line]} { incr turns }
         if {![regexp {"type":"assistant"} $line]} continue
         if {[catch {::json::json2dict $line} rec]} continue
         if {![dict exists $rec message]} continue
@@ -175,7 +200,7 @@ proc ::questlog::cost::parse_file {path} {
     }
 
     return [dict create per_model $per_model \
-        first_ts $first_ts last_ts $last_ts turns $turns ok 1]
+        first_ts $first_ts last_ts $last_ts turns $turns stamps $stamps ok 1]
 }
 
 proc ::questlog::cost::build_cost_dict {res} {
@@ -184,7 +209,6 @@ proc ::questlog::cost::build_cost_dict {res} {
     }
     set per_model [dict get $res per_model]
     set first_ts [dict get $res first_ts]
-    set last_ts [dict get $res last_ts]
     set turns [dict get $res turns]
 
     set session_date [string range $first_ts 0 9]
@@ -205,6 +229,6 @@ proc ::questlog::cost::build_cost_dict {res} {
         cache_read_tokens $cr \
         model_breakdown $per_model \
         turns $turns \
-        duration_secs [dur_secs $first_ts $last_ts]]
+        duration_secs [active_secs [dict get $res stamps]]]
 }
 
