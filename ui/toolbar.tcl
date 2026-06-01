@@ -90,7 +90,9 @@ oo::class create ::questlog::ui::Toolbar {
     variable RowFrames        ;# dict kind -> widget path (present only when row exists)
     variable TailShown        ;# dict kind -> 1 for tail rows (tool/pattern) revealed
     variable AddText          ;# array kind -> the add-entry's pending text
+    variable AddState         ;# array kind -> collapsed|editing (add affordance's morph state)
     variable AddOp            ;# op for the next file value added (either|read|wrote)
+    variable EditFocusKind    ;# kind whose editor should hold focus across a rebuild, or ""
     variable DebounceAfter    ;# after-id of the pending live-search publish, or ""
     variable TypingUntil      ;# clock-ms deadline through which the user counts as typing
 
@@ -111,7 +113,9 @@ oo::class create ::questlog::ui::Toolbar {
         set RowFrames [dict create]
         set TailShown [dict create]
         array set AddText {under {} file {} tool {} pattern {}}
+        array set AddState {under collapsed file collapsed tool collapsed pattern collapsed}
         set AddOp either
+        set EditFocusKind ""
         set DebounceAfter ""
         set TypingUntil 0
 
@@ -368,56 +372,83 @@ oo::class create ::questlog::ui::Toolbar {
     # label, so no rebuild is needed to reflect the change.
     method set_add_op {op} { set AddOp $op }
 
-    # Reveal a tail row (regex or tool) and focus its add entry.
+    # Reveal a tail row (regex or tool) and open its editor for immediate typing.
     method show_tail {kind} {
-        dict set TailShown $kind 1
-        my rebuild_clause_rows
+        my begin_edit $kind
         my refresh_add_rail
-        catch {focus [dict get $RowFrames $kind].chips.add.e}
+    }
+
+    # Morph a row's collapsed [+]/[+ or] button into the inline editor in place.
+    # A tail row is also marked shown. EditFocusKind records which editor holds
+    # focus across this rebuild and any later collateral one (a chip removed in
+    # another row, an op changed). The rebuild draws the editor; focus_add lands
+    # the caret.
+    method begin_edit {kind} {
+        set AddState($kind) editing
+        set EditFocusKind $kind
+        if {$kind in {tool pattern}} { dict set TailShown $kind 1 }
+        my rebuild_clause_rows
+        my focus_add $kind
+    }
+
+    # Collapse the editor back to its button, discarding any unconfirmed text.
+    # No publish, since nothing was added.
+    method cancel_edit {kind} {
+        set AddState($kind) collapsed
+        set AddText($kind) ""
+        if {$EditFocusKind eq $kind} { set EditFocusKind "" }
+        my rebuild_clause_rows
+    }
+
+    # Put the caret in a row's editor entry once the rebuild has drawn it.
+    method focus_add {kind} {
+        catch {focus [dict get $RowFrames $kind].chips.add.field.e}
     }
 
     # ---- add-entry commit handlers (popup-free; inline in each row) ---------
 
     method commit_folder_add {} {
         set v [string trim $AddText(under)]
-        if {$v eq ""} return
+        if {$v eq ""} { my cancel_edit under; return }
         set AddText(under) ""
+        set AddState(under) collapsed
         my add_value under $v
     }
 
     method commit_file_add {} {
         set v [string trim $AddText(file)]
-        if {$v eq ""} return
+        if {$v eq ""} { my cancel_edit file; return }
         set AddText(file) ""
+        set AddState(file) collapsed
         my add_value file [list $AddOp $v]
     }
 
     method commit_pattern_add {} {
         set v [string trim $AddText(pattern)]
-        if {$v eq ""} return
+        if {$v eq ""} { my cancel_edit pattern; return }
         set AddText(pattern) ""
+        set AddState(pattern) collapsed
         my add_value pattern $v
     }
 
     # name "" reads the typed tool name; the quick-pick menu passes the name in.
     method commit_tool_add {{name ""}} {
         if {$name eq ""} { set name [string trim $AddText(tool)] }
-        if {$name eq ""} return
+        if {$name eq ""} { my cancel_edit tool; return }
         set AddText(tool) ""
+        set AddState(tool) collapsed
         my add_value tool [list $name ""]
     }
 
     method browse_folder {} {
         set d [tk_chooseDirectory -initialdir $Cwd -mustexist 1]
-        if {$d ne ""} { my add_value under $d }
+        if {$d ne ""} { set AddState(under) collapsed; my add_value under $d }
     }
 
     method browse_file {} {
         set f [tk_getOpenFile -initialdir $Cwd]
-        if {$f ne ""} { my add_value file [list $AddOp $f] }
+        if {$f ne ""} { set AddState(file) collapsed; my add_value file [list $AddOp $f] }
     }
-
-    method add_recent_file {path} { my add_value file [list $AddOp $path] }
 
     # Seed the `under` row with the launch cwd. Marks UnderAuto so the
     # Show-all banner knows the chip was not user-typed. Any later edit
@@ -483,6 +514,12 @@ oo::class create ::questlog::ui::Toolbar {
             dict set RowFrames $k $row
         }
         my refresh_heading
+        # A rebuild destroys the focused editor entry; if a row is mid-edit,
+        # restore the caret so a collateral rebuild (a chip removed elsewhere, an
+        # op changed) does not silently drop focus while the user is typing.
+        if {$EditFocusKind ne "" && $AddState($EditFocusKind) eq "editing"} {
+            my focus_add $EditFocusKind
+        }
     }
 
     # Update the restrict heading with a count of active clauses, so the legend
@@ -531,10 +568,34 @@ oo::class create ::questlog::ui::Toolbar {
         my render_add $kind $cf
     }
 
-    # The inline add affordance for a row: an entry committed on Return, plus
-    # the kind's controls (an op pill and a browse menu for file, a browse menu
-    # for folder, a tool quick-pick for tool). No transient popup is involved.
+    # The inline add affordance for a row: collapsed to a single ghost button, or
+    # morphed in place into a row-appropriate editor. AddState($kind) decides
+    # which form to draw; the morph itself is just a rebuild_clause_rows.
     method render_add {kind cf} {
+        if {$AddState($kind) eq "editing"} {
+            my render_editor $kind $cf
+        } else {
+            my render_add_button $kind $cf
+        }
+    }
+
+    # The collapsed affordance: "+" on an empty row, "+ or" once the row carries
+    # a value. It packs after the last chip, so "+ or" reads as "OR another".
+    method render_add_button {kind cf} {
+        set has [expr {[llength [dict get $Clauses $kind]] > 0}]
+        ttk::button $cf.add -style RGhost.TButton \
+            -text [expr {$has ? "+ or" : "+"}] \
+            -command [list [self] begin_edit $kind]
+        pack $cf.add -side left -padx {4 0}
+    }
+
+    # The expanded inline editor, built where the add button was. Row-appropriate:
+    # file gets an op pill and an open-file glyph, folder a directory glyph, tool
+    # the name picker, regex a bare mono field. The entry's text lives in
+    # AddText($kind) so it survives the rebuilds other edits trigger; Return
+    # commits, Escape cancels. The borderless entry plus the glyph sit inside a
+    # rounded Field.TFrame plate so the pair reads as one control.
+    method render_editor {kind cf} {
         set ae $cf.add
         ttk::frame $ae
         if {$kind eq "file"} {
@@ -542,32 +603,43 @@ oo::class create ::questlog::ui::Toolbar {
             pack $ae.op -side left -padx {0 3}
         }
         set mono [expr {$kind eq "pattern"}]
-        ttk::entry $ae.e -textvariable [my varname AddText]($kind) -width 22 \
+        ttk::frame $ae.field -style Field.TFrame -padding {6 2}
+        tk::entry $ae.field.e -width 22 -relief flat -borderwidth 0 \
+            -highlightthickness 0 \
+            -background [::questlog::ui::theme::c chip_bg] \
+            -foreground [::questlog::ui::theme::c ink] \
+            -textvariable [my varname AddText]($kind) \
             -font [expr {$mono ? "QLMono" : "TkTextFont"}]
-        pack $ae.e -side left
         set commit [switch -- $kind {
             under   { list [self] commit_folder_add }
             file    { list [self] commit_file_add }
             pattern { list [self] commit_pattern_add }
             tool    { list [self] commit_tool_add }
         }]
-        bind $ae.e <Return> $commit
+        bind $ae.field.e <Return> $commit
+        bind $ae.field.e <Escape> [list [self] cancel_edit $kind]
+        # The open glyph packs first against the right edge so the entry fills the
+        # rest and its text never runs under it.
         switch -- $kind {
-            under {
-                ttk::button $ae.b -text "open…" -style RGhost.TButton \
-                    -command [list [self] browse_folder]
-                pack $ae.b -side left -padx {3 0}
-            }
-            file {
-                my build_file_menu $ae.b
-                pack $ae.b -side left -padx {3 0}
-            }
-            tool {
-                my build_tool_menu $ae.b
-                pack $ae.b -side left -padx {3 0}
-            }
+            file  { my add_icon $ae.field.icon "\U0001F4C2" [list [self] browse_file] }
+            under { my add_icon $ae.field.icon "\U0001F4C1" [list [self] browse_folder] }
+        }
+        pack $ae.field.e -side left -fill x -expand 1
+        pack $ae.field -side left
+        if {$kind eq "tool"} {
+            my build_tool_menu $ae.pick
+            pack $ae.pick -side left -padx {3 0}
         }
         pack $ae -side left -padx {4 0}
+    }
+
+    # A small clickable open glyph at the right edge of an add field. Mouse-only
+    # (no tab stop); it shares the field's fill so it reads as part of the field.
+    method add_icon {w glyph cmd} {
+        label $w -text $glyph -background [::questlog::ui::theme::c chip_bg] \
+            -borderwidth 0 -highlightthickness 0 -cursor hand2 -takefocus 0
+        bind $w <Button-1> $cmd
+        pack $w -side right -padx {2 4}
     }
 
     # A colored operation pill on a file chip (or the add area). It posts a menu
@@ -584,20 +656,6 @@ oo::class create ::questlog::ui::Toolbar {
         menu $w.m -tearoff 0
         foreach o {either read wrote} {
             $w.m add command -label $o -command [concat $cmdprefix [list $o]]
-        }
-    }
-
-    method build_file_menu {w} {
-        ttk::menubutton $w -text "⋯" -menu $w.m -direction below
-        menu $w.m -tearoff 0
-        $w.m add command -label "Open file…" -command [list [self] browse_file]
-        set files [my git_modified_files]
-        if {[llength $files] > 0} {
-            $w.m add separator
-            foreach f $files {
-                $w.m add command -label [::questlog::path::pretty_home $f] \
-                    -command [list [self] add_recent_file $f]
-            }
         }
     }
 
@@ -634,22 +692,6 @@ oo::class create ::questlog::ui::Toolbar {
                 pack $btn -side left -padx {0 4}
             }
         }
-    }
-
-    method git_modified_files {} {
-        if {[catch {exec git -C $Cwd rev-parse --show-toplevel} root]} {
-            return [list]
-        }
-        set root [string trim $root]
-        if {[catch {exec git -C $Cwd status --porcelain} out]} { return [list] }
-        set files [list]
-        foreach line [split $out \n] {
-            if {$line eq ""} continue
-            set rest [string range $line 3 end]
-            if {[regexp {.* -> (.*)} $rest -> renamed]} { set rest $renamed }
-            lappend files [file join $root $rest]
-        }
-        return $files
     }
 
     method destroy {} {

@@ -238,6 +238,14 @@ proc ::questlog::ui::theme::build_chrome {} {
     ttk::style layout RGhost.TButton \
         {Ghost.bg -sticky nsew -children {Button.padding -sticky nsew \
             -children {Button.label -sticky nsew}}}
+    # The inline add editor's text field: a rounded white plate built the same
+    # 9-patch way as the chips, sized so a borderless entry and an open-file
+    # glyph sit inside it and read as one control, rather than the entry showing
+    # as a bare square box among the rounded chrome. Same fill and border as the
+    # ghost button today; named apart so its tint can diverge later.
+    rrect_img qlField $w $ch $r [c chip_bg] [c ctrl_border] 1
+    ttk::style element create Field.bg image qlField -border $B -padding 0 -sticky nsew
+    ttk::style layout Field.TFrame {Field.bg -sticky nsew}
     # faint × that removes one chip; no rounding needed.
     ttk::style configure ChipX.TButton -relief flat -borderwidth 0 \
         -padding {2 0} -background [c chip_bg] -foreground [c faint] \
