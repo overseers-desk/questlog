@@ -34,7 +34,13 @@ proc ::questlog::ui::session_columns {} {
 }
 
 # ::questlog::ui::SessionList - the left pane: one read-only text widget that is
-# both the session browser and the search-result index in a single list.
+# both the session browser and the search-result index in a single list. It is
+# a TextTree (the generic tree-in-a-text-widget engine) specialised for the
+# session domain: folders are the roots, sessions are their children, and a
+# session's subagents are its grandchildren. SessionList supplies the content
+# and ordering through the engine's hooks (column_spec, render_subject,
+# cell_values, cell_tag, sort_key) and owns the session-specific interaction,
+# cost aggregation, menus, rename, search snippets, and reconcile.
 #
 # Layout, top to bottom, as tagged regions in the one text widget:
 #   folder heading   - the project label, a drop target for moves
@@ -48,34 +54,35 @@ proc ::questlog::ui::session_columns {} {
 # its snippets. A single click opens the session in the docked viewer and
 # anchors it to the relevant line.
 #
-# The list is one generic tree of nodes drawn into a single text widget. A
-# node is a folder, a session, or a subagent; each carries the position marks
-# and tag that locate it in the widget, plus a domain payload. Folders are the
-# roots; a session's subagents are its child nodes, appended at the session's
-# end region exactly as snippet and child rows render between a header and its
-# append point.
-#
-# A text widget is the list; each node tracks its position with two marks:
-#   node.start  the mark at the node's first char.
-#               Folders: right gravity (heading start). Sessions and subagents:
-#               left gravity (header start).
-#   node.end    the mark just past the node's last descendant line, the append
-#               point where the node's children and content land.
-#               Folders and sessions: left gravity.
-#   node.tag    the per-node text tag carrying the heading's drop hit-test
-#               (folders) or the row's click/drag bindings (sessions, subagents).
-# Plus TailMark: right gravity, always just before the implicit final newline,
-# the append point for new folder headings.
-# Gravity makes a mid-document insert push every mark to its right along
-# with it, so folder grouping streams without bespoke shuffling.
-#
-# Anti-self-scroll: every streaming insert is bracketed by anchor_save /
-# anchor_restore, which pins the top visible line back to the top, so a late
-# match inserted above the viewport never shifts what the reader is on.
+# The engine draws each node into the widget with two marks (node.start at its
+# first char, node.end at the append point past its last descendant) and a
+# per-node tag. Here a folder's start is the heading start (right gravity), a
+# session's or subagent's is its header start (left gravity); a node's end is
+# the folder's append point (where new sessions land) or the session's (where
+# snippets and child rows land). A session's subagents render as its child nodes
+# at the session's end region, exactly as snippet rows render between a header
+# and its append point.
 
 oo::class create ::questlog::ui::SessionList {
+    superclass ::questlog::ui::TextTree
+    # Shared with the TextTree engine (same per-object variables): the widget
+    # refs, the node store, the column geometry and the sort state.
     variable Top
     variable Text
+    variable Nodes
+    variable Roots
+    variable NextId
+    variable ColTabs
+    variable ColRightX
+    variable ColW
+    variable ColGap
+    variable SubjectMax
+    variable FolderLabelMax
+    variable LayoutW
+    variable RelayoutPending
+    variable SortKey
+    variable SortDir
+    variable ResortPending
     variable StatusVar
     variable CancelCb
     variable ResolveFolder    ;# cb: folder -> display cwd
@@ -91,18 +98,12 @@ oo::class create ::questlog::ui::SessionList {
     variable RunningSet       ;# dict uuid -> 1, replaced wholesale each tick
     variable Query            ;# {terms <list> nocase 0|1} for hit highlighting
     variable HitTags
-    # The generic node store. Nodes maps a node id to its dict
-    # {parent kind expanded rendered start end tag children payload}; Roots is
-    # the ordered list of root (folder) node ids, in arrival (mtime-desc) order.
-    variable Nodes
-    variable Roots
     # Domain indices into the node store: a folder name or a session/subagent
     # path to its node id.
     variable FolderNode       ;# folder name -> node id
     variable PathNode         ;# session path OR subagent path -> node id
     variable TagNode          ;# folder node.tag -> node id, for drop hit-testing
     variable Selected         ;# currently selected session path, or ""
-    variable NextId
     variable Menu
     variable MenuPath
     variable MenuTarget
@@ -112,17 +113,6 @@ oo::class create ::questlog::ui::SessionList {
     variable RenameIndex      ;# menu index of the Rename entry, enabled per running state
     variable TotalCost        ;# running sum of per-session cost in the model
     variable StatusBase       ;# last text set by set_progress/set_done
-    variable ColTabs          ;# -tabs spec for the session line (right-pinned metadata)
-    variable ColRightX        ;# right-edge x px per metadata column, for header click mapping
-    variable ColW             ;# measured widths per metadata column, parallel to session_columns
-    variable ColGap           ;# gap px between metadata cells
-    variable SubjectMax       ;# px the subject may fill before the metadata block
-    variable FolderLabelMax   ;# px the folder label may fill before its aggregates
-    variable LayoutW          ;# Text width the current layout was computed for
-    variable RelayoutPending  ;# 1 while a debounced relayout is queued
-    variable SortKey          ;# active sort column id: date | size | cost
-    variable SortDir          ;# desc | asc
-    variable ResortPending    ;# 1 while a debounced redraw is queued under a non-default sort
     variable OnSubagents      ;# cb: parent path -> list of child row dicts
     variable OnSubagentCost   ;# cb: child path -> start the cost pass for it
 
@@ -161,45 +151,15 @@ oo::class create ::questlog::ui::SessionList {
         my build
     }
 
+    # Reset the model: the engine's node store plus the session-domain indices
+    # into it. The node store, id allocation and payload accessors live in the
+    # TextTree base.
     method reset_model {} {
-        set Nodes [dict create]
-        set Roots [list]
+        my reset_nodes
         set FolderNode [dict create]
         set PathNode [dict create]
         set TagNode [dict create]
         set Selected ""
-    }
-
-    # ---- generic node store ------------------------------------------
-    #
-    # A node id is allocated from NextId; the store keeps the structural fields
-    # (parent/kind/expanded/rendered/start/end/tag/children) generic and hangs
-    # the domain dict off `payload`. The accessors below are the single door to
-    # the store so every folder/session/subagent operation reads and writes
-    # node state the same way.
-
-    method node_new {kind parent key payload} {
-        set id "node[incr NextId]"
-        # `key` is the node's domain key (folder name for folders, file path for
-        # sessions and subagents): the reverse lookup from a node id back to the
-        # FolderNode / PathNode index, kept out of payload so payload stays the
-        # pristine per-entity dict.
-        dict set Nodes $id [dict create \
-            parent $parent kind $kind key $key expanded 0 rendered 0 \
-            start "" end "" tag "" children [list] payload $payload]
-        return $id
-    }
-    method node_exists {id} { return [dict exists $Nodes $id] }
-    method node_get {id} { return [dict get $Nodes $id] }
-    method node_field {id field} { return [dict get [dict get $Nodes $id] $field] }
-    method node_set {id field value} { dict set Nodes $id $field $value }
-    method node_payload {id} { return [dict get [dict get $Nodes $id] payload] }
-    method node_pget {id key {dflt ""}} {
-        return [dict getdef [dict get [dict get $Nodes $id] payload] $key $dflt]
-    }
-    method node_pset {id key value} {
-        dict set Nodes $id payload [dict replace \
-            [dict get [dict get $Nodes $id] payload] $key $value]
     }
 
     # ---- public payload accessors (white-box tests, and any caller that
@@ -264,55 +224,12 @@ oo::class create ::questlog::ui::SessionList {
         pack $Top.banner.text -side left -padx 8 -pady 5 -fill x -expand 1
         pack $Top.banner.showall -side right -padx 8 -pady 5
 
-        ttk::frame $Top.body
-        pack $Top.body -side top -fill both -expand 1
-        # The sortable column header sits in row 0 of the body grid, in the
-        # same column as the text below it, so its labels share the text's
-        # width and the right-pinned metadata columns line up. The scrollbar is
-        # beside the text only (row 1), never under the header.
-        text $Top.body.hdr -height 1 -wrap none -state disabled -takefocus 0 \
-            -exportselection 0 -borderwidth 0 -highlightthickness 0 \
-            -padx 8 -pady 1 -cursor hand2 -font QLList \
-            -background [::questlog::ui::theme::c strip] \
-            -foreground [::questlog::ui::theme::c muted]
-        text $Top.body.t -wrap word -state disabled -exportselection 0 \
-            -yscrollcommand [list [self] on_yscroll] \
-            -borderwidth 0 -highlightthickness 0 -padx 8 -pady 8 -cursor arrow \
-            -takefocus 0
-        ttk::scrollbar $Top.body.sb -orient vertical \
-            -command [list $Top.body.t yview]
-        grid $Top.body.hdr -row 0 -column 0 -sticky ew
-        grid $Top.body.t   -row 1 -column 0 -sticky nsew
-        grid $Top.body.sb  -row 1 -column 1 -sticky ns
-        grid columnconfigure $Top.body 0 -weight 1
-        grid rowconfigure    $Top.body 1 -weight 1
-        set Text $Top.body.t
-        # Re-pin the metadata columns and re-fit the subject ellipsis when the
-        # list is resized.
-        bind $Text <Configure> [list [self] on_text_configure %w]
-        # This is a list, not editable text: make the click-drag text selection
-        # invisible (it otherwise paints rows grey, active and inactive) and
-        # hide the insert cursor.
-        $Text configure -insertwidth 0 -inactiveselectbackground "" \
-            -selectbackground [$Text cget -background] \
-            -selectforeground [$Text cget -foreground]
-
-        $Text mark set TailMark "end-1c"
-        $Text mark gravity TailMark right
-
+        # The engine assembles the body (header text, list text, scrollbar, the
+        # <Configure> relayout hook, the selection suppression and TailMark);
+        # the session-domain tags, sort header and menus go on top of it.
+        my build_body
         my configure_tags
         my build_header
-        # This is an object list, not editable text. Block the Text class's
-        # selection gestures so a click never starts a text selection (which
-        # would grab the X PRIMARY clipboard and, via tk::TextAutoScan, run a
-        # self-scrolling drag-select). The per-tag click/drag bindings fire
-        # first; these widget-level breaks stop the class bindings that follow.
-        # B1-Motion still drives drag-to-move, then breaks the class handler.
-        bind $Text <B1-Motion> {::questlog::ui::drag::motion %X %Y; break}
-        foreach ev {<Button-1> <Double-Button-1> <Triple-Button-1> \
-                    <Shift-Button-1> <Control-Button-1> <B1-Leave>} {
-            bind $Text $ev break
-        }
         my build_menu
         my build_child_menu
     }
@@ -417,73 +334,27 @@ oo::class create ::questlog::ui::SessionList {
         my layout_columns
     }
 
-    # Measure the metadata cells once in QLList (the proportional list font is
-    # fixed, so the widths never change at runtime). layout_columns turns these
-    # into positions; doing the measuring once keeps resize cheap.
-    method compute_col_widths {} {
-        set ColGap [font measure QLList "  "]
-        set ColW [list]
-        foreach col [::questlog::ui::session_columns] {
-            lassign $col id label sample
-            # A column must be wide enough for both its widest cell (the sample)
-            # and its header label with the sort arrow, so a short-sampled column
-            # like Turns never has its "Turns ▾" heading spill into the neighbour.
-            set ws [font measure QLList $sample]
-            set wl [font measure QLBold "$label ▾"]
-            lappend ColW [expr {$ws > $wl ? $ws : $wl}]
-        }
+    # ---- engine hooks: columns and relayout ---------------------------
+
+    # The metadata columns (engine hook): id, label, width sample, alignment,
+    # and whether the header sorts. The single home is session_columns.
+    method column_spec {} { return [::questlog::ui::session_columns] }
+
+    # Pin the engine's freshly-computed tab stops onto the three session-domain
+    # row tags, so folder headings, session headers and child rows all align
+    # their metadata under the header (engine hook, called from layout_columns).
+    method apply_column_tabs {tabs} {
+        $Text tag configure sessionhead -tabs $tabs
+        $Text tag configure folderhead  -tabs $tabs
+        $Text tag configure childhead   -tabs $tabs
     }
 
-    # Pin the metadata strip flush to the list's right edge for the current
-    # width: the last column's right edge sits a hair inside the edge and each
-    # earlier column stacks leftward by its width plus a gap, so the subject
-    # gets whatever room is left before the leftmost column. Right tab stops put
-    # each cell's right edge on its stop. Called at build and on every resize; it
-    # only repositions (cheap), the per-row ellipsis refit is the separate
-    # relayout step.
-    method layout_columns {} {
-        set w [winfo width $Text]
-        if {$w <= 1} { set w 600 }
-        set cw [expr {$w - 16}]          ;# inside the 8px left/right -padx
-        set n [llength $ColW]
-        set rights [lrepeat $n 0]
-        set edge [expr {$cw - 6}]        ;# rightmost column's right edge
-        for {set i [expr {$n - 1}]} {$i >= 0} {incr i -1} {
-            lset rights $i $edge
-            set edge [expr {$edge - [lindex $ColW $i] - $ColGap}]
-        }
-        set ColRightX $rights
-        set ColTabs [list]
-        foreach rx $rights { lappend ColTabs $rx right }
-        # Subject runs up to just before the leftmost metadata column.
-        set first_rx [lindex $rights 0]
-        set SubjectMax [expr {$first_rx - [lindex $ColW 0] - $ColGap - 12}]
-        if {$SubjectMax < 80} { set SubjectMax 80 }
-        # The folder label has no date cell, so it may run up to the first tab
-        # stop before its aggregates; cap it just short of that.
-        set FolderLabelMax [expr {$first_rx - 16}]
-        if {$FolderLabelMax < 60} { set FolderLabelMax 60 }
-        $Text tag configure sessionhead -tabs $ColTabs
-        $Text tag configure folderhead  -tabs $ColTabs
-        $Text tag configure childhead   -tabs $ColTabs
-        if {[winfo exists $Top.body.hdr]} { $Top.body.hdr configure -tabs $ColTabs }
-    }
-
-    # Resize hook: when the width actually changes, re-pin the columns and
-    # re-fit every rendered subject's ellipsis, coalesced to one pass at idle.
-    method on_text_configure {w} {
-        if {$w == $LayoutW} return
-        set LayoutW $w
-        if {$RelayoutPending} return
-        set RelayoutPending 1
-        after idle [list [self] relayout]
-    }
-    method relayout {} {
-        set RelayoutPending 0
-        my layout_columns
-        my draw_header
-        $Text configure -state normal
-        foreach fid $Roots {
+    # Re-fit every rendered row's ellipsis after a width change (engine hook,
+    # called from relayout inside the widget's normal state): each folder
+    # heading, each rendered session header, and the children of an expanded
+    # session.
+    method relayout_content {} {
+        foreach fid [my roots] {
             my redraw_folder_heading [my node_field $fid key]
             foreach sid [my node_field $fid children] {
                 if {[my node_field $sid rendered]} {
@@ -493,137 +364,6 @@ oo::class create ::questlog::ui::SessionList {
                 }
             }
         }
-        $Text configure -state disabled
-    }
-
-    # The sortable column header lives in row 0 of the body grid (created in
-    # build, so it shares the text's width). It shares the session line's font
-    # and tab stops, so its right-pinned Date/Size/Cost labels sit over the
-    # columns. Clicking a metadata column sorts by it; clicking the active one
-    # flips the direction. The Session zone on the left is not sortable.
-    method build_header {} {
-        set h $Top.body.hdr
-        $h tag configure colactive -font QLBold -foreground [::questlog::ui::theme::c ink]
-        bind $h <Button-1> [list [self] on_header_click %x]
-        my draw_header
-    }
-
-    # Map a header click x (widget pixels) to a metadata column and sort by it.
-    # Each column occupies [right_edge - width, right_edge]; a click in the
-    # Session area or the gaps falls through and sorts nothing.
-    method on_header_click {x} {
-        set cx [expr {$x - 8}]
-        set cols [::questlog::ui::session_columns]
-        for {set i 0} {$i < [llength $cols]} {incr i} {
-            lassign [lindex $cols $i] id label sample align sortable
-            set rx [lindex $ColRightX $i]
-            set lo [expr {$rx - [lindex $ColW $i] - 6}]
-            if {$cx >= $lo && $cx <= $rx + 4} {
-                if {$sortable} { my set_sort $id }
-                return
-            }
-        }
-    }
-
-    # Adopt a new sort key (descending), or flip the direction when the active
-    # key is clicked again, then re-render the list in the new order.
-    method set_sort {id} {
-        if {$SortKey eq $id} {
-            set SortDir [expr {$SortDir eq "desc" ? "asc" : "desc"}]
-        } else {
-            set SortKey $id
-            set SortDir "desc"
-        }
-        my redraw_all
-        my draw_header
-    }
-
-    # Paint the header labels: the Session column on the left, then the
-    # right-pinned Date/Size/Cost over their columns, the active one marked with
-    # a direction arrow and bold ink.
-    method draw_header {} {
-        set h $Top.body.hdr
-        $h configure -state normal
-        $h delete 1.0 end
-        set line "Session"
-        set act_off -1
-        set act_len 0
-        foreach col [::questlog::ui::session_columns] {
-            lassign $col id label
-            append line "\t"
-            set lbl $label
-            if {$id eq $SortKey} {
-                append lbl [expr {$SortDir eq "desc" ? " ▾" : " ▴"}]
-                set act_off [string length $line]
-                set act_len [string length $lbl]
-            }
-            append line $lbl
-        }
-        $h insert 1.0 $line
-        if {$act_off >= 0} {
-            $h tag add colactive "1.0 + ${act_off}c" \
-                "1.0 + [expr {$act_off + $act_len}]c"
-        }
-        $h configure -state disabled
-    }
-
-    # Order a folder's session paths by the active sort. Each key reads a
-    # cached field (mtime for date, size, cost); date descending reproduces the
-    # mtime-descending streaming order. A blank or unknown cost sinks to the
-    # bottom. src is the dict to read fields from (the live model on expand, the
-    # pre-rebuild snapshot in redraw_all).
-    method sort_paths {paths src} {
-        set keyed [list]
-        foreach p $paths {
-            set v -1
-            if {[dict exists $src $p]} {
-                set s [dict get $src $p]
-                switch -- $SortKey {
-                    date { set v [dict getdef $s mtime 0] }
-                    size { set v [dict getdef $s size 0] }
-                    cost {
-                        set v [dict getdef $s cost ""]
-                        if {$v eq "" || $v < 0} { set v -1 }
-                    }
-                    turns {
-                        set v [dict getdef $s turns ""]
-                        if {$v eq ""} { set v -1 }
-                    }
-                    duration {
-                        set v [dict getdef $s duration_secs ""]
-                        if {$v eq ""} { set v -1 }
-                    }
-                }
-            }
-            lappend keyed [list $p $v]
-        }
-        set dir [expr {$SortDir eq "asc" ? "-increasing" : "-decreasing"}]
-        return [lmap e [lsort -real -index 1 $dir $keyed] { lindex $e 0 }]
-    }
-
-    method sort_folders {order foldercost} {
-        set keyed [lmap f $order { list $f [dict getdef $foldercost $f 0.0] }]
-        set dir [expr {$SortDir eq "asc" ? "-increasing" : "-decreasing"}]
-        return [lmap e [lsort -real -index 1 $dir $keyed] { lindex $e 0 }]
-    }
-
-    method is_default_sort {} {
-        return [expr {$SortKey eq "date" && $SortDir eq "desc"}]
-    }
-
-    # A row streamed or recosted under a non-default sort lands out of order;
-    # coalesce a single full re-render at idle to restore the sort. The default
-    # sort needs none (streaming order is already correct), so this no-ops then.
-    method schedule_resort {} {
-        if {[my is_default_sort]} return
-        if {$ResortPending} return
-        set ResortPending 1
-        after idle [list [self] do_resort]
-    }
-    method do_resort {} {
-        set ResortPending 0
-        if {[my is_default_sort]} return
-        my redraw_all
     }
 
     method build_menu {} {
@@ -659,30 +399,6 @@ oo::class create ::questlog::ui::SessionList {
         set RenameIndex [$Menu index end]
         set MenuTarget [dict create]
         set MenuPath ""
-    }
-
-    # ---- view-anchoring around streaming inserts ----------------------
-    #
-    # A streaming insert must not shift what the reader is looking at. Two
-    # cases: if the reader is at the very top (the default while browsing or
-    # watching results arrive), keep them pinned to the absolute top so the
-    # newest content and the folder heading stay in view; if they have
-    # scrolled into the list, pin the character that was at the top so an
-    # insert above it scrolls to compensate and their line does not move.
-
-    variable AtTop
-    method anchor_save {} {
-        set AtTop [expr {[lindex [$Text yview] 0] <= 0.0001}]
-        $Text mark set AnchorTop @0,0
-        $Text mark gravity AnchorTop left
-    }
-    method anchor_restore {} {
-        if {[info exists AtTop] && $AtTop} {
-            $Text yview moveto 0
-        } else {
-            catch {$Text yview AnchorTop}
-        }
-        catch {$Text mark unset AnchorTop}
     }
 
     # ---- filter / clear ----------------------------------------------
@@ -911,12 +627,12 @@ oo::class create ::questlog::ui::SessionList {
         set femark [my node_field [my fid $folder] end]
         set stag "s#[incr NextId]"
         set sstart [$Text index $femark]
-        set info [my build_session_line $path]
+        set info [my build_line $sid]
         $Text insert $femark "[dict get $info line]\n" \
             [list sessionhead $stag]
-        my apply_line_tags $sstart $path $info
+        my apply_line $sid $sstart $info
         # Single-line rows: the subject preview is ellipsised to stop before the
-        # right-pinned metadata (build_session_line), and -wrap none guards
+        # right-pinned metadata (render_subject), and -wrap none guards
         # against any residual overflow. The full prompt is read in the viewer,
         # which a click on the row opens.
         $Text tag configure $stag -wrap none
@@ -1199,13 +915,13 @@ oo::class create ::questlog::ui::SessionList {
         $Text mark set $cstart [$Text index $semark]
         $Text mark gravity $cstart left
         set ctag "c#[incr NextId]"
-        set info [my build_child_line $cp]
+        set info [my build_line $cid]
         set tmp tmpchild
         $Text mark set $tmp [$Text index $semark]
         $Text mark gravity $tmp right
         set rstart [$Text index $tmp]
         $Text insert $tmp "[dict get $info line]\n" [list childhead $ctag]
-        my apply_child_tags $rstart $cp $info
+        my apply_line $cid $rstart $info
         $Text mark set $semark [$Text index $tmp]
         $Text mark unset $tmp
         # The child node's end advances past its own rows so its region nests
@@ -1267,73 +983,31 @@ oo::class create ::questlog::ui::SessionList {
         $Text mark unset $tmp
     }
 
-    # Build a subagent's header row: the tree spine, the bold agent type, the
-    # description, and the right-pinned metadata cells.
-    method build_child_line {cp} {
-        set c [my node_payload [my sid $cp]]
-        set cells [my meta_cells $c]
+    # The subagent subject: the tree spine, the bold agent type, then the
+    # description ellipsised into the room left before the metadata. Returns the
+    # subject and its tags (the spine gets childbar, the agent type the bold slug
+    # weight); meta_run paints the contiguous metadata grey.
+    method child_subject {node max} {
+        set c [my node_payload $node]
         set spine "▏  "
         set subj $spine
+        set tags [list [list childbar 0 [string length $spine]]]
         set atype [dict get $c agent_type]
-        set atype_off -1
-        set atype_len 0
         if {$atype ne ""} {
-            set atype_off [string length $subj]
+            lappend tags [list slug [string length $subj] [string length $atype]]
             append subj $atype
-            set atype_len [string length $atype]
             append subj "  "
         }
-        set body [dict get $c label]
         set fixed [font measure QLList $spine]
         if {$atype ne ""} {
             incr fixed [expr {[font measure QLBold $atype] + [font measure QLList "  "]}]
         }
-        set body [my truncate_px $body [expr {$SubjectMax - $fixed}] QLList]
-        set body_off [string length $subj]
-        append subj $body
-        set meta_off [string length $subj]
-        set line $subj
-        set offs [dict create]
-        foreach col [::questlog::ui::session_columns] {
-            lassign $col id
-            append line "\t"
-            set off [string length $line]
-            set val [dict get $cells $id]
-            append line $val
-            dict set offs $id [list $off [string length $val]]
-        }
-        return [dict create line $line spine_len [string length $spine] \
-            atype_off $atype_off atype_len $atype_len \
-            body_off $body_off body $body meta_off $meta_off offs $offs]
+        append subj [my truncate_px [dict get $c label] \
+                         [expr {$max - $fixed}] QLList]
+        return [dict create subject $subj tags $tags meta_run 1]
     }
 
     method on_child_open_at {cp lineoff} { {*}$OnOpen $cp $lineoff }
-
-    method apply_child_tags {row_start cp info} {
-        $Text tag add childbar $row_start \
-            "$row_start + [dict get $info spine_len]c"
-        set ao [dict get $info atype_off]
-        if {$ao >= 0} {
-            $Text tag add slug "$row_start + ${ao}c" \
-                "$row_start + [expr {$ao + [dict get $info atype_len]}]c"
-        }
-        $Text tag add meta \
-            "$row_start + [dict get $info meta_off]c" "$row_start lineend"
-        lassign [dict getdef [dict get $info offs] actions {-1 0}] aco acl
-        if {$aco >= 0 && $acl > 0} {
-            $Text tag add actioncell "$row_start + ${aco}c" \
-                "$row_start + [expr {$aco + $acl}]c"
-        }
-        lassign [dict getdef [dict get $info offs] cost {-1 0}] co cl
-        if {$co >= 0 && $cl > 0} {
-            set cst [my cget_field $cp cost ""]
-            if {$cst ne "" && $cst >= 0.10} {
-                set tag [expr {$cst >= 1.0 ? "cost-outlier" : "cost-mid"}]
-                $Text tag add $tag "$row_start + ${co}c" \
-                    "$row_start + [expr {$co + $cl}]c"
-            }
-        }
-    }
 
     method on_child_release {cp} {
         if {![my has_child $cp]} return
@@ -1431,15 +1105,10 @@ oo::class create ::questlog::ui::SessionList {
         return $body
     }
 
-    # The metadata cell values for a row, keyed by column id. Cost is blank
-    # until the second-pass worker fills it in; an unknown model (negative
-    # cost) stays blank.
-    method session_meta_cells {path} {
-        return [my meta_cells [my session_payload $path]]
-    }
-
     # The metadata cell values for a row dict (a session or a subagent child),
-    # keyed by column id, so parent and child lines pin the same columns.
+    # keyed by column id, so parent and child lines pin the same columns. Cost is
+    # blank until the second-pass worker fills it in; an unknown model (negative
+    # cost) stays blank.
     method meta_cells {s} {
         set cells [dict create]
         foreach col [::questlog::ui::session_columns] {
@@ -1467,17 +1136,127 @@ oo::class create ::questlog::ui::SessionList {
         return $cells
     }
 
-    # Build one session line: the subject on the left (status glyphs, the bold
-    # slug, the first-prompt preview, the match count), then the metadata cells
-    # pinned to the right by the sessionhead tab stops, in session_columns order.
-    # The preview is ellipsised to SubjectMax so it never collides with the
-    # metadata; the glyphs, slug and count are kept whole. Returns the text, the
-    # char ranges the caller tags, and a per-column {off len} map (offs) so the
-    # cost tier colour and the actions cell can be located.
-    method build_session_line {path} {
-        set s [my session_payload $path]
-        set cells [my session_meta_cells $path]
+    # ---- engine hooks: cell values and tags ---------------------------
 
+    # The metadata cells the engine lays for a node, as ordered {col value} pairs
+    # (engine hook). A session or subagent row carries every column. A folder
+    # heading carries no per-row date/turns/duration/actions: only an empty date
+    # cell (so its size/cost still tab under the rows' size/cost columns) and the
+    # size and cost aggregates.
+    method cell_values {node} {
+        set kind [my node_field $node kind]
+        if {$kind eq "folder"} {
+            set f [my node_payload $node]
+            set n [dict get $f count]
+            set size_sum ""
+            set cost_sum ""
+            if {$n > 0} {
+                set size_sum [my fmt_size [dict getdef $f size 0]]
+                set fc [dict getdef $f cost 0.0]
+                if {$fc > 0} { set cost_sum [::questlog::cost::format_usd $fc] }
+            }
+            return [list [list date ""] [list size $size_sum] [list cost $cost_sum]]
+        }
+        set cells [my meta_cells [my node_payload $node]]
+        set out [list]
+        foreach col [::questlog::ui::session_columns] {
+            lassign $col id
+            lappend out [list $id [dict get $cells $id]]
+        }
+        return $out
+    }
+
+    # The overlay tags for one laid cell (engine hook), applied only when the
+    # cell is non-empty. The cost cell takes a tier colour (amber from 10c, brick
+    # red from $1; below that the muted meta grey shows through); the actions cell
+    # is marked so a click on it is told apart from the row, and brightens while
+    # the row is selected. Folder aggregates are bold; their cost also takes the
+    # tier colour, so the project that ate the most reads bold red.
+    method cell_tag {node col} {
+        set kind [my node_field $node kind]
+        if {$kind eq "folder"} {
+            switch -- $col {
+                size { return {meta foldagg} }
+                cost {
+                    set fc [dict getdef [my node_payload $node] cost 0.0]
+                    set ctag meta
+                    if {$fc >= 1.0} {
+                        set ctag cost-outlier
+                    } elseif {$fc >= 0.10} {
+                        set ctag cost-mid
+                    }
+                    return [list $ctag foldagg]
+                }
+                default { return {} }
+            }
+        }
+        switch -- $col {
+            cost {
+                set c [dict getdef [my node_payload $node] cost ""]
+                if {$c ne "" && $c >= 0.10} {
+                    return [list [expr {$c >= 1.0 ? "cost-outlier" : "cost-mid"}]]
+                }
+                return {}
+            }
+            actions {
+                if {$kind eq "session" \
+                    && $Selected eq [my node_field $node key]} {
+                    return {actioncell actioncell-bright}
+                }
+                return {actioncell}
+            }
+            default { return {} }
+        }
+    }
+
+    # The sort value for a column from a node's payload (engine hook). Date reads
+    # mtime so date-descending reproduces the mtime-descending streaming order; a
+    # blank or unknown cost/turns/duration sinks to the bottom.
+    method sort_key {s col} {
+        switch -- $col {
+            date { return [dict getdef $s mtime 0] }
+            size { return [dict getdef $s size 0] }
+            cost {
+                set v [dict getdef $s cost ""]
+                if {$v eq "" || $v < 0} { return -1 }
+                return $v
+            }
+            turns {
+                set v [dict getdef $s turns ""]
+                if {$v eq ""} { return -1 }
+                return $v
+            }
+            duration {
+                set v [dict getdef $s duration_secs ""]
+                if {$v eq ""} { return -1 }
+                return $v
+            }
+            default { return -1 }
+        }
+    }
+
+    # ---- engine hook: the row subject (left side) ---------------------
+
+    # Build a node's subject: the left side per kind, ellipsised to fit before
+    # the metadata strip (engine hook). Returns {subject <str> tags <ranges>
+    # meta_run <0|1>}, where tags is a list of {tag off len} ranges relative to
+    # the subject start and meta_run asks the engine to paint the contiguous muted
+    # metadata run. A folder paints no meta run (its cells are tagged singly).
+    method render_subject {node max} {
+        switch -- [my node_field $node kind] {
+            folder   { return [my folder_subject $node] }
+            subagent { return [my child_subject $node $max] }
+            default  { return [my session_subject $node $max] }
+        }
+    }
+
+    # The session subject: the expand chevron (when it has subagents), the status
+    # glyphs (running ● green, bookmark ★ amber), the bold slug, the first-prompt
+    # preview ellipsised into the room left, then the match count. The chevron and
+    # glyphs are kept whole; only the preview is trimmed.
+    method session_subject {node max} {
+        set s [my node_payload $node]
+        set path [my node_field $node key]
         set running [dict exists $RunningSet [dict get $s uuid]]
         set bk [my session_bookmarked $path]
         set g [my glyph_cell $running $bk]
@@ -1495,126 +1274,39 @@ oo::class create ::questlog::ui::SessionList {
             set count_str "   ·   no match in this session · $subt in subagents below"
         }
 
+        set tags [list]
         set subj ""
-        # A session with subagents leads with an expand/collapse chevron. It is a
-        # separate click target (toggle, not open), so its char range is recorded
-        # in offs and tagged; glyph_off marks where the status glyphs begin so
-        # tag_glyphs colours them past the chevron.
-        set chev_off -1
-        if {[dict get $s has_subagents]} {
-            set chev_off 0
-            append subj [expr {[my sflag $path expanded] ? "▾" : "▸"}]
+        # A session with subagents leads with an expand/collapse chevron, a
+        # separate click target (toggle, not open) tagged so click_on_chevron can
+        # tell it apart.
+        set has_chev [dict get $s has_subagents]
+        if {$has_chev} {
+            lappend tags [list chevron 0 1]
+            append subj [expr {[my node_field $node expanded] ? "▾" : "▸"}]
             append subj " "
         }
-        set glyph_off [string length $subj]
+        # The status glyphs sit just past the chevron; tag each one its colour.
+        set gpos [string length $subj]
+        if {$running}    { lappend tags [list glyph-running $gpos 1]; incr gpos }
+        if {$bk}         { lappend tags [list glyph-bookmark $gpos 1] }
         if {$g ne ""} { append subj "$g " }
-        set slug_off -1
-        set slug_len 0
         if {$slug ne ""} {
-            set slug_off [string length $subj]
+            lappend tags [list slug [string length $subj] [string length $slug]]
             append subj $slug
-            set slug_len [string length $slug]
             append subj "  "
         }
         # Fit the preview into the room left after the kept pieces.
         set fixed 0
-        if {$chev_off >= 0} { incr fixed [font measure QLList "▸ "] }
+        if {$has_chev} { incr fixed [font measure QLList "▸ "] }
         if {$g ne ""} { incr fixed [font measure QLList "$g "] }
         if {$slug ne ""} {
             incr fixed [expr {[font measure QLBold $slug] + [font measure QLList "  "]}]
         }
         incr fixed [font measure QLList $count_str]
-        set preview [my truncate_px [dict get $s label] \
-                         [expr {$SubjectMax - $fixed}] QLList]
-        append subj $preview
+        append subj [my truncate_px [dict get $s label] \
+                         [expr {$max - $fixed}] QLList]
         append subj $count_str
-
-        set meta_off [string length $subj]
-        set line $subj
-        set offs [dict create]
-        if {$chev_off >= 0} { dict set offs chevron [list $chev_off 1] }
-        foreach col [::questlog::ui::session_columns] {
-            lassign $col id
-            append line "\t"
-            set off [string length $line]
-            set val [dict get $cells $id]
-            append line $val
-            dict set offs $id [list $off [string length $val]]
-        }
-        return [dict create line $line meta_off $meta_off glyph_off $glyph_off \
-            slug_off $slug_off slug_len $slug_len offs $offs]
-    }
-
-    # Trim text to fit px in font, appending an ellipsis when it is cut. A
-    # binary search on the character count keeps it cheap for long previews.
-    method truncate_px {text px font} {
-        if {$px <= 0} { return "" }
-        if {[font measure $font $text] <= $px} { return $text }
-        set lo 0
-        set hi [string length $text]
-        while {$lo < $hi} {
-            set mid [expr {($lo + $hi + 1) / 2}]
-            set cand "[string range $text 0 [expr {$mid - 1}]]…"
-            if {[font measure $font $cand] <= $px} {
-                set lo $mid
-            } else {
-                set hi [expr {$mid - 1}]
-            }
-        }
-        return "[string range $text 0 [expr {$lo - 1}]]…"
-    }
-
-    # Tag a freshly-inserted session line from its build_session_line info: the
-    # muted metadata run on the right, the bold slug, the status glyphs at the
-    # start, and the cost cell's tier colour (amber from 10c, brick red from
-    # $1; below that, and blank/unknown, keep the meta grey).
-    method apply_line_tags {row_start path info} {
-        $Text tag add meta \
-            "$row_start + [dict get $info meta_off]c" "$row_start lineend"
-        set so [dict get $info slug_off]
-        if {$so >= 0} {
-            $Text tag add slug "$row_start + ${so}c" \
-                "$row_start + [expr {$so + [dict get $info slug_len]}]c"
-        }
-        lassign [dict getdef [dict get $info offs] chevron {-1 0}] cho chl
-        if {$cho >= 0 && $chl > 0} {
-            $Text tag add chevron "$row_start + ${cho}c" \
-                "$row_start + [expr {$cho + $chl}]c"
-        }
-        my tag_glyphs $row_start [dict getdef $info glyph_off 0]
-        lassign [dict getdef [dict get $info offs] cost {-1 0}] co cl
-        if {$co >= 0 && $cl > 0} {
-            set c [my sget $path cost]
-            if {$c ne "" && $c >= 0.10} {
-                set tag [expr {$c >= 1.0 ? "cost-outlier" : "cost-mid"}]
-                $Text tag add $tag "$row_start + ${co}c" \
-                    "$row_start + [expr {$co + $cl}]c"
-            }
-        }
-        # Mark the actions cell so a click on it can be told apart from a click
-        # on the row, and so it can brighten; the selected row shows it bright.
-        lassign [dict getdef [dict get $info offs] actions {-1 0}] ao al
-        if {$ao >= 0 && $al > 0} {
-            set as "$row_start + ${ao}c"
-            set ae "$row_start + [expr {$ao + $al}]c"
-            $Text tag add actioncell $as $ae
-            if {$Selected eq $path} { $Text tag add actioncell-bright $as $ae }
-        }
-    }
-
-    # Colour the status glyphs at the head of a row: running ● green, bookmark
-    # ★ amber. They are the leading run of glyph chars at the start of the
-    # subject, before the first space.
-    method tag_glyphs {row_start off} {
-        set base "$row_start + ${off}c"
-        for {set i 0} {$i < 4} {incr i} {
-            set ch [$Text get "$base + ${i}c"]
-            if {$ch eq $::questlog::ui::GLYPH_RUNNING} {
-                $Text tag add glyph-running "$base + ${i}c" "$base + [expr {$i + 1}]c"
-            } elseif {$ch eq $::questlog::ui::GLYPH_BOOKMARK} {
-                $Text tag add glyph-bookmark "$base + ${i}c" "$base + [expr {$i + 1}]c"
-            } else break
-        }
+        return [dict create subject $subj tags $tags meta_run 1]
     }
 
     method session_bookmarked {path} {
@@ -1631,19 +1323,14 @@ oo::class create ::questlog::ui::SessionList {
         if {![my node_field $sid rendered]} return
         set smark [my node_field $sid start]
         set stag  [my node_field $sid tag]
-        set info [my build_session_line $path]
+        set info [my build_line $sid]
         $Text delete $smark "$smark lineend"
         $Text insert $smark [dict get $info line] \
             [list sessionhead $stag]
-        my apply_line_tags $smark $path $info
+        my apply_line $sid $smark $info
         if {$Selected eq $path} {
             $Text tag add selected $smark [my node_field $sid end]
         }
-    }
-
-    # Text widget yview update: forward to the scrollbar.
-    method on_yscroll {args} {
-        $Top.body.sb set {*}$args
     }
 
     method ensure_folder {folder} {
@@ -1668,10 +1355,10 @@ oo::class create ::questlog::ui::SessionList {
         my node_set $fid expanded $expanded
         dict set FolderNode $folder $fid
         set fstart [$Text index TailMark]
-        set info [my folder_heading_info $folder]
+        set info [my build_line $fid]
         $Text insert TailMark "[dict get $info line]\n" \
             [list folderhead $htag]
-        my apply_folder_tags $fstart $info
+        my apply_line $fid $fstart $info
         $Text mark set $fmark $fstart
         $Text mark gravity $fmark right
         $Text mark set $femark [$Text index TailMark]
@@ -1681,81 +1368,37 @@ oo::class create ::questlog::ui::SessionList {
         $Text tag bind $htag <Button-1> [list [self] toggle_folder $folder]
     }
 
-    # Build a folder heading line: the marker, the (truncated) project label and
-    # a bare "(N)" session count on the left, then the folder's total size and
-    # cost pinned in the same columns as the rows below. The aggregates carry no
-    # date cell, so a double tab opens straight into the size column. Returns the
-    # line and the char ranges apply_folder_tags bolds.
-    method folder_heading_info {folder} {
-        set f [my folder_payload $folder]
-        set marker [expr {[my node_field [my fid $folder] expanded] ? "▾" : "▸"}]
+    # The folder heading subject: the marker, the (truncated) project label and a
+    # bare "(N)" session count. The folder's size and cost aggregates are laid by
+    # the engine as cells (cell_values) under the rows' size/cost columns, with an
+    # empty date cell so the double tab opens straight into the size column; their
+    # bold/tier tags come from cell_tag. The subject carries no tags of its own.
+    method folder_subject {node} {
+        set f [my node_payload $node]
+        set marker [expr {[my node_field $node expanded] ? "▾" : "▸"}]
         set n [dict get $f count]
         set count_str [expr {$n > 0 ? " ($n)" : ""}]
-        set size_sum ""
-        set cost_sum ""
-        set fc 0.0
-        if {$n > 0} {
-            set size_sum [my fmt_size [dict getdef $f size 0]]
-            set fc [dict getdef $f cost 0.0]
-            if {$fc > 0} { set cost_sum [::questlog::cost::format_usd $fc] }
-        }
         # Marker joined to the label by a space; the label is truncated so it
         # never runs into the right-pinned aggregates.
         set fixed [expr {[font measure QLList "$marker "] \
                          + [font measure QLList $count_str]}]
         set label [my truncate_px [dict get $f label] \
                        [expr {$FolderLabelMax - $fixed}] QLList]
-        set line "$marker $label$count_str"
-        append line "\t\t"
-        set size_off [string length $line]
-        set size_len [string length $size_sum]
-        append line $size_sum
-        append line "\t"
-        set cost_off [string length $line]
-        set cost_len [string length $cost_sum]
-        append line $cost_sum
-        return [dict create line $line \
-            size_off $size_off size_len $size_len \
-            cost_off $cost_off cost_len $cost_len cost $fc]
-    }
-
-    # Bold the folder's size and cost aggregates in their columns. The size
-    # keeps the muted meta grey; the cost also takes its tier colour, so the
-    # project that ate the most reads bold red at a glance.
-    method apply_folder_tags {fstart info} {
-        set so [dict get $info size_off]
-        set sl [dict get $info size_len]
-        if {$sl > 0} {
-            $Text tag add meta    "$fstart + ${so}c" "$fstart + [expr {$so + $sl}]c"
-            $Text tag add foldagg "$fstart + ${so}c" "$fstart + [expr {$so + $sl}]c"
-        }
-        set co [dict get $info cost_off]
-        set cl [dict get $info cost_len]
-        if {$cl > 0} {
-            set fc [dict get $info cost]
-            set ctag meta
-            if {$fc >= 1.0} {
-                set ctag cost-outlier
-            } elseif {$fc >= 0.10} {
-                set ctag cost-mid
-            }
-            $Text tag add $ctag   "$fstart + ${co}c" "$fstart + [expr {$co + $cl}]c"
-            $Text tag add foldagg "$fstart + ${co}c" "$fstart + [expr {$co + $cl}]c"
-        }
+        return [dict create subject "$marker $label$count_str" tags {} meta_run 0]
     }
 
     method redraw_folder_heading {folder} {
         if {![my has_folder $folder]} return
         set fid [my fid $folder]
         set fmark [my node_field $fid start]
-        set info [my folder_heading_info $folder]
+        set info [my build_line $fid]
         $Text delete $fmark "$fmark lineend"
         # Temporarily set gravity to left so the insert does not push fmark
         $Text mark gravity $fmark left
         $Text insert $fmark [dict get $info line] \
             [list folderhead [my node_field $fid tag]]
         $Text mark gravity $fmark right
-        my apply_folder_tags $fmark $info
+        my apply_line $fid $fmark $info
     }
 
     method toggle_folder {folder} {
@@ -2123,20 +1766,10 @@ oo::class create ::questlog::ui::SessionList {
     }
 
     # Whether a root-coordinate click landed on a row's ⋯ actions cell.
-    method click_on_action {X Y} {
-        set lx [expr {$X - [winfo rootx $Text]}]
-        set ly [expr {$Y - [winfo rooty $Text]}]
-        set idx [$Text index @$lx,$ly]
-        return [expr {[lsearch -exact [$Text tag names $idx] actioncell] >= 0}]
-    }
+    method click_on_action {X Y} { return [my click_on_tag $X $Y actioncell] }
 
     # Whether a root-coordinate click landed on a session's expand chevron.
-    method click_on_chevron {X Y} {
-        set lx [expr {$X - [winfo rootx $Text]}]
-        set ly [expr {$Y - [winfo rooty $Text]}]
-        set idx [$Text index @$lx,$ly]
-        return [expr {[lsearch -exact [$Text tag names $idx] chevron] >= 0}]
-    }
+    method click_on_chevron {X Y} { return [my click_on_tag $X $Y chevron] }
 
     method on_row_enter {path} {
         $Text configure -cursor hand2
@@ -2149,11 +1782,10 @@ oo::class create ::questlog::ui::SessionList {
         my action_set_bright $path [expr {$Selected eq $path}]
     }
 
+    # Resolve a drag point to the folder under it: the engine maps the point to a
+    # text index; a folder heading's drop tag (TagNode) names the target folder.
     method drag_hit {X Y} {
-        set lx [expr {$X - [winfo rootx $Text]}]
-        set ly [expr {$Y - [winfo rooty $Text]}]
-        set idx [$Text index @$lx,$ly]
-        foreach t [$Text tag names $idx] {
+        foreach t [$Text tag names [my index_at $X $Y]] {
             if {[dict exists $TagNode $t]} {
                 return [my node_field [dict get $TagNode $t] key]
             }
