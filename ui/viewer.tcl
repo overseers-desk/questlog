@@ -66,6 +66,10 @@ oo::class create ::questlog::ui::Viewer {
     variable MatchPanel       ;# floating index panel, placed over the body top-right
     variable MatchList        ;# listbox of per-match rows inside the panel
     variable MatchLabels      ;# per-match one-line excerpt, parallel to FindMatches
+    variable ToolBtn          ;# head-strip "N tool calls" toggle, packed on demand
+    variable ToolPanel        ;# floating tool-call timeline, placed over the body top-right
+    variable ToolList         ;# listbox of per-call rows inside the panel
+    variable ToolLines        ;# jsonl line of each call, parallel to the ToolList rows
     variable Roles            ;# dict: jsonl line -> uppercased role, for row colour
     variable OnToggle         ;# cb: () -> ask the app to fold/unfold the list pane
     variable CollapseBtn      ;# the header toggle label
@@ -88,6 +92,7 @@ oo::class create ::questlog::ui::Viewer {
         set Drafts [dict create]
         set Bodies [dict create]
         set MatchLabels [list]
+        set ToolLines [list]
         set Roles [dict create]
         set OnToggle $on_toggle
         my build
@@ -112,6 +117,7 @@ oo::class create ::questlog::ui::Viewer {
         my load
         my render
         my index_matches $query
+        my index_tool_calls
         if {$scroll_to_line > 0} {
             my scroll_to_line $scroll_to_line
         } else {
@@ -141,6 +147,15 @@ oo::class create ::questlog::ui::Viewer {
             -foreground [::questlog::theme::c sessionhead] -cursor hand2
         set MatchBtn $Top.head.matches
         bind $MatchBtn <Button-1> [list [self] match_panel_toggle]
+        # Tool-call timeline: a sibling count on the head strip that toggles the
+        # floating tool-call panel (built below). It carries the session's
+        # tool-call count and re-shows the panel when clicked; glyph ▾ closed,
+        # ▴ open, like the match toggle. Packed on demand by refresh_tool_control;
+        # absent when the session made no tool calls.
+        label $Top.head.tools -text "" -background $strip \
+            -foreground [::questlog::theme::c sessionhead] -cursor hand2
+        set ToolBtn $Top.head.tools
+        bind $ToolBtn <Button-1> [list [self] tool_panel_toggle]
         # Reading-font picker at the right of the head strip: a plain label
         # affordance (matching the strip's flat look) that pops the platform
         # font chooser. Packed once, always present; the match toggle packs to
@@ -238,6 +253,38 @@ oo::class create ::questlog::ui::Viewer {
         grid $MatchPanel.sb  -row 1 -column 1 -sticky ns
         grid columnconfigure $MatchPanel 0 -weight 1
         grid rowconfigure    $MatchPanel 1 -weight 1
+
+        # Floating tool-call timeline. The "did-versus-claimed" audit panel
+        # (issue #15): a chronological list of the session's tool calls, each
+        # row "time · tool · path", so the reader can confirm by eye that a
+        # command was run, or that no Edit touched a named file - presence,
+        # absence and ordering, the check the rendered prose alone cannot make.
+        # A sibling of MatchPanel and built the same way: `place`d over the
+        # body's top-right so it stays put as the transcript scrolls, sized to
+        # its rows (capped at 8), created hidden and placed on demand by
+        # refresh_tool_control. A click jumps the reading view to that call's
+        # line via the shared scroll_to_line.
+        set ToolPanel $Top.body.toolcalls
+        ttk::frame $ToolPanel -relief solid -borderwidth 1
+        ttk::frame $ToolPanel.hdr
+        ttk::label $ToolPanel.hdr.title -text "" -foreground [::questlog::theme::c folder]
+        ttk::label $ToolPanel.hdr.close -text "✕" \
+            -foreground [::questlog::theme::c muted] -cursor hand2
+        pack $ToolPanel.hdr.title -side left -padx 6 -pady 1
+        pack $ToolPanel.hdr.close -side right -padx 4
+        bind $ToolPanel.hdr.close <Button-1> [list [self] tool_panel_hide]
+        set ToolList $ToolPanel.list
+        listbox $ToolList -height 1 -width 44 -activestyle none \
+            -borderwidth 0 -highlightthickness 0 \
+            -yscrollcommand [list $ToolPanel.sb set]
+        ttk::scrollbar $ToolPanel.sb -orient vertical \
+            -command [list $ToolList yview]
+        bind $ToolList <<ListboxSelect>> [list [self] tool_list_select]
+        grid $ToolPanel.hdr -row 0 -column 0 -columnspan 2 -sticky ew
+        grid $ToolList      -row 1 -column 0 -sticky nsew
+        grid $ToolPanel.sb  -row 1 -column 1 -sticky ns
+        grid columnconfigure $ToolPanel 0 -weight 1
+        grid rowconfigure    $ToolPanel 1 -weight 1
 
         # A read-only reading view that supports drag-select and copy. The one
         # Text class gesture it suppresses is <B1-Leave>, the sole entry into
@@ -731,34 +778,32 @@ oo::class create ::questlog::ui::Viewer {
         return [clock format $epoch -format "%a %d %b  %H:%M"]
     }
 
-    method parse_iso {ts_iso} {
-        if {$ts_iso eq ""} { return 0 }
-        # Claude stamps millisecond precision (2026-05-24T22:29:21.279Z). Tcl's
-        # clock scan has no fractional-second specifier, so drop the fraction
-        # before the Z and parse the second-resolution remainder as UTC.
-        regsub {\.[0-9]+Z$} $ts_iso {Z} ts_iso
-        if {[catch {clock scan $ts_iso -format "%Y-%m-%dT%H:%M:%SZ" -gmt 1} e]} {
-            return 0
-        }
-        return $e
-    }
+    # ISO->epoch and gap formatting are the shared session-segmentation
+    # clock (lib/jsonl.tcl), so the viewer's dividers and the markdown export
+    # never disagree. Kept as thin methods so the call sites read `my ...`.
+    method parse_iso {ts_iso}  { return [::questlog::jsonl::parse_iso $ts_iso] }
+    method fmt_gap {minutes}   { return [::questlog::jsonl::fmt_gap $minutes] }
 
-    method fmt_gap {minutes} {
-        if {$minutes < 60} { return "${minutes} min" }
-        if {$minutes < 60*24} {
-            set h [expr {$minutes / 60}]
-            set m [expr {$minutes % 60}]
-            if {$m == 0} { return "${h} hr" }
-            return "${h} hr $m min"
-        }
-        set d [expr {$minutes / (60*24)}]
-        return "${d} day(s)"
-    }
-
+    # Scroll the reading view to a jsonl line. A directly mapped line (a turn
+    # that rendered a text body) is shown as-is. A line with no anchor falls
+    # back to the nearest mapped line at or before it: tool-use-only turns
+    # render no prose and so get no LineMap entry, yet a tool-call timeline row
+    # must still land the reader on the turn that issued it, which is the turn
+    # whose body precedes the call in the transcript.
     method scroll_to_line {lineno} {
         if {[dict exists $LineMap $lineno]} {
             $Text see [dict get $LineMap $lineno]
+            return
         }
+        set best ""
+        set bestln -1
+        dict for {ln idx} $LineMap {
+            if {$ln <= $lineno && $ln > $bestln} {
+                set bestln $ln
+                set best $idx
+            }
+        }
+        if {$best ne ""} { $Text see $best }
     }
 
     method find_show {} {
@@ -969,5 +1014,100 @@ oo::class create ::questlog::ui::Viewer {
         if {$i < 0 || $i >= [llength $FindMatches]} return
         $Text see [lindex $FindMatches $i]
         set FindIdx $i
+    }
+
+    # ---- tool-call timeline (the did-versus-claimed audit, issue #15) ----
+
+    # Walk the loaded Records in document order, collect every assistant
+    # tool_use block as one timeline row "time · tool · path", and fill the
+    # head-strip count. Records are already in chronological order, so the
+    # walk needs no sort. Each row remembers its record's jsonl line (in
+    # ToolLines, parallel to the listbox rows) so a click jumps the reading
+    # view there. With no tool calls both the panel and the toggle stay hidden.
+    method index_tool_calls {} {
+        set ToolLines [list]
+        $ToolList delete 0 end
+        foreach rec $Records {
+            set lineno [dict get $rec _line]
+            set when [my tool_time [::questlog::jsonl::record_timestamp $rec]]
+            foreach use [::questlog::jsonl::record_tool_uses $rec] {
+                set name [dict get $use name]
+                set path [dict get $use path]
+                set row "$when · $name"
+                if {$path ne ""} { append row " · $path" }
+                $ToolList insert end $row
+                $ToolList itemconfigure end -foreground [::questlog::theme::c tool]
+                lappend ToolLines $lineno
+            }
+        }
+        my refresh_tool_control
+    }
+
+    # A record timestamp as a short local clock time for a timeline row. Seconds
+    # are kept (unlike the section header's %H:%M) so calls within the same
+    # minute stay distinguishable in order. Empty stamp renders as a placeholder
+    # rather than a misleading time.
+    method tool_time {ts_iso} {
+        set epoch [my parse_iso $ts_iso]
+        if {$epoch == 0} { return "--:--:--" }
+        return [clock format $epoch -format "%H:%M:%S"]
+    }
+
+    # Fill the head-strip count and size the listbox from the collected calls,
+    # then place the toggle. With no calls both the toggle and the panel stay
+    # hidden, mirroring the match control. The toggle starts closed (▾): unlike
+    # a search, the audit is an opt-in the reader reaches for, and the two floats
+    # share the body's top-right anchor, so auto-opening here would cover the
+    # match index the search just produced. Runs after index_matches, so the
+    # toggle packs to the left of the match count, keeping that rightmost slot.
+    method refresh_tool_control {} {
+        set n [llength $ToolLines]
+        if {$n == 0} {
+            pack forget $ToolBtn
+            place forget $ToolPanel
+            return
+        }
+        $ToolList configure -height [expr {min($n, 8)}]
+        $ToolList selection clear 0 end
+        $ToolPanel.hdr.title configure -text \
+            "$n tool [expr {$n == 1 ? {call} : {calls}}]"
+        # Reserve the count's width on the strip before the path fills the rest,
+        # so a long file path clips rather than squeezing it out.
+        pack forget $PathLabel
+        pack $ToolBtn -side right -padx 6
+        pack $PathLabel -side left -padx 6 -pady 1 -fill x -expand 1
+        $ToolBtn configure -text "▾ [$ToolPanel.hdr.title cget -text]"
+    }
+
+    # Place the panel over the body's top-right, offset left of the scrollbar so
+    # the drag thumb stays reachable. It shares the match index's corner; `raise`
+    # brings whichever was shown last to the front, so toggling one covers the
+    # other rather than the two interleaving. The head-strip glyph turns up (▴)
+    # when open.
+    method tool_panel_show {} {
+        if {[llength $ToolLines] == 0} return
+        place $ToolPanel -relx 1.0 -x -18 -rely 0 -y 2 -anchor ne
+        raise $ToolPanel
+        $ToolBtn configure -text "▴ [$ToolPanel.hdr.title cget -text]"
+    }
+
+    method tool_panel_hide {} {
+        place forget $ToolPanel
+        $ToolBtn configure -text "▾ [$ToolPanel.hdr.title cget -text]"
+    }
+
+    method tool_panel_toggle {} {
+        if {[winfo ismapped $ToolPanel]} {
+            my tool_panel_hide
+        } else {
+            my tool_panel_show
+        }
+    }
+
+    # Jump the reading view to the clicked call's line.
+    method tool_list_select {} {
+        set sel [$ToolList curselection]
+        if {$sel eq ""} return
+        my scroll_to_line [lindex $ToolLines [lindex $sel 0]]
     }
 }
