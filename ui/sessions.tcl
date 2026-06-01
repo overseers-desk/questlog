@@ -788,12 +788,21 @@ oo::class create ::questlog::ui::SessionList {
             folder $folder label $label slug $slug ai_title $aitt \
             when $when mtime $mtime size $size uuid $uuid cost $cost \
             turns $turns duration_secs $dsecs \
+            own_cost $cost own_turns $turns own_duration_secs $dsecs \
             count 0 first_lineno $first_lineno snippets [list] \
             has_subagents [dict getdef $row has_subagents 0] \
             expanded 0 sub_paths [list] sub_total 0 \
             children_listed 0 all_child_paths [list] chmark "" \
             stag "" smark "" semark "" rendered 0]
         dict lappend SessionsByFolder $folder $path
+
+        # Enumerate and trigger subagents' cost if there are any
+        if {[dict getdef $row has_subagents 0]} {
+            my ensure_children_enumerated $path
+            my recompute_parent_totals $path
+            set cost [dict get [dict get $Sessions $path] cost]
+        }
+
         # Count and size accrue together (size is known at scan time); fold both
         # into one heading redraw. Cost arrives later, on its own redraw.
         dict set Folders $folder count \
@@ -1014,6 +1023,8 @@ oo::class create ::questlog::ui::SessionList {
             agent_id [dict getdef $crow agent_id [file rootname [file tail $cp]]] \
             label $label hits [list] open_lineoff 0 \
             rendered 0 ctag ""]
+        # Trigger the cost pass for the subagent immediately.
+        {*}$OnSubagentCost $cp
     }
 
     method render_children {path} {
@@ -1697,23 +1708,19 @@ oo::class create ::questlog::ui::SessionList {
         }
         if {![dict exists $Sessions $path]} return
         set s [dict get $Sessions $path]
-        set old [dict getdef $s cost ""]
-        if {$old eq ""} { set old 0.0 }
-        set new [dict get $cost_dict cost_usd]
-        set delta 0.0
-        if {$new >= 0} {
-            dict set Sessions $path cost $new
-            if {$old < 0} { set old 0.0 }
-            set delta [expr {$new - $old}]
-        } else {
-            # Unknown model. Leave previous cost (if any) in place; do not
-            # zero out a known number on a partial result.
-            dict set Sessions $path cost $new
-        }
-        # Turns and duration ride the same worker result; cache them so the new
-        # columns fill in the same redraw as cost.
-        dict set Sessions $path turns [dict getdef $cost_dict turns ""]
-        dict set Sessions $path duration_secs [dict getdef $cost_dict duration_secs ""]
+        set old_cost [dict getdef $s cost ""]
+        if {$old_cost eq "" || $old_cost < 0} { set old_cost 0.0 }
+        set own_new [dict get $cost_dict cost_usd]
+        dict set Sessions $path own_cost $own_new
+        dict set Sessions $path own_turns [dict getdef $cost_dict turns ""]
+        dict set Sessions $path own_duration_secs [dict getdef $cost_dict duration_secs ""]
+
+        my recompute_parent_totals $path
+
+        set new_cost [dict get [dict get $Sessions $path] cost]
+        if {$new_cost eq "" || $new_cost < 0} { set new_cost 0.0 }
+        set delta [expr {$new_cost - $old_cost}]
+
         # bump_folder_cost mutates the heading line and redraw_header
         # mutates the session line — both go through $Text delete/insert,
         # so the widget must be in normal state for the duration.
@@ -1730,20 +1737,105 @@ oo::class create ::questlog::ui::SessionList {
     }
 
     # A subagent's cost/turns/duration arriving from the second pass. Stored on
-    # the child and shown on its own row only; subagent cost is not folded into
-    # the folder aggregate or the running total (those sum sessions). Redraws the
-    # parent's children block so the new cells land.
+    # the child and shown on its own row, but also folded up to the parent
+    # session level. Redraws the parent's children block and updates the parent
+    # row.
     method refresh_child_cost {cp cost_dict} {
         if {![dict exists $Children $cp]} return
         dict set Children $cp cost [dict get $cost_dict cost_usd]
         dict set Children $cp turns [dict getdef $cost_dict turns ""]
         dict set Children $cp duration_secs [dict getdef $cost_dict duration_secs ""]
         set parent [dict get $Children $cp parent_path]
-        if {[dict exists $Sessions $parent] && [dict get $Children $cp rendered]} {
+        if {[dict exists $Sessions $parent]} {
+            set s [dict get $Sessions $parent]
+            set old_cost [dict getdef $s cost ""]
+            if {$old_cost eq "" || $old_cost < 0} { set old_cost 0.0 }
+
+            my recompute_parent_totals $parent
+
+            set new_cost [dict get [dict get $Sessions $parent] cost]
+            if {$new_cost eq "" || $new_cost < 0} { set new_cost 0.0 }
+            set delta [expr {$new_cost - $old_cost}]
+
             $Text configure -state normal
-            my rerender_children $parent
+            if {$delta != 0} {
+                my bump_folder_cost [dict get $s folder] $delta
+                set TotalCost [expr {$TotalCost + $delta}]
+                my refresh_status
+            }
+            if {[dict get $s rendered]} {
+                my redraw_header $parent
+            }
+            if {[dict get $Children $cp rendered]} {
+                my rerender_children $parent
+            }
             $Text configure -state disabled
+            # The worker result can change cost-, turns- or duration-sorted order.
+            if {$SortKey in {cost turns duration}} { my schedule_resort }
         }
+    }
+
+    # Recomputes the parent session's aggregated totals from its own raw values
+    # plus the computed metrics of all its subagents.
+    method recompute_parent_totals {path} {
+        if {![dict exists $Sessions $path]} return
+        set s [dict get $Sessions $path]
+
+        set has_any_cost 0
+        set has_any_turns 0
+        set has_any_duration 0
+
+        # Sum cost
+        set own_cost [dict getdef $s own_cost ""]
+        if {$own_cost ne "" && $own_cost >= 0} {
+            set sum_cost $own_cost
+            set has_any_cost 1
+        } else {
+            set sum_cost 0.0
+        }
+
+        # Sum turns
+        set own_turns [dict getdef $s own_turns ""]
+        if {$own_turns ne "" && $own_turns >= 0} {
+            set sum_turns $own_turns
+            set has_any_turns 1
+        } else {
+            set sum_turns 0
+        }
+
+        # Sum duration
+        set own_duration [dict getdef $s own_duration_secs ""]
+        if {$own_duration ne "" && $own_duration >= 0} {
+            set sum_duration $own_duration
+            set has_any_duration 1
+        } else {
+            set sum_duration 0
+        }
+
+        foreach cp [dict get $s all_child_paths] {
+            if {[dict exists $Children $cp]} {
+                set c [dict get $Children $cp]
+                set cc [dict getdef $c cost ""]
+                if {$cc ne "" && $cc >= 0} {
+                    set sum_cost [expr {$sum_cost + $cc}]
+                    set has_any_cost 1
+                }
+                set ct [dict getdef $c turns ""]
+                if {$ct ne "" && $ct >= 0} {
+                    set sum_turns [expr {$sum_turns + $ct}]
+                    set has_any_turns 1
+                }
+                set cd [dict getdef $c duration_secs ""]
+                if {$cd ne "" && $cd >= 0} {
+                    set sum_duration [expr {$sum_duration + $cd}]
+                    set has_any_duration 1
+                }
+            }
+        }
+
+        dict set Sessions $path cost [expr {$has_any_cost ? $sum_cost : ""}]
+        dict set Sessions $path turns [expr {$has_any_turns ? $sum_turns : ""}]
+        dict set Sessions $path duration_secs [expr {$has_any_duration ? $sum_duration : ""}]
     }
 
     method glyph_cell {running bookmarked} {
