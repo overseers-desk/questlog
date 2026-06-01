@@ -6,7 +6,7 @@
 package require Tcl 9
 set ROOT [file dirname [file dirname [file normalize [info script]]]]
 source [file join $ROOT lib path.tcl]
-source [file join $ROOT lib live.tcl]
+source [file join $ROOT ui live.tcl]
 
 set fails 0
 proc check {name expected actual} {

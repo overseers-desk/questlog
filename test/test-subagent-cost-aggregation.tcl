@@ -11,8 +11,8 @@ set SAND [file join [pwd] _subagent_sandbox]
 set FOLDER "-tmp-subagent-proj"
 
 set ROOT [file dirname [file dirname [file normalize [info script]]]]
-foreach f {config.tcl lib/cost.tcl lib/theme.tcl lib/path.tcl lib/filter.tcl lib/jsonl.tcl \
-           lib/match.tcl lib/terminal.tcl lib/live.tcl lib/scan.tcl lib/search.tcl \
+foreach f {config.tcl lib/cost.tcl ui/theme.tcl lib/path.tcl lib/filter.tcl lib/jsonl.tcl \
+           lib/match.tcl ui/terminal.tcl ui/live.tcl lib/scan.tcl lib/search.tcl \
            ui/drag.tcl ui/toolbar.tcl ui/sessions.tcl} {
     source [file join $ROOT $f]
 }

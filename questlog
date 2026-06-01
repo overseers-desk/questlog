@@ -41,7 +41,6 @@ set ROOT [file dirname [file normalize [info script]]]
 source [file join $ROOT config.tcl]
 source [file join $ROOT lib path.tcl]
 source [file join $ROOT lib filter.tcl]
-source [file join $ROOT lib state.tcl]
 source [file join $ROOT lib jsonl.tcl]
 source [file join $ROOT lib match.tcl]
 source [file join $ROOT lib scan.tcl]
@@ -60,20 +59,21 @@ if {$CLI_MODE} {
     exit 0
 }
 
-# GUI mode: source the GUI layer. Tk (and with it ttk) enters the process here,
-# required by theme.tcl and the ui/ classes; the entry script never requires Tk
-# itself, so CLI mode above stays Tk-free.
-source [file join $ROOT lib theme.tcl]
-source [file join $ROOT lib markdown.tcl]
-source [file join $ROOT lib terminal.tcl]
-source [file join $ROOT lib live.tcl]
-source [file join $ROOT lib title_writer.tcl]
+# GUI mode: source the ui/ layer. Tk (and with it ttk) enters the process here,
+# required by theme.tcl (sourced first) and the ui/ classes; the entry script
+# never requires Tk itself, so CLI mode above stays Tk-free.
+source [file join $ROOT ui  theme.tcl]
+source [file join $ROOT ui  markdown.tcl]
+source [file join $ROOT ui  terminal.tcl]
+source [file join $ROOT ui  live.tcl]
+source [file join $ROOT ui  title_writer.tcl]
+source [file join $ROOT ui  state.tcl]
 source [file join $ROOT ui  drag.tcl]
 source [file join $ROOT ui  toolbar.tcl]
 source [file join $ROOT ui  sessions.tcl]
 source [file join $ROOT ui  viewer.tcl]
 source [file join $ROOT ui  move_dialog.tcl]
-source [file join $ROOT lib app.tcl]
+source [file join $ROOT ui  app.tcl]
 
 # A leading criterion-type token (pattern|read|wrote|edited) launches the GUI
 # pre-seeded with that criteria chain; otherwise the -regex flag prefills a
