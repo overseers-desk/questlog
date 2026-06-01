@@ -58,7 +58,7 @@ install -D -m 0644 assets/questlog-512.png \
 %{_datadir}/icons/hicolor/512x512/apps/questlog.png
 
 %changelog
-* Sun Jun 01 2026 Weiwu Zhang <a@colourful.land> - 1.1.0-1
+* Mon Jun 01 2026 Weiwu Zhang <a@colourful.land> - 1.1.0-1
 - Subagents surface under their parent session in the list and search
 - Tool-call audit timeline in the session viewer
 - Export a session as Markdown
