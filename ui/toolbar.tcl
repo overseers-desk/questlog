@@ -152,7 +152,7 @@ oo::class create ::questlog::ui::Toolbar {
         set Restrict $Top.restrict
         set RestrictHd $Restrict.hd
         ttk::label $RestrictHd -text "Restrict to sessions that…" -anchor w \
-            -foreground [::questlog::theme::c muted]
+            -foreground [::questlog::ui::theme::c muted]
         pack $RestrictHd -side top -fill x -pady {0 4}
 
         ttk::frame $Restrict.time
@@ -358,7 +358,7 @@ oo::class create ::questlog::ui::Toolbar {
             label $row.label -image qlPill_$t -compound center \
                 -text $t -anchor center -borderwidth 0 \
                 -background [ttk::style lookup . -background] \
-                -foreground [::questlog::theme::c crit_${t}_fg]
+                -foreground [::questlog::ui::theme::c crit_${t}_fg]
             pack $row.label -side left -padx {0 6} -pady 1
             ttk::frame $row.chips
             pack $row.chips -side left -fill x -expand 1
@@ -382,14 +382,14 @@ oo::class create ::questlog::ui::Toolbar {
     }
 
     method render_chips {kind type chips_frame} {
-        set white [::questlog::theme::c chip_bg]
+        set white [::questlog::ui::theme::c chip_bg]
         set vals [dict get $Clauses $kind]
         set first 1
         set i 0
         foreach v $vals {
             if {!$first} {
                 ttk::label $chips_frame.or$i -text "or" \
-                    -foreground [::questlog::theme::c chip_or]
+                    -foreground [::questlog::ui::theme::c chip_or]
                 pack $chips_frame.or$i -side left -padx 4
             }
             # White chip with a hairline type-tinted border: the value in the
@@ -397,7 +397,7 @@ oo::class create ::questlog::ui::Toolbar {
             set chip $chips_frame.c$i
             ttk::frame $chip -style Crit_$type.TFrame -padding {6 1}
             label $chip.t -text [my chip_display $kind $v] \
-                -background $white -foreground [::questlog::theme::c ink] -font QLMono
+                -background $white -foreground [::questlog::ui::theme::c ink] -font QLMono
             pack $chip.t -side left
             ttk::button $chip.x -text "×" -width 2 -style ChipX.TButton \
                 -command [list [self] remove_value $kind $v]
@@ -454,7 +454,7 @@ oo::class create ::questlog::ui::Toolbar {
             edited  "Sessions that edited or created this file"
             pattern "Sessions whose content matches this regular expression"
         } $kind]
-        ttk::label $pop.desc -text $desc -foreground [::questlog::theme::c muted]
+        ttk::label $pop.desc -text $desc -foreground [::questlog::ui::theme::c muted]
         pack $pop.desc -side top -anchor w -pady {0 4}
 
         if {$kind in {wrote edited}} {

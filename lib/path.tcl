@@ -17,7 +17,7 @@ namespace eval ::questlog::path {
 #
 # The original `file` is preserved as ::questlog::path::_real_file and is
 # the way the legitimate sinks reach the filesystem: this module's own
-# move/bookmark/mkdir, and ::questlog::state, which writes its XDG flag
+# move/bookmark/mkdir, and ::questlog::ui::state, which writes its XDG flag
 # directory through the same hatch. Idempotent: a second source of this file
 # is a no-op.
 if {[info commands ::questlog::path::_real_file] eq ""} {

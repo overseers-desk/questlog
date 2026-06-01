@@ -118,7 +118,7 @@ if {[llength $argv] > 0 && [dict exists $arg_kinds [lindex $argv 0]]} {
     tool_param_cap  [::questlog::config::get tool_param_cap] \
     tool_render_cap [::questlog::config::get tool_render_cap]]
 
-::questlog::theme::init
-if {$VIEWER_FONT ne ""} { ::questlog::theme::set_body_family $VIEWER_FONT }
-::questlog::app::start $ROOT $initial_criteria $INIT_WINDOW $INIT_SEARCH
+::questlog::ui::theme::init
+if {$VIEWER_FONT ne ""} { ::questlog::ui::theme::set_body_family $VIEWER_FONT }
+::questlog::ui::app::start $ROOT $initial_criteria $INIT_WINDOW $INIT_SEARCH
 

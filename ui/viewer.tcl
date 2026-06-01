@@ -131,11 +131,11 @@ oo::class create ::questlog::ui::Viewer {
         # flush against the body (no separator, minimal pad), like the strip
         # atop a text editor. A plain frame/label carries a subtle background
         # tint so it reads as part of the pane rather than a control bar.
-        set strip [::questlog::theme::c strip]
+        set strip [::questlog::ui::theme::c strip]
         frame $Top.head -background $strip
         pack $Top.head -side top -fill x
         label $Top.head.path -text "no session selected" -background $strip \
-            -anchor w -font QLMono -foreground [::questlog::theme::c muted]
+            -anchor w -font QLMono -foreground [::questlog::ui::theme::c muted]
         pack $Top.head.path -side left -padx 6 -pady 1 -fill x -expand 1
         set PathLabel $Top.head.path
         # Match index: a count on the right of the head strip that toggles the
@@ -144,7 +144,7 @@ oo::class create ::questlog::ui::Viewer {
         # ▾ closed, ▴ open. Packed on demand by refresh_match_control; absent
         # when the session was opened without a search.
         label $Top.head.matches -text "" -background $strip \
-            -foreground [::questlog::theme::c sessionhead] -cursor hand2
+            -foreground [::questlog::ui::theme::c sessionhead] -cursor hand2
         set MatchBtn $Top.head.matches
         bind $MatchBtn <Button-1> [list [self] match_panel_toggle]
         # Tool-call timeline: a sibling count on the head strip that toggles the
@@ -153,7 +153,7 @@ oo::class create ::questlog::ui::Viewer {
         # ▴ open, like the match toggle. Packed on demand by refresh_tool_control;
         # absent when the session made no tool calls.
         label $Top.head.tools -text "" -background $strip \
-            -foreground [::questlog::theme::c sessionhead] -cursor hand2
+            -foreground [::questlog::ui::theme::c sessionhead] -cursor hand2
         set ToolBtn $Top.head.tools
         bind $ToolBtn <Button-1> [list [self] tool_panel_toggle]
         # Reading-font picker at the right of the head strip: a plain label
@@ -161,7 +161,7 @@ oo::class create ::questlog::ui::Viewer {
         # font chooser. Packed once, always present; the match toggle packs to
         # its left when a search is active.
         label $Top.head.font -text "Font…" -background $strip \
-            -foreground [::questlog::theme::c sessionhead] -cursor hand2
+            -foreground [::questlog::ui::theme::c sessionhead] -cursor hand2
         # -before the path so this fixed-width control keeps its slot: the path
         # label expands and, once a long session path is loaded, its requested
         # width would otherwise claim the whole strip and squeeze this out.
@@ -176,16 +176,16 @@ oo::class create ::questlog::ui::Viewer {
         # the list is foldable and reopenable. Core Tk 9 decodes SVG with no
         # extension; if a build cannot, make_toggle_icon returns "" and a text
         # glyph stands in.
-        set IconOpen   [my make_toggle_icon [::questlog::theme::c muted] \
-                            [::questlog::theme::c muted]]
-        set IconClosed [my make_toggle_icon [::questlog::theme::c muted] \
-                            [::questlog::theme::c faint]]
+        set IconOpen   [my make_toggle_icon [::questlog::ui::theme::c muted] \
+                            [::questlog::ui::theme::c muted]]
+        set IconClosed [my make_toggle_icon [::questlog::ui::theme::c muted] \
+                            [::questlog::ui::theme::c faint]]
         set CollapseBtn $Top.head.collapse
         if {$IconOpen ne ""} {
             label $CollapseBtn -image $IconOpen -background $strip -cursor hand2
         } else {
             label $CollapseBtn -text "◫" -background $strip -cursor hand2 \
-                -foreground [::questlog::theme::c muted]
+                -foreground [::questlog::ui::theme::c muted]
         }
         pack $CollapseBtn -side left -padx {6 2} -before $Top.head.path
         bind $CollapseBtn <Button-1> [list [self] do_toggle]
@@ -212,10 +212,10 @@ oo::class create ::questlog::ui::Viewer {
         grid columnconfigure $Top.body.empty {0 2} -weight 1
         ttk::frame $Top.body.empty.box
         ttk::label $Top.body.empty.box.msg -justify center -font QLBold \
-            -foreground [::questlog::theme::c section] \
+            -foreground [::questlog::ui::theme::c section] \
             -text "Click a session to show it here"
         ttk::label $Top.body.empty.box.sub -justify center -wraplength 340 \
-            -foreground [::questlog::theme::c muted] \
+            -foreground [::questlog::ui::theme::c muted] \
             -text "A single click loads the transcript here. After a search, the match index up top jumps to each hit."
         pack $Top.body.empty.box.msg -side top -pady {0 6}
         pack $Top.body.empty.box.sub -side top
@@ -235,9 +235,9 @@ oo::class create ::questlog::ui::Viewer {
         set MatchPanel $Top.body.matches
         ttk::frame $MatchPanel -relief solid -borderwidth 1
         ttk::frame $MatchPanel.hdr
-        ttk::label $MatchPanel.hdr.title -text "" -foreground [::questlog::theme::c folder]
+        ttk::label $MatchPanel.hdr.title -text "" -foreground [::questlog::ui::theme::c folder]
         ttk::label $MatchPanel.hdr.close -text "✕" \
-            -foreground [::questlog::theme::c muted] -cursor hand2
+            -foreground [::questlog::ui::theme::c muted] -cursor hand2
         pack $MatchPanel.hdr.title -side left -padx 6 -pady 1
         pack $MatchPanel.hdr.close -side right -padx 4
         bind $MatchPanel.hdr.close <Button-1> [list [self] match_panel_hide]
@@ -267,9 +267,9 @@ oo::class create ::questlog::ui::Viewer {
         set ToolPanel $Top.body.toolcalls
         ttk::frame $ToolPanel -relief solid -borderwidth 1
         ttk::frame $ToolPanel.hdr
-        ttk::label $ToolPanel.hdr.title -text "" -foreground [::questlog::theme::c folder]
+        ttk::label $ToolPanel.hdr.title -text "" -foreground [::questlog::ui::theme::c folder]
         ttk::label $ToolPanel.hdr.close -text "✕" \
-            -foreground [::questlog::theme::c muted] -cursor hand2
+            -foreground [::questlog::ui::theme::c muted] -cursor hand2
         pack $ToolPanel.hdr.title -side left -padx 6 -pady 1
         pack $ToolPanel.hdr.close -side right -padx 4
         bind $ToolPanel.hdr.close <Button-1> [list [self] tool_panel_hide]
@@ -299,23 +299,23 @@ oo::class create ::questlog::ui::Viewer {
         # Tags.
         # Section header (the "▼ date" line): grey, monospace, not bold.
         $Text tag configure section-header -font QLMono \
-            -spacing1 10 -spacing3 4 -foreground [::questlog::theme::c section]
+            -spacing1 10 -spacing3 4 -foreground [::questlog::ui::theme::c section]
         $Text tag configure divider -justify center -font QLMono \
-            -foreground [::questlog::theme::c muted] -spacing1 6 -spacing3 6
+            -foreground [::questlog::ui::theme::c muted] -spacing1 6 -spacing3 6
         $Text tag configure compact-divider -justify center -font QLMono \
-            -foreground [::questlog::theme::c compact] -spacing1 8 -spacing3 8
+            -foreground [::questlog::ui::theme::c compact] -spacing1 8 -spacing3 8
         # Colour marks only the role label (monospace bold, design role fg); the
         # message body is neutral ink, so the transcript reads as prose with a
         # coloured speaker tag, not a wall of tinted text.
-        $Text tag configure lbl-user      -foreground [::questlog::theme::c user]      -font QLMonoBold -lmargin1 10 -lmargin2 10 -spacing1 6
-        $Text tag configure lbl-assistant -foreground [::questlog::theme::c assistant] -font QLMonoBold -lmargin1 10 -lmargin2 10 -spacing1 6
-        $Text tag configure lbl-system    -foreground [::questlog::theme::c tool]      -font QLMonoBold -lmargin1 10 -lmargin2 10 -spacing1 6
+        $Text tag configure lbl-user      -foreground [::questlog::ui::theme::c user]      -font QLMonoBold -lmargin1 10 -lmargin2 10 -spacing1 6
+        $Text tag configure lbl-assistant -foreground [::questlog::ui::theme::c assistant] -font QLMonoBold -lmargin1 10 -lmargin2 10 -spacing1 6
+        $Text tag configure lbl-system    -foreground [::questlog::ui::theme::c tool]      -font QLMonoBold -lmargin1 10 -lmargin2 10 -spacing1 6
         # Body prose follows QLBody, the proportional reading font switched at
         # runtime; fenced code keeps QLMono so it stays aligned regardless of
         # the reading font. Without an explicit -font the text widget would
         # render both in its TkFixedFont default.
-        $Text tag configure body          -font QLBody -foreground [::questlog::theme::c body] -lmargin1 10 -lmargin2 10 -spacing2 3 -spacing3 6
-        $Text tag configure code          -font QLMono -foreground [::questlog::theme::c body] -lmargin1 10 -lmargin2 10 -spacing2 3 -spacing3 6
+        $Text tag configure body          -font QLBody -foreground [::questlog::ui::theme::c body] -lmargin1 10 -lmargin2 10 -spacing2 3 -spacing3 6
+        $Text tag configure code          -font QLMono -foreground [::questlog::ui::theme::c body] -lmargin1 10 -lmargin2 10 -spacing2 3 -spacing3 6
         # Inline-span tags carry only a -font; colour and margins keep coming
         # from the body tag, which stays on every prose run (tags stack, and
         # these later tags win on -font). i-code is kept separate from the
@@ -324,8 +324,8 @@ oo::class create ::questlog::ui::Viewer {
         $Text tag configure i-italic     -font QLBodyItalic
         $Text tag configure i-bolditalic -font QLBodyBoldItalic
         $Text tag configure i-code       -font QLMono
-        $Text tag configure recap     -background [::questlog::theme::c recap]
-        $Text tag configure find      -background [::questlog::theme::c find]
+        $Text tag configure recap     -background [::questlog::ui::theme::c recap]
+        $Text tag configure find      -background [::questlog::ui::theme::c find]
 
         # Right-click copy (issue #4) and width tracking for the embedded
         # quote boxes that drafts render into.
@@ -395,7 +395,7 @@ oo::class create ::questlog::ui::Viewer {
     # Apply a chosen font to the reading body. Reconfiguring the named QLBody
     # reflows every body-tagged run; fenced code (QLMono) is untouched.
     method on_font_chosen {fontspec args} {
-        ::questlog::theme::set_body_font $fontspec
+        ::questlog::ui::theme::set_body_font $fontspec
         # The named-font reflow updates the glyphs but not the boxes' fixed
         # -height, computed from display lines at the previous size; re-fit.
         my on_resize
@@ -573,7 +573,7 @@ oo::class create ::questlog::ui::Viewer {
         tk::frame $f -borderwidth 0 -highlightthickness 0 -cursor arrow
         # The quoted marker: a single muted vertical rule. A classic tk::frame
         # (not ttk) is used because clam ignores -background on ttk frames.
-        tk::frame $f.rule -width 3 -background [::questlog::theme::c muted]
+        tk::frame $f.rule -width 3 -background [::questlog::ui::theme::c muted]
         pack $f.rule -side left -fill y
         set bt $f.body
         # No -font of its own: QLBody is the reading font, reconfigured live by
@@ -974,9 +974,9 @@ oo::class create ::questlog::ui::Viewer {
     # Row foreground by role, echoing the rendered transcript's role colours.
     method role_color {ty} {
         switch -- $ty {
-            USER      { return [::questlog::theme::c user] }
-            ASSISTANT { return [::questlog::theme::c assistant] }
-            default   { return [::questlog::theme::c tool] }
+            USER      { return [::questlog::ui::theme::c user] }
+            ASSISTANT { return [::questlog::ui::theme::c assistant] }
+            default   { return [::questlog::ui::theme::c tool] }
         }
     }
 
@@ -1036,7 +1036,7 @@ oo::class create ::questlog::ui::Viewer {
                 set row "$when · $name"
                 if {$path ne ""} { append row " · $path" }
                 $ToolList insert end $row
-                $ToolList itemconfigure end -foreground [::questlog::theme::c tool]
+                $ToolList itemconfigure end -foreground [::questlog::ui::theme::c tool]
                 lappend ToolLines $lineno
             }
         }

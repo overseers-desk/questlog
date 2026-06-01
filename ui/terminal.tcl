@@ -1,13 +1,13 @@
 package require Tcl 9
 
-namespace eval ::questlog::terminal {
+namespace eval ::questlog::ui::terminal {
     namespace export launch_tab resume_command
     variable Detected ""
 }
 
 # Build the compound resume command. claude has no flag for cwd, so cd is
 # part of the command. fork=1 appends --fork-session.
-proc ::questlog::terminal::resume_command {cwd uuid {fork 0}} {
+proc ::questlog::ui::terminal::resume_command {cwd uuid {fork 0}} {
     set extra [expr {$fork ? " --fork-session" : ""}]
     return "cd [shquote $cwd] && claude --resume $uuid$extra"
 }
@@ -18,7 +18,7 @@ proc ::questlog::terminal::resume_command {cwd uuid {fork 0}} {
 #   3. $KONSOLE_VERSION         -> konsole
 #   4. parent process tree walk
 #   5. fall back to first installed: ptyxis, gnome-terminal, konsole, xterm
-proc ::questlog::terminal::detect {} {
+proc ::questlog::ui::terminal::detect {} {
     variable Detected
     if {$Detected ne ""} { return $Detected }
 
@@ -48,7 +48,7 @@ proc ::questlog::terminal::detect {} {
 }
 
 # Walk /proc/$PID/status upward looking for a known terminal binary name.
-proc ::questlog::terminal::walk_parents {} {
+proc ::questlog::ui::terminal::walk_parents {} {
     set known {ptyxis gnome-terminal-server konsole xterm alacritty kitty}
     set pid [pid]
     for {set i 0} {$i < 10} {incr i} {
@@ -78,7 +78,7 @@ proc ::questlog::terminal::walk_parents {} {
 
 # Open a new terminal tab (or window) running "claude --resume <uuid>" in
 # the given cwd. Returns 1 on success, 0 on failure.
-proc ::questlog::terminal::launch_tab {cwd uuid {fork 0}} {
+proc ::questlog::ui::terminal::launch_tab {cwd uuid {fork 0}} {
     set t [detect]
     set extra [expr {$fork ? " --fork-session" : ""}]
     set inner "claude --resume $uuid$extra; exec bash"
@@ -144,7 +144,7 @@ end tell
     }
 }
 
-proc ::questlog::terminal::exec_ok {args} {
+proc ::questlog::ui::terminal::exec_ok {args} {
     if {[catch {exec {*}$args &} err]} {
         puts stderr "questlog: terminal launch failed: $err"
         return 0
@@ -153,11 +153,11 @@ proc ::questlog::terminal::exec_ok {args} {
 }
 
 # Conservative shell-quote for a path that will appear inside a bash -c string.
-proc ::questlog::terminal::shquote {s} {
+proc ::questlog::ui::terminal::shquote {s} {
     return '[string map {' '\\''} $s]'
 }
 
 # AppleScript string literal: wrap in double quotes and escape \ and " only.
-proc ::questlog::terminal::asquote {s} {
+proc ::questlog::ui::terminal::asquote {s} {
     return \"[string map [list \\ \\\\ \" \\\"] $s]\"
 }

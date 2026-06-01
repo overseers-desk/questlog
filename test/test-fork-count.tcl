@@ -21,7 +21,7 @@ set PROJDIR [file join $SAND .claude projects $FOLDER]
 set ::env(HOME) $SAND
 
 set ROOT [file dirname [file dirname [file normalize [info script]]]]
-# SessionList::build reads ::questlog::theme colours and the named fonts, and
+# SessionList::build reads ::questlog::ui::theme colours and the named fonts, and
 # the Scan/Search/SessionList filter path reads ::questlog::config; source both
 # and create the fonts before constructing any widget.
 foreach f {config.tcl ui/theme.tcl lib/path.tcl lib/filter.tcl lib/jsonl.tcl \
@@ -29,7 +29,7 @@ foreach f {config.tcl ui/theme.tcl lib/path.tcl lib/filter.tcl lib/jsonl.tcl \
            ui/drag.tcl ui/toolbar.tcl ui/sessions.tcl} {
     source [file join $ROOT $f]
 }
-::questlog::theme::init
+::questlog::ui::theme::init
 
 proc noop {args} {}
 proc write_multi {path} {

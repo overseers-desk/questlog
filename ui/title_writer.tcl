@@ -1,6 +1,6 @@
 package require Tcl 9
 
-# ::questlog::title - persist a session title by appending Claude Code's native
+# ::questlog::ui::title_writer - persist a session title by appending Claude Code's native
 # rename records to the jsonl. Two lines:
 #   {"type":"custom-title","customTitle":<title>,"sessionId":<uuid>}
 #   {"type":"agent-name","agentName":<title>,"sessionId":<uuid>}
@@ -16,9 +16,9 @@ package require Tcl 9
 # rename UI still disables this action while the session is running, so
 # this safety net never has to carry weight.
 
-namespace eval ::questlog::title {}
+namespace eval ::questlog::ui::title_writer {}
 
-proc ::questlog::title::set_custom {path uuid title} {
+proc ::questlog::ui::title_writer::set_custom {path uuid title} {
     set title_json [json_escape $title]
     set uuid_json  [json_escape $uuid]
     set line1 "{\"type\":\"custom-title\",\"customTitle\":\"$title_json\",\"sessionId\":\"$uuid_json\"}\n"
@@ -33,7 +33,7 @@ proc ::questlog::title::set_custom {path uuid title} {
 # Clear back to the auto title. Writes an empty customTitle and an
 # agentName carrying the supplied revert_to (the original aiTitle, or ""
 # when none was ever generated). Last agentName wins on the next scan.
-proc ::questlog::title::clear_custom {path uuid revert_to} {
+proc ::questlog::ui::title_writer::clear_custom {path uuid revert_to} {
     set rev_json  [json_escape $revert_to]
     set uuid_json [json_escape $uuid]
     set line1 "{\"type\":\"custom-title\",\"customTitle\":\"\",\"sessionId\":\"$uuid_json\"}\n"
@@ -48,7 +48,7 @@ proc ::questlog::title::clear_custom {path uuid revert_to} {
 # Minimal JSON string escaping for the fields we write. Titles are kebab
 # slugs in normal use; this handles the literal characters that must not
 # appear raw inside a JSON string.
-proc ::questlog::title::json_escape {s} {
+proc ::questlog::ui::title_writer::json_escape {s} {
     return [string map [list \
         "\\" "\\\\" \
         "\"" "\\\"" \

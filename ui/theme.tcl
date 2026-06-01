@@ -1,7 +1,7 @@
 package require Tcl 9
 package require Tk
 
-# ::questlog::theme - the single home for the app's colours and fonts.
+# ::questlog::ui::theme - the single home for the app's colours and fonts.
 #
 # The same semantic colour - the user-turn blue, the muted grey, the deep
 # session-heading blue - was written as a bare hex literal at every tag that
@@ -17,7 +17,7 @@ package require Tk
 # text widgets that hold the list and the transcript are not ttk widgets - their
 # colours are these same roles applied as tag config, identical on every OS.
 
-namespace eval ::questlog::theme {
+namespace eval ::questlog::ui::theme {
     # role -> colour, taken from the design source: the transcript/snippet role
     # set (screens.jsx SNIPPET_COLORS and the viewer's role map) and the
     # criterion-type set (tk-mac.jsx CRITERION_TYPE_COLORS). One foreground set
@@ -92,12 +92,12 @@ namespace eval ::questlog::theme {
 
 # Colour for a role. Errors loudly on an unknown role rather than returning a
 # default, so a typo surfaces at build time, not as an invisible miscolour.
-proc ::questlog::theme::c {role} {
+proc ::questlog::ui::theme::c {role} {
     variable Palette
     return [dict get $Palette $role]
 }
 
-proc ::questlog::theme::hues {} {
+proc ::questlog::ui::theme::hues {} {
     variable Hues
     return $Hues
 }
@@ -110,7 +110,7 @@ proc ::questlog::theme::hues {} {
 # variant to its own weight/slant, so a bold or italic source spec cannot leak
 # the wrong face into a variant. A spec Tk cannot resolve is reported on stderr
 # rather than letting the callback's error reach bgerror.
-proc ::questlog::theme::set_body_font {spec} {
+proc ::questlog::ui::theme::set_body_font {spec} {
     if {[catch {
         set a [font actual $spec]
         set fam [dict get $a -family]
@@ -129,7 +129,7 @@ proc ::questlog::theme::set_body_font {spec} {
 # takes the whole value, so a spaced family name ("DejaVu Serif") needs no list
 # quoting and no size is injected. An unknown family is recorded as requested
 # and resolves to a fallback at render.
-proc ::questlog::theme::set_body_family {family} {
+proc ::questlog::ui::theme::set_body_family {family} {
     if {[catch {
         foreach f {QLBody QLBodyBold QLBodyItalic QLBodyBoldItalic} {
             font configure $f -family $family
@@ -153,7 +153,7 @@ proc ::questlog::theme::set_body_family {family} {
 # recolours nothing visible (clam's own beige would otherwise read as a
 # change); on a platform whose background is a symbolic system colour the
 # reapply is skipped and clam's default stands.
-proc ::questlog::theme::init {} {
+proc ::questlog::ui::theme::init {} {
     if {"QLBold" ni [font names]} {
         font create QLBold     {*}[font actual TkTextFont] -weight bold
         font create QLBody     {*}[font actual TkTextFont]
@@ -171,13 +171,13 @@ proc ::questlog::theme::init {} {
     set bg [. cget -background]
     ttk::style theme use clam
     catch {ttk::style configure . -background $bg}
-    ::questlog::theme::build_chrome
+    ::questlog::ui::theme::build_chrome
 }
 
 # A rounded-rectangle SVG string, authored directly in pixels (so it rasterises
 # crisp at the display's physical resolution, no compositor upscaling). `sop` is
 # the stroke opacity; a non-empty `dash` emits a dashed outline.
-proc ::questlog::theme::rrect_svg {w h r fill stroke sw {sop 1} {dash ""}} {
+proc ::questlog::ui::theme::rrect_svg {w h r fill stroke sw {sop 1} {dash ""}} {
     set o [expr {$sw / 2.0}]
     set dattr [expr {$dash ne "" ? "stroke-dasharray=\"$dash\"" : ""}]
     set fattr [expr {$fill eq "none" ? "fill=\"none\"" : "fill=\"$fill\""}]
@@ -190,15 +190,15 @@ proc ::questlog::theme::rrect_svg {w h r fill stroke sw {sop 1} {dash ""}} {
 # Create (or replace) a named photo from a rounded-rect SVG. Named Tk images
 # persist for the interpreter's life, so the elements and badges that reference
 # them stay drawn without a separate variable holding them.
-proc ::questlog::theme::rrect_img {name w h r fill stroke sw {sop 1} {dash ""}} {
-    set svg [::questlog::theme::rrect_svg $w $h $r $fill $stroke $sw $sop $dash]
+proc ::questlog::ui::theme::rrect_img {name w h r fill stroke sw {sop 1} {dash ""}} {
+    set svg [::questlog::ui::theme::rrect_svg $w $h $r $fill $stroke $sw $sop $dash]
     if {$name in [image names]} { image delete $name }
     image create photo $name -data $svg -format svg
     return $name
 }
 
 # The shared snippet-badge pill for one block type.
-proc ::questlog::theme::badge_pill {type} {
+proc ::questlog::ui::theme::badge_pill {type} {
     variable BadgePill
     return [dict getdef $BadgePill $type [dict get $BadgePill system]]
 }
@@ -209,7 +209,7 @@ proc ::questlog::theme::badge_pill {type} {
 # image stretches to the label, so one small SVG serves any button width. Sizes
 # track font metrics so the controls match the text at any DPI. Run once from
 # init, after the clam switch and the named fonts.
-proc ::questlog::theme::build_chrome {} {
+proc ::questlog::ui::theme::build_chrome {} {
     variable BadgePill
     # ---- rounded toolbar controls -----------------------------------------
     set ch [expr {[font metrics TkDefaultFont -linespace] + 10}]

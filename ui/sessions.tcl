@@ -174,10 +174,10 @@ oo::class create ::questlog::ui::SessionList {
         # A soft-tinted alert strip (plain tk frame/label so -background takes;
         # ttk would ignore it), so the launch-scope notice reads as a banner
         # rather than blending into the chrome.
-        frame $Top.banner -background [::questlog::theme::c banner_bg]
+        frame $Top.banner -background [::questlog::ui::theme::c banner_bg]
         label $Top.banner.text -anchor w \
-            -background [::questlog::theme::c banner_bg] \
-            -foreground [::questlog::theme::c banner_fg]
+            -background [::questlog::ui::theme::c banner_bg] \
+            -foreground [::questlog::ui::theme::c banner_fg]
         ttk::button $Top.banner.showall -text "Show all" \
             -command [list [self] on_show_all_clicked]
         pack $Top.banner.text -side left -padx 8 -pady 5 -fill x -expand 1
@@ -192,8 +192,8 @@ oo::class create ::questlog::ui::SessionList {
         text $Top.body.hdr -height 1 -wrap none -state disabled -takefocus 0 \
             -exportselection 0 -borderwidth 0 -highlightthickness 0 \
             -padx 8 -pady 1 -cursor hand2 -font QLList \
-            -background [::questlog::theme::c strip] \
-            -foreground [::questlog::theme::c muted]
+            -background [::questlog::ui::theme::c strip] \
+            -foreground [::questlog::ui::theme::c muted]
         text $Top.body.t -wrap word -state disabled -exportselection 0 \
             -yscrollcommand [list [self] on_yscroll] \
             -borderwidth 0 -highlightthickness 0 -padx 8 -pady 8 -cursor arrow \
@@ -243,10 +243,10 @@ oo::class create ::questlog::ui::SessionList {
         # Folder heading is single-line so its size/cost aggregates can sit in
         # the same right-pinned columns as the session rows below it.
         $Text tag configure folderhead \
-            -font QLList -foreground [::questlog::theme::c folder] \
+            -font QLList -foreground [::questlog::ui::theme::c folder] \
             -spacing1 14 -spacing3 3 -wrap none
-        $Text tag configure glyph-running  -foreground [::questlog::theme::c glyph_running]
-        $Text tag configure glyph-bookmark -foreground [::questlog::theme::c glyph_bookmark]
+        $Text tag configure glyph-running  -foreground [::questlog::ui::theme::c glyph_running]
+        $Text tag configure glyph-bookmark -foreground [::questlog::ui::theme::c glyph_bookmark]
         # Session header: one line, the block's "title" (like a search result
         # heading), indented under its folder. Rows are separated by the gap
         # above each and the bold title colour; no background band. The
@@ -254,15 +254,15 @@ oo::class create ::questlog::ui::SessionList {
         # columns align on per-tag right tab stops (set by layout_columns), so
         # the line reads in the proportional QLList without a fixed-width crutch.
         $Text tag configure sessionhead -lmargin1 12 -lmargin2 28 \
-            -spacing1 6 -spacing3 2 -foreground [::questlog::theme::c ink] \
+            -spacing1 6 -spacing3 2 -foreground [::questlog::ui::theme::c ink] \
             -font QLList
         # The slug (Claude's agentName / aiTitle) renders bold inline before
         # the prompt body, so the slug acts as the headline and the prompt
         # as the deck below it. Bold weight is the only marker; brackets
         # would compete with the kebab-case hyphens.
         $Text tag configure slug -font QLBold
-        $Text tag configure selected -background [::questlog::theme::c sel]
-        $Text tag configure drop-candidate -background [::questlog::theme::c drop]
+        $Text tag configure selected -background [::questlog::ui::theme::c sel]
+        $Text tag configure drop-candidate -background [::questlog::ui::theme::c drop]
 
         # Snippet rows: a rounded type-badge pill in a left column, the matched
         # line beside it. Indented past the header so each block reads
@@ -274,7 +274,7 @@ oo::class create ::questlog::ui::SessionList {
         # preceding glyph, so the badge column IS lmargin2: just past the bar
         # glyph. lmargin1 holds the bar; a single tab then aligns content.
         set badgecol [expr {$barcol + [font measure QLList "▏"] + 6}]
-        set bpw [image width [::questlog::theme::badge_pill system]]
+        set bpw [image width [::questlog::ui::theme::badge_pill system]]
         set content_col [expr {$badgecol + $bpw + 12}]
         $Text configure -tabs [list $content_col left]
         # A thin session-grouping spine runs in the gutter to the left of the
@@ -284,8 +284,8 @@ oo::class create ::questlog::ui::SessionList {
         # content_col. -wrap none clips each match to one row, as the design does.
         $Text tag configure snippet -lmargin1 $barcol -lmargin2 $badgecol \
             -tabs [list $content_col left] -wrap none \
-            -font QLList -foreground [::questlog::theme::c snippet] -spacing3 1
-        $Text tag configure snippetbar -foreground [::questlog::theme::c snippet_guide]
+            -font QLList -foreground [::questlog::ui::theme::c snippet] -spacing3 1
+        $Text tag configure snippetbar -foreground [::questlog::ui::theme::c snippet_guide]
         # Subagent child rows (issue #13): a session-header-style line one indent
         # deeper than the parent, on the same metadata tab stops (set by
         # layout_columns) so date/size/cost/turns/duration sit under the parent's
@@ -293,39 +293,39 @@ oo::class create ::questlog::ui::SessionList {
         # connector, so a session's children read as one grouped run.
         $Text tag configure childhead -lmargin1 30 -lmargin2 46 \
             -spacing1 2 -spacing3 2 -wrap none \
-            -foreground [::questlog::theme::c ink] -font QLList
-        $Text tag configure childbar -foreground [::questlog::theme::c snippet_guide]
+            -foreground [::questlog::ui::theme::c ink] -font QLList
+        $Text tag configure childbar -foreground [::questlog::ui::theme::c snippet_guide]
         # A subagent's matched line, beneath its child row, indented past the
         # child so the hit reads at full width (its own line, not cramped into the
         # metadata strip). Same look as a parent snippet, one level deeper.
         $Text tag configure childsnip -lmargin1 40 -lmargin2 40 -wrap none \
-            -font QLList -foreground [::questlog::theme::c snippet] -spacing3 1
+            -font QLList -foreground [::questlog::ui::theme::c snippet] -spacing3 1
         # The expand/collapse chevron at the head of a session that has subagents.
-        $Text tag configure chevron -foreground [::questlog::theme::c meta]
+        $Text tag configure chevron -foreground [::questlog::ui::theme::c meta]
         # Metadata cells (date, size, cost): the muted grey column run pinned
         # to the right of each session line. Proportional QLList, aligned by
         # the sessionhead right tab stops, not a monospace font.
-        $Text tag configure meta -foreground [::questlog::theme::c meta]
+        $Text tag configure meta -foreground [::questlog::ui::theme::c meta]
         # Cost tiers draw the eye to the sessions that ate the budget: amber
         # from 10c, brick red from $1. Below 10c the cell keeps the muted meta
         # grey, so only elevated costs stand out. Configured after meta so the
         # tier foreground wins over it on the cost cell.
-        $Text tag configure cost-mid     -foreground [::questlog::theme::c cost_mid]
-        $Text tag configure cost-outlier -foreground [::questlog::theme::c cost_outlier]
+        $Text tag configure cost-mid     -foreground [::questlog::ui::theme::c cost_mid]
+        $Text tag configure cost-outlier -foreground [::questlog::ui::theme::c cost_outlier]
         # The per-row actions control ("⋯") in the rightmost column. It rests at
         # the faded meta grey with the rest of the metadata and brightens to ink
         # while its row is hovered or selected, so the menu it opens advertises
         # itself for anyone whose trackpad refuses the right-click. The bright
         # tag is added/removed per row over the cell's range; configured after
         # meta so its foreground wins.
-        $Text tag configure actioncell        -foreground [::questlog::theme::c meta]
-        $Text tag configure actioncell-bright  -foreground [::questlog::theme::c ink]
+        $Text tag configure actioncell        -foreground [::questlog::ui::theme::c meta]
+        $Text tag configure actioncell-bright  -foreground [::questlog::ui::theme::c ink]
         # Folder size/cost aggregates are bold (a sum, not a row value); they
         # overlay meta or a cost tier for colour, so this only sets the weight.
         $Text tag configure foldagg -font QLBold
 
         set HitTags [list]
-        set hues [::questlog::theme::hues]
+        set hues [::questlog::ui::theme::hues]
         for {set i 0} {$i < [llength $hues]} {incr i} {
             set t hit-$i
             $Text tag configure $t -background [lindex $hues $i]
@@ -419,7 +419,7 @@ oo::class create ::questlog::ui::SessionList {
     # flips the direction. The Session zone on the left is not sortable.
     method build_header {} {
         set h $Top.body.hdr
-        $h tag configure colactive -font QLBold -foreground [::questlog::theme::c ink]
+        $h tag configure colactive -font QLBold -foreground [::questlog::ui::theme::c ink]
         bind $h <Button-1> [list [self] on_header_click %x]
         my draw_header
     }
@@ -928,9 +928,9 @@ oo::class create ::questlog::ui::SessionList {
     # bindings, so click and context-menu are forwarded to the same handlers.
     method make_badge {bt fgrole path lineoff} {
         set b $Text.badge[incr NextId]
-        label $b -image [::questlog::theme::badge_pill $bt] -compound center \
+        label $b -image [::questlog::ui::theme::badge_pill $bt] -compound center \
             -text [string toupper [string map {_ { }} $bt]] \
-            -font QLBold -foreground [::questlog::theme::c $fgrole] \
+            -font QLBold -foreground [::questlog::ui::theme::c $fgrole] \
             -background [$Text cget -background] -borderwidth 0 \
             -takefocus 0 -cursor hand2
         bind $b <ButtonRelease-1> [list [self] on_snippet_release $path $lineoff]
@@ -2057,7 +2057,7 @@ oo::class create ::questlog::ui::SessionList {
     method menu_target_get {key} { return [dict get $MenuTarget $key] }
     method menu_open {} { my open_session $MenuPath }
     method menu_copy_resume {} {
-        my clipboard_set [::questlog::terminal::resume_command \
+        my clipboard_set [::questlog::ui::terminal::resume_command \
             [my menu_target_get cwd] [my menu_target_get uuid]]
     }
     method menu_copy_uuid {} { my clipboard_set [my menu_target_get uuid] }
@@ -2070,7 +2070,7 @@ oo::class create ::questlog::ui::SessionList {
     # gaps the way the viewer breaks it). Tool calls are out of scope by design.
     method menu_copy_markdown {} {
         my clipboard_set \
-            [::questlog::markdown::export_session [my menu_target_get path]]
+            [::questlog::ui::markdown::export_session [my menu_target_get path]]
     }
     # The same Markdown to a file the reader picks. A cancelled dialog returns
     # empty and does nothing; a write failure is surfaced rather than swallowed.
@@ -2081,7 +2081,7 @@ oo::class create ::questlog::ui::SessionList {
             -defaultextension .md -initialfile $initial \
             -filetypes {{Markdown {.md}} {{All files} *}}]
         if {$dest eq ""} return
-        set md [::questlog::markdown::export_session $path]
+        set md [::questlog::ui::markdown::export_session $path]
         if {[catch {
             set fh [open $dest w]
             chan configure $fh -encoding utf-8
@@ -2093,7 +2093,7 @@ oo::class create ::questlog::ui::SessionList {
         }
     }
     method menu_resume {fork} {
-        ::questlog::terminal::launch_tab [my menu_target_get cwd] \
+        ::questlog::ui::terminal::launch_tab [my menu_target_get cwd] \
             [my menu_target_get uuid] $fork
     }
     method menu_reveal {} {
@@ -2120,10 +2120,10 @@ oo::class create ::questlog::ui::SessionList {
         set entered [my prompt_rename $current]
         if {$entered eq "<cancelled>"} return
         if {$entered eq ""} {
-            ::questlog::title::clear_custom $MenuPath $uuid $aitt
+            ::questlog::ui::title_writer::clear_custom $MenuPath $uuid $aitt
             dict set Sessions $MenuPath slug $aitt
         } else {
-            ::questlog::title::set_custom $MenuPath $uuid $entered
+            ::questlog::ui::title_writer::set_custom $MenuPath $uuid $entered
             dict set Sessions $MenuPath slug $entered
         }
         $Text configure -state normal

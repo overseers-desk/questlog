@@ -9,7 +9,7 @@
 #   - macos x86_64: hosted Intel runners (macos-13) do not get allocated, so a
 #     run sits queued until the 24h limit cancels it. The arm64 job exercises
 #     the same Aqua branch; revisit Intel during the cross-platform work.
-#   - windows-x86_64: blocked by questlog itself. lib/terminal.tcl has no
+#   - windows-x86_64: blocked by questlog itself. ui/terminal.tcl has no
 #     Windows branch (issue #10); the port lands before a Windows variant.
 #
 # Trigger manually, or automatically when a release is published; in the latter

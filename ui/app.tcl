@@ -1,7 +1,7 @@
 package require Tcl 9
 package require Tk
 
-# ::questlog::app - startup wiring. Constructs Scan, Toolbar, SessionList, Viewer,
+# ::questlog::ui::app - startup wiring. Constructs Scan, Toolbar, SessionList, Viewer,
 # Search. No splash: the empty UI renders immediately and rows stream in via
 # the Scan coroutine. Status-bar shows scanning progress while in flight.
 #
@@ -13,7 +13,7 @@ package require Tk
 # (anchored). The split defaults to ~58/42 in the list's favour and the sash is
 # draggable.
 
-namespace eval ::questlog::app {
+namespace eval ::questlog::ui::app {
     variable Scan
     variable Search
     variable Toolbar
@@ -38,7 +38,7 @@ namespace eval ::questlog::app {
     variable CostWorkerScript ;# Script evaluated in each cost worker
 }
 
-proc ::questlog::app::start {root {initial_criteria {}} {init_window ""} {init_search ""}} {
+proc ::questlog::ui::app::start {root {initial_criteria {}} {init_window ""} {init_search ""}} {
     variable Scan
     variable Search
     variable Toolbar
@@ -79,7 +79,7 @@ proc ::questlog::app::start {root {initial_criteria {}} {init_window ""} {init_s
         proc dispatch_main {path tid epoch} {
             set r [::questlog::cost::parse_file $path]
             thread::send -async $tid \
-                [list ::questlog::app::on_cost_worker_result $path $epoch $r]
+                [list ::questlog::ui::app::on_cost_worker_result $path $epoch $r]
         }
     }
 
@@ -213,22 +213,22 @@ proc ::questlog::app::start {root {initial_criteria {}} {init_window ""} {init_s
 # reader dismisses it. It teaches what the app reads and that nothing leaves
 # the machine; the dismissal is remembered by a single XDG state flag, the
 # app's only cross-launch state.
-proc ::questlog::app::maybe_show_onboarding {} {
-    if {[::questlog::state::flag_get onboarded]} return
+proc ::questlog::ui::app::maybe_show_onboarding {} {
+    if {[::questlog::ui::state::flag_get onboarded]} return
     set b .top.onboard
     if {[winfo exists $b]} return
     # Plain tk frame/label so -background takes (ttk would ignore it).
-    frame $b -background [::questlog::theme::c onboard_bg]
+    frame $b -background [::questlog::ui::theme::c onboard_bg]
     label $b.icon -text "?" -width 2 -font QLBold \
-        -background [::questlog::theme::c onboard_accent] -foreground white
-    frame $b.txt -background [::questlog::theme::c onboard_bg]
+        -background [::questlog::ui::theme::c onboard_accent] -foreground white
+    frame $b.txt -background [::questlog::ui::theme::c onboard_bg]
     label $b.txt.h -anchor w -font QLBold \
-        -background [::questlog::theme::c onboard_bg] \
-        -foreground [::questlog::theme::c onboard_fg] \
+        -background [::questlog::ui::theme::c onboard_bg] \
+        -foreground [::questlog::ui::theme::c onboard_fg] \
         -text "This is your Claude Code session history"
     label $b.txt.s -anchor w \
-        -background [::questlog::theme::c onboard_bg] \
-        -foreground [::questlog::theme::c onboard_sub] \
+        -background [::questlog::ui::theme::c onboard_bg] \
+        -foreground [::questlog::ui::theme::c onboard_sub] \
         -text "questlog reads ~/.claude/projects on this machine; nothing leaves it."
     pack $b.txt.h -side top -anchor w
     pack $b.txt.s -side top -anchor w
@@ -239,8 +239,8 @@ proc ::questlog::app::maybe_show_onboarding {} {
     pack $b -side top -fill x -before .top.pw
 }
 
-proc ::questlog::app::dismiss_onboarding {} {
-    ::questlog::state::flag_set onboarded
+proc ::questlog::ui::app::dismiss_onboarding {} {
+    ::questlog::ui::state::flag_set onboarded
     if {[winfo exists .top.onboard]} { destroy .top.onboard }
 }
 
@@ -249,7 +249,7 @@ proc ::questlog::app::dismiss_onboarding {} {
 # contents alive, so unfold is instant with no rescan; the divider is remembered
 # as a fraction of the paned width, so a resize while folded does not misplace
 # it on unfold. Transient: the app always opens unfolded.
-proc ::questlog::app::toggle_sidebar {} {
+proc ::questlog::ui::app::toggle_sidebar {} {
     variable PW
     variable ListFrame
     variable Viewer
@@ -262,7 +262,7 @@ proc ::questlog::app::toggle_sidebar {} {
     if {$SidebarCollapsed} {
         $PW insert 0 $ListFrame -weight 58
         set SidebarCollapsed 0
-        after idle [list ::questlog::app::restore_sash $SidebarSash]
+        after idle [list ::questlog::ui::app::restore_sash $SidebarSash]
         $Viewer set_collapsed 0
     } else {
         set w [winfo width $PW]
@@ -277,7 +277,7 @@ proc ::questlog::app::toggle_sidebar {} {
 # Re-place the divider after the re-inserted column has been laid out (its width
 # is not final in the same event-loop turn as the insert). Guarded so a fold
 # that happened before this idle fired leaves it a no-op.
-proc ::questlog::app::restore_sash {frac} {
+proc ::questlog::ui::app::restore_sash {frac} {
     variable PW
     variable ListFrame
     variable SidebarCollapsed
@@ -291,7 +291,7 @@ proc ::questlog::app::restore_sash {frac} {
 
 # Place the sash at ~58% once the paned window is mapped (its width is 1
 # before that). Self-unbinds so a later manual drag is never overridden.
-proc ::questlog::app::init_sash {pw} {
+proc ::questlog::ui::app::init_sash {pw} {
     bind $pw <Map> {}
     update idletasks
     set w [winfo width $pw]
@@ -304,18 +304,18 @@ proc ::questlog::app::init_sash {pw} {
 # Re-read the live-session registry and re-derive every row's running
 # state, then re-arm. 2s keeps the markers current without busy-polling;
 # the cost is O(running sessions), independent of the on-disk corpus.
-proc ::questlog::app::run_tick {} {
+proc ::questlog::ui::app::run_tick {} {
     variable SessionList
     variable Running
     variable RunTimer
-    set Running [::questlog::live::running_uuids]
+    set Running [::questlog::ui::live::running_uuids]
     $SessionList reconcile_running $Running
     set RunTimer [after [::questlog::config::get running_poll_ms] [namespace code run_tick]]
 }
 
 # ---- toolbar callback --------------------------------------------------
 
-proc ::questlog::app::on_filter {snapshot} {
+proc ::questlog::ui::app::on_filter {snapshot} {
     variable Scan
     variable Search
     variable SessionList
@@ -369,7 +369,7 @@ proc ::questlog::app::on_filter {snapshot} {
 
 # ---- scan callbacks ----------------------------------------------------
 
-proc ::questlog::app::on_scan_row {row} {
+proc ::questlog::ui::app::on_scan_row {row} {
     variable SessionList
     $SessionList on_scan_row $row
     # Queue a cost task only for rows that don't yet carry one. A
@@ -388,7 +388,7 @@ proc ::questlog::app::on_scan_row {row} {
 # flushed in one pass every cost_coalesce_ms, so a flood of worker results does
 # not churn the list (each render is a main-thread text mutation) while the user
 # interacts. immediate restores the per-result render.
-proc ::questlog::app::on_cost_result {path cost_dict} {
+proc ::questlog::ui::app::on_cost_result {path cost_dict} {
     variable Scan
     variable SessionList
     variable CostPending
@@ -407,7 +407,7 @@ proc ::questlog::app::on_cost_result {path cost_dict} {
 
 # Drain the buffered cost results in one render pass. Keyed by path, so repeated
 # results for one session within a window collapse to the last.
-proc ::questlog::app::flush_cost {} {
+proc ::questlog::ui::app::flush_cost {} {
     variable SessionList
     variable CostPending
     variable CostFlushTimer
@@ -422,7 +422,7 @@ proc ::questlog::app::flush_cost {} {
 # the list comes from. It is the default whenever no transient message (a scan
 # in flight, or the path of an opened session) is showing. (No "this Mac": the
 # design's wording is from a macOS mock; questlog is the native Linux tool.)
-proc ::questlog::app::scope_status {} {
+proc ::questlog::ui::app::scope_status {} {
     set pretty [::questlog::path::pretty_home [::questlog::path::projects_root]]
     return "Reading from $pretty · Claude Code CLI sessions only · [corpus_count] total"
 }
@@ -430,7 +430,7 @@ proc ::questlog::app::scope_status {} {
 # Count the session files across every project folder, independent of the
 # toolbar window: a directory walk over <projects_root>/*/*.jsonl with no file
 # reads, cheap enough to recompute whenever the resting line is shown.
-proc ::questlog::app::corpus_count {} {
+proc ::questlog::ui::app::corpus_count {} {
     set root [::questlog::path::projects_root]
     if {![file isdirectory $root]} { return 0 }
     set n 0
@@ -440,7 +440,7 @@ proc ::questlog::app::corpus_count {} {
     return $n
 }
 
-proc ::questlog::app::on_scan_progress {done total} {
+proc ::questlog::ui::app::on_scan_progress {done total} {
     variable StatusVar
     if {$done < $total} {
         set StatusVar "Scanning $done / $total…"
@@ -449,7 +449,7 @@ proc ::questlog::app::on_scan_progress {done total} {
 
 # Scan finished: fall back to the resting corpus-scope line rather than a
 # transient "scanned N" message, so the bar's idle state always names the source.
-proc ::questlog::app::on_scan_done {scanned} {
+proc ::questlog::ui::app::on_scan_done {scanned} {
     variable StatusVar
     set StatusVar [scope_status]
 }
@@ -461,7 +461,7 @@ proc ::questlog::app::on_scan_done {scanned} {
 # folder-grouped pass when the event loop next goes idle, so typing always
 # preempts and a broad term cannot freeze the list; immediate renders each
 # session as it arrives (still one anchored pass per session, never per match).
-proc ::questlog::app::on_search_file {matches} {
+proc ::questlog::ui::app::on_search_file {matches} {
     variable SessionList
     variable SearchPending
     variable SearchFlushTimer
@@ -480,13 +480,13 @@ proc ::questlog::app::on_search_file {matches} {
 # slice stops at that wall-clock budget and re-arms at idle to finish, so even a
 # match-every-file query never blocks input beyond one budget; 0 renders the
 # whole buffer in one idle pass.
-proc ::questlog::app::flush_search {} {
+proc ::questlog::ui::app::flush_search {} {
     variable SessionList
     variable SearchPending
     variable SearchFlushTimer
     set SearchFlushTimer ""
     if {[llength $SearchPending] == 0} return
-    set SearchPending [lsort -command ::questlog::app::cmp_search_folder $SearchPending]
+    set SearchPending [lsort -command ::questlog::ui::app::cmp_search_folder $SearchPending]
     set slice_ms [::questlog::config::get search_render_slice_ms]
     set deadline [expr {[clock milliseconds] + $slice_ms}]
     $SessionList begin_batch
@@ -503,31 +503,31 @@ proc ::questlog::app::flush_search {} {
 
 # Order two buffered per-file entries by their folder, so a flush updates a
 # folder's sessions as one group.
-proc ::questlog::app::cmp_search_folder {a b} {
+proc ::questlog::ui::app::cmp_search_folder {a b} {
     return [string compare \
         [dict get [lindex $a 0] folder] [dict get [lindex $b 0] folder]]
 }
 
 # Drop buffered per-file results and cancel a pending flush, when the result set
 # is invalidated (a new search, a filter change, a cancel, quit).
-proc ::questlog::app::discard_search_buffer {} {
+proc ::questlog::ui::app::discard_search_buffer {} {
     variable SearchPending
     variable SearchFlushTimer
     if {$SearchFlushTimer ne ""} { after cancel $SearchFlushTimer; set SearchFlushTimer "" }
     set SearchPending [list]
 }
 
-proc ::questlog::app::on_search_progress {done total matches} {
+proc ::questlog::ui::app::on_search_progress {done total matches} {
     variable SessionList
     $SessionList set_progress $done $total $matches
 }
 
-proc ::questlog::app::on_search_done {total matches} {
+proc ::questlog::ui::app::on_search_done {total matches} {
     variable SessionList
     $SessionList set_done $total $matches
 }
 
-proc ::questlog::app::on_search_cancel {} {
+proc ::questlog::ui::app::on_search_cancel {} {
     variable Search
     $Search cancel
     discard_search_buffer
@@ -536,7 +536,7 @@ proc ::questlog::app::on_search_cancel {} {
 # The Show-all banner in SessionList calls this when the user clicks
 # Show all. Drop the auto-applied under chip; the toolbar will republish
 # the snapshot and the banner will hide on the next apply_filter.
-proc ::questlog::app::on_show_all {} {
+proc ::questlog::ui::app::on_show_all {} {
     variable Toolbar
     $Toolbar clear_under_auto
 }
@@ -547,7 +547,7 @@ proc ::questlog::app::on_show_all {} {
 # session in the viewer pane and anchor it to lineno (0 = top), replacing the
 # empty state. The active search query rides along so the viewer can index the
 # matches in-transcript.
-proc ::questlog::app::on_open {path lineno} {
+proc ::questlog::ui::app::on_open {path lineno} {
     variable Viewer
     variable StatusVar
     variable CurrentQuery
@@ -564,7 +564,7 @@ proc ::questlog::app::on_open {path lineno} {
 # paths is a list of session paths to move to a single destination. The
 # dialog excludes the source's own folder only when exactly one session is
 # moved; a group may span folders, so no folder is excluded then.
-proc ::questlog::app::on_move_request {paths} {
+proc ::questlog::ui::app::on_move_request {paths} {
     variable Scan
     set current_folder ""
     if {[llength $paths] == 1} {
@@ -576,7 +576,7 @@ proc ::questlog::app::on_move_request {paths} {
         [list [namespace current]::on_picker_done $paths]
 }
 
-proc ::questlog::app::on_picker_done {paths dst_cwd} {
+proc ::questlog::ui::app::on_picker_done {paths dst_cwd} {
     do_move_batch $paths $dst_cwd
 }
 
@@ -584,7 +584,7 @@ proc ::questlog::app::on_picker_done {paths dst_cwd} {
 # canonical resolver. A drop onto a folder that cannot be resolved (its
 # underlying project directory is gone or ambiguous) is refused rather than
 # silently moving into an orphan.
-proc ::questlog::app::on_drop_move {paths target_folder_basename} {
+proc ::questlog::ui::app::on_drop_move {paths target_folder_basename} {
     variable Scan
     set dst_cwd [$Scan resolve_folder $target_folder_basename]
     if {$dst_cwd eq ""} {
@@ -598,7 +598,7 @@ proc ::questlog::app::on_drop_move {paths target_folder_basename} {
 # Move every path to dst_cwd, then report any failures in one dialog so a
 # batch does not spray a messagebox per session. Successful moves have
 # already updated the list.
-proc ::questlog::app::do_move_batch {paths dst_cwd} {
+proc ::questlog::ui::app::do_move_batch {paths dst_cwd} {
     set failures [list]
     foreach src_path $paths {
         if {[catch {move_one $src_path $dst_cwd} err]} {
@@ -615,7 +615,7 @@ proc ::questlog::app::do_move_batch {paths dst_cwd} {
 # already in the destination's encoded folder is a silent no-op - the only
 # "succeed without effect" path. A filesystem failure throws (the error
 # reaches do_move_batch).
-proc ::questlog::app::move_one {src_path dst_cwd} {
+proc ::questlog::ui::app::move_one {src_path dst_cwd} {
     variable SessionList
     variable Scan
     set src_basename [file tail [file dirname $src_path]]
@@ -636,7 +636,7 @@ proc ::questlog::app::move_one {src_path dst_cwd} {
 # guard and is reported rather than crashing. The bit is the truth: flip it,
 # refresh the cached field, then re-derive that one row's marker immediately
 # so the user sees it without waiting for a tick.
-proc ::questlog::app::on_bookmark_toggle {path} {
+proc ::questlog::ui::app::on_bookmark_toggle {path} {
     variable Scan
     variable SessionList
     if {[file executable $path]} {
@@ -655,14 +655,14 @@ proc ::questlog::app::on_bookmark_toggle {path} {
 
 # Synchronously scan one file into Rows, for the reconciler to surface a
 # running session that the windowed scan has not reached.
-proc ::questlog::app::on_scan_path {path} {
+proc ::questlog::ui::app::on_scan_path {path} {
     variable Scan
     return [$Scan scan_path $path]
 }
 
 # A session's subagents as child row dicts, for the list to render under it on
 # expand (issue #13). A pure read; children never enter Rows.
-proc ::questlog::app::on_subagents {path} {
+proc ::questlog::ui::app::on_subagents {path} {
     variable Scan
     return [$Scan subagents_for $path]
 }
@@ -670,18 +670,18 @@ proc ::questlog::app::on_subagents {path} {
 # Trigger the cost second pass for one subagent file. The result returns through
 # on_cost_result; update_cost no-ops there (the child is not in Rows) and the
 # session list's refresh_cost routes it to the child row.
-proc ::questlog::app::on_subagent_cost {path} {
+proc ::questlog::ui::app::on_subagent_cost {path} {
     start_cost_one $path
 }
 
 # ---- shared helpers exposed to UI components --------------------------
 
-proc ::questlog::app::resolve_folder {folder} {
+proc ::questlog::ui::app::resolve_folder {folder} {
     variable Scan
     return [$Scan resolve_folder $folder]
 }
 
-proc ::questlog::app::lookup_session {path} {
+proc ::questlog::ui::app::lookup_session {path} {
     variable Scan
     return [$Scan lookup $path]
 }
@@ -690,12 +690,12 @@ proc ::questlog::app::lookup_session {path} {
 # the user is mid-keystroke in the search field. Delegates to the Toolbar, which
 # records the keystroke deadline; the lib never references the ui directly, the
 # prefix is injected at construction.
-proc ::questlog::app::scan_is_typing {} {
+proc ::questlog::ui::app::scan_is_typing {} {
     variable Toolbar
     return [$Toolbar is_typing]
 }
 
-proc ::questlog::app::quit {} {
+proc ::questlog::ui::app::quit {} {
     variable Search
     variable Scan
     variable RunTimer
@@ -719,7 +719,7 @@ proc ::questlog::app::quit {} {
 
 # ---- background cost queue ---------------------------------------------
 
-proc ::questlog::app::init_cost_pool {} {
+proc ::questlog::ui::app::init_cost_pool {} {
     variable CostPool
     variable CostWorkerScript
     variable Root
@@ -731,19 +731,19 @@ proc ::questlog::app::init_cost_pool {} {
         -initcmd $initcmd]
 }
 
-proc ::questlog::app::start_cost_one {path} {
+proc ::questlog::ui::app::start_cost_one {path} {
     variable CostPool
     variable CostEpoch
     if {$CostPool eq ""} return
     tpool::post -nowait $CostPool [list dispatch_main $path [thread::id] $CostEpoch]
 }
 
-proc ::questlog::app::cancel_cost {} {
+proc ::questlog::ui::app::cancel_cost {} {
     variable CostEpoch
     incr CostEpoch
 }
 
-proc ::questlog::app::on_cost_worker_result {path epoch result} {
+proc ::questlog::ui::app::on_cost_worker_result {path epoch result} {
     variable CostEpoch
     if {$epoch != $CostEpoch} return
     if {![dict get $result ok]} return

@@ -10,7 +10,7 @@ package require Tcl 9
 # line saying what it does and which way it leans, so the whole tuning surface
 # is read and changed in one file.
 #
-# Same shape as ::questlog::theme: a single dict and a `get` accessor that
+# Same shape as ::questlog::ui::theme: a single dict and a `get` accessor that
 # errors loudly on an unknown key, so a typo surfaces at startup. No class -
 # pure data with a reader, like theme.tcl and path.tcl.
 #

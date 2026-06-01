@@ -17,7 +17,7 @@ package require Tcl 9
 # A record whose extract_text is empty (a tool-only turn or a metadata snapshot)
 # emits no turn but still advances the clock, the same as the viewer, so an idle
 # gap is measured from the last real message either side of the quiet records.
-namespace eval ::questlog::markdown {
+namespace eval ::questlog::ui::markdown {
     namespace export export_session
 }
 
@@ -25,7 +25,7 @@ namespace eval ::questlog::markdown {
 # line (the read+parse idiom of ::questlog::jsonl::last_assistant_text: utf-8,
 # replace profile), classifies each record by type, and emits a role heading
 # plus the text body. Returns "" for a file that cannot be opened.
-proc ::questlog::markdown::export_session {path} {
+proc ::questlog::ui::markdown::export_session {path} {
     if {[catch {open $path r} fh]} { return "" }
     chan configure $fh -encoding utf-8 -profile replace
 
@@ -90,7 +90,7 @@ proc ::questlog::markdown::export_session {path} {
 # Map a record type to its export role heading. Conversation types only;
 # anything else has already been filtered out by an empty extract_text, but a
 # defensive default keeps an unexpected type labelled rather than blank.
-proc ::questlog::markdown::role_label {type} {
+proc ::questlog::ui::markdown::role_label {type} {
     switch -- $type {
         user      { return USER }
         assistant { return ASSISTANT }

@@ -16,7 +16,7 @@ foreach f {config.tcl lib/cost.tcl ui/theme.tcl lib/path.tcl lib/filter.tcl lib/
            ui/drag.tcl ui/toolbar.tcl ui/sessions.tcl} {
     source [file join $ROOT $f]
 }
-::questlog::theme::init
+::questlog::ui::theme::init
 
 ::questlog::path::_real_file delete -force $SAND
 set PROJDIR [file join $SAND .claude projects $FOLDER]

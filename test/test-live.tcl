@@ -34,9 +34,9 @@ set mystart [real_procstart $me]
 set deadpid 2147480000
 
 # ---- direct predicate ----------------------------------------------
-check alive_match    1 [::questlog::live::proc_alive_matching $me $mystart]
-check alive_mismatch 0 [::questlog::live::proc_alive_matching $me 0]
-check dead_pid       0 [::questlog::live::proc_alive_matching $deadpid $mystart]
+check alive_match    1 [::questlog::ui::live::proc_alive_matching $me $mystart]
+check alive_mismatch 0 [::questlog::ui::live::proc_alive_matching $me 0]
+check dead_pid       0 [::questlog::ui::live::proc_alive_matching $deadpid $mystart]
 
 # ---- running_uuids over a synthetic registry -----------------------
 set ::env(HOME) /tmp/questlog-test-live-home
@@ -55,7 +55,7 @@ write_rec alive.json $me      alive-uuid /home/test/code/foo $mystart
 write_rec dead.json  $deadpid dead-uuid  /home/test/code/bar 12345
 write_rec reuse.json $me      reuse-uuid /home/test/code/baz 0   ;# pid alive, wrong start
 
-set running [::questlog::live::running_uuids]
+set running [::questlog::ui::live::running_uuids]
 check alive_present 1 [dict exists $running alive-uuid]
 check dead_absent   0 [dict exists $running dead-uuid]
 check reuse_absent  0 [dict exists $running reuse-uuid]
