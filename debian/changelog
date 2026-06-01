@@ -1,3 +1,13 @@
+questlog (1.1.1) unstable; urgency=medium
+
+  * Fix: duplicate token counting corrected by deduplicating on requestId.
+  * Fix: folder heading overwrite bug fixed.
+  * Subagent metrics fold up to the parent session level.
+  * CLI: --json flag replaces --cli; --help/-h handled.
+  * Cost module refactored as a pure domain library.
+
+ -- Weiwu Zhang <a@colourful.land>  Mon, 01 Jun 2026 00:00:00 +0000
+
 questlog (1.1.0) unstable; urgency=medium
 
   * Subagents surface under their parent session in the list and search.

@@ -1,5 +1,5 @@
 Name:           questlog
-Version:        1.1.0
+Version:        1.1.1
 Release:        1%{?dist}
 Summary:        GUI for finding, reading, and reopening past Claude Code sessions
 License:        MIT
@@ -58,6 +58,13 @@ install -D -m 0644 assets/questlog-512.png \
 %{_datadir}/icons/hicolor/512x512/apps/questlog.png
 
 %changelog
+* Mon Jun 01 2026 Weiwu Zhang <a@colourful.land> - 1.1.1-1
+- Fix: duplicate token counting corrected by deduplicating on requestId
+- Fix: folder heading overwrite bug fixed
+- Subagent metrics fold up to the parent session level
+- CLI: --json flag replaces --cli; --help/-h handled
+- Cost module refactored as a pure domain library
+
 * Mon Jun 01 2026 Weiwu Zhang <a@colourful.land> - 1.1.0-1
 - Subagents surface under their parent session in the list and search
 - Tool-call audit timeline in the session viewer
