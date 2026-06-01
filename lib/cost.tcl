@@ -123,7 +123,8 @@ proc ::questlog::cost::iso_to_epoch {ts} {
 }
 
 proc ::questlog::cost::parse_file {path} {
-    set per_model [dict create]
+    set req_usage [dict create]
+    set dummy_req 0
     set first_ts ""
     set last_ts ""
     set turns 0
@@ -137,32 +138,42 @@ proc ::questlog::cost::parse_file {path} {
             if {$first_ts eq ""} { set first_ts $m }
             set last_ts $m
         }
-        if {[regexp {"role":"user","content":"} $line]} {
-            incr turns
-        }
+        if {[regexp {"role":"user","content":"} $line]} { incr turns }
         if {![regexp {"type":"assistant"} $line]} continue
         if {[catch {::json::json2dict $line} rec]} continue
         if {![dict exists $rec message]} continue
         set msg [dict get $rec message]
-        set model ""
-        if {[dict exists $msg model]} { set model [dict get $msg model] }
+
+        set req_id [dict getdef $rec requestId [dict getdef $msg requestId ""]]
+        if {$req_id eq ""} { set req_id "dummy-[incr dummy_req]" }
+
+        set model [dict getdef $msg model "unknown"]
         if {![dict exists $msg usage]} continue
         set u [dict get $msg usage]
-        set in_t  [expr {[dict exists $u input_tokens] ? [dict get $u input_tokens] : 0}]
-        set out_t [expr {[dict exists $u output_tokens] ? [dict get $u output_tokens] : 0}]
-        set cw_t  [expr {[dict exists $u cache_creation_input_tokens] ? [dict get $u cache_creation_input_tokens] : 0}]
-        set cr_t  [expr {[dict exists $u cache_read_input_tokens] ? [dict get $u cache_read_input_tokens] : 0}]
-        if {$model eq ""} { set model unknown }
-        if {[dict exists $per_model $model]} {
-            lassign [dict get $per_model $model] pi po pw pr
-            dict set per_model $model [list \
-                [expr {$pi+$in_t}] [expr {$po+$out_t}] \
-                [expr {$pw+$cw_t}] [expr {$pr+$cr_t}]]
+        set in_t  [dict getdef $u input_tokens 0]
+        set out_t [dict getdef $u output_tokens 0]
+        set cw_t  [dict getdef $u cache_creation_input_tokens 0]
+        set cr_t  [dict getdef $u cache_read_input_tokens 0]
+
+        if {[dict exists $req_usage $req_id]} {
+            lassign [dict get $req_usage $req_id] om oi oo ow or
+            if {$om eq "unknown"} { set om $model }
+            dict set req_usage $req_id [list $om \
+                [expr {max($in_t, $oi)}] [expr {max($out_t, $oo)}] \
+                [expr {max($cw_t, $ow)}] [expr {max($cr_t, $or)}]]
         } else {
-            dict set per_model $model [list $in_t $out_t $cw_t $cr_t]
+            dict set req_usage $req_id [list $model $in_t $out_t $cw_t $cr_t]
         }
     }
     close $fh
+
+    set per_model [dict create]
+    dict for {_ counts} $req_usage {
+        lassign $counts m i o w r
+        lassign [dict getdef $per_model $m {0 0 0 0}] pi po pw pr
+        dict set per_model $m [list [expr {$pi+$i}] [expr {$po+$o}] [expr {$pw+$w}] [expr {$pr+$r}]]
+    }
+
     return [dict create per_model $per_model \
         first_ts $first_ts last_ts $last_ts turns $turns ok 1]
 }
