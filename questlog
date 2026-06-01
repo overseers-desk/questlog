@@ -56,8 +56,6 @@ source [file join $ROOT lib match.tcl]
 source [file join $ROOT lib scan.tcl]
 source [file join $ROOT lib cost.tcl]
 source [file join $ROOT lib search.tcl]
-source [file join $ROOT lib cli.tcl]
-
 # In CLI mode, set up matcher caps and execute directly, bypassing the UI completely
 if {$CLI_MODE} {
     source [file join $ROOT cli main.tcl]
@@ -87,10 +85,28 @@ source [file join $ROOT lib app.tcl]
 # A leading criterion-type token (pattern|read|wrote|edited) launches the GUI
 # pre-seeded with that criteria chain; otherwise the -regex flag prefills a
 # pattern criterion. Either way the GUI opens normally.
-if {[::questlog::cli::is_cli $argv]} {
-    set initial_criteria [::questlog::cli::parse $argv]
+set initial_criteria [list]
+set arg_kinds [dict create \
+    pattern pattern  regex pattern \
+    read    read \
+    wrote   wrote    write wrote \
+    edited  edited   edit  edited]
+
+if {[llength $argv] > 0 && [dict exists $arg_kinds [lindex $argv 0]]} {
+    if {[llength $argv] % 2 != 0} {
+        puts stderr "usage: questlog <type> <value> \[<type> <value> ...\]"
+        puts stderr "  type: pattern | read | wrote | edited  (aliases: regex, write, edit)"
+        exit 2
+    }
+    foreach {type value} $argv {
+        if {![dict exists $arg_kinds $type] || $value eq ""} {
+            puts stderr "usage: questlog <type> <value> \[<type> <value> ...\]"
+            puts stderr "  type: pattern | read | wrote | edited  (aliases: regex, write, edit)"
+            exit 2
+        }
+        lappend initial_criteria [dict create type [dict get $arg_kinds $type] value $value]
+    }
 } else {
-    set initial_criteria [list]
     for {set i 0} {$i < [llength $argv]} {incr i} {
         set a [lindex $argv $i]
         if {$a eq "-regex" || $a eq "--regex"} {
