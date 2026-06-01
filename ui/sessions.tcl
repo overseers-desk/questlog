@@ -50,7 +50,7 @@ proc ::questlog::ui::session_columns {} {
 #
 # A text widget is the list; position is tracked with text marks:
 #   TailMark   right-gravity, always just before the implicit final newline.
-#   <folder>   fmark left-gravity at the heading start; femark right-gravity
+#   <folder>   fmark right-gravity at the heading start; femark left-gravity
 #              at the end of the folder's session group (new sessions land
 #              here); htag, a per-folder tag on the heading line for drop
 #              hit-testing.
@@ -1531,7 +1531,7 @@ oo::class create ::questlog::ui::SessionList {
             [list folderhead $htag]
         my apply_folder_tags $fstart $info
         $Text mark set $fmark $fstart
-        $Text mark gravity $fmark left
+        $Text mark gravity $fmark right
         $Text mark set $femark [$Text index TailMark]
         $Text mark gravity $femark left
         dict set HtagFolder $htag $folder
@@ -1609,8 +1609,11 @@ oo::class create ::questlog::ui::SessionList {
         set fmark [dict get $f fmark]
         set info [my folder_heading_info $folder]
         $Text delete $fmark "$fmark lineend"
+        # Temporarily set gravity to left so the insert does not push fmark
+        $Text mark gravity $fmark left
         $Text insert $fmark [dict get $info line] \
             [list folderhead [dict get $f htag]]
+        $Text mark gravity $fmark right
         my apply_folder_tags $fmark $info
     }
 
