@@ -255,31 +255,28 @@ oo::class create ::questlog::ui::SessionList {
         $Text tag configure selected -background [::questlog::theme::c sel]
         $Text tag configure drop-candidate -background [::questlog::theme::c drop]
 
-        # Snippet rows: a type label in a left column, the matched line beside it.
-        # Indented past the header so each block reads title-then-evidence. The
-        # column is sized to the widest rendered label ("TOOL RESULT") in its
-        # own bold font; content is the proportional QLList, like the headers.
+        # Snippet rows: a rounded type-badge pill in a left column, the matched
+        # line beside it. Indented past the header so each block reads
+        # title-then-evidence. The badge is an embedded label drawing the shared
+        # qlBadge_<type> pill image (theme::build_chrome), so the content column
+        # is sized from that pill's width; content is the proportional QLList.
         set barcol 22
-        set lm 40
-        set tw [font measure QLBold "TOOL RESULT  "]
-        set content_col [expr {$lm + $tw}]
+        # Tk positions an embedded window at the line's -lmargin2, not after the
+        # preceding glyph, so the badge column IS lmargin2: just past the bar
+        # glyph. lmargin1 holds the bar; a single tab then aligns content.
+        set badgecol [expr {$barcol + [font measure QLList "▏"] + 6}]
+        set bpw [image width [::questlog::theme::badge_pill system]]
+        set content_col [expr {$badgecol + $bpw + 12}]
         $Text configure -tabs [list $content_col left]
         # A thin session-grouping spine runs in the gutter to the left of the
-        # badge column: every snippet line opens with a bar glyph, so the matches
-        # of one session stack into one continuous rule (the design's MatchList
-        # left guide). The badge then tabs to $lm and content to $content_col;
-        # -wrap none clips each match to a single row, as the design ellipsises it.
-        $Text tag configure snippet -lmargin1 $barcol -lmargin2 $content_col \
-            -tabs [list $lm left $content_col left] -wrap none \
+        # badge: every snippet line opens with a bar glyph, so the matches of one
+        # session stack into one continuous rule (the design's MatchList left
+        # guide). The badge (an embedded pill) sits at lmargin2; content tabs to
+        # content_col. -wrap none clips each match to one row, as the design does.
+        $Text tag configure snippet -lmargin1 $barcol -lmargin2 $badgecol \
+            -tabs [list $content_col left] -wrap none \
             -font QLList -foreground [::questlog::theme::c snippet] -spacing3 1
         $Text tag configure snippetbar -foreground [::questlog::theme::c snippet_guide]
-        # Snippet type labels are small tinted pill badges (role foreground on a
-        # pale background), matching the design's SNIPPET_COLORS.
-        $Text tag configure type-user        -foreground [::questlog::theme::c user]        -background [::questlog::theme::c user_bg]        -font QLBold
-        $Text tag configure type-assistant   -foreground [::questlog::theme::c assistant]   -background [::questlog::theme::c assistant_bg]   -font QLBold
-        $Text tag configure type-tool_use    -foreground [::questlog::theme::c tool]        -background [::questlog::theme::c tool_bg]        -font QLBold
-        $Text tag configure type-tool_result -foreground [::questlog::theme::c tool_result] -background [::questlog::theme::c tool_result_bg] -font QLBold
-        $Text tag configure type-system      -foreground [::questlog::theme::c system]      -background [::questlog::theme::c system_bg]      -font QLBold
         # Metadata cells (date, size, cost): the muted grey column run pinned
         # to the right of each session line. Proportional QLList, aligned by
         # the sessionhead right tab stops, not a monospace font.
@@ -823,19 +820,31 @@ oo::class create ::questlog::ui::SessionList {
     method render_snippet {path btype content lineoff} {
         set semark [dict get $Sessions $path semark]
         set ntag "n#[incr NextId]"
-        set type_tag type-$btype
-        if {[lsearch -exact [$Text tag names] $type_tag] < 0} {
-            set type_tag type-system
-        }
+        # Normalise to a type with a known badge pill; an unknown block type
+        # falls back to the neutral system pill.
+        set fgrole [dict getdef {
+            user user assistant assistant tool_use tool
+            tool_result tool_result system system
+        } $btype system]
+        set bt [expr {$fgrole eq "system" && $btype ne "system" ? "system" : $btype}]
         # Build at a temporary right-gravity mark so the pieces land in order;
         # semark is left gravity and would otherwise reverse successive inserts.
         set tmp tmpsnip
         $Text mark set $tmp [$Text index $semark]
         $Text mark gravity $tmp right
         $Text insert $tmp "▏" [list snippet snippetbar $ntag]
-        $Text insert $tmp "\t" [list snippet $ntag]
-        $Text insert $tmp [string toupper [string map {_ { }} $btype]] \
-            [list snippet $type_tag $ntag]
+        # Rounded type badge: a label drawing the type name centred over the
+        # shared pill image (Tk's SVG cannot render text itself). It is created
+        # lazily through -create so only the on-screen badges become real widgets
+        # — a whole-corpus search can list thousands of snippets, and eagerly
+        # building a widget per badge pegs a core; -create keeps it to a screenful.
+        set wstart [$Text index $tmp]
+        $Text window create $tmp -align center -pady 1 -padx 3 \
+            -create [list [self] make_badge $bt $fgrole $path $lineoff]
+        # The window segment must carry the snippet tag too, or its untagged
+        # -wrap (the widget default `word`) lets the row wrap to a second line.
+        $Text tag add snippet $wstart "$wstart +1c"
+        $Text tag add $ntag   $wstart "$wstart +1c"
         $Text insert $tmp "\t" [list snippet $ntag]
         set cstart [$Text index $tmp]
         $Text insert $tmp $content [list snippet $ntag]
@@ -859,6 +868,21 @@ oo::class create ::questlog::ui::SessionList {
             $Text mark set [dict get [dict get $Folders $folder] femark] \
                 [$Text index $semark]
         }
+    }
+
+    # Build one snippet badge on demand (the text widget's -create callback when
+    # the row scrolls into view). Embedded windows do not inherit the row's tag
+    # bindings, so click and context-menu are forwarded to the same handlers.
+    method make_badge {bt fgrole path lineoff} {
+        set b $Text.badge[incr NextId]
+        label $b -image [::questlog::theme::badge_pill $bt] -compound center \
+            -text [string toupper [string map {_ { }} $bt]] \
+            -font QLBold -foreground [::questlog::theme::c $fgrole] \
+            -background [$Text cget -background] -borderwidth 0 \
+            -takefocus 0 -cursor hand2
+        bind $b <ButtonRelease-1> [list [self] on_snippet_release $path $lineoff]
+        bind $b <<ContextMenu>>   [list [self] on_session_right $path %X %Y]
+        return $b
     }
 
     method session_label {path row} {
