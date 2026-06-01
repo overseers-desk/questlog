@@ -57,16 +57,17 @@ source [file join $ROOT lib scan.tcl]
 source [file join $ROOT lib cost.tcl]
 source [file join $ROOT lib search.tcl]
 source [file join $ROOT lib cli.tcl]
-source [file join $ROOT lib cli_mode.tcl]
 
 # In CLI mode, set up matcher caps and execute directly, bypassing the UI completely
 if {$CLI_MODE} {
+    source [file join $ROOT cli main.tcl]
+    source [file join $ROOT cli cost.tcl]
     ::questlog::match::set_caps [dict create \
         content_cap     [::questlog::config::get content_cap] \
         snippet_radius  [::questlog::config::get snippet_radius] \
         tool_param_cap  [::questlog::config::get tool_param_cap] \
         tool_render_cap [::questlog::config::get tool_render_cap]]
-    ::questlog::cli_mode::run $argv
+    ::questlog::cli::main::run $argv
     exit 0
 }
 

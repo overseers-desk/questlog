@@ -1,16 +1,16 @@
 package require Tcl 9
 package require json
 
-namespace eval ::questlog::cli_mode {}
+namespace eval ::questlog::cli::main {}
 
 # Escape characters to output valid JSON strings.
-proc ::questlog::cli_mode::escape_json {str} {
+proc ::questlog::cli::main::escape_json {str} {
     set map [list "\\" "\\\\" "\"" "\\\"" "\n" "\\n" "\r" "\\r" "\t" "\\t"]
     return [string map $map $str]
 }
 
 # Helper to format match records into JSON array elements
-proc ::questlog::cli_mode::format_matches {matches} {
+proc ::questlog::cli::main::format_matches {matches} {
     set parts [list]
     foreach m $matches {
         lappend parts [format {{"line":%d,"type":"%s","content":"%s"}} \
@@ -23,7 +23,7 @@ proc ::questlog::cli_mode::format_matches {matches} {
 
 # Print JSON to stdout. Hand-crafted serializer is extremely robust and
 # completely free of external dependencies or type-guessing bugs.
-proc ::questlog::cli_mode::format_json {folders_dict} {
+proc ::questlog::cli::main::format_json {folders_dict} {
     set folder_parts [list]
     dict for {folder data} $folders_dict {
         set sessions [dict get $data sessions]
@@ -64,8 +64,8 @@ proc ::questlog::cli_mode::format_json {folders_dict} {
 }
 
 # Print command-line mode usage and exit.
-proc ::questlog::cli_mode::usage {} {
-    puts stderr "usage: questlog --cli \[options\] \[search_term\]"
+proc ::questlog::cli::main::usage {} {
+    puts stderr "usage: questlog --json \[options\] \[search_term\]"
     puts stderr "options:"
     puts stderr "  --limit <N>             Limit the number of returned sessions (default: 50, use 0 for unlimited)"
     puts stderr "  --limit-matches <N>     Limit matched snippets per session/subagent (0 = none)"
@@ -76,12 +76,12 @@ proc ::questlog::cli_mode::usage {} {
     puts stderr "  --edited <file>         Filter sessions by edited file (aliases: --edit)"
     puts stderr "  --under <dir>           Filter sessions located under the specified directory"
     puts stderr "alternative positional filters:"
-    puts stderr "  questlog --cli \[pattern <regex>\] \[read <file>\] \[wrote <file>\] \[edited <file>\]"
+    puts stderr "  questlog --json \[pattern <regex>\] \[read <file>\] \[wrote <file>\] \[edited <file>\]"
     exit 2
 }
 
 # Helper to filter and limit matches to the requested cap
-proc ::questlog::cli_mode::limit_matches {matches limit_cap {sub_path ""}} {
+proc ::questlog::cli::main::limit_matches {matches limit_cap {sub_path ""}} {
     set out [list]
     if {$limit_cap <= 0} { return $out }
     set idx 0
@@ -98,7 +98,7 @@ proc ::questlog::cli_mode::limit_matches {matches limit_cap {sub_path ""}} {
 }
 
 # Run the command-line search engine.
-proc ::questlog::cli_mode::run {argv} {
+proc ::questlog::cli::main::run {argv} {
     variable ::ROOT
     if {![info exists ROOT]} {
         set ROOT [file dirname [file dirname [file normalize [info script]]]]
@@ -117,7 +117,10 @@ proc ::questlog::cli_mode::run {argv} {
     for {set i 0} {$i < [llength $argv]} {incr i} {
         set arg [lindex $argv $i]
         switch -exact -- $arg {
-            --cli - --cmd {}
+            --json - --cmd {}
+            --help - -h {
+                ::questlog::cli::main::usage
+            }
             --limit         { set limit [lindex $argv [incr i]] }
             --limit-matches { set limit_matches [lindex $argv [incr i]] }
             --search        { set search_key [lindex $argv [incr i]] }
@@ -129,7 +132,7 @@ proc ::questlog::cli_mode::run {argv} {
             default {
                 if {[string match "-*" $arg]} {
                     puts stderr "Unknown option: $arg"
-                    ::questlog::cli_mode::usage
+                    ::questlog::cli::main::usage
                 }
                 set next [lindex $argv [expr {$i + 1}]]
                 set map [dict create regex pattern write wrote edit edited]
@@ -251,7 +254,7 @@ proc ::questlog::cli_mode::run {argv} {
         set parent_uuid [dict get $parent_row uuid]
 
         # Calculate parent cost synchronously
-        set cost_info [::questlog::cost::compute_cost_sync $parent_path]
+        set cost_info [::questlog::cli::cost::compute_sync $parent_path]
         set parent_cost [dict getdef $cost_info cost_usd ""]
         set parent_turns [dict getdef $cost_info turns 0]
         set parent_duration [dict getdef $cost_info duration_secs ""]
@@ -263,7 +266,7 @@ proc ::questlog::cli_mode::run {argv} {
         set subagents_list [list]
         foreach sub [$scan subagents_for $parent_path] {
             set sub_path [dict get $sub path]
-            set sub_cost_info [::questlog::cost::compute_cost_sync $sub_path]
+            set sub_cost_info [::questlog::cli::cost::compute_sync $sub_path]
             
             # Find and limit matching snippets for this subagent if any
             set limited_sub_matches [limit_matches [dict getdef $group_data subagent_matches {}] $sub_limit $sub_path]

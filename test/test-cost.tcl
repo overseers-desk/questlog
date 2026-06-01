@@ -9,9 +9,7 @@ package require json
 set ROOT [file dirname [file dirname [file normalize [info script]]]]
 namespace eval ::questlog::cost {}
 source [file join $ROOT lib cost.tcl]
-# compute_cost lives in the worker prelude; eval it here to test it directly.
-eval $::questlog::cost::WorkerScript
-
+source [file join $ROOT cli cost.tcl]
 set failures 0
 proc check {name got want} {
     if {$got eq $want} {
@@ -53,13 +51,13 @@ puts $fd {{"type":"assistant","timestamp":"2026-04-25T10:30:00.000Z","message":{
 puts $fd {{"type":"user","timestamp":"2026-04-25T10:43:08.000Z","message":{"role":"user","content":"third prompt"}}}
 close $fd
 
-set r [compute_cost $fix]
+set r [::questlog::cost::parse_file $fix]
 check "turns counts typed prompts, not tool results" [dict get $r turns] 3
 check "first_ts is the earliest record"  [dict get $r first_ts] 2026-04-25T10:00:00.000Z
 check "last_ts is the latest record"      [dict get $r last_ts]  2026-04-25T10:43:08.000Z
+set cost_dict [::questlog::cli::cost::compute_sync $fix]
 check "duration from the fixture" \
-    [::questlog::cost::fmt_dur \
-        [::questlog::cost::dur_secs [dict get $r first_ts] [dict get $r last_ts]]] "43:08"
+    [::questlog::cost::fmt_dur [dict get $cost_dict duration_secs]] "43:08"
 file delete $fix
 
 if {$failures == 0} {

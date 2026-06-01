@@ -197,7 +197,3 @@ proc ::questlog::cost::build_cost_dict {res} {
         duration_secs [dur_secs $first_ts $last_ts]]
 }
 
-proc ::questlog::cost::compute_cost_sync {path} {
-    set res [parse_file $path]
-    return [build_cost_dict $res]
-}
