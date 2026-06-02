@@ -1,5 +1,5 @@
 Name:           questlog
-Version:        1.1.1
+Version:        1.1.2
 Release:        1%{?dist}
 Summary:        GUI for finding, reading, and reopening past Claude Code sessions
 License:        MIT
@@ -59,6 +59,10 @@ install -D -m 0644 assets/questlog-512.png \
 %{_datadir}/icons/hicolor/512x512/apps/questlog.png
 
 %changelog
+* Tue Jun 02 2026 Weiwu Zhang <a@colourful.land> - 1.1.2-1
+- CLI: the --json search composes by one boolean algebra; --keyword and --regex each take an optional :regions suffix; --or widens to OR, --not negates the next clause; --scope removed; --case for case-sensitive keywords
+- Time filter unified across CLI and GUI: --since takes a relative window (24h, 7d, 2w) or an absolute date (2026-04-01); the GUI time row gains a custom member with a date-picker popover
+- Packaging: install the cli/ scripts so --json and --shortstat work from packages
 * Mon Jun 01 2026 Weiwu Zhang <a@colourful.land> - 1.1.1-1
 - Fix: duplicate token counting corrected by deduplicating on requestId
 - Fix: folder heading overwrite bug fixed
