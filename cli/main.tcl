@@ -147,16 +147,14 @@ proc ::questlog::cli::main::push_leaf {leavesVar curVar negVar leaf} {
     set pending_neg 0
 }
 
-# Run the command-line search engine.
-proc ::questlog::cli::main::run {argv} {
-    variable ::ROOT
-    if {![info exists ROOT]} {
-        set ROOT [file dirname [file dirname [file normalize [info script]]]]
-    }
-
-    # 1. Parse arguments into a clause tree plus the global bounds. Clauses build
-    # an OR (--or) of AND-groups (adjacency) of optionally-negated (--not)
-    # leaves: groups is the closed AND-groups, cur the one being built.
+# parse_query argv - turn the clause and bound arguments into a query: the
+# matcher clauses (leaves + boolean tree + nocase) and the global bounds (limit,
+# limit_matches, under, since). The grammar is an OR (--or) of AND-groups
+# (adjacency) of optionally-negated (--not) leaves; groups is the closed
+# AND-groups and cur the one being built, while bounds ride outside the tree. A
+# malformed query prints a message and exits through usage. Separated from run so
+# the grammar is a unit a test can drive from argv to tree.
+proc ::questlog::cli::main::parse_query {argv} {
     set limit 50
     set limit_matches -1
     set under ""
@@ -248,6 +246,27 @@ proc ::questlog::cli::main::run {argv} {
         ::questlog::cli::main::usage
     }
 
+    return [dict create \
+        clauses [dict create leaves $leaves \
+            tree [::questlog::match::tnode_or $groups] nocase $nocase] \
+        limit $limit limit_matches $limit_matches under $under since $since]
+}
+
+# Run the command-line search engine.
+proc ::questlog::cli::main::run {argv} {
+    variable ::ROOT
+    if {![info exists ROOT]} {
+        set ROOT [file dirname [file dirname [file normalize [info script]]]]
+    }
+
+    # 1. Parse the query: clauses (the boolean tree of leaves) and global bounds.
+    set q [::questlog::cli::main::parse_query $argv]
+    set clauses       [dict get $q clauses]
+    set limit         [dict get $q limit]
+    set limit_matches [dict get $q limit_matches]
+    set under         [dict get $q under]
+    set since         [dict get $q since]
+
     # If --limit-matches is not set, default to config defaults
     if {$limit_matches == -1} {
         set sess_limit [::questlog::config::get snippets_per_session]
@@ -257,10 +276,8 @@ proc ::questlog::cli::main::run {argv} {
         set sub_limit $limit_matches
     }
 
-    # 2. Assemble the clause tree and the row-level bounds snapshot. The bounds
-    # (since, under, one_turn) ride outside the boolean algebra as global filters.
-    set clauses [dict create leaves $leaves \
-        tree [::questlog::match::tnode_or $groups] nocase $nocase]
+    # 2. The row-level bounds snapshot. The bounds (since, under, one_turn) ride
+    # outside the boolean algebra as global filters.
     set snapshot [dict create \
         under [expr {$under eq "" ? {} : [list $under]}] \
         since $since \
