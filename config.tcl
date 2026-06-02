@@ -5,8 +5,8 @@ package require Tcl 9
 # The numbers that govern the trade-off between scan/search throughput and UI
 # responsiveness used to sit as bare literals at the point of use: the yield
 # cadence in scan.tcl, the debounce interval in toolbar.tcl, the worker counts
-# in search.tcl and cost.tcl, the time-window hour map in three places. To find
-# the best feel meant hunting each one. Here every knob is named once, with a
+# in search.tcl and cost.tcl. To find the best feel meant hunting each one.
+# Here every knob is named once, with a
 # line saying what it does and which way it leans, so the whole tuning surface
 # is read and changed in one file.
 #
@@ -84,7 +84,7 @@ namespace eval ::questlog::config {
     # pass per session, never per match).
     dict set Config search_render coalesced
     # Caps each idle render slice to this many ms, yielding between slices, so a
-    # query matching every file in the window cannot block input beyond this on
+    # query matching every file in the since bound cannot block input beyond this on
     # any machine. 0 renders the whole idle batch in one pass (faster overall,
     # but an ~800ms hitch on a very broad term).
     dict set Config search_render_slice_ms 50
@@ -94,13 +94,13 @@ namespace eval ::questlog::config {
     # is O(running sessions), independent of the on-disk corpus.
     dict set Config running_poll_ms 2000
 
-    # ---- time windows ------------------------------------------------------
-    # The recency filter. window_hours maps each option to its hour count;
-    # window_options is the set the toolbar offers; window_default is the one a
-    # fresh launch starts on. all means no time bound.
-    dict set Config window_hours   {24h 24 7d 168 30d 720}
-    dict set Config window_options {24h 7d 30d all}
-    dict set Config window_default 7d
+    # ---- recency presets ---------------------------------------------------
+    # The recency filter. since_presets is the set the toolbar's radio offers;
+    # since_default is the one a fresh GUI launch starts on; "all" means no
+    # bound. A since value (a preset, or an open --since duration) is turned
+    # into a cutoff by ::questlog::filter::parse_since.
+    dict set Config since_presets {24h 7d 30d all}
+    dict set Config since_default 7d
 
     # ---- display caps ------------------------------------------------------
     # Tail bytes read for the most-recent agentName/aiTitle rename records.

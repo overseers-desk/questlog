@@ -38,7 +38,7 @@ namespace eval ::questlog::ui::app {
     variable CostWorkerScript ;# Script evaluated in each cost worker
 }
 
-proc ::questlog::ui::app::start {root {initial_criteria {}} {init_window ""} {init_search ""}} {
+proc ::questlog::ui::app::start {root {initial_criteria {}} {init_since ""} {init_search ""}} {
     variable Scan
     variable Search
     variable Toolbar
@@ -182,10 +182,10 @@ proc ::questlog::ui::app::start {root {initial_criteria {}} {init_window ""} {in
     foreach c $initial_criteria {
         $Toolbar add_value [dict get $c type] [dict get $c value]
     }
-    # Launch pre-fills: --window pre-selects the time radio, --search pre-fills
+    # Launch pre-fills: --since pre-selects the time radio, --search pre-fills
     # the search field. Applied before the first publish so the opening search
     # runs with them already in place.
-    if {$init_window ne ""} { $Toolbar set_window $init_window }
+    if {$init_since ne ""} { $Toolbar set_window $init_since }
     if {$init_search ne ""} { $Toolbar set_search $init_search }
 
     # Launch from inside a known project: seed an `under` chip with that

@@ -2,7 +2,7 @@ package require Tcl 9
 
 # ::questlog::filter - the single home for snapshot row-level matching.
 #
-# Whether a session row passes the toolbar's snapshot (time window, one_turn,
+# Whether a session row passes the toolbar's snapshot (recency bound, one_turn,
 # bookmarked_only, and the under-scope) is one question with one answer, asked
 # by both the model (Scan, when it filters its memoised rows) and the view
 # (SessionList, when it reconciles which rows stay shown). The cutoff
@@ -16,16 +16,29 @@ package require Tcl 9
 # criteria all fail, and a few procs over two dicts beat a class.
 
 namespace eval ::questlog::filter {
-    namespace export cutoff_for row_under_match row_matches
+    namespace export parse_since cutoff_for row_under_match row_matches
 }
 
-# Epoch cutoff for a snapshot's time window. 0 means no bound (window "all"),
-# and since on-disk mtimes are always positive a 0 cutoff filters nothing.
+# Seconds for a recency duration spec: an integer with a unit suffix (m
+# minutes, h hours, d days, w weeks). "" or "all" mean no bound and return "";
+# a malformed spec throws. The one home that interprets a since value: the GUI
+# offers a preset subset, the headless CLI accepts any.
+proc ::questlog::filter::parse_since {spec} {
+    if {$spec eq "" || $spec eq "all"} { return "" }
+    if {![regexp {^([0-9]+)([mhdw])$} $spec -> n unit]} {
+        error "invalid since duration: $spec"
+    }
+    return [expr {$n * [dict get {m 60 h 3600 d 86400 w 604800} $unit]}]
+}
+
+# Epoch cutoff for a snapshot's since bound. 0 means no bound ("all", or the
+# default when the key is absent); since on-disk mtimes are always positive a 0
+# cutoff filters nothing.
 proc ::questlog::filter::cutoff_for {snapshot} {
-    set window [dict getdef $snapshot window [::questlog::config::get window_default]]
-    if {$window eq "all"} { return 0 }
-    set hours [dict get [::questlog::config::get window_hours] $window]
-    return [expr {[clock seconds] - $hours*3600}]
+    set since [dict getdef $snapshot since [::questlog::config::get since_default]]
+    set secs [parse_since $since]
+    if {$secs eq ""} { return 0 }
+    return [expr {[clock seconds] - $secs}]
 }
 
 # 1 iff the row's cwd is at or below any folder in under_list. An exact-cwd hit
@@ -45,8 +58,8 @@ proc ::questlog::filter::row_under_match {row under_list} {
 }
 
 # 1 iff a row passes a snapshot's row-level filters. A bookmark (+x) pins the
-# row past the time window, so a bookmarked row survives an out-of-window mtime
-# and a bookmarked_only filter that a plain row would not.
+# row past the recency bound, so a bookmarked row survives an mtime older than
+# the cutoff and a bookmarked_only filter that a plain row would not.
 proc ::questlog::filter::row_matches {snapshot row} {
     set bk [dict getdef $row bookmarked 0]
     if {[dict getdef $snapshot bookmarked_only 0] && !$bk} { return 0 }

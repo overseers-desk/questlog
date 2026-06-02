@@ -21,14 +21,14 @@ if {"--json" in $argv || "--cmd" in $argv || "--help" in $argv || "-h" in $argv}
 # argv before the criteria parse so it composes with a criteria chain; applied
 # after the theme is initialised.
 set VIEWER_FONT ""
-set INIT_WINDOW ""
+set INIT_SINCE ""
 set INIT_SEARCH ""
 if {!$CLI_MODE} {
     set kept [list]
     for {set i 0} {$i < [llength $argv]} {incr i} {
         switch -- [lindex $argv $i] {
             --font   { set VIEWER_FONT [lindex $argv [incr i]] }
-            --window { set INIT_WINDOW [lindex $argv [incr i]] }
+            --since  { set INIT_SINCE [lindex $argv [incr i]] }
             --search { set INIT_SEARCH [lindex $argv [incr i]] }
             default  { lappend kept [lindex $argv $i] }
         }
@@ -129,5 +129,5 @@ if {[llength $argv] > 0 && ([string match tool:* $first] || $first in {pattern r
 
 ::questlog::ui::theme::init
 if {$VIEWER_FONT ne ""} { ::questlog::ui::theme::set_body_family $VIEWER_FONT }
-::questlog::ui::app::start $ROOT $initial_criteria $INIT_WINDOW $INIT_SEARCH
+::questlog::ui::app::start $ROOT $initial_criteria $INIT_SINCE $INIT_SEARCH
 

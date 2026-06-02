@@ -59,7 +59,7 @@ proc subagent_cost_cb {path} {
 
 set SL [::questlog::ui::SessionList new .s resolvef lookup noop noop noop noop scanpath noop noop subagentsf subagent_cost_cb]
 pack .s -fill both -expand 1
-$SL apply_filter [dict create window 7d one_turn 0]
+$SL apply_filter [dict create since 7d one_turn 0]
 
 set ns [info object namespace $SL]
 set fails 0
@@ -76,7 +76,7 @@ proc check {name got want} {
 
 # 1. Trigger the scan
 set ::scan_done 0
-$::Scan extend [dict create window 7d one_turn 0]
+$::Scan extend [dict create since 7d one_turn 0]
 # Wait a brief moment for scan to populate
 after 100 [list set ::scan_done 1]
 vwait ::scan_done

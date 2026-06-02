@@ -5,9 +5,9 @@ package require TclOO
 #
 # Replaces the previous sqlite-cached design. Each launch builds the row
 # table fresh by line-streaming each jsonl with Tcl regex (no jq, no
-# subprocess). Within one process the table is memoised across toolbar
-# window changes - shrinking the window filters in O(rows), growing
-# scans only the delta.
+# subprocess). Within one process the table is memoised across recency-bound
+# changes: tightening the since bound filters in O(rows), widening it scans
+# only the delta.
 #
 # Single-instance by current convention, not by structural constraint.
 # The class earns its existence under issue 67 on (a) named globals
@@ -165,13 +165,13 @@ oo::class create ::questlog::Scan {
         foreach folder [glob -nocomplain -directory $root -type d -- *] {
             foreach f [glob -nocomplain -directory $folder -- *.jsonl] {
                 set m [file mtime $f]
-                # A bookmarked (+x) file is kept regardless of the window
+                # A bookmarked (+x) file is kept regardless of the since bound
                 # so it always enters Rows and can be surfaced as a pin.
                 if {$m <= $cutoff && ![file executable $f]} continue
                 lappend pairs [list $f $m]
                 # A subagent belongs to its parent session, so it enters the
-                # search corpus whenever the parent is in window, regardless of
-                # its own mtime.
+                # search corpus whenever the parent is within the since bound,
+                # regardless of its own mtime.
                 if {$include_subagents} {
                     set uuid [file rootname [file tail $f]]
                     set subdir [file join $folder $uuid subagents]
@@ -451,7 +451,7 @@ oo::class create ::questlog::Scan {
     }
 
     # Scan a single file synchronously and publish it. Used by the running
-    # reconciler to bring a freshly-started (or out-of-window but live)
+    # reconciler to bring a freshly-started (or outside the since bound, but live)
     # session into Rows on demand. Returns the row, or {} if unreadable.
     method scan_path {path} {
         set row [my scan_one $path]

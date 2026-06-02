@@ -5,7 +5,7 @@ package require Tk
 #
 # Owns the filter state. Subscribers receive the full snapshot dict
 # whenever any control changes:
-#   window           24h | 7d | 30d | all
+#   since            24h | 7d | 30d | all
 #   search           string (user's typed search; empty when blank)
 #   search_case      0 | 1   (Aa toggle next to the search field)
 #   search_scope     anywhere | text | tool-call | tool-output
@@ -99,7 +99,7 @@ oo::class create ::questlog::ui::Toolbar {
     constructor {parent cwd} {
         set Top $parent
         set Cwd $cwd
-        set WindowVar  [::questlog::config::get window_default]
+        set WindowVar  [::questlog::config::get since_default]
         set SearchVar  ""
         set SearchCaseVar 0
         set SearchScopeVar anywhere
@@ -181,7 +181,7 @@ oo::class create ::questlog::ui::Toolbar {
         pack $Restrict.time.label -side left -padx {0 4}
         ttk::label $Restrict.time.rans -text "ran in the last"
         pack $Restrict.time.rans -side left -padx {0 8}
-        foreach w [::questlog::config::get window_options] {
+        foreach w [::questlog::config::get since_presets] {
             ttk::radiobutton $Restrict.time.r$w -text $w \
                 -variable [my varname WindowVar] -value $w \
                 -command [list [self] publish]
@@ -254,21 +254,21 @@ oo::class create ::questlog::ui::Toolbar {
     # string the search bar would hold; the one startup publish runs it.
     method set_search {text} { set SearchVar $text }
 
-    # Pre-select the time window (a launch --window). An unknown option is
+    # Pre-select the time-window radio (a launch --since). An unknown option is
     # ignored with a warning so a typo falls back to the default rather than
     # leaving the radio set with no selection.
     method set_window {opt} {
-        if {$opt in [::questlog::config::get window_options]} {
+        if {$opt in [::questlog::config::get since_presets]} {
             set WindowVar $opt
         } else {
-            puts stderr "questlog: ignoring unknown --window '$opt'\
-                (want one of: [::questlog::config::get window_options])"
+            puts stderr "questlog: ignoring unknown --since '$opt'\
+                (want one of: [::questlog::config::get since_presets])"
         }
     }
 
     method snapshot {} {
         return [dict create \
-            window         $WindowVar \
+            since          $WindowVar \
             search         $SearchVar \
             search_case    $SearchCaseVar \
             search_scope   $SearchScopeVar \

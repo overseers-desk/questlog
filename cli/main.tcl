@@ -71,6 +71,7 @@ proc ::questlog::cli::main::usage {} {
     puts stderr "  --limit-matches <N>     Limit matched snippets per session/subagent (0 = none)"
     puts stderr "  --search <key>          Search for a key in session contents"
     puts stderr "  --scope <where>         Restrict the search to: anywhere | text | tool-call | tool-output"
+    puts stderr "  --since <dur>           Only sessions active in the last <dur> (e.g. 24h, 7d, 2w); default all"
     puts stderr "  --pattern <regex>       Filter sessions by regex content pattern (alias: --regex)"
     puts stderr "  --tool:read <file>      Filter sessions that read a file (by path suffix)"
     puts stderr "  --tool:write <file>     Filter sessions that wrote a file"
@@ -112,6 +113,7 @@ proc ::questlog::cli::main::run {argv} {
     set search_key ""
     set pattern ""
     set under ""
+    set since ""
     set files [list]   ;# {op path} pairs feeding the file clause
     set tools [list]   ;# {name key} pairs feeding the tool clause
     set scope anywhere
@@ -126,6 +128,7 @@ proc ::questlog::cli::main::run {argv} {
             --search        { set search_key [lindex $argv [incr i]] }
             --pattern - --regex { set pattern [lindex $argv [incr i]] }
             --scope         { set scope [lindex $argv [incr i]] }
+            --since         { set since [lindex $argv [incr i]] }
             --under         { set under [lindex $argv [incr i]] }
             --tool:* {
                 set selector [string range $arg [string length "--tool:"] end]
@@ -146,6 +149,14 @@ proc ::questlog::cli::main::run {argv} {
     }
     if {$limit eq "all"} { set limit 0 }
 
+    # --since accepts an open duration (24h, 7d, 2w, ...); "" or "all" mean no
+    # bound. Validate now so a bad spec fails fast rather than at cutoff time.
+    if {$since ne "" && $since ne "all"
+        && [catch {::questlog::filter::parse_since $since}]} {
+        puts stderr "questlog: --since: invalid duration '$since' (e.g. 24h, 7d, 2w, or 'all')"
+        ::questlog::cli::main::usage
+    }
+
     # If --limit-matches is not set, default to config defaults
     if {$limit_matches == -1} {
         set sess_limit [::questlog::config::get snippets_per_session]
@@ -164,7 +175,7 @@ proc ::questlog::cli::main::run {argv} {
         file  $files \
         tool  $tools \
         under [expr {$under eq "" ? {} : [list $under]}] \
-        window all \
+        since $since \
         one_turn 0]
 
     set clauses [::questlog::search::build_clauses $snapshot]
@@ -206,7 +217,7 @@ proc ::questlog::cli::main::run {argv} {
         lassign [::questlog::match::scan_file $path $clauses] row matches
         if {$row eq ""} continue
         
-        # Apply snapshot-level row filters (time window, one_turn, bookmarked, and under-folder)
+        # Apply snapshot-level row filters (recency bound, one_turn, bookmarked, and under-folder)
         if {![::questlog::filter::row_matches $snapshot $row]} {
             continue
         }

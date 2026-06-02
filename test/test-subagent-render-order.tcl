@@ -72,7 +72,7 @@ proc subagent_cost_cb {path} {}
 set SL [::questlog::ui::SessionList new .s resolvef lookup noop noop noop noop \
             scanpath noop noop subagentsf subagent_cost_cb]
 pack .s -fill both -expand 1
-$SL apply_filter [dict create window 30d one_turn 0]
+$SL apply_filter [dict create since 30d one_turn 0]
 
 set ns [info object namespace $SL]
 set TX [set ${ns}::Text]
@@ -98,7 +98,7 @@ proc sline {p} {
 # Stream the two sessions into the model, then open the folder so both render
 # (F collapsed, G directly below it).
 set ::scan_done 0
-$::Scan extend [dict create window 30d one_turn 0]
+$::Scan extend [dict create since 30d one_turn 0]
 after 200 [list set ::scan_done 1]
 vwait ::scan_done
 $SL toggle_folder $FOLDER
