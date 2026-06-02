@@ -13,7 +13,7 @@ if {[lindex $argv 0] in {--version -v}} {
 # Tk is absent until a GUI file requires it: CLI mode never loads Tk and runs
 # without a display, while GUI mode pulls Tk in through the GUI layer below.
 set CLI_MODE 0
-if {"--json" in $argv || "--cmd" in $argv || "--help" in $argv || "-h" in $argv} {
+if {"--json" in $argv || "--cmd" in $argv || "--shortstat" in $argv || "--help" in $argv || "-h" in $argv} {
     set CLI_MODE 1
 }
 

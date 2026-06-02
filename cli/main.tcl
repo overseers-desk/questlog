@@ -74,14 +74,41 @@ proc ::questlog::cli::main::format_json {folders_dict} {
     return "\[[join $folder_parts ","]\]"
 }
 
+# Render the --shortstat summary: a terse totals block over the same result set
+# --json would emit. Sums the priced cost (the unknown sentinel and zero are
+# skipped), the session and subagent counts, the turns, and the token categories
+# that make up the cost. A non-zero limit capped the set, so it is named rather
+# than left to read as a complete total.
+proc ::questlog::cli::main::format_shortstat {stats limit} {
+    set lines [list]
+    lappend lines [format "sessions           %d"    [dict get $stats sessions]]
+    lappend lines [format "subagent sessions  %d"    [dict get $stats subagents]]
+    lappend lines [format "turns              %d"    [dict get $stats turns]]
+    lappend lines [format "input tokens       %d"    [dict get $stats input_tokens]]
+    lappend lines [format "output tokens      %d"    [dict get $stats output_tokens]]
+    lappend lines [format "cache write tokens %d"    [dict get $stats cache_write_tokens]]
+    lappend lines [format "cache read tokens  %d"    [dict get $stats cache_read_tokens]]
+    lappend lines [format "total cost         \$%.2f" [dict get $stats cost]]
+    if {$limit > 0} {
+        lappend lines [format "limit applied      %d (totals cover the first %d sessions only)" \
+            $limit $limit]
+    }
+    return [join $lines "\n"]
+}
+
 # Print command-line mode usage and exit.
 proc ::questlog::cli::main::usage {} {
-    puts stderr "usage: questlog --json \[bounds\] \[clauses\]"
+    puts stderr "usage: questlog \[--json|--shortstat\] \[bounds\] \[clauses\]"
     puts stderr ""
     puts stderr "A session is returned when its clauses hold. Each clause is one needle in an"
     puts stderr "optional region-list; clauses combine by one algebra: adjacency is AND, --or is"
     puts stderr "OR, --not negates the next clause. Precedence is NOT > AND > OR. There is no"
     puts stderr "grouping - a query that needs A AND (B OR C) is rejected; reorder to DNF instead."
+    puts stderr ""
+    puts stderr "output (one is required; each runs headless, no GUI):"
+    puts stderr "  --json                  Emit the full result as JSON."
+    puts stderr "  --shortstat             Emit a totals summary instead: session and subagent"
+    puts stderr "                          counts, turns, tokens, and total cost over the result."
     puts stderr ""
     puts stderr "clauses:"
     puts stderr "  --keyword\[:regions\] <needle>   Literal needle (aliases: --kw, --search). A bare"
@@ -201,7 +228,8 @@ proc ::questlog::cli::main::parse_query {argv} {
             continue
         }
         switch -glob -- $arg {
-            --json - --cmd {}
+            --json - --cmd { set mode json }
+            --shortstat { set mode shortstat }
             --help - -h { ::questlog::cli::main::usage }
             --or {
                 if {$pending_neg || [llength $cur] == 0} {
@@ -261,7 +289,7 @@ proc ::questlog::cli::main::parse_query {argv} {
     return [dict create \
         clauses [dict create leaves $leaves \
             tree [::questlog::match::tnode_or $groups] nocase $nocase] \
-        limit $limit limit_matches $limit_matches under $under since $since]
+        limit $limit limit_matches $limit_matches under $under since $since mode $mode]
 }
 
 # Run the command-line search engine.
@@ -278,6 +306,7 @@ proc ::questlog::cli::main::run {argv} {
     set limit_matches [dict get $q limit_matches]
     set under         [dict get $q under]
     set since         [dict get $q since]
+    set mode          [dict get $q mode]
 
     # If --limit-matches is not set, default to config defaults
     if {$limit_matches == -1} {
@@ -361,6 +390,11 @@ proc ::questlog::cli::main::run {argv} {
     # 4. Construct JSON Model
     set output_folders [dict create]
 
+    # --shortstat accumulators, summed over the same result set as --json.
+    set n_sessions 0; set n_subagents 0
+    set total_cost 0.0; set total_turns 0
+    set total_in 0; set total_out 0; set total_cw 0; set total_cr 0
+
     dict for {parent_path group_data} $session_groups {
         set parent_row [dict get $group_data parent_row]
         if {$parent_row eq ""} {
@@ -378,6 +412,16 @@ proc ::questlog::cli::main::run {argv} {
         set parent_turns [dict getdef $cost_info turns 0]
         set parent_duration [dict getdef $cost_info duration_secs ""]
 
+        incr n_sessions
+        if {[string is double -strict $parent_cost] && $parent_cost > 0} {
+            set total_cost [expr {$total_cost + $parent_cost}]
+        }
+        incr total_turns $parent_turns
+        set total_in  [expr {$total_in  + [dict getdef $cost_info input_tokens 0]}]
+        set total_out [expr {$total_out + [dict getdef $cost_info output_tokens 0]}]
+        set total_cw  [expr {$total_cw  + [dict getdef $cost_info cache_write_tokens 0]}]
+        set total_cr  [expr {$total_cr  + [dict getdef $cost_info cache_read_tokens 0]}]
+
         # Limit parent matches
         set limited_sess_matches [limit_matches [dict getdef $group_data parent_matches {}] $sess_limit]
 
@@ -386,6 +430,16 @@ proc ::questlog::cli::main::run {argv} {
         foreach sub [$scan subagents_for $parent_path] {
             set sub_path [dict get $sub path]
             set sub_cost_info [::questlog::cli::cost::compute_sync $sub_path]
+            incr n_subagents
+            set sub_cost [dict getdef $sub_cost_info cost_usd ""]
+            if {[string is double -strict $sub_cost] && $sub_cost > 0} {
+                set total_cost [expr {$total_cost + $sub_cost}]
+            }
+            incr total_turns [dict getdef $sub_cost_info turns 0]
+            set total_in  [expr {$total_in  + [dict getdef $sub_cost_info input_tokens 0]}]
+            set total_out [expr {$total_out + [dict getdef $sub_cost_info output_tokens 0]}]
+            set total_cw  [expr {$total_cw  + [dict getdef $sub_cost_info cache_write_tokens 0]}]
+            set total_cr  [expr {$total_cr  + [dict getdef $sub_cost_info cache_read_tokens 0]}]
             
             # Find and limit matching snippets for this subagent if any
             set limited_sub_matches [limit_matches [dict getdef $group_data subagent_matches {}] $sub_limit $sub_path]
@@ -421,6 +475,13 @@ proc ::questlog::cli::main::run {argv} {
         dict set output_folders $folder $folder_data
     }
 
-    # Print JSON output to stdout
-    puts [format_json $output_folders]
+    # Emit the result in the requested mode.
+    if {$mode eq "shortstat"} {
+        puts [format_shortstat [dict create \
+            sessions $n_sessions subagents $n_subagents cost $total_cost \
+            turns $total_turns input_tokens $total_in output_tokens $total_out \
+            cache_write_tokens $total_cw cache_read_tokens $total_cr] $limit]
+    } else {
+        puts [format_json $output_folders]
+    }
 }
