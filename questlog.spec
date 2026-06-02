@@ -28,9 +28,10 @@ working directory.
 # Pure Tcl; nothing to build.
 
 %install
-install -d %{buildroot}%{_datadir}/%{name}/lib %{buildroot}%{_datadir}/%{name}/ui %{buildroot}%{_datadir}/%{name}/data %{buildroot}%{_datadir}/%{name}/assets
+install -d %{buildroot}%{_datadir}/%{name}/lib %{buildroot}%{_datadir}/%{name}/ui %{buildroot}%{_datadir}/%{name}/cli %{buildroot}%{_datadir}/%{name}/data %{buildroot}%{_datadir}/%{name}/assets
 cp lib/*.tcl %{buildroot}%{_datadir}/%{name}/lib/
 cp ui/*.tcl  %{buildroot}%{_datadir}/%{name}/ui/
+cp cli/*.tcl %{buildroot}%{_datadir}/%{name}/cli/
 cp data/*.csv %{buildroot}%{_datadir}/%{name}/data/
 cp config.tcl %{buildroot}%{_datadir}/%{name}/
 cp assets/questlog.svg %{buildroot}%{_datadir}/%{name}/assets/

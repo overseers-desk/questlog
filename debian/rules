@@ -11,9 +11,10 @@ override_dh_auto_build:
 override_dh_auto_test:
 
 override_dh_auto_install:
-	install -d $(SHARE)/lib $(SHARE)/ui $(SHARE)/data $(SHARE)/assets
+	install -d $(SHARE)/lib $(SHARE)/ui $(SHARE)/cli $(SHARE)/data $(SHARE)/assets
 	cp lib/*.tcl $(SHARE)/lib/
 	cp ui/*.tcl  $(SHARE)/ui/
+	cp cli/*.tcl $(SHARE)/cli/
 	cp data/*.csv $(SHARE)/data/
 	cp config.tcl $(SHARE)/
 	cp assets/questlog.svg $(SHARE)/assets/

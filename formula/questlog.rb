@@ -13,7 +13,7 @@ class Questlog < Formula
   depends_on "tcl-tk"
 
   def install
-    pkgshare.install "lib", "ui", "data"
+    pkgshare.install "config.tcl", "lib", "ui", "cli", "data"
 
     # questlog sources lib/ and ui/ relative to ROOT and runs under tclsh, loading
     # Tk only in GUI mode. Point ROOT at the installed tree, and pin the shebang to
