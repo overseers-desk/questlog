@@ -313,10 +313,10 @@ oo::class create ::questlog::ui::Toolbar {
             -variable [my varname WindowVar] -value $CustomSpec \
             -command [list [self] publish]
         pack $cf.r -side left
-        ttk::button $cf.edit -style RGhost.TButton -text "✎" \
+        ttk::button $cf.edit -text "✎" -width 2 -style ChipX.TButton \
             -command [list [self] open_time_popover]
         pack $cf.edit -side left -padx {3 0}
-        ttk::button $cf.x -style RGhost.TButton -text "×" \
+        ttk::button $cf.x -text "×" -width 2 -style ChipX.TButton \
             -command [list [self] clear_custom]
         pack $cf.x -side left -padx {2 0}
     }
