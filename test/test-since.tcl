@@ -22,23 +22,45 @@ proc check {name expected actual} {
     }
 }
 
-# ---- parse_since: the one home for a duration spec ------------------
-check parse_24h   86400   [::questlog::filter::parse_since 24h]
-check parse_7d    604800  [::questlog::filter::parse_since 7d]
-check parse_30d   2592000 [::questlog::filter::parse_since 30d]
-check parse_2w    1209600 [::questlog::filter::parse_since 2w]
-check parse_90m   5400    [::questlog::filter::parse_since 90m]
-check parse_empty ""      [::questlog::filter::parse_since ""]
-check parse_all   ""      [::questlog::filter::parse_since all]
+# ---- parse_since: the one home for a since value (typed normal form) -
+check parse_24h   {rel 86400}   [::questlog::filter::parse_since 24h]
+check parse_7d    {rel 604800}  [::questlog::filter::parse_since 7d]
+check parse_30d   {rel 2592000} [::questlog::filter::parse_since 30d]
+check parse_2w    {rel 1209600} [::questlog::filter::parse_since 2w]
+check parse_90m   {rel 5400}    [::questlog::filter::parse_since 90m]
+check parse_empty {none}        [::questlog::filter::parse_since ""]
+check parse_all   {none}        [::questlog::filter::parse_since all]
 check parse_bad_unit  1 [catch {::questlog::filter::parse_since 3x}]
 check parse_bad_word  1 [catch {::questlog::filter::parse_since abc}]
 check parse_bad_order 1 [catch {::questlog::filter::parse_since d7}]
 
-# ---- cutoff_for: "all" => no bound; a duration => now - secs --------
+# ---- parse_since: absolute ISO date -> {abs <local-midnight-epoch>} --
+set abs_epoch [clock scan 2026-04-01 -format "%Y-%m-%d"]
+check parse_abs_kind  abs        [lindex [::questlog::filter::parse_since 2026-04-01] 0]
+check parse_abs_epoch $abs_epoch [lindex [::questlog::filter::parse_since 2026-04-01] 1]
+check parse_bad_day   1 [catch {::questlog::filter::parse_since 2026-02-30}]
+check parse_bad_month 1 [catch {::questlog::filter::parse_since 2026-13-01}]
+check parse_bad_short 1 [catch {::questlog::filter::parse_since 2026-4-1}]
+
+# ---- cutoff_for: "all" => no bound; relative => now - secs; abs => epoch-1
 check cutoff_all 0 [::questlog::filter::cutoff_for [dict create since all]]
 set now [clock seconds]
 set c7 [::questlog::filter::cutoff_for [dict create since 7d]]
 check cutoff_7d_within 1 [expr {abs(($now - 604800) - $c7) <= 2}]
+check cutoff_abs [expr {$abs_epoch - 1}] \
+    [::questlog::filter::cutoff_for [dict create since 2026-04-01]]
+
+# ---- since_label: the one display-string home -----------------------
+check label_all  all          [::questlog::filter::since_label all]
+check label_week {1 week}     [::questlog::filter::since_label 7d]
+check label_2w   {2 weeks}    [::questlog::filter::since_label 2w]
+check label_6h   {6 hours}    [::questlog::filter::since_label 6h]
+check label_90m  {90 minutes} [::questlog::filter::since_label 90m]
+# The abs label tracks the locale, so assert against the same formatter rather
+# than a fixed string (otherwise the test would read en_AU on one box, C on another).
+check label_abs \
+    "since [string trim [clock format $abs_epoch -format %x -locale [::questlog::filter::time_locale]]]" \
+    [::questlog::filter::since_label 2026-04-01]
 
 # ---- list_paths_for: a since bound prunes the scan corpus ----------
 ::questlog::path::_real_file delete -force /tmp/questlog-test-since

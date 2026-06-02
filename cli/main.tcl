@@ -126,7 +126,7 @@ proc ::questlog::cli::main::usage {} {
     puts stderr "  accepted, e.g. --keyword:user,assi <needle>. Omit the suffix to match anywhere."
     puts stderr ""
     puts stderr "bounds (global, applied to the whole result - not clauses):"
-    puts stderr "  --since <dur>           Only sessions active in the last <dur> (e.g. 24h, 7d, 2w)."
+    puts stderr "  --since <when>          Recency bound: a window (24h, 7d, 2w), a date (2026-04-01), or 'all'."
     puts stderr "  --under <dir>           Only sessions located under the directory."
     puts stderr "  --limit <N>             Cap returned sessions (unset or 0 = unlimited)."
     puts stderr "  --limit-matches <N>     Cap snippets per session/subagent (0 = none)."
@@ -278,11 +278,12 @@ proc ::questlog::cli::main::parse_query {argv} {
     }
     if {$limit eq "all"} { set limit 0 }
 
-    # --since accepts an open duration (24h, 7d, 2w, ...); "" or "all" mean no
-    # bound. Validate now so a bad spec fails fast rather than at cutoff time.
+    # --since accepts a relative window (24h, 7d, 2w, ...) or an absolute date
+    # (2026-04-01); "" or "all" mean no bound. Validate now so a bad spec fails
+    # fast rather than at cutoff time.
     if {$since ne "" && $since ne "all"
         && [catch {::questlog::filter::parse_since $since}]} {
-        puts stderr "questlog: --since: invalid duration '$since' (e.g. 24h, 7d, 2w, or 'all')"
+        puts stderr "questlog: --since: invalid '$since' (want 24h/7d/2w, a date 2026-04-01, or 'all')"
         ::questlog::cli::main::usage
     }
 
