@@ -24,7 +24,7 @@ Deliberately out of scope, because separate tools already serve them: exposing s
 
 The window opens as a horizontal split: the **session list** with its toolbar on the left and the **reading view** on the right, a status bar along the bottom. The reading view is present from launch, showing a centred empty state until the first session or snippet is clicked.
 
-The **toolbar** holds a time window (24 h / 7 d / 30 d / all), a search box with a case toggle and a scope (anywhere, the said text, tool calls, or tool output), and a small form of AND-joined criteria with a "this cwd only" filter that auto-detects whether the launch directory has a corresponding project folder. The persistent **folder** and **file** rows ask which folder a session ran under and which file it touched; each file carries an operation pill (read, wrote, or either), so one criterion answers "which session touched this file" without caring whether it was a Write or an Edit, matched by path suffix so a bare filename finds it in any directory. A short tail reveals the rarer **regex** (a raw content pattern) and **tool** (a session that used a given tool) rows on demand. A session is shown only when it satisfies every criterion somewhere in its log.
+The **toolbar** holds a time window (24 h / 7 d / 30 d / all, or a custom relative span or calendar date), a search box with a case toggle and a scope (anywhere, the said text, tool calls, or tool output), and a small form of AND-joined criteria with a "this cwd only" filter that auto-detects whether the launch directory has a corresponding project folder. The persistent **folder** and **file** rows ask which folder a session ran under and which file it touched; each file carries an operation pill (read, wrote, or either), so one criterion answers "which session touched this file" without caring whether it was a Write or an Edit, matched by path suffix so a bare filename finds it in any directory. A short tail reveals the rarer **regex** (a raw content pattern) and **tool** (a session that used a given tool) rows on demand. A session is shown only when it satisfies every criterion somewhere in its log.
 
 The **session list** is one widget doing two jobs. With no search active it browses your sessions grouped by project, each marked while it is running and when you have bookmarked it. Type a word or add a criterion and the same list narrows to the sessions that match, showing the matching evidence under each so you can tell which one you want before you open it. A click opens a session in the reading view.
 
@@ -53,6 +53,7 @@ See [docs/installation.md](docs/installation.md) for the Debian, Fedora, Homebre
 ./questlog -regex "pattern"                       # prefill a single pattern criterion
 ./questlog --search "california michael"          # prefill the search bar (plain words, not regex)
 ./questlog --since 30d                             # open on a time window other than the 7d default
+./questlog --since 2026-04-01                      # ... or on everything since a calendar date
 ```
 
 `./questlog` opens the main window immediately and streams rows in. The default seven-day window populates in under a second; switching to "all" extends incrementally with the tree growing as files are scanned. Scan progress is reported in the bottom status bar.
