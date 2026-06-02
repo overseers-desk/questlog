@@ -77,6 +77,12 @@ oo::class create ::questlog::ui::Toolbar {
     variable Subscribers
     variable WindowVar
     variable CustomSpec       ;# the committed/parked custom since spec, or "" when none
+    variable PopTop           ;# the open custom-window popover toplevel, or ""
+    variable PopMode          ;# the popover's chosen option: relative | absolute
+    variable PopNum           ;# relative count (spinbox textvariable)
+    variable PopUnit          ;# relative unit word: minutes | hours | days | weeks
+    variable PopDate          ;# absolute ISO date chosen in the popover
+    variable CalMonth         ;# YYYY-MM-01 the mini-calendar is showing
     variable SearchVar
     variable SearchCaseVar
     variable SearchScopeVar   ;# region-spec: any | user,assistant | tool-use | tool-result
@@ -103,6 +109,12 @@ oo::class create ::questlog::ui::Toolbar {
         set Cwd $cwd
         set WindowVar  [::questlog::config::get since_default]
         set CustomSpec ""
+        set PopTop ""
+        set PopMode relative
+        set PopNum 3
+        set PopUnit days
+        set PopDate ""
+        set CalMonth ""
         set SearchVar  ""
         set SearchCaseVar 0
         set SearchScopeVar any
@@ -291,11 +303,19 @@ oo::class create ::questlog::ui::Toolbar {
     method refresh_custom_member {} {
         set cf $Restrict.time.custom
         foreach c [winfo children $cf] { destroy $c }
-        if {$CustomSpec eq ""} return
+        if {$CustomSpec eq ""} {
+            ttk::button $cf.open -style RGhost.TButton -text "+ custom…" \
+                -command [list [self] open_time_popover]
+            pack $cf.open -side left
+            return
+        }
         ttk::radiobutton $cf.r -text [::questlog::filter::since_label $CustomSpec] \
             -variable [my varname WindowVar] -value $CustomSpec \
             -command [list [self] publish]
         pack $cf.r -side left
+        ttk::button $cf.edit -style RGhost.TButton -text "✎" \
+            -command [list [self] open_time_popover]
+        pack $cf.edit -side left -padx {3 0}
         ttk::button $cf.x -style RGhost.TButton -text "×" \
             -command [list [self] clear_custom]
         pack $cf.x -side left -padx {2 0}
@@ -310,6 +330,199 @@ oo::class create ::questlog::ui::Toolbar {
         set CustomSpec ""
         my refresh_custom_member
         my publish
+    }
+
+    # Open the custom-window popover (the move_dialog idiom: a transient toplevel
+    # the window manager sizes and places from its packed content). It offers what
+    # a preset radio cannot, a relative window or an absolute date via a calendar.
+    # Scratch state is prefilled from the current custom spec, so reopening edits.
+    method open_time_popover {} {
+        set today [clock format [clock seconds] -format %Y-%m-%d]
+        set PopMode relative
+        set PopNum 3
+        set PopUnit days
+        set PopDate $today
+        set CalMonth "[string range $today 0 6]-01"
+        if {$CustomSpec ne ""} {
+            lassign [::questlog::filter::parse_since $CustomSpec] kind val
+            if {$kind eq "rel"} {
+                foreach {word secs} {weeks 604800 days 86400 hours 3600 minutes 60} {
+                    if {$val % $secs == 0} {
+                        set PopNum [expr {$val / $secs}]
+                        set PopUnit $word
+                        break
+                    }
+                }
+            } elseif {$kind eq "abs"} {
+                set PopMode absolute
+                set PopDate $CustomSpec
+                set CalMonth "[string range $CustomSpec 0 6]-01"
+            }
+        }
+        my build_popover
+    }
+
+    method build_popover {} {
+        set p .ql_timepop
+        if {[winfo exists $p]} { destroy $p }
+        toplevel $p
+        set PopTop $p
+        wm title $p "Custom window"
+        wm transient $p [winfo toplevel $Top]
+        ttk::frame $p.f -padding 12
+        pack $p.f -fill both -expand 1
+
+        # Relative option: Last <N> <unit>.
+        ttk::frame $p.f.rel
+        pack $p.f.rel -side top -fill x -anchor w
+        ttk::radiobutton $p.f.rel.rb -text "Last" \
+            -variable [my varname PopMode] -value relative \
+            -command [list [self] refresh_popover]
+        pack $p.f.rel.rb -side left
+        ttk::spinbox $p.f.rel.n -from 1 -to 999 -width 5 \
+            -textvariable [my varname PopNum]
+        pack $p.f.rel.n -side left -padx {6 4}
+        ttk::combobox $p.f.rel.u -width 9 -state readonly \
+            -values {minutes hours days weeks} \
+            -textvariable [my varname PopUnit]
+        pack $p.f.rel.u -side left
+
+        # Absolute option: Since <date>, revealing the mini-calendar.
+        ttk::frame $p.f.abs
+        pack $p.f.abs -side top -fill x -anchor w -pady {10 0}
+        ttk::radiobutton $p.f.abs.rb -text "Since" \
+            -variable [my varname PopMode] -value absolute \
+            -command [list [self] refresh_popover]
+        pack $p.f.abs.rb -side left
+        ttk::label $p.f.abs.d -textvariable [my varname PopDate]
+        pack $p.f.abs.d -side left -padx {6 0}
+
+        ttk::frame $p.f.cal
+        pack $p.f.cal -side top -fill x -anchor w -pady {6 0}
+
+        ttk::frame $p.f.btn
+        pack $p.f.btn -side top -fill x -pady {12 0}
+        ttk::button $p.f.btn.apply -text "Apply" -command [list [self] commit_time]
+        ttk::button $p.f.btn.cancel -text "Cancel" -command [list [self] close_time_popover]
+        pack $p.f.btn.apply -side right
+        pack $p.f.btn.cancel -side right -padx {0 6}
+
+        bind $p <Escape> [list [self] close_time_popover]
+        wm protocol $p WM_DELETE_WINDOW [list [self] close_time_popover]
+
+        my refresh_popover
+        grab set $p
+    }
+
+    # Show the mini-calendar only in absolute mode; relative mode hides it.
+    method refresh_popover {} {
+        if {$PopTop eq "" || ![winfo exists $PopTop]} return
+        if {$PopMode eq "absolute"} {
+            my build_mini_calendar
+        } else {
+            foreach c [winfo children $PopTop.f.cal] { destroy $c }
+        }
+    }
+
+    # Render the month grid for CalMonth into the popover's calendar slot. Month
+    # length and the leading weekday come from clock math (leap years included),
+    # not a table. Sunday-first; today is tinted, the chosen day filled.
+    method build_mini_calendar {} {
+        set cal $PopTop.f.cal
+        foreach c [winfo children $cal] { destroy $c }
+        set loc [::questlog::filter::time_locale]
+        set anchor [clock scan $CalMonth -format %Y-%m-%d]
+        set monthlabel [clock format $anchor -format "%B %Y" -locale $loc]
+        set first_wd [scan [clock format $anchor -format %w] %d]
+        set eom  [clock add [clock add $anchor 1 month] -1 day]
+        set days [scan [clock format $eom -format %d] %d]
+        set today [clock format [clock seconds] -format %Y-%m-%d]
+        set y  [scan [string range $CalMonth 0 3] %d]
+        set mo [scan [string range $CalMonth 5 6] %d]
+
+        set g $cal.g
+        frame $g -bg [::questlog::ui::theme::c chip_bg] \
+            -bd 1 -relief solid -highlightthickness 0
+        pack $g -side top -anchor w
+
+        # Header: prev, month label, next.
+        ttk::button $g.prev -style RGhost.TButton -text "‹" -width 2 \
+            -command [list [self] cal_step -1]
+        ttk::label  $g.lbl  -text $monthlabel -anchor center \
+            -background [::questlog::ui::theme::c chip_bg]
+        ttk::button $g.next -style RGhost.TButton -text "›" -width 2 \
+            -command [list [self] cal_step 1]
+        grid $g.prev -row 0 -column 0 -sticky w
+        grid $g.lbl  -row 0 -column 1 -columnspan 5 -sticky ew
+        grid $g.next -row 0 -column 6 -sticky e
+
+        # Weekday header row (Sunday first).
+        set wd 0
+        foreach d {S M T W T F S} {
+            label $g.wd$wd -text $d -width 3 -font QLList \
+                -bg [::questlog::ui::theme::c chip_bg] \
+                -fg [::questlog::ui::theme::c muted]
+            grid $g.wd$wd -row 1 -column $wd
+            incr wd
+        }
+
+        # Day cells.
+        set col $first_wd
+        set row 2
+        for {set d 1} {$d <= $days} {incr d} {
+            set iso [format "%04d-%02d-%02d" $y $mo $d]
+            set b $g.d$d
+            label $b -text $d -width 3 -font QLList \
+                -bg [::questlog::ui::theme::c chip_bg] \
+                -fg [::questlog::ui::theme::c ink]
+            if {$iso eq $PopDate} {
+                $b configure -bg [::questlog::ui::theme::c onboard_accent] -fg white
+            } elseif {$iso eq $today} {
+                $b configure -bg [::questlog::ui::theme::c sel]
+            }
+            bind $b <Button-1> [list [self] cal_pick $iso]
+            grid $b -row $row -column $col -padx 1 -pady 1
+            incr col
+            if {$col > 6} { set col 0; incr row }
+        }
+    }
+
+    method cal_step {n} {
+        set anchor [clock scan $CalMonth -format %Y-%m-%d]
+        set CalMonth [clock format [clock add $anchor $n month] -format %Y-%m-01]
+        my build_mini_calendar
+    }
+
+    method cal_pick {iso} {
+        set PopDate $iso
+        set PopMode absolute
+        my build_mini_calendar
+    }
+
+    # Assemble the chosen spec, validate it through the one grammar home (so the
+    # popover can never emit a spec the engine would reject), commit it as the
+    # custom member, and publish.
+    method commit_time {} {
+        if {$PopMode eq "relative"} {
+            set unit [dict get {minutes m hours h days d weeks w} $PopUnit]
+            set spec "[string trim $PopNum]$unit"
+        } else {
+            set spec $PopDate
+        }
+        if {[catch {::questlog::filter::parse_since $spec}]} { return }
+        set CustomSpec $spec
+        set WindowVar $spec
+        my close_time_popover
+        my refresh_custom_member
+        my publish
+    }
+
+    method close_time_popover {} {
+        if {$PopTop ne "" && [winfo exists $PopTop]} {
+            grab release $PopTop
+            destroy $PopTop
+        }
+        set PopTop ""
     }
 
     method snapshot {} {
