@@ -76,6 +76,7 @@ oo::class create ::questlog::ui::Toolbar {
     variable Cwd
     variable Subscribers
     variable WindowVar
+    variable CustomSpec       ;# the committed/parked custom since spec, or "" when none
     variable SearchVar
     variable SearchCaseVar
     variable SearchScopeVar   ;# region-spec: any | user,assistant | tool-use | tool-result
@@ -101,6 +102,7 @@ oo::class create ::questlog::ui::Toolbar {
         set Top $parent
         set Cwd $cwd
         set WindowVar  [::questlog::config::get since_default]
+        set CustomSpec ""
         set SearchVar  ""
         set SearchCaseVar 0
         set SearchScopeVar any
@@ -180,14 +182,20 @@ oo::class create ::questlog::ui::Toolbar {
         pack $Restrict.time -side top -fill x -pady {0 3}
         ttk::label $Restrict.time.label -text "time" -width 18 -anchor w
         pack $Restrict.time.label -side left -padx {0 4}
-        ttk::label $Restrict.time.rans -text "ran in the last"
-        pack $Restrict.time.rans -side left -padx {0 8}
         foreach w [::questlog::config::get since_presets] {
             ttk::radiobutton $Restrict.time.r$w -text $w \
                 -variable [my varname WindowVar] -value $w \
                 -command [list [self] publish]
             pack $Restrict.time.r$w -side left -padx 2
         }
+        # The custom 5th member of the same single-select group: a relative
+        # window or an absolute date the presets cannot express. Its own
+        # sub-frame so committing or clearing re-renders only this, never the
+        # presets. No "ran in the last" prose: the time tag labels the row, so
+        # an absolute date has no preposition to break.
+        ttk::frame $Restrict.time.custom
+        pack $Restrict.time.custom -side left -padx {6 0}
+        my refresh_custom_member
 
         set AddRail $Restrict.add
         ttk::frame $AddRail
@@ -256,16 +264,52 @@ oo::class create ::questlog::ui::Toolbar {
     # string the search bar would hold; the one startup publish runs it.
     method set_search {text} { set SearchVar $text }
 
-    # Pre-select the time-window radio (a launch --since). An unknown option is
-    # ignored with a warning so a typo falls back to the default rather than
-    # leaving the radio set with no selection.
+    # Pre-select the time row from a launch --since. A preset picks its radio;
+    # any other spec the engine accepts (a relative window, an absolute date)
+    # becomes the custom member. Validation goes through the one grammar home, so
+    # this accepts exactly what the headless CLI does. A bad spec is ignored with
+    # a warning, falling back to the default rather than leaving nothing selected.
     method set_window {opt} {
+        if {[catch {::questlog::filter::parse_since $opt}]} {
+            puts stderr "questlog: ignoring invalid --since '$opt'"
+            return
+        }
         if {$opt in [::questlog::config::get since_presets]} {
             set WindowVar $opt
         } else {
-            puts stderr "questlog: ignoring unknown --since '$opt'\
-                (want one of: [::questlog::config::get since_presets])"
+            set CustomSpec $opt
+            set WindowVar $opt
+            my refresh_custom_member
         }
+    }
+
+    # Re-render only the custom-member sub-frame of the (static) time row. With
+    # no custom spec the slot is empty; with one it is a radio in the same group,
+    # labelled through the one display-string home, plus a clear button. The
+    # radio's value-binding gives parked-to-restore for one click free. The
+    # opener and edit affordances that drive the popover are added with it.
+    method refresh_custom_member {} {
+        set cf $Restrict.time.custom
+        foreach c [winfo children $cf] { destroy $c }
+        if {$CustomSpec eq ""} return
+        ttk::radiobutton $cf.r -text [::questlog::filter::since_label $CustomSpec] \
+            -variable [my varname WindowVar] -value $CustomSpec \
+            -command [list [self] publish]
+        pack $cf.r -side left
+        ttk::button $cf.x -style RGhost.TButton -text "×" \
+            -command [list [self] clear_custom]
+        pack $cf.x -side left -padx {2 0}
+    }
+
+    # Drop the custom member back to the presets. If it was the active value,
+    # reselect the default window so the row never sits with nothing chosen.
+    method clear_custom {} {
+        if {$WindowVar eq $CustomSpec} {
+            set WindowVar [::questlog::config::get since_default]
+        }
+        set CustomSpec ""
+        my refresh_custom_member
+        my publish
     }
 
     method snapshot {} {
