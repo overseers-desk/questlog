@@ -21,6 +21,17 @@ proc ::questlog::cli::main::format_matches {matches} {
     return [join $parts ","]
 }
 
+# A cost_usd domain value to its JSON token. The cost module returns -1.0 for
+# "no rate matched any model": a session with no priced usage, such as one
+# holding only <synthetic> records or no assistant turns at all. The GUI renders
+# that as a blank cell; JSON says null, in the same "no figure" sense, so a
+# consumer never reads the internal sentinel as a negative cost. A genuine
+# figure (including a true zero) passes through as the number.
+proc ::questlog::cli::main::format_cost {usd} {
+    if {$usd eq "" || $usd < 0} { return "null" }
+    return $usd
+}
+
 # Print JSON to stdout. Hand-crafted serializer is extremely robust and
 # completely free of external dependencies or type-guessing bugs.
 proc ::questlog::cli::main::format_json {folders_dict} {
@@ -37,7 +48,7 @@ proc ::questlog::cli::main::format_json {folders_dict} {
                     [escape_json [dict get $sub agent_id]] \
                     [escape_json [dict get $sub agent_type]] \
                     [escape_json [dict get $sub description]] \
-                    [expr {[dict get $sub cost_usd] eq "" ? "null" : [dict get $sub cost_usd]}] \
+                    [format_cost [dict get $sub cost_usd]] \
                     [dict get $sub turns] \
                     [expr {[dict get $sub duration_secs] eq "" ? "null" : [dict get $sub duration_secs]}] \
                     [format_matches [dict get $sub matches]]]
@@ -48,7 +59,7 @@ proc ::questlog::cli::main::format_json {folders_dict} {
                 [escape_json [dict get $sess path]] \
                 [escape_json [dict get $sess title]] \
                 [escape_json [dict get $sess first_ts]] \
-                [expr {[dict get $sess cost_usd] eq "" ? "null" : [dict get $sess cost_usd]}] \
+                [format_cost [dict get $sess cost_usd]] \
                 [dict get $sess turns] \
                 [expr {[dict get $sess duration_secs] eq "" ? "null" : [dict get $sess duration_secs]}] \
                 [format_matches [dict get $sess matches]] \
