@@ -56,12 +56,16 @@ proc ::questlog::ui::session_columns {} {
 #
 # The engine draws each node into the widget with two marks (node.start at its
 # first char, node.end at the append point past its last descendant) and a
-# per-node tag. Here a folder's start is the heading start (right gravity), a
-# session's or subagent's is its header start (left gravity); a node's end is
-# the folder's append point (where new sessions land) or the session's (where
-# snippets and child rows land). A session's subagents render as its child nodes
-# at the session's end region, exactly as snippet rows render between a header
-# and its append point.
+# per-node tag. A folder's start is the heading start (right gravity). A
+# session's start is its header start with right gravity: a session rendered
+# while a sibling above it is collapsed begins exactly where that sibling's end
+# mark sits, and right gravity makes the start follow its own header down when
+# the sibling later expands and inserts child rows at that point, rather than
+# being stranded among them. A subagent's start is left gravity. A node's end
+# is the folder's append point (where new sessions land) or the session's
+# (where snippets and child rows land). A session's subagents render as its
+# child nodes at the session's end region, exactly as snippet rows render
+# between a header and its append point.
 
 oo::class create ::questlog::ui::SessionList {
     superclass ::questlog::ui::TextTree
@@ -663,7 +667,11 @@ oo::class create ::questlog::ui::SessionList {
         $Text tag configure $stag -wrap none
         set smark "sm[incr NextId]"
         $Text mark set $smark $sstart
-        $Text mark gravity $smark left
+        # Right gravity: when a sibling above this session expands and inserts
+        # its child rows at this start point, the mark follows its own header
+        # down instead of being left behind among those children (redraw_header
+        # repins it to the line start after its own header re-insert).
+        $Text mark gravity $smark right
         set send [$Text index "$smark lineend +1c"]
         set semark "se[incr NextId]"
         $Text mark set $semark $send
@@ -699,6 +707,15 @@ oo::class create ::questlog::ui::SessionList {
 
     method render_snippet {path btype content lineoff} {
         set semark [my node_field [my sid $path] end]
+        set folder [my sget $path folder]
+        # As in render_child: only the folder's last session may carry the
+        # folder append point past its new rows; a session in the middle relies
+        # on the insert shifting the lower folder-end mark on its own.
+        set was_last 0
+        if {[my has_folder $folder]} {
+            set was_last [$Text compare $semark == \
+                [my node_field [my fid $folder] end]]
+        }
         set ntag "n#[incr NextId]"
         # Normalise to a type with a known badge pill; an unknown block type
         # falls back to the neutral system pill.
@@ -740,12 +757,11 @@ oo::class create ::questlog::ui::SessionList {
             [list [self] on_session_right $path %X %Y]
         $Text tag bind $ntag <Enter> [list $Text configure -cursor hand2]
         $Text tag bind $ntag <Leave> [list $Text configure -cursor arrow]
-        # Advance this session's end and the folder's append point past the
-        # snippet (the session receiving snippets is always its folder's last).
+        # Advance this session's end past the snippet, and the folder append
+        # point too when this session is the folder's last (see render_child).
         $Text mark set $semark [$Text index $tmp]
         $Text mark unset $tmp
-        set folder [my sget $path folder]
-        if {[my has_folder $folder]} {
+        if {$was_last} {
             $Text mark set [my node_field [my fid $folder] end] \
                 [$Text index $semark]
         }
@@ -931,6 +947,17 @@ oo::class create ::questlog::ui::SessionList {
         set cid [my sid $cp]
         if {[my node_field $cid rendered]} return
         set semark [my node_field [my sid $path] end]
+        set folder [my sget $path folder]
+        # Only the folder's last session may drag the folder append point down
+        # to swallow new child rows. For a session in the middle of the folder,
+        # the insert below shifts the lower folder-end mark on its own, and
+        # forcing it back to this session's end would strand every session
+        # below inside this one's child block.
+        set was_last 0
+        if {[my has_folder $folder]} {
+            set was_last [$Text compare $semark == \
+                [my node_field [my fid $folder] end]]
+        }
         # The subagent node's start mark sits at its row's first char, left
         # gravity, so an insert at the session append point (right of it) keeps
         # it pinned to this row. The first child's start mark is the children
@@ -962,8 +989,7 @@ oo::class create ::questlog::ui::SessionList {
             my render_child_snippet $path $cp $content $lineoff
         }
         $Text mark set $cend [$Text index $semark]
-        set folder [my sget $path folder]
-        if {[my has_folder $folder]} {
+        if {$was_last} {
             $Text mark set [my node_field [my fid $folder] end] \
                 [$Text index $semark]
         }
@@ -1356,12 +1382,17 @@ oo::class create ::questlog::ui::SessionList {
         set smark [my node_field $sid start]
         set stag  [my node_field $sid tag]
         set info [my build_line $sid]
+        # The start mark has right gravity, so re-inserting the header at it
+        # would carry it to the end of the new text. Pin the row start as an
+        # index, lay the line there, then reset the mark to the first char.
+        set s0 [$Text index $smark]
         $Text delete $smark "$smark lineend"
-        $Text insert $smark [dict get $info line] \
+        $Text insert $s0 [dict get $info line] \
             [list sessionhead $stag]
-        my apply_line $sid $smark $info
+        $Text mark set $smark $s0
+        my apply_line $sid $s0 $info
         if {$Selected eq $path} {
-            $Text tag add selected $smark [my node_field $sid end]
+            $Text tag add selected $s0 [my node_field $sid end]
         }
     }
 
