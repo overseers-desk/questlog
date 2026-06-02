@@ -1,3 +1,11 @@
+questlog (1.1.2) unstable; urgency=medium
+
+  * CLI: the --json search composes by one boolean algebra. Each content condition is a needle in an optional region-list: --keyword and --regex (aliases --kw, --rx, and the former --search, --pattern). Clauses AND by adjacency, --or widens to OR, --not negates the next clause.
+  * CLI: --scope is gone; a :regions suffix rides on each keyword or regex clause instead. Region tokens are user, assistant, tool-use, tool-result, and any, comma-joined for OR and accepting unambiguous prefixes.
+  * CLI: --case makes keyword matching case-sensitive; a query that needs grouping is rejected rather than mis-parsed.
+
+ -- Weiwu Zhang <a@colourful.land>  Tue, 02 Jun 2026 00:00:00 +0000
+
 questlog (1.1.1) unstable; urgency=medium
 
   * Fix: duplicate token counting corrected by deduplicating on requestId.

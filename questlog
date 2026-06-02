@@ -3,7 +3,7 @@
 
 package require Tcl 9
 
-set QUESTLOG_VERSION 1.1.1
+set QUESTLOG_VERSION 1.1.2
 if {[lindex $argv 0] in {--version -v}} {
     puts "questlog $QUESTLOG_VERSION"
     exit 0
