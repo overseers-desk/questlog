@@ -1,6 +1,6 @@
 #!/usr/bin/env tclsh9.0
 # Parity test: the search worker thread and the main interpreter must produce
-# identical scan_file / record_hits output. A worker sources lib/jsonl.tcl and
+# identical scan_file / leaf_record_hit output. A worker sources lib/jsonl.tcl and
 # lib/match.tcl through worker_prelude instead of carrying copies, so this is
 # the guard that the two sides cannot drift - it runs the real prelude and
 # WorkerScript in a real thread and diffs the results. Run:
@@ -50,9 +50,18 @@ puts $fh "{\"type\":\"user\",\"message\":{\"content\":\"second turn\"}}"
 close $fh
 
 proc mk_clauses {args} {
-    set c [dict create terms {} nocase 1 patterns {} scope anywhere files {} tools {}]
-    foreach {k v} $args { dict set c $k $v }
-    return $c
+    set snap [dict create search "" search_case 0 search_regions any \
+        pattern {} file {} tool {}]
+    foreach {k v} $args {
+        switch -- $k {
+            terms    { dict set snap search $v }
+            patterns { dict set snap pattern $v }
+            files    { dict set snap file $v }
+            tools    { dict set snap tool $v }
+            scope    { dict set snap search_regions $v }
+        }
+    }
+    return [::questlog::search::build_clauses $snap]
 }
 
 # Stand up a worker exactly as start_threaded does.
@@ -70,13 +79,14 @@ foreach {name clauses} [list \
     check "scan_file parity: $name" $main_res $worker_res
 }
 
-# record_hits directly on a crafted record, so the tool_param_cap path is
-# proven mirrored rather than merely present.
+# leaf_record_hit directly on a crafted record, so the tool_param_cap path (the
+# rendered tool_use a keyword leaf snippets through) is proven mirrored rather
+# than merely present.
 set rec [::questlog::jsonl::parse_line "{\"type\":\"assistant\",\"message\":{\"content\":\[{\"type\":\"tool_use\",\"name\":\"Bash\",\"input\":{\"command\":\"echo $bigparam\"}}\]}}"]
-set cl [mk_clauses terms echo]
-set main_rh   [::questlog::match::record_hits $rec $cl]
-set worker_rh [thread::send $tid [list ::questlog::match::record_hits $rec $cl]]
-check "record_hits parity (cap path)" $main_rh $worker_rh
+set leaf [::questlog::match::kw_leaf echo {} 0]
+set main_rh   [::questlog::match::leaf_record_hit $leaf $rec 1]
+set worker_rh [thread::send $tid [list ::questlog::match::leaf_record_hit $leaf $rec 1]]
+check "leaf_record_hit parity (cap path)" $main_rh $worker_rh
 
 thread::release $tid
 file delete $fix

@@ -65,21 +65,34 @@ proc ::questlog::cli::main::format_json {folders_dict} {
 
 # Print command-line mode usage and exit.
 proc ::questlog::cli::main::usage {} {
-    puts stderr "usage: questlog --json \[options\] \[search_term\]"
-    puts stderr "options:"
-    puts stderr "  --limit <N>             Limit the number of returned sessions (default: 50, use 0 for unlimited)"
-    puts stderr "  --limit-matches <N>     Limit matched snippets per session/subagent (0 = none)"
-    puts stderr "  --search <key>          Search for a key in session contents"
-    puts stderr "  --scope <where>         Restrict the search to: anywhere | text | tool-call | tool-output"
-    puts stderr "  --since <dur>           Only sessions active in the last <dur> (e.g. 24h, 7d, 2w); default all"
-    puts stderr "  --pattern <regex>       Filter sessions by regex content pattern (alias: --regex)"
-    puts stderr "  --tool:read <file>      Filter sessions that read a file (by path suffix)"
-    puts stderr "  --tool:write <file>     Filter sessions that wrote a file"
-    puts stderr "  --tool:edit <file>      Filter sessions that edited a file"
-    puts stderr "  --tool:file <file>      Filter sessions that touched a file (read, wrote, or created)"
-    puts stderr "  --tool:<name> <key>     Filter sessions that used a tool (Bash, Grep, ...) whose"
-    puts stderr "                          invocation contains the key (empty key = any use)"
-    puts stderr "  --under <dir>           Filter sessions located under the specified directory"
+    puts stderr "usage: questlog --json \[bounds\] \[clauses\]"
+    puts stderr ""
+    puts stderr "A session is returned when its clauses hold. Each clause is one needle in an"
+    puts stderr "optional region-list; clauses combine by one algebra: adjacency is AND, --or is"
+    puts stderr "OR, --not negates the next clause. Precedence is NOT > AND > OR. There is no"
+    puts stderr "grouping - a query that needs A AND (B OR C) is rejected; reorder to DNF instead."
+    puts stderr ""
+    puts stderr "clauses:"
+    puts stderr "  --keyword\[:regions\] <needle>   Literal needle (aliases: --kw, --search). A bare"
+    puts stderr "                                argument is the same as --keyword."
+    puts stderr "  --regex\[:regions\] <needle>     Regex needle (aliases: --rx, --pattern)."
+    puts stderr "  --tool:read <file>            A file read (by path suffix)."
+    puts stderr "  --tool:write|edit|file <file> A file written / edited / touched."
+    puts stderr "  --tool:<name> <key>           A use of a tool (Bash, Grep, ...) whose invocation"
+    puts stderr "                                contains the key (empty key = any use)."
+    puts stderr "  --or                          OR between the clause before and the clause after."
+    puts stderr "  --not                         Negate the next clause."
+    puts stderr ""
+    puts stderr "regions (the :regions suffix on --keyword/--regex; comma-joins for OR):"
+    puts stderr "  user, assistant, tool-use, tool-result, any (default). Unambiguous prefixes are"
+    puts stderr "  accepted, e.g. --keyword:user,assi <needle>. Omit the suffix to match anywhere."
+    puts stderr ""
+    puts stderr "bounds (global, applied to the whole result - not clauses):"
+    puts stderr "  --since <dur>           Only sessions active in the last <dur> (e.g. 24h, 7d, 2w)."
+    puts stderr "  --under <dir>           Only sessions located under the directory."
+    puts stderr "  --limit <N>             Cap returned sessions (default: 50, 0 = unlimited)."
+    puts stderr "  --limit-matches <N>     Cap snippets per session/subagent (0 = none)."
+    puts stderr "  --case                  Case-sensitive keyword matching (default: insensitive)."
     exit 2
 }
 
@@ -100,6 +113,40 @@ proc ::questlog::cli::main::limit_matches {matches limit_cap {sub_path ""}} {
     return $out
 }
 
+# Parse a CLI :regions suffix, exiting cleanly on a bad spec rather than dumping
+# a stack trace. An empty suffix (no colon, or a bare "--keyword:") is the
+# unrestricted default.
+proc ::questlog::cli::main::regions {spec} {
+    if {[catch {::questlog::search::parse_regions $spec} out]} {
+        puts stderr "questlog: $out"
+        exit 2
+    }
+    return $out
+}
+
+# The value following a clause flag; a missing one is an error rather than a
+# silent empty needle (which would match every session).
+proc ::questlog::cli::main::next_val {argvVar iVar flag} {
+    upvar 1 $argvVar argv $iVar i
+    incr i
+    if {$i >= [llength $argv]} {
+        puts stderr "questlog: $flag needs a value"
+        ::questlog::cli::main::usage
+    }
+    return [lindex $argv $i]
+}
+
+# Append a leaf to the flat leaf list and the current AND-group, then clear the
+# pending --not. The leaf already carries its negation, so the reset only guards
+# the next clause.
+proc ::questlog::cli::main::push_leaf {leavesVar curVar negVar leaf} {
+    upvar 1 $leavesVar leaves $curVar cur $negVar pending_neg
+    set id [llength $leaves]
+    lappend leaves $leaf
+    lappend cur [::questlog::match::tnode_leaf $id]
+    set pending_neg 0
+}
+
 # Run the command-line search engine.
 proc ::questlog::cli::main::run {argv} {
     variable ::ROOT
@@ -107,45 +154,89 @@ proc ::questlog::cli::main::run {argv} {
         set ROOT [file dirname [file dirname [file normalize [info script]]]]
     }
 
-    # 1. Parse Arguments
+    # 1. Parse arguments into a clause tree plus the global bounds. Clauses build
+    # an OR (--or) of AND-groups (adjacency) of optionally-negated (--not)
+    # leaves: groups is the closed AND-groups, cur the one being built.
     set limit 50
     set limit_matches -1
-    set search_key ""
-    set pattern ""
     set under ""
     set since ""
-    set files [list]   ;# {op path} pairs feeding the file clause
-    set tools [list]   ;# {name key} pairs feeding the tool clause
-    set scope anywhere
+    set nocase 1
+    set leaves [list]
+    set groups [list]
+    set cur [list]
+    set pending_neg 0
 
     for {set i 0} {$i < [llength $argv]} {incr i} {
         set arg [lindex $argv $i]
+        # Keyword and regex clauses carry an optional :regions suffix.
+        if {[regexp {^--(?:keyword|kw|search)(?::(.*))?$} $arg -> rspec]} {
+            set val [::questlog::cli::main::next_val argv i $arg]
+            ::questlog::cli::main::push_leaf leaves cur pending_neg \
+                [::questlog::match::kw_leaf $val [::questlog::cli::main::regions $rspec] $pending_neg]
+            continue
+        }
+        if {[regexp {^--(?:regex|rx|pattern)(?::(.*))?$} $arg -> rspec]} {
+            set val [::questlog::cli::main::next_val argv i $arg]
+            ::questlog::cli::main::push_leaf leaves cur pending_neg \
+                [::questlog::match::rx_leaf $val [::questlog::cli::main::regions $rspec] $pending_neg]
+            continue
+        }
+        if {[string match --tool:* $arg]} {
+            set selector [string range $arg [string length "--tool:"] end]
+            set val [::questlog::cli::main::next_val argv i $arg]
+            lassign [::questlog::search::tool_selector $selector] kind spec
+            ::questlog::cli::main::push_leaf leaves cur pending_neg \
+                [::questlog::match::tool_leaf $kind $spec $val $pending_neg]
+            continue
+        }
         switch -glob -- $arg {
             --json - --cmd {}
             --help - -h { ::questlog::cli::main::usage }
-            --limit         { set limit [lindex $argv [incr i]] }
-            --limit-matches { set limit_matches [lindex $argv [incr i]] }
-            --search        { set search_key [lindex $argv [incr i]] }
-            --pattern - --regex { set pattern [lindex $argv [incr i]] }
-            --scope         { set scope [lindex $argv [incr i]] }
-            --since         { set since [lindex $argv [incr i]] }
-            --under         { set under [lindex $argv [incr i]] }
-            --tool:* {
-                set selector [string range $arg [string length "--tool:"] end]
-                set val [lindex $argv [incr i]]
-                lassign [::questlog::search::tool_selector $selector] kind spec
-                if {$kind eq "file"} {
-                    lappend files [list $spec $val]
-                } else {
-                    lappend tools [list $spec $val]
+            --or {
+                if {$pending_neg || [llength $cur] == 0} {
+                    puts stderr "questlog: --or needs a clause on each side"
+                    ::questlog::cli::main::usage
                 }
+                lappend groups [::questlog::match::tnode_and $cur]
+                set cur [list]
+            }
+            --not {
+                if {$pending_neg} {
+                    puts stderr "questlog: --not --not is not allowed"
+                    ::questlog::cli::main::usage
+                }
+                set pending_neg 1
+            }
+            --limit         { set limit [::questlog::cli::main::next_val argv i $arg] }
+            --limit-matches { set limit_matches [::questlog::cli::main::next_val argv i $arg] }
+            --since         { set since [::questlog::cli::main::next_val argv i $arg] }
+            --under         { set under [::questlog::cli::main::next_val argv i $arg] }
+            --case          { set nocase 0 }
+            "(" - ")" - "--(" - "--)" - --and {
+                puts stderr "questlog: grouping is not supported - the flag algebra has no\
+                    parentheses. Reorder to OR-of-ANDs, e.g. 'A B --or A C' for 'A AND (B OR C)'."
+                exit 2
             }
             -* {
                 puts stderr "Unknown option: $arg"
                 ::questlog::cli::main::usage
             }
-            default { set search_key $arg }
+            default {
+                ::questlog::cli::main::push_leaf leaves cur pending_neg \
+                    [::questlog::match::kw_leaf $arg {} $pending_neg]
+            }
         }
+    }
+    if {$pending_neg} {
+        puts stderr "questlog: --not has no following clause"
+        ::questlog::cli::main::usage
+    }
+    if {[llength $cur] > 0} {
+        lappend groups [::questlog::match::tnode_and $cur]
+    } elseif {[llength $groups] > 0} {
+        puts stderr "questlog: --or needs a clause on each side"
+        ::questlog::cli::main::usage
     }
     if {$limit eq "all"} { set limit 0 }
 
@@ -166,29 +257,19 @@ proc ::questlog::cli::main::run {argv} {
         set sub_limit $limit_matches
     }
 
-    # 2. Build the query criteria snapshot
+    # 2. Assemble the clause tree and the row-level bounds snapshot. The bounds
+    # (since, under, one_turn) ride outside the boolean algebra as global filters.
+    set clauses [dict create leaves $leaves \
+        tree [::questlog::match::tnode_or $groups] nocase $nocase]
     set snapshot [dict create \
-        search $search_key \
-        search_case 0 \
-        search_scope $scope \
-        pattern [expr {$pattern eq "" ? {} : [list $pattern]}] \
-        file  $files \
-        tool  $tools \
         under [expr {$under eq "" ? {} : [list $under]}] \
         since $since \
         one_turn 0]
 
-    set clauses [::questlog::search::build_clauses $snapshot]
     set scan [::questlog::Scan new {} {}]
 
     # Initialize rates for synchronous costing
     ::questlog::cost::load_rates $ROOT
-
-    # Determine if any query or directory filters are active
-    set has_filters [expr {
-        [::questlog::search::clauses_any $clauses] ||
-        [llength [dict get $snapshot under]] > 0
-    }]
 
     # 3. Discover on-disk files including subagents
     set paths [$scan list_paths_for $snapshot 1]

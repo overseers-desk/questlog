@@ -49,11 +49,52 @@ proc ::questlog::search::search_terms {s} {
     return $out
 }
 
-# build_clauses snapshot - normalise the toolbar's snapshot into the form the
-# matcher consumes: tokenised search terms, the search scope, the regex
-# patterns from the pattern row, the {op path} file values and the {name key}
-# tool values. File pairs keep only a non-empty path, tool pairs a non-empty
-# name; empty entries are stripped.
+# parse_regions spec - the block-type set a region-spec selects. spec is a
+# comma-joined list of region tokens (user, assistant, tool-use, tool-result,
+# any); each token may be any unambiguous prefix, so `assi` resolves to
+# assistant. `any`, an empty spec, or any token resolving to `any` returns the
+# empty list, which the matcher reads as unrestricted (every block type,
+# including the system/compaction blocks the four named regions exclude). An
+# unknown token, or an ambiguous prefix (t, to, tool, tool-, a), throws and names
+# the candidates - never a silent default. The one home for the region
+# vocabulary the CLI colon-qualifier and the GUI scope selector both parse; the
+# hyphenated tokens map to the jsonl block types.
+proc ::questlog::search::parse_regions {spec} {
+    set canon {user assistant tool-use tool-result any}
+    set to_btype {user user  assistant assistant  tool-use tool_use  tool-result tool_result}
+    set out [list]
+    foreach tok [split [string trim $spec] ,] {
+        set tok [string trim $tok]
+        if {$tok eq ""} continue
+        if {$tok in $canon} {
+            set hit $tok
+        } else {
+            set cands [list]
+            foreach c $canon {
+                if {[string equal -length [string length $tok] $tok $c]} { lappend cands $c }
+            }
+            if {[llength $cands] == 0} {
+                error "unknown region '$tok' (want: [join $canon {, }])"
+            }
+            if {[llength $cands] > 1} {
+                error "ambiguous region '$tok' (matches: [join $cands {, }])"
+            }
+            set hit [lindex $cands 0]
+        }
+        if {$hit eq "any"} { return {} }
+        lappend out [dict get $to_btype $hit]
+    }
+    return [lsort -unique $out]
+}
+
+# build_clauses snapshot - normalise the toolbar's snapshot into the matcher's
+# {leaves tree nocase} form. The search terms become keyword leaves carrying the
+# scope's region set, ANDed together; the regex patterns, the {op path} file
+# values and the {name key} tool values each become a leaf, ORed within their
+# kind, and those OR-groups AND with the terms. This is the GUI's existing
+# meaning - all terms, and one of each filled-in filter - expressed as one tree.
+# File pairs keep only a non-empty path, tool pairs a non-empty name; empty
+# entries are stripped.
 proc ::questlog::search::build_clauses {snapshot} {
     set search ""
     if {[dict exists $snapshot search]} { set search [dict get $snapshot search] }
@@ -62,14 +103,33 @@ proc ::questlog::search::build_clauses {snapshot} {
     if {[dict exists $snapshot search_case]} {
         set search_case [dict get $snapshot search_case]
     }
-    set out [dict create \
-        terms    $terms \
-        nocase   [expr {!$search_case}] \
-        scope    [dict getdef $snapshot search_scope anywhere] \
-        patterns [::questlog::search::trim_values [dict getdef $snapshot pattern {}]] \
-        files    [::questlog::search::trim_pairs  [dict getdef $snapshot file {}] 1] \
-        tools    [::questlog::search::trim_pairs  [dict getdef $snapshot tool {}] 0]]
-    return $out
+    set regions  [::questlog::search::parse_regions [dict getdef $snapshot search_regions any]]
+    set patterns [::questlog::search::trim_values [dict getdef $snapshot pattern {}]]
+    set files    [::questlog::search::trim_pairs  [dict getdef $snapshot file {}] 1]
+    set tools    [::questlog::search::trim_pairs  [dict getdef $snapshot tool {}] 0]
+
+    set leaves [list]
+    set andnodes [list]
+    foreach t $terms {
+        lappend andnodes [::questlog::match::tnode_leaf [llength $leaves]]
+        lappend leaves [::questlog::match::kw_leaf $t $regions 0]
+    }
+    foreach {kind src} [list regex $patterns file $files tool $tools] {
+        set ornodes [list]
+        foreach v $src {
+            set id [llength $leaves]
+            switch -- $kind {
+                regex { lappend leaves [::questlog::match::rx_leaf $v {} 0] }
+                file  { lappend leaves [::questlog::match::tool_leaf file [lindex $v 0] [lindex $v 1] 0] }
+                tool  { lappend leaves [::questlog::match::tool_leaf tool [lindex $v 0] [lindex $v 1] 0] }
+            }
+            lappend ornodes [::questlog::match::tnode_leaf $id]
+        }
+        if {[llength $ornodes] > 0} { lappend andnodes [::questlog::match::tnode_or $ornodes] }
+    }
+    return [dict create leaves $leaves \
+        tree [::questlog::match::tnode_and $andnodes] \
+        nocase [expr {!$search_case}]]
 }
 
 proc ::questlog::search::trim_values {vs} {
@@ -103,14 +163,11 @@ proc ::questlog::search::tool_selector {selector} {
     return [list tool [dict getdef $tool_names [string tolower $selector] $selector]]
 }
 
-# clauses_any clauses - 1 iff any clause has at least one value. Used by
-# the matcher to early-exit when the user clears every filter. Scope is never
-# a clause on its own: it only narrows where the terms land.
+# clauses_any clauses - 1 iff there is at least one leaf clause. Used by the
+# matcher to early-exit when the user clears every filter. A region set rides on
+# each keyword leaf and is never a clause of its own.
 proc ::questlog::search::clauses_any {clauses} {
-    foreach k {terms patterns files tools} {
-        if {[llength [dict get $clauses $k]] > 0} { return 1 }
-    }
-    return 0
+    return [expr {[llength [dict get $clauses leaves]] > 0}]
 }
 
 # Body sourced into each worker thread. A worker is a separate interp, so it
@@ -142,28 +199,28 @@ set ::questlog::search::WorkerScript {
     thread::wait
 }
 
-# ::questlog::Search - typed-criteria search across session logs, threaded
+# ::questlog::Search - clause-tree search across session logs, threaded
 # fan-out by default; QUESTLOG_SEARCH_THREADS tunes the worker count, or 0
 # selects the single-thread coroutine path.
 #
-# The criteria are the search terms (with a scope: anywhere, the said text,
-# tool calls, or tool output), the regex patterns, the {op path} file values
-# and the {name key} tool values. A session qualifies when every active
-# criterion is satisfied somewhere in it (AND at session scope; values within
-# the file row or the tool row OR among themselves). A regex matches a content
-# block; a file value matches a tool_use whose tool name is in the op's set and
-# whose path ends with the value, so a bare filename matches that file in any
-# directory; a tool value matches a use of the named tool whose invocation text
-# contains the key (empty key = any use).
+# The criteria are a flat list of leaf clauses and a boolean tree over them. A
+# leaf is a keyword or regex needle in an optional region set (user, assistant,
+# tool_use, tool_result; empty = anywhere), or a structured {op path} file value
+# or {name key} tool value. Each leaf is session-satisfied once a record matches
+# it; a session qualifies when the tree (adjacency AND, --or, --not) holds over
+# those per-leaf truths. A regex matches a content block in its regions; a file
+# value matches a tool_use whose tool name is in the op's set and whose path ends
+# with the value, so a bare filename matches that file in any directory; a tool
+# value matches a use of the named tool whose invocation text contains the key
+# (empty key = any use).
 #
-# Per file: pre-filter each raw line by any criterion's literal (the pattern
-# for regex, the path for a file value, the key or tool name for a tool value)
-# so the JSON parse is skipped on lines that cannot contribute; on a candidate
-# line, parse once and collect the record's hits via record_hits, marking
-# criteria satisfied and buffering evidence rows. At end of file, if every
-# criterion is satisfied, deliver the file's row and its match list (in line
-# order) together through OnFile; each match is a dict {path lineoff ts btype
-# content folder}.
+# Per file: pre-filter each raw line by any leaf's literal (the needle for a
+# keyword, the pattern run for regex, the path/key/name for a tool leaf) so the
+# JSON parse is skipped on lines that cannot contribute; on a candidate line,
+# parse once and score each leaf via leaf_record_hit, marking leaves satisfied
+# and buffering the snippets of positively-used leaves. At end of file, if the
+# tree holds, deliver the file's row and its match list (in line order) together
+# through OnFile; each match is a dict {path lineoff ts btype content folder}.
 #
 # Side effect: as a free byproduct of reading each file, the row data
 # (multi-turn predicate, first prompt, cwd_hint, first timestamp) is

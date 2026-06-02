@@ -8,7 +8,8 @@ package require Tk
 #   since            24h | 7d | 30d | all
 #   search           string (user's typed search; empty when blank)
 #   search_case      0 | 1   (Aa toggle next to the search field)
-#   search_scope     anywhere | text | tool-call | tool-output
+#   search_regions   any | user,assistant | tool-use | tool-result (region-spec
+#                    for the search terms; see lib/search.tcl parse_regions)
 #   under            list of absolute paths  (OR within, AND across clauses)
 #   file             list of {op path} pairs (op: either | read | wrote)
 #   tool             list of {name key} pairs (key matches the invocation text;
@@ -77,7 +78,7 @@ oo::class create ::questlog::ui::Toolbar {
     variable WindowVar
     variable SearchVar
     variable SearchCaseVar
-    variable SearchScopeVar   ;# anywhere | text | tool-call | tool-output
+    variable SearchScopeVar   ;# region-spec: any | user,assistant | tool-use | tool-result
     variable ScopeLabelVar    ;# the menubutton's friendly label for the scope
     variable OneTurnVar
     variable RunningOnlyVar
@@ -102,7 +103,7 @@ oo::class create ::questlog::ui::Toolbar {
         set WindowVar  [::questlog::config::get since_default]
         set SearchVar  ""
         set SearchCaseVar 0
-        set SearchScopeVar anywhere
+        set SearchScopeVar any
         set ScopeLabelVar "anywhere"
         set OneTurnVar 1
         set RunningOnlyVar    0
@@ -220,14 +221,15 @@ oo::class create ::questlog::ui::Toolbar {
         my refresh_add_rail
     }
 
-    # The search-scope picker. The value is the matcher scope token; the label
-    # is the friendly word shown on the button.
+    # The search-scope picker. The value is the region-spec the search terms are
+    # matched in (parsed by lib/search.tcl parse_regions); the label is the
+    # friendly word shown on the button.
     method build_scope_menu {w} {
         ttk::menubutton $w -textvariable [my varname ScopeLabelVar] \
             -menu $w.m -direction below
         menu $w.m -tearoff 0
-        foreach {val label} {anywhere "anywhere" text "user + asst" \
-                             tool-call "tool calls" tool-output "tool output"} {
+        foreach {val label} {any "anywhere" user,assistant "user + asst" \
+                             tool-use "tool calls" tool-result "tool output"} {
             $w.m add command -label $label \
                 -command [list [self] set_scope $val $label]
         }
@@ -271,7 +273,7 @@ oo::class create ::questlog::ui::Toolbar {
             since          $WindowVar \
             search         $SearchVar \
             search_case    $SearchCaseVar \
-            search_scope   $SearchScopeVar \
+            search_regions $SearchScopeVar \
             under          [dict get $Clauses under] \
             file           [dict get $Clauses file] \
             tool           [dict get $Clauses tool] \
