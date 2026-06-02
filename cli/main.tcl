@@ -101,7 +101,7 @@ proc ::questlog::cli::main::usage {} {
     puts stderr "bounds (global, applied to the whole result - not clauses):"
     puts stderr "  --since <dur>           Only sessions active in the last <dur> (e.g. 24h, 7d, 2w)."
     puts stderr "  --under <dir>           Only sessions located under the directory."
-    puts stderr "  --limit <N>             Cap returned sessions (default: 50, 0 = unlimited)."
+    puts stderr "  --limit <N>             Cap returned sessions (unset or 0 = unlimited)."
     puts stderr "  --limit-matches <N>     Cap snippets per session/subagent (0 = none)."
     puts stderr "  --case                  Case-sensitive keyword matching (default: insensitive)."
     exit 2
@@ -166,11 +166,12 @@ proc ::questlog::cli::main::push_leaf {leavesVar curVar negVar leaf} {
 # malformed query prints a message and exits through usage. Separated from run so
 # the grammar is a unit a test can drive from argv to tree.
 proc ::questlog::cli::main::parse_query {argv} {
-    set limit 50
+    set limit 0
     set limit_matches -1
     set under ""
     set since ""
     set nocase 1
+    set mode json
     set leaves [list]
     set groups [list]
     set cur [list]
