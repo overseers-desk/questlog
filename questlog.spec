@@ -63,6 +63,7 @@ install -D -m 0644 assets/questlog-512.png \
 - Fix: folder heading overwrite bug fixed
 - Subagent metrics fold up to the parent session level
 - CLI: --json flag replaces --cli; --help/-h handled
+- CLI: --since filters JSON output by recency (e.g. 24h, 7d, 2w); the launcher's --window flag was renamed to --since
 - Cost module refactored as a pure domain library
 
 * Mon Jun 01 2026 Weiwu Zhang <a@colourful.land> - 1.1.0-1

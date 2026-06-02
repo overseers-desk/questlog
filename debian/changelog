@@ -4,6 +4,7 @@ questlog (1.1.1) unstable; urgency=medium
   * Fix: folder heading overwrite bug fixed.
   * Subagent metrics fold up to the parent session level.
   * CLI: --json flag replaces --cli; --help/-h handled.
+  * CLI: --since filters JSON output by recency (e.g. 24h, 7d, 2w); the launcher's --window flag was renamed to --since.
   * Cost module refactored as a pure domain library.
 
  -- Weiwu Zhang <a@colourful.land>  Mon, 01 Jun 2026 00:00:00 +0000
