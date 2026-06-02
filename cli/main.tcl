@@ -81,16 +81,16 @@ proc ::questlog::cli::main::format_json {folders_dict} {
 # than left to read as a complete total.
 proc ::questlog::cli::main::format_shortstat {stats limit} {
     set lines [list]
-    lappend lines [format "sessions           %d"    [dict get $stats sessions]]
-    lappend lines [format "subagent sessions  %d"    [dict get $stats subagents]]
-    lappend lines [format "turns              %d"    [dict get $stats turns]]
-    lappend lines [format "input tokens       %d"    [dict get $stats input_tokens]]
-    lappend lines [format "output tokens      %d"    [dict get $stats output_tokens]]
-    lappend lines [format "cache write tokens %d"    [dict get $stats cache_write_tokens]]
-    lappend lines [format "cache read tokens  %d"    [dict get $stats cache_read_tokens]]
+    lappend lines [format "sessions           %s"    [dict get $stats sessions]]
+    lappend lines [format "subagent sessions  %s"    [dict get $stats subagents]]
+    lappend lines [format "turns              %s"    [dict get $stats turns]]
+    lappend lines [format "input tokens       %s"    [dict get $stats input_tokens]]
+    lappend lines [format "output tokens      %s"    [dict get $stats output_tokens]]
+    lappend lines [format "cache write tokens %s"    [dict get $stats cache_write_tokens]]
+    lappend lines [format "cache read tokens  %s"    [dict get $stats cache_read_tokens]]
     lappend lines [format "total cost         \$%.2f" [dict get $stats cost]]
     if {$limit > 0} {
-        lappend lines [format "limit applied      %d (totals cover the first %d sessions only)" \
+        lappend lines [format "limit applied      %s (totals cover the first %s sessions only)" \
             $limit $limit]
     }
     return [join $lines "\n"]
