@@ -61,6 +61,9 @@ install -D -m 0644 assets/questlog-512.png \
 %changelog
 * Tue Jun 02 2026 Weiwu Zhang <a@colourful.land> - 1.1.2-1
 - CLI: the --json search composes by one boolean algebra; --keyword and --regex each take an optional :regions suffix; --or widens to OR, --not negates the next clause; --scope removed; --case for case-sensitive keywords
+- CLI: --shortstat emits a totals summary (session and subagent counts, turns, tokens, total cost) over the same result set as --json
+- CLI: the default --limit is removed; a query returns every matching session unless --limit caps it
+- CLI: --json emits null for an unknown cost rather than the -1.0 sentinel
 - Time filter unified across CLI and GUI: --since takes a relative window (24h, 7d, 2w) or an absolute date (2026-04-01); the GUI time row gains a custom member with a date-picker popover
 - Packaging: install the cli/ scripts so --json and --shortstat work from packages
 * Mon Jun 01 2026 Weiwu Zhang <a@colourful.land> - 1.1.1-1
