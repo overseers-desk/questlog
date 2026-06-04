@@ -50,7 +50,12 @@ oo::class create ::questlog::ui::Viewer {
     variable Records
     variable Sections        ;# list of dicts: {kind label start_idx end_idx}
     variable Text             ;# the text widget
-    variable PathLabel        ;# header label showing the loaded path
+    variable PathLabel        ;# header label showing the loaded session's cwd
+    variable IdLabel          ;# header label showing the abbreviated session id
+    variable ActionMenu       ;# the "⋯" head-strip menu (Font, and Stage 2 actions)
+    variable Uuid             ;# loaded session's uuid (basename of the jsonl)
+    variable Cwd              ;# loaded session's working directory (first_cwd)
+    variable CwdFull          ;# full ~-collapsed cwd string, kept for re-elision on resize
     variable Find             ;# find overlay frame
     variable FindVar
     variable FindMatches      ;# list of indices of all current matches
@@ -95,6 +100,9 @@ oo::class create ::questlog::ui::Viewer {
         set ToolLines [list]
         set Roles [dict create]
         set OnToggle $on_toggle
+        set Uuid ""
+        set Cwd ""
+        set CwdFull ""
         my build
     }
 
@@ -112,7 +120,16 @@ oo::class create ::questlog::ui::Viewer {
         set Path $jsonl_path
         set Records [list]
         set LineMap [dict create]
-        $PathLabel configure -text $Path
+        set Uuid [file rootname [file tail $Path]]
+        set Cwd [::questlog::jsonl::first_cwd $Path]
+        # Show the working directory the session ran in (it survives a move,
+        # unlike the encoded project folder the jsonl sits under). Fall back to
+        # the jsonl's own directory when the file records no cwd.
+        set shown_dir [expr {$Cwd ne "" ? $Cwd : [file dirname $Path]}]
+        set CwdFull [::questlog::path::pretty_home $shown_dir]
+        my elide_cwd
+        $IdLabel configure -text \
+            "[string range $Uuid 0 3]…[string range $Uuid end-3 end]"
         my find_hide
         my load
         my render
@@ -138,6 +155,18 @@ oo::class create ::questlog::ui::Viewer {
             -anchor w -font QLMono -foreground [::questlog::ui::theme::c muted]
         pack $Top.head.path -side left -padx 6 -pady 1 -fill x -expand 1
         set PathLabel $Top.head.path
+        # The cwd can outrun the strip; Tk labels do not ellipsize, so re-elide
+        # it on every resize (elide_cwd keeps the ~ head and the leaf, dropping
+        # the middle), restoring detail when the pane widens.
+        bind $PathLabel <Configure> [list [self] elide_cwd]
+        # Abbreviated session id (first4…last4 of the uuid), click-to-copy the
+        # full id. Fixed width on the right, packed before the on-demand counts
+        # and never forgotten so the expanding cwd cannot squeeze it out.
+        label $Top.head.sid -text "" -background $strip -cursor hand2 \
+            -font QLMono -foreground [::questlog::ui::theme::c sessionhead]
+        set IdLabel $Top.head.sid
+        pack $IdLabel -side right -padx 6 -before $Top.head.path
+        bind $IdLabel <Button-1> [list [self] copy_uuid]
         # Match index: a count on the right of the head strip that toggles the
         # floating index panel (built below). It carries the count even while
         # the panel is dismissed and re-shows it when clicked; its glyph reads
@@ -156,17 +185,17 @@ oo::class create ::questlog::ui::Viewer {
             -foreground [::questlog::ui::theme::c sessionhead] -cursor hand2
         set ToolBtn $Top.head.tools
         bind $ToolBtn <Button-1> [list [self] tool_panel_toggle]
-        # Reading-font picker at the right of the head strip: a plain label
-        # affordance (matching the strip's flat look) that pops the platform
-        # font chooser. Packed once, always present; the match toggle packs to
-        # its left when a search is active.
-        label $Top.head.font -text "Font…" -background $strip \
+        # Overflow menu at the right of the head strip: a plain "⋯" label
+        # affordance (matching the strip's flat look) holding the reading-font
+        # picker, and in Stage 2 the session action set. Packed first on the
+        # right and never forgotten, so the match/tool count re-pack dance keeps
+        # it rightmost. The on-demand counts pack to its left when active.
+        label $Top.head.actions -text "⋯" -background $strip \
             -foreground [::questlog::ui::theme::c sessionhead] -cursor hand2
-        # -before the path so this fixed-width control keeps its slot: the path
-        # label expands and, once a long session path is loaded, its requested
-        # width would otherwise claim the whole strip and squeeze this out.
-        pack $Top.head.font -side right -padx 6 -before $Top.head.path
-        bind $Top.head.font <Button-1> [list [self] choose_font]
+        pack $Top.head.actions -side right -padx 6 -before $Top.head.sid
+        bind $Top.head.actions <Button-1> [list [self] actions_menu_popup]
+        set ActionMenu $Top.actionsmenu
+        menu $ActionMenu -tearoff 0
 
         # Sidebar toggle at the far left of the strip (Ctrl+B's mouse twin). The
         # design icon (screens.jsx SessionViewer) is a panel outline with a
@@ -390,6 +419,49 @@ oo::class create ::questlog::ui::Viewer {
         tk fontchooser configure -parent $Top -title "Reading font" \
             -font QLBody -command [list [self] on_font_chosen]
         tk fontchooser show
+    }
+
+    # Copy the loaded session's full id to the clipboard (the id label shows
+    # only the abbreviated first4…last4 form).
+    method copy_uuid {} { if {$Uuid ne ""} { my clipboard_set $Uuid } }
+
+    # The "⋯" overflow menu. Stage 1: the reading-font picker only. Stage 2 adds
+    # the shared session action set above a separator.
+    method actions_menu_popup {} {
+        $ActionMenu delete 0 end
+        $ActionMenu add command -label "Font…" -command [list [self] choose_font]
+        tk_popup $ActionMenu {*}[winfo pointerxy .]
+    }
+
+    # Fit the cwd into the strip. Tk labels do not ellipsize, so when the full
+    # ~-collapsed cwd overruns the available width we drop interior components,
+    # keeping the head (the ~ anchor) and as many trailing components (the leaf
+    # is what identifies the project) as fit: ~/code/…/leaf/dir. Bound to the
+    # label's <Configure>, so widening the pane restores detail.
+    method elide_cwd {} {
+        if {![winfo exists $PathLabel]} return
+        if {$CwdFull eq ""} return
+        set avail [expr {[winfo width $PathLabel] - 12}]
+        if {$avail <= 1} return
+        if {[font measure QLMono $CwdFull] <= $avail} {
+            $PathLabel configure -text $CwdFull
+            return
+        }
+        set comps [split $CwdFull /]
+        if {[lindex $comps 0] eq ""} {
+            set comps [lreplace $comps 0 1 "/[lindex $comps 1]"]
+        }
+        set head [lindex $comps 0]
+        set rest [lrange $comps 1 end]
+        # Grow the kept tail until one more component would overflow.
+        set best "$head/…/[lindex $rest end]"
+        for {set k 1} {$k <= [llength $rest]} {incr k} {
+            set tail [lrange $rest end-[expr {$k-1}] end]
+            set cand "$head/…/[join $tail /]"
+            if {[font measure QLMono $cand] > $avail} break
+            set best $cand
+        }
+        $PathLabel configure -text $best
     }
 
     # Apply a chosen font to the reading body. Reconfiguring the named QLBody
