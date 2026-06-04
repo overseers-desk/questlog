@@ -124,7 +124,13 @@ proc ::questlog::ui::move_dialog::browse {} {
     if {![file isdirectory $start]} { set start $::env(HOME) }
     set dir [tk_chooseDirectory -parent $Top -mustexist 1 \
                  -title "Choose destination directory" -initialdir $start]
-    if {$dir ne ""} { set EntryVar $dir }
+    if {$dir eq ""} return
+    # Some choosers return the picked folder relative to -initialdir rather
+    # than absolute (observed under XWayland). Anchor it back to the start
+    # directory we handed in, then normalise, so the entry always holds the
+    # absolute path the rest of the dialog requires.
+    if {![string match "/*" $dir]} { set dir [file join $start $dir] }
+    set EntryVar [file normalize $dir]
 }
 
 proc ::questlog::ui::move_dialog::on_select {} {
