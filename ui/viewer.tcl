@@ -77,11 +77,14 @@ oo::class create ::questlog::ui::Viewer {
     variable ToolLines        ;# jsonl line of each call, parallel to the ToolList rows
     variable Roles            ;# dict: jsonl line -> uppercased role, for row colour
     variable OnToggle         ;# cb: () -> ask the app to fold/unfold the list pane
+    variable OnMove           ;# cb: [list path] -> app move router (⋯ menu)
+    variable OnBookmark       ;# cb: path -> app bookmark router (⋯ menu)
+    variable OnRename         ;# cb: path -> app rename router (⋯ menu)
     variable CollapseBtn      ;# the header toggle label
     variable IconOpen         ;# toggle photo, list shown (solid left pane)
     variable IconClosed       ;# toggle photo, list hidden (dim left pane)
 
-    constructor {parent {on_toggle ""}} {
+    constructor {parent {on_toggle ""} {on_move ""} {on_bookmark ""} {on_rename ""}} {
         set Top $parent
         set Shown 0
         set Path ""
@@ -100,6 +103,9 @@ oo::class create ::questlog::ui::Viewer {
         set ToolLines [list]
         set Roles [dict create]
         set OnToggle $on_toggle
+        set OnMove $on_move
+        set OnBookmark $on_bookmark
+        set OnRename $on_rename
         set Uuid ""
         set Cwd ""
         set CwdFull ""
@@ -425,10 +431,32 @@ oo::class create ::questlog::ui::Viewer {
     # only the abbreviated first4…last4 form).
     method copy_uuid {} { if {$Uuid ne ""} { my clipboard_set $Uuid } }
 
-    # The "⋯" overflow menu. Stage 1: the reading-font picker only. Stage 2 adds
-    # the shared session action set above a separator.
+    # The "⋯" overflow menu: the shared session action set for the loaded
+    # session, then the viewer-local reading-font picker below a separator.
+    # "Open in viewer" is omitted (the session is already shown). The folder is
+    # the encoded basename of the jsonl's parent, the same value app::move_one
+    # derives, so Reveal and the bookmark work without an app round-trip. Rename
+    # stays enabled here (is_running 0); the app's rename router holds the
+    # authoritative running guard.
     method actions_menu_popup {} {
-        $ActionMenu delete 0 end
+        if {$Path eq ""} return
+        set folder [file tail [file dirname $Path]]
+        set ctx [dict create \
+            target [dict create path $Path uuid $Uuid cwd $Cwd folder $folder] \
+            parent $Top \
+            clipboard [list [self] clipboard_set] \
+            on_move $OnMove \
+            on_bookmark $OnBookmark \
+            on_rename $OnRename \
+            state [dict create \
+                is_running 0 \
+                is_bookmarked [file executable $Path] \
+                has_cwd [expr {$Cwd ne ""}] \
+                has_folder [expr {$folder ne ""}]]]
+        set idx [::questlog::ui::session_actions::populate $ActionMenu $ctx]
+        ::questlog::ui::session_actions::apply_state \
+            $ActionMenu $idx [dict get $ctx state]
+        $ActionMenu add separator
         $ActionMenu add command -label "Font…" -command [list [self] choose_font]
         tk_popup $ActionMenu {*}[winfo pointerxy .]
     }

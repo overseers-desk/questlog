@@ -132,6 +132,7 @@ proc ::questlog::ui::app::start {root {initial_criteria {}} {init_since ""} {ini
         [namespace code on_move_request] \
         [namespace code on_drop_move] \
         [namespace code on_bookmark_toggle] \
+        [namespace code on_rename_request] \
         [namespace code on_scan_path] \
         [namespace code on_search_cancel] \
         [namespace code on_show_all] \
@@ -144,7 +145,11 @@ proc ::questlog::ui::app::start {root {initial_criteria {}} {init_since ""} {ini
     # shows a centered empty state until the first session is previewed.
     set ViewFrame $PW.view
     ttk::frame $ViewFrame
-    set Viewer [::questlog::ui::Viewer new $ViewFrame.v [namespace code toggle_sidebar]]
+    set Viewer [::questlog::ui::Viewer new $ViewFrame.v \
+        [namespace code toggle_sidebar] \
+        [namespace code on_move_request] \
+        [namespace code on_bookmark_toggle] \
+        [namespace code on_rename_request]]
     pack $ViewFrame.v -side top -fill both -expand 1
     $PW add $ViewFrame -weight 42
 
@@ -652,6 +657,21 @@ proc ::questlog::ui::app::on_bookmark_toggle {path} {
     }
     $Scan set_bookmark_field $path
     $SessionList reconcile_one $path
+}
+
+# Rename router. Both the list's right-click menu and the viewer's ⋯ menu reach
+# rename through here, so the list row redraws regardless of which widget asked.
+# The running guard lives here (origin-independent): renaming appends to the
+# jsonl, and we avoid interleaving with a live claude session's own writes.
+proc ::questlog::ui::app::on_rename_request {path} {
+    variable SessionList
+    set uuid [file rootname [file tail $path]]
+    if {[$SessionList is_running $uuid]} {
+        tk_messageBox -icon info -title "Rename session" \
+            -message "This session is running; rename it once it finishes."
+        return
+    }
+    $SessionList do_rename $path
 }
 
 # Synchronously scan one file into Rows, for the reconciler to surface a

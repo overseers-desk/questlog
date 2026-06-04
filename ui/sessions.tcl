@@ -95,6 +95,7 @@ oo::class create ::questlog::ui::SessionList {
     variable OnMoveRequest    ;# cb: paths -> open move picker
     variable OnDropMove       ;# cb: paths folder -> direct move
     variable OnBookmarkToggle ;# cb: path -> flip the +x bookmark bit
+    variable OnRename         ;# cb: path -> app router that runs do_rename
     variable OnScanPath       ;# cb: path -> row (synchronous single-file scan)
     variable OnShowAll        ;# cb: () -> ask the toolbar to drop the auto-under
     variable Snapshot
@@ -113,15 +114,14 @@ oo::class create ::questlog::ui::SessionList {
     variable MenuTarget
     variable CMenu            ;# the reduced right-click menu for subagent child rows
     variable ChildMenuPath    ;# child path the child menu acts on
-    variable BookmarkIndex    ;# menu index of the Bookmark entry (its label mutates)
-    variable RenameIndex      ;# menu index of the Rename entry, enabled per running state
+    variable MenuIndices      ;# entry indices returned by session_actions::populate
     variable TotalCost        ;# running sum of per-session cost in the model
     variable StatusBase       ;# last text set by set_progress/set_done
     variable OnSubagents      ;# cb: parent path -> list of child row dicts
     variable OnSubagentCost   ;# cb: child path -> start the cost pass for it
 
     constructor {parent resolve_cb lookup_cb on_open on_move_request \
-                 on_drop_move on_bookmark_toggle on_scan_path cancel_cb \
+                 on_drop_move on_bookmark_toggle on_rename on_scan_path cancel_cb \
                  on_show_all on_subagents on_subagent_cost} {
         set Top $parent
         set ResolveFolder $resolve_cb
@@ -130,6 +130,7 @@ oo::class create ::questlog::ui::SessionList {
         set OnMoveRequest $on_move_request
         set OnDropMove $on_drop_move
         set OnBookmarkToggle $on_bookmark_toggle
+        set OnRename $on_rename
         set OnScanPath $on_scan_path
         set CancelCb $cancel_cb
         set OnShowAll $on_show_all
@@ -395,37 +396,12 @@ oo::class create ::questlog::ui::SessionList {
         }
     }
 
+    # The entries are filled per-popup by session_actions::populate (shared with
+    # the viewer's ⋯ menu); here we only create the empty widget.
     method build_menu {} {
         set Menu $Top.cmenu
         menu $Menu -tearoff 0
-        $Menu add command -label "Open in viewer" -command [list [self] menu_open]
-        $Menu add separator
-        $Menu add command -label "Copy resume command" \
-            -command [list [self] menu_copy_resume]
-        $Menu add command -label "Copy session id" \
-            -command [list [self] menu_copy_uuid]
-        $Menu add command -label "Copy session path" \
-            -command [list [self] menu_copy_path]
-        $Menu add command -label "Copy last assistant output" \
-            -command [list [self] menu_copy_last_assistant]
-        $Menu add command -label "Copy session as Markdown" \
-            -command [list [self] menu_copy_markdown]
-        $Menu add command -label "Export to .md..." \
-            -command [list [self] menu_export_markdown]
-        $Menu add separator
-        $Menu add command -label "Resume in new terminal tab" \
-            -command [list [self] menu_resume 0]
-        $Menu add command -label "Resume forked" -command [list [self] menu_resume 1]
-        $Menu add separator
-        $Menu add command -label "Move to..." -command [list [self] menu_move]
-        $Menu add command -label "Reveal folder" -command [list [self] menu_reveal]
-        $Menu add separator
-        $Menu add command -label "Bookmark" -command [list [self] menu_bookmark]
-        # Addressed by index, not label: on_session_right rewrites this label
-        # to Add/Remove bookmark, so a label lookup would fail on the next open.
-        set BookmarkIndex [$Menu index end]
-        $Menu add command -label "Rename..." -command [list [self] menu_rename]
-        set RenameIndex [$Menu index end]
+        set MenuIndices [dict create]
         set MenuTarget [dict create]
         set MenuPath ""
     }
@@ -1883,96 +1859,61 @@ oo::class create ::questlog::ui::SessionList {
         set MenuPath $path
         set MenuTarget [dict create path $path uuid $uuid cwd $cwd folder $folder]
 
-        set rstate [expr {$cwd ne "" ? "normal" : "disabled"}]
-        foreach lbl {"Copy resume command" "Resume in new terminal tab" \
-                     "Resume forked"} {
-            $Menu entryconfigure $lbl -state $rstate
-        }
-        $Menu entryconfigure "Reveal folder" \
-            -state [expr {$folder ne "" ? "normal" : "disabled"}]
-        $Menu entryconfigure $BookmarkIndex \
-            -label [expr {[file executable $path] ? "Remove bookmark" : "Add bookmark"}]
         # Rename writes into the file; greying it while the session is
         # running keeps us from interleaving with claude's own writes.
-        set is_running [dict exists $RunningSet $uuid]
-        $Menu entryconfigure $RenameIndex \
-            -state [expr {$is_running ? "disabled" : "normal"}]
+        set ctx [dict create target $MenuTarget parent $Top \
+            clipboard [list [self] clipboard_set] \
+            on_open [list [self] open_session] \
+            on_move $OnMoveRequest \
+            on_bookmark $OnBookmarkToggle \
+            on_rename $OnRename \
+            state [dict create \
+                is_running [dict exists $RunningSet $uuid] \
+                is_bookmarked [file executable $path] \
+                has_cwd [expr {$cwd ne ""}] \
+                has_folder [expr {$folder ne ""}]]]
+        set MenuIndices [::questlog::ui::session_actions::populate $Menu $ctx]
+        ::questlog::ui::session_actions::apply_state \
+            $Menu $MenuIndices [dict get $ctx state]
         tk_popup $Menu $X $Y
     }
 
-    method menu_target_get {key} { return [dict get $MenuTarget $key] }
-    method menu_open {} { my open_session $MenuPath }
-    method menu_copy_resume {} {
-        my clipboard_set [::questlog::ui::terminal::resume_command \
-            [my menu_target_get cwd] [my menu_target_get uuid]]
-    }
-    method menu_copy_uuid {} { my clipboard_set [my menu_target_get uuid] }
-    method menu_copy_path {} { my clipboard_set $MenuPath }
-    method menu_copy_last_assistant {} {
-        my clipboard_set [::questlog::jsonl::last_assistant_text [my menu_target_get path]]
-    }
-    # The whole session as Markdown on the clipboard: the text-only transcript
-    # (USER/ASSISTANT/SYSTEM turns, segmented at compaction boundaries and idle
-    # gaps the way the viewer breaks it). Tool calls are out of scope by design.
-    method menu_copy_markdown {} {
-        my clipboard_set \
-            [::questlog::ui::markdown::export_session [my menu_target_get path]]
-    }
-    # The same Markdown to a file the reader picks. A cancelled dialog returns
-    # empty and does nothing; a write failure is surfaced rather than swallowed.
-    method menu_export_markdown {} {
-        set path [my menu_target_get path]
-        set initial "[file rootname [file tail $path]].md"
-        set dest [tk_getSaveFile -parent $Top -title "Export session to Markdown" \
-            -defaultextension .md -initialfile $initial \
-            -filetypes {{Markdown {.md}} {{All files} *}}]
-        if {$dest eq ""} return
-        set md [::questlog::ui::markdown::export_session $path]
-        if {[catch {
-            set fh [open $dest w]
-            chan configure $fh -encoding utf-8
-            puts -nonewline $fh $md
-            close $fh
-        } err]} {
-            tk_messageBox -parent $Top -icon error -title "Export session" \
-                -message "Could not write $dest" -detail $err
-        }
-    }
-    method menu_resume {fork} {
-        ::questlog::ui::terminal::launch_tab [my menu_target_get cwd] \
-            [my menu_target_get uuid] $fork
-    }
-    method menu_reveal {} {
-        set dir [file join [::questlog::path::projects_root] [my menu_target_get folder]]
-        set opener [expr {$::tcl_platform(os) eq "Darwin" ? "open" : "xdg-open"}]
-        if {[catch {exec $opener $dir &} err]} {
-            puts stderr "questlog: $opener failed: $err"
-        }
-    }
-    method menu_move {} { {*}$OnMoveRequest [list $MenuPath] }
-    method menu_bookmark {} { {*}$OnBookmarkToggle $MenuPath }
+    # Is the session running right now? Used by the app's rename router as an
+    # origin-independent guard (rename writes to the file; we avoid interleaving
+    # with claude's own writes).
+    method is_running {uuid} { return [dict exists $RunningSet $uuid] }
 
-    # Rename the session. An empty entry reverts to Claude's auto title
-    # (the ai_title we captured at scan time); otherwise the new value
-    # becomes the custom title. Either path appends Claude Code's native
-    # rename records (custom-title and agent-name) to the jsonl, so the
+    # Rename the session and redraw its list row. An empty entry reverts to
+    # Claude's auto title (the ai_title captured at scan time); otherwise the
+    # new value becomes the custom title. Either path appends Claude Code's
+    # native rename records (custom-title and agent-name) to the jsonl, so the
     # title survives an app restart and shows up in claude's own picker.
-    method menu_rename {} {
-        if {![my has_session $MenuPath]} return
-        set uuid [my sget $MenuPath uuid]
-        set current [my sget $MenuPath slug]
-        set aitt [my sget $MenuPath ai_title ""]
+    # Both the list menu and the viewer's ⋯ menu reach this through the app's
+    # on_rename_request router, so the row redraws regardless of origin. A
+    # session filtered out of the current view still gets the title write, but
+    # has no row to redraw.
+    method do_rename {path} {
+        set known [my has_session $path]
+        if {$known} {
+            set uuid [my sget $path uuid]
+            set current [my sget $path slug]
+            set aitt [my sget $path ai_title ""]
+        } else {
+            set uuid [file rootname [file tail $path]]
+            set current ""
+            set aitt ""
+        }
         set entered [my prompt_rename $current]
         if {$entered eq "<cancelled>"} return
         if {$entered eq ""} {
-            ::questlog::ui::title_writer::clear_custom $MenuPath $uuid $aitt
-            my sset $MenuPath slug $aitt
+            ::questlog::ui::title_writer::clear_custom $path $uuid $aitt
         } else {
-            ::questlog::ui::title_writer::set_custom $MenuPath $uuid $entered
-            my sset $MenuPath slug $entered
+            ::questlog::ui::title_writer::set_custom $path $uuid $entered
         }
+        if {!$known} return
+        my sset $path slug [expr {$entered eq "" ? $aitt : $entered}]
         $Text configure -state normal
-        my redraw_header $MenuPath
+        my redraw_header $path
         $Text configure -state disabled
     }
 
