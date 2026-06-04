@@ -18,10 +18,12 @@ namespace eval ::questlog::ui {
 #
 # The row reads subject-on-the-left, metadata right-pinned: the subject (glyphs,
 # slug, preview, match count) fills from the left and the columns below sit in a
-# fixed strip flush to the right edge, in this left-to-right order. Turns and
-# Duration are filled by the cost second pass (the forward scan stops at the
-# second user record and computes neither); the actions column carries the row's
-# "⋯" overflow control and is not sortable.
+# fixed strip flush to the right edge, in this left-to-right order. Turns,
+# Duration and Model are filled by the cost second pass (the forward scan stops
+# at the second user record and computes none of them); Model is the session's
+# last non-sidechain assistant model and is not sortable (the engine sorts
+# numerically only). The actions column carries the row's "⋯" overflow control
+# and is not sortable.
 proc ::questlog::ui::session_columns {} {
     return {
         {date     Date     {Wed 30 May 12:30} right 1}
@@ -29,6 +31,7 @@ proc ::questlog::ui::session_columns {} {
         {cost     Cost     {$9999.99}         right 1}
         {turns    Turns    {9999}             right 1}
         {duration Duration {0:00:00}          right 1}
+        {model    Model    {Sonnet 4.6}       right 0}
         {actions  {}       {⋯}                right 0}
     }
 }
@@ -589,6 +592,7 @@ oo::class create ::questlog::ui::SessionList {
         set cost  [dict getdef $row cost_usd ""]
         set turns [dict getdef $row turns ""]
         set dsecs [dict getdef $row duration_secs ""]
+        set model [dict getdef $row model ""]
         # The session node: payload carries the per-session domain dict; the
         # node's expanded/rendered flags, start/end marks, tag and children
         # (the attached subagent nodes) live alongside it in the store.
@@ -596,8 +600,9 @@ oo::class create ::questlog::ui::SessionList {
         set sid [my node_new session $fid $path [dict create \
             folder $folder label $label slug $slug ai_title $aitt \
             when $when mtime $mtime size $size uuid $uuid cost $cost \
-            turns $turns duration_secs $dsecs \
+            turns $turns duration_secs $dsecs model $model \
             own_cost $cost own_turns $turns own_duration_secs $dsecs \
+            own_model $model \
             count 0 first_lineno $first_lineno snippets [list] \
             has_subagents [dict getdef $row has_subagents 0] \
             sub_total 0 children_listed 0 all_child_paths [list]]]
@@ -881,7 +886,7 @@ oo::class create ::questlog::ui::SessionList {
             when [my fmt_time [dict getdef $crow mtime 0]] \
             mtime [dict getdef $crow mtime 0] \
             size [dict getdef $crow size 0] \
-            cost "" turns "" duration_secs "" \
+            cost "" turns "" duration_secs "" model "" \
             agent_type [dict getdef $crow agent_type ""] \
             agent_id [dict getdef $crow agent_id [file rootname [file tail $cp]]] \
             label $label hits [list] open_lineoff 0]]
@@ -1155,6 +1160,7 @@ oo::class create ::questlog::ui::SessionList {
                 duration {
                     set v [::questlog::cost::fmt_dur [dict getdef $s duration_secs ""]]
                 }
+                model { set v [dict getdef $s model ""] }
                 actions { set v $::questlog::ui::GLYPH_ACTIONS }
                 default { set v "" }
             }
@@ -1553,6 +1559,7 @@ oo::class create ::questlog::ui::SessionList {
         my sset $path own_cost [dict get $cost_dict cost_usd]
         my sset $path own_turns [dict getdef $cost_dict turns ""]
         my sset $path own_duration_secs [dict getdef $cost_dict duration_secs ""]
+        my sset $path own_model [dict getdef $cost_dict model ""]
 
         my recompute_parent_totals $path
 
@@ -1584,6 +1591,7 @@ oo::class create ::questlog::ui::SessionList {
         my cset $cp cost [dict get $cost_dict cost_usd]
         my cset $cp turns [dict getdef $cost_dict turns ""]
         my cset $cp duration_secs [dict getdef $cost_dict duration_secs ""]
+        my cset $cp model [dict getdef $cost_dict model ""]
         set parent [my cget_field $cp parent_path]
         if {[my has_session $parent]} {
             set folder [my sget $parent folder]
@@ -1669,6 +1677,9 @@ oo::class create ::questlog::ui::SessionList {
         my sset $path cost [expr {$has_any_cost ? $sum_cost : ""}]
         my sset $path turns [expr {$has_any_turns ? $sum_turns : ""}]
         my sset $path duration_secs $dur
+        # Model is the session's own, never summed: a parent shows the model it
+        # ran on, not its subagents'.
+        my sset $path model [dict getdef $s own_model ""]
     }
 
     method glyph_cell {running bookmarked} {

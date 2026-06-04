@@ -44,6 +44,16 @@ check "fmt_dur past an hour"    [::questlog::cost::fmt_dur 3909] "1:05:09"
 check "fmt_dur blank on empty"  [::questlog::cost::fmt_dur ""]   ""
 check "fmt_dur blank on -1"     [::questlog::cost::fmt_dur -1]   ""
 
+# ---- model label ---------------------------------------------------------
+
+# A model id reduces to a "Family Ver" label; a dated suffix is ignored and an
+# unrecognised or empty id reads blank.
+check "fmt_model opus"          [::questlog::cost::fmt_model claude-opus-4-8] "Opus 4.8"
+check "fmt_model sonnet"        [::questlog::cost::fmt_model claude-sonnet-4-6] "Sonnet 4.6"
+check "fmt_model haiku dated"   [::questlog::cost::fmt_model claude-haiku-4-5-20251001] "Haiku 4.5"
+check "fmt_model blank on empty" [::questlog::cost::fmt_model ""] ""
+check "fmt_model blank on unknown" [::questlog::cost::fmt_model unknown] ""
+
 # ---- compute_cost: turns + timestamps over a fixture ---------------------
 
 # Three typed prompts ("role":"user","content":"…"), one tool-result user
@@ -57,16 +67,24 @@ puts $fd {{"type":"assistant","timestamp":"2026-04-25T10:00:05.000Z","message":{
 puts $fd {{"type":"user","timestamp":"2026-04-25T10:10:00.000Z","message":{"role":"user","content":[{"type":"tool_result","content":"ls output"}]}}}
 puts $fd {{"type":"user","timestamp":"2026-04-25T10:20:00.000Z","message":{"role":"user","content":"second prompt"}}}
 puts $fd {{"type":"assistant","timestamp":"2026-04-25T10:30:00.000Z","message":{"model":"claude-opus-4-8","usage":{"input_tokens":200,"output_tokens":80}}}}
+# A subagent's assistant record (isSidechain) on a different model must NOT win
+# the parent's Model label: the last non-sidechain model stays opus. Sharing the
+# prior record's timestamp keeps last_ts and the active span unchanged.
+puts $fd {{"type":"assistant","isSidechain":true,"timestamp":"2026-04-25T10:30:00.000Z","message":{"model":"claude-haiku-4-5","usage":{"input_tokens":10,"output_tokens":5}}}}
 puts $fd {{"type":"user","timestamp":"2026-04-25T10:43:08.000Z","message":{"role":"user","content":"third prompt"}}}
 close $fd
 
 set r [::questlog::cost::parse_file $fix]
 check "turns counts typed prompts, not tool results" [dict get $r turns] 3
+check "last_model is the last non-sidechain assistant model" \
+    [dict get $r last_model] claude-opus-4-8
 check "first_ts is the earliest record"  [dict get $r first_ts] 2026-04-25T10:00:00.000Z
 check "last_ts is the latest record"      [dict get $r last_ts]  2026-04-25T10:43:08.000Z
 set cost_dict [::questlog::cli::cost::compute_sync $fix]
 check "active duration from the fixture (idle gaps before prompts dropped)" \
     [::questlog::cost::fmt_dur [dict get $cost_dict duration_secs]] "20:00"
+check "cost dict carries the formatted model label" \
+    [dict get $cost_dict model] "Opus 4.8"
 file delete $fix
 
 if {$failures == 0} {

@@ -119,6 +119,19 @@ proc ::questlog::cost::fmt_dur {secs} {
     return [format "%02d:%02d" $m $s]
 }
 
+# A model id (claude-opus-4-8, claude-haiku-4-5-20251001) to a short
+# "Family Ver" label (Opus 4.8, Haiku 4.5) for the session list's Model cell.
+# The family is the opus/sonnet/haiku token; the version is the two numeric
+# groups right after it joined by a dot. Any trailing date suffix is dropped.
+# Blank for an empty or unrecognised id, so the cell reads as "no figure".
+proc ::questlog::cost::fmt_model {id} {
+    if {![regexp {(opus|sonnet|haiku)-(\d+)-(\d+)} $id -> fam maj min]} {
+        return ""
+    }
+    set fam [string totitle $fam]
+    return "$fam $maj.$min"
+}
+
 # ISO-8601 UTC timestamp (e.g. 2026-04-25T10:00:00.000Z) to epoch seconds.
 # Tolerates a missing fractional part; empty on any parse failure.
 proc ::questlog::cost::iso_to_epoch {ts} {
@@ -140,8 +153,9 @@ proc ::questlog::cost::parse_file {path} {
     set last_ts ""
     set turns 0
     set stamps [list]
+    set last_model ""
     if {[catch {open $path r} fh]} {
-        return [dict create per_model {} first_ts "" last_ts "" turns 0 stamps {} ok 0]
+        return [dict create per_model {} first_ts "" last_ts "" turns 0 stamps {} last_model "" ok 0]
     }
     chan configure $fh -encoding utf-8 -profile replace
     while {[chan gets $fh line] >= 0} {
@@ -173,6 +187,12 @@ proc ::questlog::cost::parse_file {path} {
         if {$req_id eq ""} { set req_id "dummy-[incr dummy_req]" }
 
         set model [dict getdef $msg model "unknown"]
+        # The session's own (non-sidechain) last assistant model drives the
+        # Model cell. A subagent runs as a sidechain inside this same file; its
+        # records carry isSidechain, so skip them for the parent's label.
+        if {$model ne "unknown" && ![regexp {"isSidechain":true} $line]} {
+            set last_model $model
+        }
         if {![dict exists $msg usage]} continue
         set u [dict get $msg usage]
         set in_t  [dict getdef $u input_tokens 0]
@@ -200,12 +220,13 @@ proc ::questlog::cost::parse_file {path} {
     }
 
     return [dict create per_model $per_model \
-        first_ts $first_ts last_ts $last_ts turns $turns stamps $stamps ok 1]
+        first_ts $first_ts last_ts $last_ts turns $turns stamps $stamps \
+        last_model $last_model ok 1]
 }
 
 proc ::questlog::cost::build_cost_dict {res} {
     if {![dict get $res ok]} {
-        return [dict create cost_usd 0.0 turns 0 duration_secs 0 input_tokens 0 output_tokens 0 cache_write_tokens 0 cache_read_tokens 0 model_breakdown {}]
+        return [dict create cost_usd 0.0 turns 0 duration_secs 0 input_tokens 0 output_tokens 0 cache_write_tokens 0 cache_read_tokens 0 model_breakdown {} model ""]
     }
     set per_model [dict get $res per_model]
     set first_ts [dict get $res first_ts]
@@ -228,6 +249,7 @@ proc ::questlog::cost::build_cost_dict {res} {
         cache_write_tokens $cw \
         cache_read_tokens $cr \
         model_breakdown $per_model \
+        model [fmt_model [dict getdef $res last_model ""]] \
         turns $turns \
         duration_secs [active_secs [dict get $res stamps]]]
 }

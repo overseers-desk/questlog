@@ -358,7 +358,7 @@ oo::class create ::questlog::Scan {
                 && [dict getdef $old mtime ""] eq [dict getdef $row mtime ""]} {
                 foreach k {cost_usd input_tokens output_tokens \
                            cache_write_tokens cache_read_tokens model_breakdown \
-                           turns duration_secs} {
+                           model turns duration_secs} {
                     if {[dict exists $old $k]} { dict set row $k [dict get $old $k] }
                 }
             }
