@@ -19,7 +19,8 @@ package require json
 namespace eval ::questlog::match {
     variable Caps [dict create]
     namespace export clean_text snippet_window format_tool_use \
-        clean_preview scan_file leaf_record_hit eval_tree btype_in_regions
+        format_tool_use_full clean_preview scan_file leaf_record_hit \
+        eval_tree btype_in_regions
 }
 
 proc ::questlog::match::set_caps {capdict} {
@@ -102,6 +103,23 @@ proc ::questlog::match::format_tool_use {name input} {
     set rcap [::questlog::match::cap tool_render_cap]
     if {[string length $s] > $rcap} { set s "[string range $s 0 [expr {$rcap - 1}]]…" }
     return $s
+}
+
+# Uncapped variant of format_tool_use for the reading body, where the full
+# command must be visible (the timeline still uses the capped form). Same key
+# ordering and whitespace collapse, no tool_param_cap / tool_render_cap.
+proc ::questlog::match::format_tool_use_full {name input} {
+    if {[catch {dict size $input}]} { return "${name}()" }
+    set keys [dict keys $input]
+    if {[llength $keys] == 0} { return "${name}()" }
+    set ordered [::questlog::match::_order_tool_keys $name $keys]
+    set parts [list]
+    foreach k $ordered {
+        set v [dict get $input $k]
+        set v [regsub -all {[\s]+} $v " "]
+        lappend parts "${k}=${v}"
+    }
+    return "${name}([join $parts {, }])"
 }
 
 proc ::questlog::match::_order_tool_keys {name keys} {

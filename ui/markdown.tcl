@@ -2,11 +2,11 @@ package require Tcl 9
 
 # Markdown export of a session transcript. The text-only mirror of what the
 # viewer's `render` shows: USER / ASSISTANT / SYSTEM turns in document order,
-# broken into the same segments by the same two cues. Tool calls (tool_use /
-# tool_result blocks) are deliberately out of scope - they belong to the
-# tool-call timeline, not this text export - and ::questlog::jsonl::extract_text
-# already drops tool_use blocks, so the text it returns is exactly the body this
-# export wants.
+# broken into the same segments by the same two cues. The export mirrors the
+# viewer body verbatim: ::questlog::jsonl::extract_text now renders tool_use
+# as `Tool(args)`, thinking as `[thinking] ...`, and image blocks as `[image]`
+# placeholders, and prefixes tool_result with `ERROR: ` when is_error is true,
+# so all of that flows through into the exported markdown alongside the prose.
 #
 # Segmentation reuses the viewer's helpers and threshold so the two never
 # disagree on where a session breaks:
@@ -14,7 +14,7 @@ package require Tcl 9
 #               opens a "## --- /compact ---" heading and resets the clock.
 #   secondary - a silence of viewer_idle_gap_min minutes or more between content
 #               turns opens a "## --- N later ---" heading.
-# A record whose extract_text is empty (a tool-only turn or a metadata snapshot)
+# A record whose extract_text is empty (a metadata snapshot or attachment)
 # emits no turn but still advances the clock, the same as the viewer, so an idle
 # gap is measured from the last real message either side of the quiet records.
 namespace eval ::questlog::ui::markdown {

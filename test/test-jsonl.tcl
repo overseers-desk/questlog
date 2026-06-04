@@ -34,10 +34,27 @@ set comp     [::questlog::jsonl::parse_line {{"type":"system","subtype":"compact
 set sys_other [::questlog::jsonl::parse_line {{"type":"system","content":"misc"}}]
 
 check extract_user_string         "hello world" [::questlog::jsonl::extract_text $user_str]
-check extract_assistant_array     "first\nsecond" [::questlog::jsonl::extract_text $user_arr]
+check extract_assistant_array     "first\nBash()\nsecond" [::questlog::jsonl::extract_text $user_arr]
 check extract_queue_op            "x"    [::questlog::jsonl::extract_text $qop]
 check extract_last_prompt         "resume?" [::questlog::jsonl::extract_text $lp]
 check extract_system              "Conversation compacted" [::questlog::jsonl::extract_text $comp]
+
+# New extractor behaviours: tool_use, thinking, image, tool_result.is_error.
+set assist_tool_use_only_full [::questlog::jsonl::parse_line {{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"ls -la"}}]}}}]
+set assist_text_plus_tool     [::questlog::jsonl::parse_line {{"type":"assistant","message":{"content":[{"type":"text","text":"ok"},{"type":"tool_use","name":"Bash","input":{"command":"ls"}}]}}}]
+set assist_thinking           [::questlog::jsonl::parse_line {{"type":"assistant","message":{"content":[{"type":"thinking","thinking":"pondering"}]}}}]
+set assist_redacted_thinking  [::questlog::jsonl::parse_line {{"type":"assistant","message":{"content":[{"type":"redacted_thinking"}]}}}]
+set user_image                [::questlog::jsonl::parse_line {{"type":"user","message":{"content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"AAAA"}}]}}}]
+set tool_result_error         [::questlog::jsonl::parse_line {{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","is_error":true,"content":"oops"}]}}}]
+set tool_result_image         [::questlog::jsonl::parse_line {{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"AAAA"}}]}]}}}]
+
+check extract_tool_use_only_full   "Bash(command=ls -la)"      [::questlog::jsonl::extract_text $assist_tool_use_only_full]
+check extract_text_plus_tool_use   "ok\nBash(command=ls)"      [::questlog::jsonl::extract_text $assist_text_plus_tool]
+check extract_thinking             "\[thinking\] pondering"    [::questlog::jsonl::extract_text $assist_thinking]
+check extract_redacted_thinking    "\[redacted thinking\]"     [::questlog::jsonl::extract_text $assist_redacted_thinking]
+check extract_user_image           "\[image\]"                  [::questlog::jsonl::extract_text $user_image]
+check extract_tool_result_error    "ERROR: oops"               [::questlog::jsonl::extract_text $tool_result_error]
+check extract_tool_result_image    "\[image\]"                  [::questlog::jsonl::extract_text $tool_result_image]
 
 check is_compact_yes              1     [::questlog::jsonl::is_compact_boundary $comp]
 check is_compact_no_other_system  0     [::questlog::jsonl::is_compact_boundary $sys_other]
@@ -66,6 +83,16 @@ check blocks_queue_op {system x}                                [::questlog::jso
 check blocks_attachment_empty {}                                [::questlog::jsonl::extract_blocks $attachment]
 check blocks_tool_result_array {tool_result {WebSearch WebFetch}} \
     [::questlog::jsonl::extract_blocks $tool_result_arr]
+
+# New extract_blocks behaviours: uncapped tool_use renderer, thinking, image.
+check blocks_assistant_tool_use_full {tool_use {Bash(command=ls -la)}} \
+    [::questlog::jsonl::extract_blocks $assist_tool_use_only_full]
+check blocks_assistant_thinking {thinking pondering} \
+    [::questlog::jsonl::extract_blocks $assist_thinking]
+check blocks_assistant_image {image {[image]}} \
+    [::questlog::jsonl::extract_blocks [::questlog::jsonl::parse_line {{"type":"assistant","message":{"content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"AAAA"}}]}}}]]
+check blocks_user_image {image {[image]}} \
+    [::questlog::jsonl::extract_blocks $user_image]
 
 # record_tool_uses: structural tool/path extraction for read/write/edit
 # criteria. Assert name:path pairs; the rendered string is exercised by

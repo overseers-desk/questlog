@@ -71,8 +71,25 @@ proc ::questlog::jsonl::extract_array_text {blocks} {
                 lappend out [dict getdef $blk text ""]
             }
             tool_result {
-                set bc [dict getdef $blk content ""]
-                if {[is_string_content $bc]} { lappend out $bc }
+                # Route through tool_result_text so is_error and image inner
+                # blocks are honoured in the reading body too.
+                set bc [tool_result_text $blk]
+                if {$bc ne ""} { lappend out $bc }
+            }
+            tool_use {
+                set name  [dict getdef $blk name ""]
+                set input [dict getdef $blk input [dict create]]
+                lappend out [::questlog::match::format_tool_use_full $name $input]
+            }
+            thinking {
+                set tx [dict getdef $blk thinking ""]
+                if {$tx ne ""} { lappend out "\[thinking\] $tx" }
+            }
+            redacted_thinking {
+                lappend out "\[redacted thinking\]"
+            }
+            image {
+                lappend out "\[image\]"
             }
         }
     }
@@ -304,9 +321,10 @@ proc ::questlog::jsonl::inline_unescape {s} {
 #   last-prompt:                          {user $lastPrompt}
 #   anything else (attachment, file-history-snapshot, etc.): empty list.
 #
-# tool_use blocks pass through ::questlog::match::format_tool_use, which lives
-# in the match namespace because the rendered form is a search-pane
-# concern, not a JSONL concern.
+# tool_use blocks pass through ::questlog::match::format_tool_use_full, the
+# uncapped renderer in the match namespace; the search snippet and the viewer
+# body agree character-for-character. thinking/image blocks emit their own
+# btypes so search regions can be extended to them later.
 proc ::questlog::jsonl::extract_blocks {rec} {
     set out [list]
     set t [dict getdef $rec type ""]
@@ -326,6 +344,8 @@ proc ::questlog::jsonl::extract_blocks {rec} {
                         if {$bc ne ""} { lappend out tool_result $bc }
                     } elseif {$bt eq "text"} {
                         lappend out user [dict getdef $blk text ""]
+                    } elseif {$bt eq "image"} {
+                        lappend out image "\[image\]"
                     }
                 }
             }
@@ -345,7 +365,12 @@ proc ::questlog::jsonl::extract_blocks {rec} {
                     } elseif {$bt eq "tool_use"} {
                         set name  [dict getdef $blk name ""]
                         set input [dict getdef $blk input [dict create]]
-                        lappend out tool_use [::questlog::match::format_tool_use $name $input]
+                        lappend out tool_use [::questlog::match::format_tool_use_full $name $input]
+                    } elseif {$bt eq "thinking"} {
+                        set tx [dict getdef $blk thinking ""]
+                        if {$tx ne ""} { lappend out thinking $tx }
+                    } elseif {$bt eq "image"} {
+                        lappend out image "\[image\]"
                     }
                 }
             }
@@ -363,18 +388,31 @@ proc ::questlog::jsonl::extract_blocks {rec} {
 }
 
 proc ::questlog::jsonl::tool_result_text {blk} {
-    if {![dict exists $blk content]} { return "" }
+    set is_err [dict getdef $blk is_error 0]
+    if {![dict exists $blk content]} {
+        return [expr {$is_err ? "ERROR:" : ""}]
+    }
     set c [dict get $blk content]
-    if {[is_string_content $c]} { return $c }
+    if {[is_string_content $c]} {
+        if {$is_err} {
+            return [expr {$c eq "" ? "ERROR:" : "ERROR: $c"}]
+        }
+        return $c
+    }
     set parts [list]
     foreach inner $c {
         set it [dict getdef $inner type ""]
         switch -- $it {
             text            { lappend parts [dict getdef $inner text ""] }
             tool_reference  { lappend parts [dict getdef $inner tool_name ""] }
+            image           { lappend parts "\[image\]" }
         }
     }
-    return [join $parts " "]
+    set joined [join $parts " "]
+    if {$is_err} {
+        return [expr {$joined eq "" ? "ERROR:" : "ERROR: $joined"}]
+    }
+    return $joined
 }
 
 # Walk an assistant record's tool_use blocks. Returns one dict per block:
@@ -464,8 +502,9 @@ proc ::questlog::jsonl::fmt_gap {minutes} {
 }
 
 # Last non-empty assistant text body in a session jsonl. Empty string if
-# the file holds no parseable assistant record with text content (e.g. the
-# final assistant turn was all tool_use blocks).
+# the file holds no parseable assistant record with renderable content. A
+# final turn consisting solely of tool_use blocks now returns the rendered
+# Tool(args) line(s), since extract_array_text emits those too.
 proc ::questlog::jsonl::last_assistant_text {path} {
     set last ""
     if {[catch {open $path r} fh]} { return "" }

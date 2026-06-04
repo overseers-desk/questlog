@@ -543,10 +543,12 @@ oo::class create ::questlog::ui::Viewer {
             }
 
             # Records that carry no text body (permission-mode, file-history
-            # snapshots, attachments, tool-only turns) head no section and draw
-            # no line; they only keep the clock moving for gap detection. Tested
-            # before the header so a leading metadata record never leaves a bare
-            # section glyph at the top of the transcript.
+            # snapshots, attachments) head no section and draw no line; they
+            # only keep the clock moving for gap detection. Tested before the
+            # header so a leading metadata record never leaves a bare section
+            # glyph at the top of the transcript. Tool-only assistant turns
+            # now render (extract_text emits Tool(args), [thinking], [image]
+            # placeholders), so they pass through to the body path below.
             set body [::questlog::jsonl::extract_text $rec]
             if {$body eq ""} {
                 if {$ts_epoch > 0} { set last_ts $ts_epoch }
