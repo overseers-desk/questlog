@@ -1870,8 +1870,6 @@ oo::class create ::questlog::ui::SessionList {
         set MenuPath $path
         set MenuTarget [dict create path $path uuid $uuid cwd $cwd folder $folder]
 
-        # Rename writes into the file; greying it while the session is
-        # running keeps us from interleaving with claude's own writes.
         set ctx [dict create target $MenuTarget parent $Top \
             clipboard [list [self] clipboard_set] \
             on_open [list [self] open_session] \
@@ -1879,7 +1877,6 @@ oo::class create ::questlog::ui::SessionList {
             on_bookmark $OnBookmarkToggle \
             on_rename $OnRename \
             state [dict create \
-                is_running [dict exists $RunningSet $uuid] \
                 is_bookmarked [file executable $path] \
                 has_cwd [expr {$cwd ne ""}] \
                 has_folder [expr {$folder ne ""}]]]
@@ -1889,9 +1886,9 @@ oo::class create ::questlog::ui::SessionList {
         tk_popup $Menu $X $Y
     }
 
-    # Is the session running right now? Used by the app's rename router as an
-    # origin-independent guard (rename writes to the file; we avoid interleaving
-    # with claude's own writes).
+    # Is the session running right now? do_rename consults this to disable the
+    # rename dialog's OK button (rename writes to the file; we avoid
+    # interleaving with claude's own writes).
     method is_running {uuid} { return [dict exists $RunningSet $uuid] }
 
     # Rename the session and redraw its list row. An empty entry reverts to
@@ -1914,7 +1911,7 @@ oo::class create ::questlog::ui::SessionList {
             set current ""
             set aitt ""
         }
-        set entered [my prompt_rename $current]
+        set entered [my prompt_rename $current [my is_running $uuid]]
         if {$entered eq "<cancelled>"} return
         if {$entered eq ""} {
             ::questlog::ui::title_writer::clear_custom $path $uuid $aitt
@@ -1931,8 +1928,10 @@ oo::class create ::questlog::ui::SessionList {
     # Small modal one-field dialog. Returns the entered text on OK, or
     # the literal "<cancelled>" string on Cancel / Escape / close.
     # "<cancelled>" is a sentinel rather than {} so an OK with an empty
-    # entry (which means "revert to auto") stays distinguishable.
-    method prompt_rename {current} {
+    # entry (which means "revert to auto") stays distinguishable. While the
+    # session is running OK is disabled, so the dialog opens (the current
+    # title stays visible) but Cancel is the only exit.
+    method prompt_rename {current running} {
         set dlg .renameDialog
         if {[winfo exists $dlg]} { destroy $dlg }
         toplevel $dlg
@@ -1954,7 +1953,14 @@ oo::class create ::questlog::ui::SessionList {
         pack $dlg.bf  -padx 12 -pady {4 12} -anchor e -fill x
         pack $dlg.bf.cancel -side right -padx 4
         pack $dlg.bf.ok     -side right -padx 4
-        bind $dlg.ent <Return> [list $dlg.bf.ok invoke]
+        # A live session holds the title write back so it never interleaves
+        # with claude's own appends: OK is disabled and Return is left unbound,
+        # leaving Cancel the only (commit-free) exit.
+        if {$running} {
+            $dlg.bf.ok state disabled
+        } else {
+            bind $dlg.ent <Return> [list $dlg.bf.ok invoke]
+        }
         bind $dlg.ent <Escape> [list $dlg.bf.cancel invoke]
         wm protocol $dlg WM_DELETE_WINDOW \
             [list set ::questlog::ui::rename_outcome cancel]

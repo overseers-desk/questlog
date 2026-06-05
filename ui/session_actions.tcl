@@ -29,7 +29,7 @@ proc ::questlog::ui::session_actions::tget {ctx key} {
 proc ::questlog::ui::session_actions::populate {menu ctx} {
     $menu delete 0 end
     set indices [dict create resume_indices {} reveal_index -1 \
-        bookmark_index -1 rename_index -1]
+        bookmark_index -1]
 
     if {[dict exists $ctx on_open]} {
         $menu add command -label "Open in viewer" \
@@ -74,13 +74,14 @@ proc ::questlog::ui::session_actions::populate {menu ctx} {
     dict set indices bookmark_index [$menu index end]
     $menu add command -label "Rename..." \
         -command [concat [dict get $ctx on_rename] [list [tget $ctx path]]]
-    dict set indices rename_index [$menu index end]
 
     return $indices
 }
 
 # Per-open dynamic pass: grey what the target cannot support and set the
-# Bookmark label. state keys: is_running is_bookmarked has_cwd has_folder.
+# Bookmark label. state keys: is_bookmarked has_cwd has_folder. Rename carries
+# no state here: it stays enabled on a running session and the rename dialog's
+# OK button is what disables while the session is live.
 proc ::questlog::ui::session_actions::apply_state {menu indices state} {
     set rstate [expr {[dict get $state has_cwd] ? "normal" : "disabled"}]
     foreach i [dict get $indices resume_indices] {
@@ -91,8 +92,6 @@ proc ::questlog::ui::session_actions::apply_state {menu indices state} {
     $menu entryconfigure [dict get $indices bookmark_index] \
         -label [expr {[dict get $state is_bookmarked] \
             ? "Remove bookmark" : "Add bookmark"}]
-    $menu entryconfigure [dict get $indices rename_index] \
-        -state [expr {[dict get $state is_running] ? "disabled" : "normal"}]
 }
 
 # ---- Tier-1 actions: depend only on the target + clipboard/parent. ----------

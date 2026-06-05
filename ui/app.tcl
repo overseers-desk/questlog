@@ -661,16 +661,11 @@ proc ::questlog::ui::app::on_bookmark_toggle {path} {
 
 # Rename router. Both the list's right-click menu and the viewer's ⋯ menu reach
 # rename through here, so the list row redraws regardless of which widget asked.
-# The running guard lives here (origin-independent): renaming appends to the
-# jsonl, and we avoid interleaving with a live claude session's own writes.
+# do_rename holds the running guard (origin-independent): on a live session the
+# dialog still opens but its OK button is disabled, so the title write never
+# interleaves with claude's own appends.
 proc ::questlog::ui::app::on_rename_request {path} {
     variable SessionList
-    set uuid [file rootname [file tail $path]]
-    if {[$SessionList is_running $uuid]} {
-        tk_messageBox -icon info -title "Rename session" \
-            -message "This session is running; rename it once it finishes."
-        return
-    }
     $SessionList do_rename $path
 }
 
