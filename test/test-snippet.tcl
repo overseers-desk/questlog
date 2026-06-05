@@ -1,6 +1,6 @@
 #!/usr/bin/env tclsh9.0
-# Unit test for ::questlog::match::snippet_window - the hit-centred match window
-# that replaced the 300-char head cap. Pure logic, no Tk. Run:
+# Unit test for ::questlog::match::snippet_window - the search-hit match window,
+# a short excerpt that leads with the matched term. Pure logic, no Tk. Run:
 #   tclsh9.0 test/test-snippet.tcl
 
 set ROOT [file dirname [file dirname [file normalize [info script]]]]
@@ -8,7 +8,8 @@ source [file join $ROOT config.tcl]
 source [file join $ROOT lib match.tcl]
 ::questlog::match::set_caps [dict create \
     content_cap     [::questlog::config::get content_cap] \
-    snippet_radius  [::questlog::config::get snippet_radius] \
+    snippet_lead    [::questlog::config::get snippet_lead] \
+    snippet_trail   [::questlog::config::get snippet_trail] \
     tool_param_cap  [::questlog::config::get tool_param_cap] \
     tool_render_cap [::questlog::config::get tool_render_cap]]
 
@@ -24,7 +25,7 @@ proc check {name got want} {
     }
 }
 
-# A long line so the radius (80) elides both ends; the hit sits in the middle.
+# A long line so both ends elide; the hit sits in the middle.
 set mid [string repeat "x " 60][string repeat "y " 60]
 append mid "NEEDLE "
 append mid [string repeat "z " 60][string repeat "w " 60]
@@ -35,6 +36,10 @@ check "middle hit is bracketed by ellipses" \
 check "middle hit keeps the matched term" [string match "*NEEDLE*" $w] 1
 check "middle window is short, not the whole line" \
     [expr {[string length $w] < [string length $mid]}] 1
+# The hit leads: only the leading "…" and snippet_lead characters of context
+# precede the matched term, so it survives a narrow, non-scrolling row.
+check "snippet leads with the keyword" \
+    [string first NEEDLE $w] [expr {1 + [::questlog::match::cap snippet_lead]}]
 
 # Hit at the very start: no leading ellipsis, trailing one present.
 set head "NEEDLE [string repeat {tail } 80]"

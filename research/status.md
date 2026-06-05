@@ -9,7 +9,7 @@ Snapshot June 2026.
 | Pain | Coverage | How | Code |
 |---|---|---|---|
 | P1 Context loss at compaction / session end | Partial | The viewer segments the transcript at `compact_boundary` records and 10-minute idle gaps, so a reader lands at the boundary and reads up to it | `ui/viewer.tcl`. Ceiling: `/compact` runs server-side and is not written back to the JSONL, so no local reader can recover compacted content |
-| P2 Finding a past session and reading it | Solved | Cross-session regex search, hit-centred streaming snippets, and the segmented viewer; subagent transcripts are searched as first-class targets and listed under their parent session | `lib/search.tcl`, `lib/scan.tcl`, `ui/sessions.tcl`, `ui/viewer.tcl` |
+| P2 Finding a past session and reading it | Solved | Cross-session regex search, hit-leading streaming snippets, and the segmented viewer; subagent transcripts are searched as first-class targets and listed under their parent session | `lib/search.tcl`, `lib/scan.tcl`, `ui/sessions.tcl`, `ui/viewer.tcl` |
 | P3 Resuming and forking | Solved | Resume, fork, and resume-in-new-terminal-tab from the right-click menu, in the session's original cwd | `ui/terminal.tcl`, `ui/sessions.tcl:1475`. The resume cache-cost spike is Anthropic-side and out of reach |
 | P4 Finding which session touched a file | Solved | Tool-use path search over Read/Write/Edit records (bare filename matches any directory by suffix), with a git-status file picker | `lib/match.tcl`, `lib/jsonl.tcl`, `lib/search.tcl`; picker `ui/toolbar.tcl:479-563`. The git listbox seeds the Write and Edit dropdowns; the Read dropdown keeps its file chooser and manual entry without a git list, since git status reports changed files (a write/edit signal), not reads (issue #16) |
 | P5 Seeing which of many sessions is live | Solved | A "running only" filter reads live Claude processes from the process table, validated against `/proc`, so it sees sessions from any terminal | `ui/live.tcl` |
@@ -30,7 +30,7 @@ The features behind the coverage above, each with its code home and the pains it
 - Git-status file picker (Write/Edit dropdowns): `ui/toolbar.tcl`. Serves P4.
 - Resume, fork, resume-in-new-terminal-tab: `ui/terminal.tcl`, `ui/sessions.tcl`. Serves P3.
 - Bookmark via the `u+x` bit: `lib/path.tcl`. Serves P7.
-- Hit-centred streaming snippets with non-scrolling insert: `ui/sessions.tcl`. Serves P2.
+- Hit-leading streaming snippets with non-scrolling insert: `ui/sessions.tcl`. Serves P2.
 - Segmented session viewer (compaction boundary and 10-minute idle gap): `ui/viewer.tcl`. Serves P1, P2, P9, P10.
 - Tool-call audit timeline in the viewer (each call as time/tool/path, click-to-jump): `ui/viewer.tcl`, `lib/jsonl.tcl`. Serves P10.
 - "This cwd only" auto-detection: `ui/toolbar.tcl`, `ui/app.tcl`. Serves P6 (scope).

@@ -11,7 +11,7 @@ package require json
 # copy and no drift. Nothing here touches Tk, TclOO or Thread; scan_file reads a
 # file and json-parses lines, the rest is string work on already-parsed records.
 #
-# The four display caps the matchers honour live in ::questlog::config, which a
+# The five display caps the matchers honour live in ::questlog::config, which a
 # worker cannot read, so they are injected once through set_caps - from config
 # in the main interp, from prelude literals in a worker - and read back through
 # cap. config.tcl stays the authored home; Caps is a derived snapshot.
@@ -54,22 +54,26 @@ proc ::questlog::match::clean_preview {s} {
     return [string trim $s]
 }
 
-# A short window of $s centred on the first match of $pat, with leading and
-# trailing "…" where text is elided. re_opts carries the search flags (e.g.
-# -nocase) the caller already uses for matching. The whole matched span is
-# always inside the window so the display can re-find and embolden it. If the
-# pattern does not match (it should, since the caller only calls this on a
-# hit) the head-capped clean_text is returned as a safe fallback.
-proc ::questlog::match::snippet_window {s pat re_opts {radius -1}} {
-    if {$radius < 0} { set radius [::questlog::match::cap snippet_radius] }
+# A short window of $s that leads with the first match of $pat: snippet_lead
+# characters of context precede the matched span and snippet_trail follow it,
+# with a leading and/or trailing "…" where text is elided. Leading with the hit
+# keeps it on screen when the one-line snippet row is clipped to the column
+# width (the row does not wrap or scroll sideways). re_opts carries the search
+# flags (e.g. -nocase) the caller already uses for matching. The whole matched
+# span is inside the window so the display can re-find and embolden it. If the
+# pattern does not match (it should, since the caller only calls this on a hit)
+# the head-capped clean_text is returned as a safe fallback.
+proc ::questlog::match::snippet_window {s pat re_opts {lead -1} {trail -1}} {
+    if {$lead  < 0} { set lead  [::questlog::match::cap snippet_lead] }
+    if {$trail < 0} { set trail [::questlog::match::cap snippet_trail] }
     set s [string trim [regsub -all {[\s]+} $s " "]]
     if {[catch {regexp -indices {*}$re_opts -- $pat $s m} ok] || !$ok} {
         return [::questlog::match::clean_text $s]
     }
     lassign $m a b
     set len [string length $s]
-    set start [expr {$a - $radius}]
-    set end   [expr {$b + $radius}]
+    set start [expr {$a - $lead}]
+    set end   [expr {$b + $trail}]
     if {$start < 0}        { set start 0 }
     if {$end > $len - 1}   { set end [expr {$len - 1}] }
     set win [string range $s $start $end]

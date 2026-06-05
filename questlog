@@ -52,7 +52,8 @@ if {$CLI_MODE} {
     source [file join $ROOT cli cost.tcl]
     ::questlog::match::set_caps [dict create \
         content_cap     [::questlog::config::get content_cap] \
-        snippet_radius  [::questlog::config::get snippet_radius] \
+        snippet_lead    [::questlog::config::get snippet_lead] \
+        snippet_trail   [::questlog::config::get snippet_trail] \
         tool_param_cap  [::questlog::config::get tool_param_cap] \
         tool_render_cap [::questlog::config::get tool_render_cap]]
     ::questlog::cli::main::run $argv
@@ -124,7 +125,8 @@ if {[llength $argv] > 0 && ([string match tool:* $first] || $first in {pattern r
 # main interp (each worker gets its own copy via worker_prelude).
 ::questlog::match::set_caps [dict create \
     content_cap     [::questlog::config::get content_cap] \
-    snippet_radius  [::questlog::config::get snippet_radius] \
+    snippet_lead    [::questlog::config::get snippet_lead] \
+    snippet_trail   [::questlog::config::get snippet_trail] \
     tool_param_cap  [::questlog::config::get tool_param_cap] \
     tool_render_cap [::questlog::config::get tool_render_cap]]
 

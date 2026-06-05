@@ -49,7 +49,7 @@ proc ::questlog::ui::session_columns {} {
 #   folder heading   - the project label, a drop target for moves
 #   session header   - glyphs, label, time, and (when searching) a match count
 #   snippet rows     - up to three per session: a block-type label and a
-#                      hit-centred snippet with the matched term in bold
+#                      hit-leading snippet with the matched term in bold
 #
 # Two display states share the widget. With no criteria it browses: every
 # session that passes the snapshot filter appears as a header, grouped by
@@ -995,7 +995,7 @@ oo::class create ::questlog::ui::SessionList {
     # A subagent's matched line, beneath its child header, opening the subagent's
     # own transcript at the hit (issue #13 chose per-file open over a unified
     # parent+child view). Lighter than a parent snippet (no badge widget): a
-    # deeper spine then the hit-centred content with the terms emboldened.
+    # deeper spine then the hit-leading content with the terms emboldened.
     method render_child_snippet {path cp content lineoff} {
         set semark [my node_field [my sid $path] end]
         set ntag "c#[incr NextId]"

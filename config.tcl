@@ -105,8 +105,12 @@ namespace eval ::questlog::config {
     # ---- display caps ------------------------------------------------------
     # Tail bytes read for the most-recent agentName/aiTitle rename records.
     dict set Config tail_window_bytes 65536
-    # Characters of context shown either side of a search hit in a snippet.
-    dict set Config snippet_radius 80
+    # A search-hit snippet leads with the matched term: snippet_lead characters
+    # of context (with a leading "…") sit before the hit, snippet_trail after.
+    # Asymmetric so the term stays on screen when the one-line snippet row is
+    # clipped to the column width (the row neither wraps nor scrolls sideways).
+    dict set Config snippet_lead  16
+    dict set Config snippet_trail 144
     # Length caps for displayed strings: a matched content block, a rendered
     # tool call, and one tool parameter value. The first-prompt preview is left
     # uncapped; the session list clips it to the subject column at render.

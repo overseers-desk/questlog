@@ -14,7 +14,8 @@ source [file join $ROOT lib search.tcl]
 # Main-interp caps, as the launcher injects them.
 ::questlog::match::set_caps [dict create \
     content_cap     [::questlog::config::get content_cap] \
-    snippet_radius  [::questlog::config::get snippet_radius] \
+    snippet_lead    [::questlog::config::get snippet_lead] \
+    snippet_trail   [::questlog::config::get snippet_trail] \
     tool_param_cap  [::questlog::config::get tool_param_cap] \
     tool_render_cap [::questlog::config::get tool_render_cap]]
 
