@@ -104,6 +104,7 @@ oo::class create ::questlog::ui::SessionList {
     variable Snapshot
     variable CriteriaActive
     variable RunningSet       ;# dict uuid -> 1, replaced wholesale each tick
+    variable RenamePoll       ;# after id: live-tracks the rename dialog's OK state
     variable Query            ;# {terms <list> nocase 0|1} for hit highlighting
     variable HitTags
     # Domain indices into the node store: a folder name or a session/subagent
@@ -1911,7 +1912,7 @@ oo::class create ::questlog::ui::SessionList {
             set current ""
             set aitt ""
         }
-        set entered [my prompt_rename $current [my is_running $uuid]]
+        set entered [my prompt_rename $current $uuid]
         if {$entered eq "<cancelled>"} return
         if {$entered eq ""} {
             ::questlog::ui::title_writer::clear_custom $path $uuid $aitt
@@ -1929,9 +1930,10 @@ oo::class create ::questlog::ui::SessionList {
     # the literal "<cancelled>" string on Cancel / Escape / close.
     # "<cancelled>" is a sentinel rather than {} so an OK with an empty
     # entry (which means "revert to auto") stays distinguishable. While the
-    # session is running OK is disabled, so the dialog opens (the current
-    # title stays visible) but Cancel is the only exit.
-    method prompt_rename {current running} {
+    # session is running OK is disabled (the dialog still opens, with the
+    # current title visible); OK re-enables live the moment the session
+    # stops, so a dialog held open across a quit needs no reopening.
+    method prompt_rename {current uuid} {
         set dlg .renameDialog
         if {[winfo exists $dlg]} { destroy $dlg }
         toplevel $dlg
@@ -1953,27 +1955,43 @@ oo::class create ::questlog::ui::SessionList {
         pack $dlg.bf  -padx 12 -pady {4 12} -anchor e -fill x
         pack $dlg.bf.cancel -side right -padx 4
         pack $dlg.bf.ok     -side right -padx 4
-        # A live session holds the title write back so it never interleaves
-        # with claude's own appends: OK is disabled and Return is left unbound,
-        # leaving Cancel the only (commit-free) exit.
-        if {$running} {
-            $dlg.bf.ok state disabled
-        } else {
-            bind $dlg.ent <Return> [list $dlg.bf.ok invoke]
-        }
         bind $dlg.ent <Escape> [list $dlg.bf.cancel invoke]
         wm protocol $dlg WM_DELETE_WINDOW \
             [list set ::questlog::ui::rename_outcome cancel]
+        # OK tracks the live running state rather than a snapshot: while the
+        # session runs the title write is held back (OK disabled, Return
+        # unbound) so it never interleaves with claude's own appends, and OK
+        # re-enables the instant the session stops, even with the dialog open.
+        set RenamePoll ""
+        my track_rename_ok $dlg $uuid
         focus $dlg.ent
         $dlg.ent selection range 0 end
         grab set $dlg
         vwait ::questlog::ui::rename_outcome
+        if {$RenamePoll ne ""} { after cancel $RenamePoll }
         set outcome $::questlog::ui::rename_outcome
         set value   $::questlog::ui::rename_entry
         catch {grab release $dlg}
         destroy $dlg
         if {$outcome ne "ok"} { return "<cancelled>" }
         return $value
+    }
+
+    # Keep the rename dialog's OK button in step with the live running state,
+    # rescheduling itself until the dialog is destroyed. RunningSet is replaced
+    # wholesale on each tick, so re-reading is_running here picks up a session
+    # that quits while the dialog is open and re-enables OK (and the Return
+    # accelerator) without a reopen.
+    method track_rename_ok {dlg uuid} {
+        if {![winfo exists $dlg]} { set RenamePoll ""; return }
+        if {[my is_running $uuid]} {
+            $dlg.bf.ok state disabled
+            bind $dlg.ent <Return> {}
+        } else {
+            $dlg.bf.ok state !disabled
+            bind $dlg.ent <Return> [list $dlg.bf.ok invoke]
+        }
+        set RenamePoll [after 300 [list [self] track_rename_ok $dlg $uuid]]
     }
 
     method clipboard_set {s} { clipboard clear; clipboard append $s }
