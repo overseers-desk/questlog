@@ -549,6 +549,11 @@ oo::class create ::questlog::ui::Viewer {
             # now render (extract_text emits Tool(args), [thinking], [image]
             # placeholders), so they pass through to the body path below.
             set body [::questlog::jsonl::extract_text $rec]
+            if {[::questlog::debug::enabled]} {
+                ::questlog::debug::log render "line $lineno type=$t\
+                    empty=[expr {$body eq ""}]\
+                    tools=[llength [::questlog::jsonl::record_tool_uses $rec]]"
+            }
             if {$body eq ""} {
                 if {$ts_epoch > 0} { set last_ts $ts_epoch }
                 continue
@@ -893,6 +898,7 @@ oo::class create ::questlog::ui::Viewer {
     # whose body precedes the call in the transcript.
     method scroll_to_line {lineno} {
         if {[dict exists $LineMap $lineno]} {
+            ::questlog::debug::log scroll "want $lineno exact hit"
             $Text see [dict get $LineMap $lineno]
             return
         }
@@ -904,6 +910,8 @@ oo::class create ::questlog::ui::Viewer {
                 set best $idx
             }
         }
+        ::questlog::debug::log scroll \
+            "want $lineno no exact entry, nearest preceding=$bestln found=[expr {$best ne ""}]"
         if {$best ne ""} { $Text see $best }
     }
 
@@ -997,6 +1005,10 @@ oo::class create ::questlog::ui::Viewer {
                 set start "$m + ${len}c"
             }
             if {[llength $positions] > 0} { lappend per_term $positions }
+            if {[::questlog::debug::enabled]} {
+                ::questlog::debug::log index \
+                    "term=[list $term] occurrences=[llength $positions]"
+            }
         }
 
         # Order terms rarest-first (fewest occurrences, ties broken by the
@@ -1007,6 +1019,10 @@ oo::class create ::questlog::ui::Viewer {
         foreach m [::questlog::ui::rarity_round_robin $ordered] {
             lappend FindMatches $m
             lappend MatchLabels [my match_context $m]
+        }
+        if {[::questlog::debug::enabled]} {
+            ::questlog::debug::log index "terms=[llength $terms]\
+                matched_terms=[llength $per_term] total_matches=[llength $FindMatches]"
         }
         my refresh_match_control
     }
@@ -1052,6 +1068,10 @@ oo::class create ::questlog::ui::Viewer {
         foreach m $FindMatches lab $MatchLabels {
             set ln [my line_at $m]
             set ty [expr {[dict exists $Roles $ln] ? [dict get $Roles $ln] : ""}]
+            if {[::questlog::debug::enabled]} {
+                ::questlog::debug::log match \
+                    "row $i at $m resolved line=[list $ln] role=[list $ty]"
+            }
             set tail [expr {$ln eq "" ? "" : " · line $ln"}]
             $MatchList insert end "$ty · …$lab…$tail"
             $MatchList itemconfigure $i -foreground [my role_color $ty]

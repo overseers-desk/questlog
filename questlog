@@ -25,14 +25,16 @@ if {[lindex $argv 0] eq "rename" \
 set VIEWER_FONT ""
 set INIT_SINCE ""
 set INIT_SEARCH ""
+set DEBUG_ENABLED 0
 if {!$CLI_MODE} {
     set kept [list]
     for {set i 0} {$i < [llength $argv]} {incr i} {
         switch -- [lindex $argv $i] {
-            --font   { set VIEWER_FONT [lindex $argv [incr i]] }
-            --since  { set INIT_SINCE [lindex $argv [incr i]] }
-            --search { set INIT_SEARCH [lindex $argv [incr i]] }
-            default  { lappend kept [lindex $argv $i] }
+            --font            { set VIEWER_FONT [lindex $argv [incr i]] }
+            --since           { set INIT_SINCE [lindex $argv [incr i]] }
+            --search          { set INIT_SEARCH [lindex $argv [incr i]] }
+            -debug - --debug  { set DEBUG_ENABLED [lindex $argv [incr i]] }
+            default           { lappend kept [lindex $argv $i] }
         }
     }
     set argv $kept
@@ -41,6 +43,12 @@ if {!$CLI_MODE} {
 set ROOT [file dirname [file normalize [info script]]]
 
 source [file join $ROOT config.tcl]
+source [file join $ROOT lib debug.tcl]
+# Carry the parsed -debug value into config so every module reads the gate the
+# one way, then bring the diagnostic log up before any module that logs is
+# sourced. A failed open inside enable leaves logging off and the run unchanged.
+dict set ::questlog::config::Config debug_enabled $DEBUG_ENABLED
+if {$DEBUG_ENABLED ne "0" && $DEBUG_ENABLED ne ""} { ::questlog::debug::enable }
 source [file join $ROOT lib path.tcl]
 source [file join $ROOT lib filter.tcl]
 source [file join $ROOT lib jsonl.tcl]

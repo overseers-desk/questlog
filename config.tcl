@@ -141,6 +141,12 @@ namespace eval ::questlog::config {
     dict set Config drag_threshold_px  6
     dict set Config drag_autoscroll_ms 60
     dict set Config drag_edge_band_px  16
+
+    # ---- debug -------------------------------------------------------------
+    # 1 iff the launcher saw -debug 1: turns on the opt-in diagnostic log
+    # (::questlog::debug), off by default so a normal run writes nothing. The
+    # launcher overwrites this from the command line before the ui/ layer loads.
+    dict set Config debug_enabled 0
 }
 
 # Value for a key. Errors loudly on an unknown key rather than returning a
