@@ -13,7 +13,9 @@ if {[lindex $argv 0] in {--version -v}} {
 # Tk is absent until a GUI file requires it: CLI mode never loads Tk and runs
 # without a display, while GUI mode pulls Tk in through the GUI layer below.
 set CLI_MODE 0
-if {"--json" in $argv || "--cmd" in $argv || "--shortstat" in $argv || "--help" in $argv || "-h" in $argv} {
+if {[lindex $argv 0] eq "rename" \
+    || "--json" in $argv || "--cmd" in $argv || "--shortstat" in $argv \
+    || "--help" in $argv || "-h" in $argv} {
     set CLI_MODE 1
 }
 
@@ -46,9 +48,16 @@ source [file join $ROOT lib match.tcl]
 source [file join $ROOT lib scan.tcl]
 source [file join $ROOT lib cost.tcl]
 source [file join $ROOT lib search.tcl]
-# In CLI mode, set up matcher caps and execute directly, bypassing the UI completely
+source [file join $ROOT lib rename.tcl]
+# In CLI mode, execute directly, bypassing the UI completely. `rename` is a
+# standalone file edit (it needs no matcher caps or cost pass), so it dispatches
+# before the search engine's setup.
 if {$CLI_MODE} {
     source [file join $ROOT cli main.tcl]
+    if {[lindex $argv 0] eq "rename"} {
+        ::questlog::cli::main::rename [lrange $argv 1 end]
+        exit 0
+    }
     source [file join $ROOT cli cost.tcl]
     ::questlog::match::set_caps [dict create \
         content_cap     [::questlog::config::get content_cap] \
@@ -67,7 +76,6 @@ source [file join $ROOT ui  theme.tcl]
 source [file join $ROOT ui  markdown.tcl]
 source [file join $ROOT ui  terminal.tcl]
 source [file join $ROOT ui  live.tcl]
-source [file join $ROOT ui  title_writer.tcl]
 source [file join $ROOT ui  state.tcl]
 source [file join $ROOT ui  drag.tcl]
 source [file join $ROOT ui  toolbar.tcl]

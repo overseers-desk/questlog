@@ -98,13 +98,12 @@ oo::class create ::questlog::ui::SessionList {
     variable OnMoveRequest    ;# cb: paths -> open move picker
     variable OnDropMove       ;# cb: paths folder -> direct move
     variable OnBookmarkToggle ;# cb: path -> flip the +x bookmark bit
-    variable OnRename         ;# cb: path -> app router that runs do_rename
+    variable OnRename         ;# cb: path -> app rename router (dialog + apply + refresh)
     variable OnScanPath       ;# cb: path -> row (synchronous single-file scan)
     variable OnShowAll        ;# cb: () -> ask the toolbar to drop the auto-under
     variable Snapshot
     variable CriteriaActive
     variable RunningSet       ;# dict uuid -> 1, replaced wholesale each tick
-    variable RenamePoll       ;# after id: live-tracks the rename dialog's OK state
     variable Query            ;# {terms <list> nocase 0|1} for hit highlighting
     variable HitTags
     # Domain indices into the node store: a folder name or a session/subagent
@@ -1887,111 +1886,17 @@ oo::class create ::questlog::ui::SessionList {
         tk_popup $Menu $X $Y
     }
 
-    # Is the session running right now? do_rename consults this to disable the
-    # rename dialog's OK button (rename writes to the file; we avoid
-    # interleaving with claude's own writes).
-    method is_running {uuid} { return [dict exists $RunningSet $uuid] }
-
-    # Rename the session and redraw its list row. An empty entry reverts to
-    # Claude's auto title (the ai_title captured at scan time); otherwise the
-    # new value becomes the custom title. Either path appends Claude Code's
-    # native rename records (custom-title and agent-name) to the jsonl, so the
-    # title survives an app restart and shows up in claude's own picker.
-    # Both the list menu and the viewer's ⋯ menu reach this through the app's
-    # on_rename_request router, so the row redraws regardless of origin. A
-    # session filtered out of the current view still gets the title write, but
-    # has no row to redraw.
-    method do_rename {path} {
-        set known [my has_session $path]
-        if {$known} {
-            set uuid [my sget $path uuid]
-            set current [my sget $path slug]
-            set aitt [my sget $path ai_title ""]
-        } else {
-            set uuid [file rootname [file tail $path]]
-            set current ""
-            set aitt ""
-        }
-        set entered [my prompt_rename $current $uuid]
-        if {$entered eq "<cancelled>"} return
-        if {$entered eq ""} {
-            ::questlog::ui::title_writer::clear_custom $path $uuid $aitt
-        } else {
-            ::questlog::ui::title_writer::set_custom $path $uuid $entered
-        }
-        if {!$known} return
-        my sset $path slug [expr {$entered eq "" ? $aitt : $entered}]
+    # Best-effort refresh of a renamed session's list row. The rename itself is
+    # a path-only domain op (::questlog::rename) the app applies before calling
+    # here; this only updates the shown title, and only if the row is still in
+    # view - a session renamed while filtered out has nothing to redraw, which
+    # is fine, the title write already persisted to the file.
+    method refresh_row {path slug} {
+        if {![my has_session $path]} return
+        my sset $path slug $slug
         $Text configure -state normal
         my redraw_header $path
         $Text configure -state disabled
-    }
-
-    # Small modal one-field dialog. Returns the entered text on OK, or
-    # the literal "<cancelled>" string on Cancel / Escape / close.
-    # "<cancelled>" is a sentinel rather than {} so an OK with an empty
-    # entry (which means "revert to auto") stays distinguishable. While the
-    # session is running OK is disabled (the dialog still opens, with the
-    # current title visible); OK re-enables live the moment the session
-    # stops, so a dialog held open across a quit needs no reopening.
-    method prompt_rename {current uuid} {
-        set dlg .renameDialog
-        if {[winfo exists $dlg]} { destroy $dlg }
-        toplevel $dlg
-        wm title $dlg "Set session title"
-        wm transient $dlg [winfo toplevel $Text]
-        wm resizable $dlg 1 0
-        set ::questlog::ui::rename_entry $current
-        set ::questlog::ui::rename_outcome ""
-        ttk::label $dlg.lbl \
-            -text "Title (kebab-case; empty reverts to Claude's auto title):"
-        ttk::entry $dlg.ent -textvariable ::questlog::ui::rename_entry
-        ttk::frame $dlg.bf
-        ttk::button $dlg.bf.ok -text "OK" \
-            -command [list set ::questlog::ui::rename_outcome ok]
-        ttk::button $dlg.bf.cancel -text "Cancel" \
-            -command [list set ::questlog::ui::rename_outcome cancel]
-        pack $dlg.lbl -padx 12 -pady {12 4} -anchor w -fill x
-        pack $dlg.ent -padx 12 -pady 4 -fill x
-        pack $dlg.bf  -padx 12 -pady {4 12} -anchor e -fill x
-        pack $dlg.bf.cancel -side right -padx 4
-        pack $dlg.bf.ok     -side right -padx 4
-        bind $dlg.ent <Escape> [list $dlg.bf.cancel invoke]
-        wm protocol $dlg WM_DELETE_WINDOW \
-            [list set ::questlog::ui::rename_outcome cancel]
-        # OK tracks the live running state rather than a snapshot: while the
-        # session runs the title write is held back (OK disabled, Return
-        # unbound) so it never interleaves with claude's own appends, and OK
-        # re-enables the instant the session stops, even with the dialog open.
-        set RenamePoll ""
-        my track_rename_ok $dlg $uuid
-        focus $dlg.ent
-        $dlg.ent selection range 0 end
-        grab set $dlg
-        vwait ::questlog::ui::rename_outcome
-        if {$RenamePoll ne ""} { after cancel $RenamePoll }
-        set outcome $::questlog::ui::rename_outcome
-        set value   $::questlog::ui::rename_entry
-        catch {grab release $dlg}
-        destroy $dlg
-        if {$outcome ne "ok"} { return "<cancelled>" }
-        return $value
-    }
-
-    # Keep the rename dialog's OK button in step with the live running state,
-    # rescheduling itself until the dialog is destroyed. RunningSet is replaced
-    # wholesale on each tick, so re-reading is_running here picks up a session
-    # that quits while the dialog is open and re-enables OK (and the Return
-    # accelerator) without a reopen.
-    method track_rename_ok {dlg uuid} {
-        if {![winfo exists $dlg]} { set RenamePoll ""; return }
-        if {[my is_running $uuid]} {
-            $dlg.bf.ok state disabled
-            bind $dlg.ent <Return> {}
-        } else {
-            $dlg.bf.ok state !disabled
-            bind $dlg.ent <Return> [list $dlg.bf.ok invoke]
-        }
-        set RenamePoll [after 300 [list [self] track_rename_ok $dlg $uuid]]
     }
 
     method clipboard_set {s} { clipboard clear; clipboard append $s }

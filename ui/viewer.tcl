@@ -436,8 +436,8 @@ oo::class create ::questlog::ui::Viewer {
     # "Open in viewer" is omitted (the session is already shown). The folder is
     # the encoded basename of the jsonl's parent, the same value app::move_one
     # derives, so Reveal and the bookmark work without an app round-trip. Rename
-    # is always enabled in the menu; do_rename disables the dialog's OK button
-    # while the session is running.
+    # is always enabled in the menu; the app's rename dialog disables its OK
+    # button while the session is running.
     method actions_menu_popup {} {
         if {$Path eq ""} return
         set folder [file tail [file dirname $Path]]

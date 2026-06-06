@@ -293,6 +293,24 @@ proc ::questlog::cli::main::parse_query {argv} {
         limit $limit limit_matches $limit_matches under $under since $since mode $mode]
 }
 
+# Apply a rename from the command line: `questlog rename <session.jsonl> [title]`.
+# An empty or omitted title reverts the session to its auto title. The rename is
+# a path-only domain op (::questlog::rename, in lib/), so it runs headless with
+# no GUI and no display. Prints the effective title now in force.
+proc ::questlog::cli::main::rename {argv} {
+    if {[llength $argv] < 1 || [llength $argv] > 2} {
+        puts stderr "usage: questlog rename <session.jsonl> \[title]"
+        puts stderr "  Sets the session's custom title; an empty or omitted title reverts to the auto title."
+        exit 2
+    }
+    set path [lindex $argv 0]
+    if {![file isfile $path]} {
+        puts stderr "questlog: no such session file: $path"
+        exit 1
+    }
+    puts [::questlog::rename::apply $path [lindex $argv 1]]
+}
+
 # Run the command-line search engine.
 proc ::questlog::cli::main::run {argv} {
     variable ::ROOT

@@ -26,6 +26,9 @@ namespace eval ::questlog::ui::app {
     variable ViewFrame     ;# the viewer's container, present in the PW from launch
     variable Running       ;# last polled uuid -> path running set
     variable RunTimer      ;# after-id of the running-poll loop
+    variable RenamePoll    ;# after-id of the rename dialog's running-state poll
+    variable RenameEntry   ;# -textvariable backing the rename dialog's entry
+    variable RenameOutcome ;# ok|cancel sentinel the rename dialog vwaits on
     variable CurrentQuery  ;# {terms <list> nocase 0|1} of the active search, or {}
     variable SidebarCollapsed ;# 1 while the list column is folded away (transient)
     variable SidebarSash      ;# remembered divider position as a fraction of width
@@ -659,14 +662,100 @@ proc ::questlog::ui::app::on_bookmark_toggle {path} {
     $SessionList reconcile_one $path
 }
 
-# Rename router. Both the list's right-click menu and the viewer's ⋯ menu reach
-# rename through here, so the list row redraws regardless of which widget asked.
-# do_rename holds the running guard (origin-independent): on a live session the
-# dialog still opens but its OK button is disabled, so the title write never
-# interleaves with claude's own appends.
+# Rename, GUI side. The rename itself is a path-only domain op in lib/rename.tcl,
+# reachable from the CLI too; here is only the GUI - collect the new title in a
+# modal dialog, apply it, then ask the list to refresh the row if it happens to
+# be showing it. Both the list menu and the viewer ⋯ menu route here via OnRename.
 proc ::questlog::ui::app::on_rename_request {path} {
+    variable Scan
     variable SessionList
-    $SessionList do_rename $path
+    # Current title and uuid come from the file (scan_one is a pure read), the
+    # source of truth, so the dialog prefill never depends on the view's model.
+    set row [$Scan scan_one $path]
+    set current [dict getdef $row slug ""]
+    set uuid    [dict getdef $row uuid [file rootname [file tail $path]]]
+    set entered [prompt_rename $current $uuid]
+    if {$entered eq "<cancelled>"} return
+    set slug [::questlog::rename::apply $path $entered]
+    # Re-scan into the model so the new title is fresh everywhere. scan_path
+    # refreshes Scan's Rows cache, which reconcile_running reads (via lookup) to
+    # re-surface a session that was renamed, quit, then run again - without this
+    # that path would re-add the row with its cached pre-rename title. refresh_row
+    # then redraws the row if it is currently shown.
+    on_scan_path $path
+    $SessionList refresh_row $path $slug
+}
+
+# Modal one-field title dialog. Returns the entered text on OK, or "<cancelled>"
+# on Cancel / Escape / close ("<cancelled>" is a sentinel rather than {} so an OK
+# with an empty entry - which means "revert to auto" - stays distinguishable).
+# While the session runs OK is disabled (the dialog still opens, current title
+# visible); OK re-enables live the instant the session stops, so a dialog held
+# open across a quit needs no reopening.
+proc ::questlog::ui::app::prompt_rename {current uuid} {
+    variable RenameEntry
+    variable RenameOutcome
+    variable RenamePoll
+    set dlg .renameDialog
+    if {[winfo exists $dlg]} { destroy $dlg }
+    toplevel $dlg
+    wm title $dlg "Set session title"
+    wm transient $dlg .
+    wm resizable $dlg 1 0
+    set RenameEntry $current
+    set RenameOutcome ""
+    ttk::label $dlg.lbl \
+        -text "Title (kebab-case; empty reverts to Claude's auto title):"
+    ttk::entry $dlg.ent -textvariable [namespace which -variable RenameEntry]
+    ttk::frame $dlg.bf
+    ttk::button $dlg.bf.ok -text "OK" \
+        -command [list set [namespace which -variable RenameOutcome] ok]
+    ttk::button $dlg.bf.cancel -text "Cancel" \
+        -command [list set [namespace which -variable RenameOutcome] cancel]
+    pack $dlg.lbl -padx 12 -pady {12 4} -anchor w -fill x
+    pack $dlg.ent -padx 12 -pady 4 -fill x
+    pack $dlg.bf  -padx 12 -pady {4 12} -anchor e -fill x
+    pack $dlg.bf.cancel -side right -padx 4
+    pack $dlg.bf.ok     -side right -padx 4
+    bind $dlg.ent <Escape> [list $dlg.bf.cancel invoke]
+    wm protocol $dlg WM_DELETE_WINDOW \
+        [list set [namespace which -variable RenameOutcome] cancel]
+    # OK tracks the live running state, not a snapshot: while the session runs
+    # the title write is held back (OK disabled, Return unbound) so it never
+    # interleaves with claude's own appends, and OK re-enables the instant the
+    # session stops, even with the dialog already open.
+    set RenamePoll ""
+    track_rename_ok $dlg $uuid
+    focus $dlg.ent
+    $dlg.ent selection range 0 end
+    grab set $dlg
+    vwait [namespace which -variable RenameOutcome]
+    if {$RenamePoll ne ""} { after cancel $RenamePoll }
+    set outcome $RenameOutcome
+    set value   $RenameEntry
+    catch {grab release $dlg}
+    destroy $dlg
+    if {$outcome ne "ok"} { return "<cancelled>" }
+    return $value
+}
+
+# Keep the rename dialog's OK button in step with the live running state,
+# rescheduling until the dialog is destroyed. Running is the app's running set,
+# replaced wholesale each poll tick, so re-reading it here picks up a session
+# that quits while the dialog is open and re-enables OK (and the Return
+# accelerator) with no reopen.
+proc ::questlog::ui::app::track_rename_ok {dlg uuid} {
+    variable Running
+    variable RenamePoll
+    if {![winfo exists $dlg]} { set RenamePoll ""; return }
+    if {[dict exists $Running $uuid]} {
+        $dlg.bf.ok state disabled
+        bind $dlg.ent <Return> {}
+    } else {
+        $dlg.bf.ok state !disabled
+        bind $dlg.ent <Return> [list $dlg.bf.ok invoke]
+    }
+    set RenamePoll [after 300 [list [namespace current]::track_rename_ok $dlg $uuid]]
 }
 
 # Synchronously scan one file into Rows, for the reconciler to surface a
