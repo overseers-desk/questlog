@@ -67,15 +67,24 @@ oo::class create ::questlog::ui::Viewer {
     variable NextQid          ;# monotonic id for embedded quote boxes
     variable Drafts           ;# dict: qid -> box state
     variable Bodies           ;# dict: jsonl line -> raw body (for Copy message)
-    variable MatchBtn         ;# head-strip "N matches" toggle, packed on demand
-    variable MatchPanel       ;# floating index panel, placed over the body top-right
-    variable MatchList        ;# listbox of per-match rows inside the panel
+    variable MatchBtn         ;# head-strip "N matches" count, packed on demand
+    variable MatchList        ;# listbox of per-match rows inside the band
     variable MatchLabels      ;# per-match one-line excerpt, parallel to FindMatches
-    variable ToolBtn          ;# head-strip "N tool calls" toggle, packed on demand
-    variable ToolPanel        ;# floating tool-call timeline, placed over the body top-right
-    variable ToolList         ;# listbox of per-call rows inside the panel
+    variable MatchCountText   ;# "N matches" string, shared by the head count and band tab
+    variable ToolBtn          ;# head-strip "N tool calls" count, packed on demand
+    variable ToolList         ;# listbox of per-call rows inside the band
     variable ToolLines        ;# jsonl line of each call, parallel to the ToolList rows
+    variable ToolCountText    ;# "N tool calls" string, shared by the head count and band tab
     variable Roles            ;# dict: jsonl line -> uppercased role, for row colour
+    # Docked index band above the transcript: one collapsible pane whose content
+    # switches between the match index and the tool-call timeline. It replaces the
+    # two floating panels that used to cover the reading view.
+    variable Band             ;# the band frame, gridded in the body's row 0
+    variable BandTab          ;# "matches"|"tools": which list the band currently shows
+    variable BandOpen         ;# 1 while the band is gridded (taking transcript height)
+    variable BandCount        ;# band-header count label
+    variable TabMatches       ;# band-header "Matches" tab label
+    variable TabTools         ;# band-header "Tools" tab label
     variable OnToggle         ;# cb: () -> ask the app to fold/unfold the list pane
     variable OnMove           ;# cb: [list path] -> app move router (⋯ menu)
     variable OnBookmark       ;# cb: path -> app bookmark router (⋯ menu)
@@ -100,8 +109,12 @@ oo::class create ::questlog::ui::Viewer {
         set Drafts [dict create]
         set Bodies [dict create]
         set MatchLabels [list]
+        set MatchCountText ""
         set ToolLines [list]
+        set ToolCountText ""
         set Roles [dict create]
+        set BandTab "matches"
+        set BandOpen 0
         set OnToggle $on_toggle
         set OnMove $on_move
         set OnBookmark $on_bookmark
@@ -115,12 +128,12 @@ oo::class create ::questlog::ui::Viewer {
     # Load a session and anchor to a line (1-based; 0 means top). Replaces
     # whatever was shown before. `query` is the active search ({terms <list>
     # nocase 0|1}, or {}); its terms are matched literally, highlighted, and
-    # listed in the floating match index.
+    # listed in the docked match index band.
     method show {jsonl_path {scroll_to_line 0} {query {}}} {
         if {!$Shown} {
             grid remove $Empty
-            grid $Text        -row 0 -column 0 -sticky nsew
-            grid $Top.body.sb -row 0 -column 1 -sticky ns
+            grid $Text        -row 1 -column 0 -sticky nsew
+            grid $Top.body.sb -row 1 -column 1 -sticky ns
             set Shown 1
         }
         set Path $jsonl_path
@@ -173,24 +186,24 @@ oo::class create ::questlog::ui::Viewer {
         set IdLabel $Top.head.sid
         pack $IdLabel -side right -padx 6 -before $Top.head.path
         bind $IdLabel <Button-1> [list [self] copy_uuid]
-        # Match index: a count on the right of the head strip that toggles the
-        # floating index panel (built below). It carries the count even while
-        # the panel is dismissed and re-shows it when clicked; its glyph reads
-        # ▾ closed, ▴ open. Packed on demand by refresh_match_control; absent
-        # when the session was opened without a search.
+        # Match index: a count on the right of the head strip that opens the
+        # docked band (built below) on its Matches tab, and collapses it when
+        # clicked again. It carries the count even while the band is collapsed;
+        # its glyph reads ▾ closed, ▴ open. Packed on demand by
+        # refresh_match_control; absent when the session was opened without a
+        # search.
         label $Top.head.matches -text "" -background $strip \
             -foreground [::questlog::ui::theme::c sessionhead] -cursor hand2
         set MatchBtn $Top.head.matches
-        bind $MatchBtn <Button-1> [list [self] match_panel_toggle]
-        # Tool-call timeline: a sibling count on the head strip that toggles the
-        # floating tool-call panel (built below). It carries the session's
-        # tool-call count and re-shows the panel when clicked; glyph ▾ closed,
-        # ▴ open, like the match toggle. Packed on demand by refresh_tool_control;
-        # absent when the session made no tool calls.
+        bind $MatchBtn <Button-1> [list [self] band_toggle matches]
+        # Tool-call timeline: a sibling count on the head strip that opens the
+        # band on its Tools tab. It carries the session's tool-call count;
+        # glyph ▾ closed, ▴ open, like the match count. Packed on demand by
+        # refresh_tool_control; absent when the session made no tool calls.
         label $Top.head.tools -text "" -background $strip \
             -foreground [::questlog::ui::theme::c sessionhead] -cursor hand2
         set ToolBtn $Top.head.tools
-        bind $ToolBtn <Button-1> [list [self] tool_panel_toggle]
+        bind $ToolBtn <Button-1> [list [self] band_toggle tools]
         # Overflow menu at the right of the head strip: a plain "⋯" label
         # affordance (matching the strip's flat look) holding the reading-font
         # picker, and in Stage 2 the session action set. Packed first on the
@@ -227,14 +240,19 @@ oo::class create ::questlog::ui::Viewer {
 
         ttk::frame $Top.body
         pack $Top.body -side top -fill both -expand 1
+        # Two body rows: the docked index band (row 0, natural height, gridded
+        # only while open) sits above the transcript (row 1, absorbs all height).
+        # Row 0 carries no weight and no minsize, so `grid remove`-ing the band
+        # collapses its row to nothing and the transcript reclaims the space.
         # text widget - no ttk equivalent.
         text $Top.body.t -wrap word -yscrollcommand [list $Top.body.sb set] \
             -state disabled -padx 10 -pady 6 -borderwidth 0 -highlightthickness 0
         ttk::scrollbar $Top.body.sb -orient vertical -command [list $Top.body.t yview]
-        grid $Top.body.t  -row 0 -column 0 -sticky nsew
-        grid $Top.body.sb -row 0 -column 1 -sticky ns
+        grid $Top.body.t  -row 1 -column 0 -sticky nsew
+        grid $Top.body.sb -row 1 -column 1 -sticky ns
         grid columnconfigure $Top.body 0 -weight 1
-        grid rowconfigure    $Top.body 0 -weight 1
+        grid rowconfigure    $Top.body 0 -weight 0
+        grid rowconfigure    $Top.body 1 -weight 1
         set Text $Top.body.t
 
         # Empty state: a centered prompt for the open gesture, gridded into the
@@ -242,7 +260,7 @@ oo::class create ::questlog::ui::Viewer {
         # whether empty or loaded. Shown at launch (the text and its scrollbar
         # start grid-removed); the first `show` swaps them in.
         ttk::frame $Top.body.empty
-        grid $Top.body.empty -row 0 -column 0 -columnspan 2 -sticky nsew
+        grid $Top.body.empty -row 1 -column 0 -columnspan 2 -sticky nsew
         grid rowconfigure    $Top.body.empty {0 2} -weight 1
         grid columnconfigure $Top.body.empty {0 2} -weight 1
         ttk::frame $Top.body.empty.box
@@ -258,68 +276,65 @@ oo::class create ::questlog::ui::Viewer {
         set Empty $Top.body.empty
         grid remove $Top.body.t $Top.body.sb
 
-        # Floating match index. A panel placed over the body's top-right;
-        # `place` is independent of the text's yview, so it stays put as the
-        # transcript scrolls under it (a true float, not an embedded window
-        # that would scroll away). Each row jumps the reading view to that
-        # match's line, the way an in-page anchor does. ✕ dismisses it; the
-        # head-strip count re-shows it. Sized to its rows (capped at 8), not to
-        # a fixed fraction, so it stays a limited-height index and lets content
-        # drive its height. Created hidden; refresh_match_control places it
-        # when a session opens with matches.
-        set MatchPanel $Top.body.matches
-        ttk::frame $MatchPanel -relief solid -borderwidth 1
-        ttk::frame $MatchPanel.hdr
-        ttk::label $MatchPanel.hdr.title -text "" -foreground [::questlog::ui::theme::c folder]
-        ttk::label $MatchPanel.hdr.close -text "✕" \
+        # Docked index band. One collapsible pane above the transcript whose
+        # content switches between the match index and the tool-call timeline.
+        # Gridded into the body's row 0 (no weight, no minsize) so collapsing it
+        # gives every pixel back to the transcript, and full-width so the reading
+        # column keeps its width (the win over a side column). Two listboxes
+        # share the band's content cell; set_tab grids one and removes the other.
+        # The header carries the Matches|Tools tabs, the active count, and ✕.
+        # A classic tk frame/label set tinted with the head strip's background,
+        # not ttk (clam ignores -background on ttk frames), so the head strip and
+        # band read as one contiguous chrome zone over the transcript.
+        set Band $Top.body.band
+        frame $Band -background $strip
+        frame $Band.hdr -background $strip
+        frame $Band.hdr.tabs -background $strip
+        set TabMatches $Band.hdr.tabs.matches
+        label $TabMatches -text "Matches" -background $strip -cursor hand2 \
+            -foreground [::questlog::ui::theme::c muted] -font QLMonoBold
+        bind $TabMatches <Button-1> [list [self] set_tab matches]
+        set TabTools $Band.hdr.tabs.tools
+        label $TabTools -text "Tools" -background $strip -cursor hand2 \
+            -foreground [::questlog::ui::theme::c muted] -font QLMonoBold
+        bind $TabTools <Button-1> [list [self] set_tab tools]
+        pack $TabMatches -side left
+        pack $TabTools   -side left -padx {10 0}
+        set BandCount $Band.hdr.count
+        label $BandCount -text "" -background $strip \
+            -foreground [::questlog::ui::theme::c sessionhead]
+        label $Band.hdr.close -text "✕" -background $strip \
             -foreground [::questlog::ui::theme::c muted] -cursor hand2
-        pack $MatchPanel.hdr.title -side left -padx 6 -pady 1
-        pack $MatchPanel.hdr.close -side right -padx 4
-        bind $MatchPanel.hdr.close <Button-1> [list [self] match_panel_hide]
-        set MatchList $MatchPanel.list
+        bind $Band.hdr.close <Button-1> [list [self] band_hide]
+        pack $Band.hdr.tabs  -side left -padx 8 -pady 2
+        pack $BandCount      -side left -padx 6
+        pack $Band.hdr.close -side right -padx 8
+        # Match index listbox: rows "ROLE · …excerpt… · line N", coloured by role,
+        # each jumping the reading view to that hit.
+        set MatchList $Band.matchlist
         listbox $MatchList -height 1 -width 44 -activestyle none \
             -borderwidth 0 -highlightthickness 0 \
-            -yscrollcommand [list $MatchPanel.sb set]
-        ttk::scrollbar $MatchPanel.sb -orient vertical \
+            -yscrollcommand [list $Band.matchsb set]
+        ttk::scrollbar $Band.matchsb -orient vertical \
             -command [list $MatchList yview]
         bind $MatchList <<ListboxSelect>> [list [self] match_list_select]
-        grid $MatchPanel.hdr -row 0 -column 0 -columnspan 2 -sticky ew
-        grid $MatchList      -row 1 -column 0 -sticky nsew
-        grid $MatchPanel.sb  -row 1 -column 1 -sticky ns
-        grid columnconfigure $MatchPanel 0 -weight 1
-        grid rowconfigure    $MatchPanel 1 -weight 1
-
-        # Floating tool-call timeline. The "did-versus-claimed" audit panel
-        # (issue #15): a chronological list of the session's tool calls, each
-        # row "time · tool · path", so the reader can confirm by eye that a
-        # command was run, or that no Edit touched a named file - presence,
-        # absence and ordering, the check the rendered prose alone cannot make.
-        # A sibling of MatchPanel and built the same way: `place`d over the
-        # body's top-right so it stays put as the transcript scrolls, sized to
-        # its rows (capped at 8), created hidden and placed on demand by
-        # refresh_tool_control. A click jumps the reading view to that call's
-        # line via the shared scroll_to_line.
-        set ToolPanel $Top.body.toolcalls
-        ttk::frame $ToolPanel -relief solid -borderwidth 1
-        ttk::frame $ToolPanel.hdr
-        ttk::label $ToolPanel.hdr.title -text "" -foreground [::questlog::ui::theme::c folder]
-        ttk::label $ToolPanel.hdr.close -text "✕" \
-            -foreground [::questlog::ui::theme::c muted] -cursor hand2
-        pack $ToolPanel.hdr.title -side left -padx 6 -pady 1
-        pack $ToolPanel.hdr.close -side right -padx 4
-        bind $ToolPanel.hdr.close <Button-1> [list [self] tool_panel_hide]
-        set ToolList $ToolPanel.list
+        # Tool-call timeline listbox: the did-versus-claimed audit (issue #15),
+        # rows "time · tool · path" in chronological order, each jumping the
+        # reading view to the call's line.
+        set ToolList $Band.toollist
         listbox $ToolList -height 1 -width 44 -activestyle none \
             -borderwidth 0 -highlightthickness 0 \
-            -yscrollcommand [list $ToolPanel.sb set]
-        ttk::scrollbar $ToolPanel.sb -orient vertical \
+            -yscrollcommand [list $Band.toolsb set]
+        ttk::scrollbar $Band.toolsb -orient vertical \
             -command [list $ToolList yview]
         bind $ToolList <<ListboxSelect>> [list [self] tool_list_select]
-        grid $ToolPanel.hdr -row 0 -column 0 -columnspan 2 -sticky ew
-        grid $ToolList      -row 1 -column 0 -sticky nsew
-        grid $ToolPanel.sb  -row 1 -column 1 -sticky ns
-        grid columnconfigure $ToolPanel 0 -weight 1
-        grid rowconfigure    $ToolPanel 1 -weight 1
+        grid $Band.hdr -row 0 -column 0 -columnspan 2 -sticky ew
+        grid columnconfigure $Band 0 -weight 1
+        grid rowconfigure    $Band 1 -weight 1
+        # Dock the band in the body's top row, then collapse it: ew (not nsew) so
+        # it hugs its content height rather than stretching over the transcript.
+        grid $Band -row 0 -column 0 -columnspan 2 -sticky ew
+        grid remove $Band
 
         # A read-only reading view that supports drag-select and copy. The one
         # Text class gesture it suppresses is <B1-Leave>, the sole entry into
@@ -967,7 +982,7 @@ oo::class create ::questlog::ui::Viewer {
 
     # Highlight every literal occurrence of the search terms in the rendered
     # transcript, remember them ordered rarest-keyword-first (one hit of each
-    # term before any term repeats), and show the floating match index. Terms
+    # term before any term repeats), and open the band on its match index. Terms
     # are matched literally (the search bar is Google-style, not
     # regex; the toolbar's pattern row is the separate regex restriction and is
     # not highlighted here). An empty query (a session opened while browsing)
@@ -1044,24 +1059,26 @@ oo::class create ::questlog::ui::Viewer {
     }
 
     # A one-line, whitespace-collapsed excerpt of the match's line, for the
-    # dropdown entry.
+    # match index row.
     method match_context {idx} {
         set line [regsub -all {\s+} [string trim [$Text get "$idx linestart" "$idx lineend"]] " "]
         if {[string length $line] > 60} { set line "[string range $line 0 59]…" }
         return $line
     }
 
-    # Fill the floating index and the head-strip count from the current
-    # matches, then open the panel. With no matches (a session opened while
-    # browsing) both are hidden. Opening on every populate is what lands a
-    # session click on the index when a search is active, with no second
-    # gesture.
+    # Fill the match listbox and the head-strip count from the current matches,
+    # then open the band on its Matches tab. With no matches (a session opened
+    # while browsing) the count is hidden and the band, if it was showing
+    # matches, collapses. Auto-opening on every populate is what lands a session
+    # click on the index when a search is active, with no second gesture.
     method refresh_match_control {} {
         set n [llength $FindMatches]
         $MatchList delete 0 end
         if {$n == 0} {
             pack forget $MatchBtn
-            place forget $MatchPanel
+            set MatchCountText ""
+            if {$BandOpen && $BandTab eq "matches"} { my band_hide }
+            my update_band_tabs
             return
         }
         set i 0
@@ -1080,8 +1097,7 @@ oo::class create ::questlog::ui::Viewer {
         $MatchList configure -height [expr {min($n, 8)}]
         $MatchList selection clear 0 end
         $MatchList selection set 0
-        $MatchPanel.hdr.title configure -text \
-            "$n [expr {$n == 1 ? {match} : {matches}}]"
+        set MatchCountText "$n [expr {$n == 1 ? {match} : {matches}}]"
         # Reserve the count's width on the right before the path fills the rest,
         # so a long file path clips rather than squeezing it out of the strip.
         # Re-packing the path after fixes the order regardless of which packed
@@ -1089,7 +1105,7 @@ oo::class create ::questlog::ui::Viewer {
         pack forget $PathLabel
         pack $MatchBtn -side right -padx 6
         pack $PathLabel -side left -padx 6 -pady 1 -fill x -expand 1
-        my match_panel_show
+        my band_show matches
     }
 
     # Row foreground by role, echoing the rendered transcript's role colours.
@@ -1101,26 +1117,85 @@ oo::class create ::questlog::ui::Viewer {
         }
     }
 
-    # Place the panel over the body's top-right, offset left of the scrollbar
-    # so the drag thumb stays reachable; `raise` keeps it above the text. The
-    # head-strip glyph turns up (▴) to read as open.
-    method match_panel_show {} {
-        if {[llength $FindMatches] == 0} return
-        place $MatchPanel -relx 1.0 -x -18 -rely 0 -y 2 -anchor ne
-        raise $MatchPanel
-        $MatchBtn configure -text "▴ [$MatchPanel.hdr.title cget -text]"
-    }
+    # ---- docked band: open/collapse and tab switching --------------------
 
-    method match_panel_hide {} {
-        place forget $MatchPanel
-        $MatchBtn configure -text "▾ [$MatchPanel.hdr.title cget -text]"
-    }
-
-    method match_panel_toggle {} {
-        if {[winfo ismapped $MatchPanel]} {
-            my match_panel_hide
+    # Switch the band's content without changing its open/collapsed state: grid
+    # the chosen list into the content cell and remove the other, so only the
+    # active list's height drives the band. Re-derives the tab styling and the
+    # head-strip glyphs.
+    method set_tab {tab} {
+        set BandTab $tab
+        if {$tab eq "matches"} {
+            grid remove $ToolList $Band.toolsb
+            grid $MatchList    -row 1 -column 0 -sticky nsew
+            grid $Band.matchsb -row 1 -column 1 -sticky ns
         } else {
-            my match_panel_show
+            grid remove $MatchList $Band.matchsb
+            grid $ToolList    -row 1 -column 0 -sticky nsew
+            grid $Band.toolsb -row 1 -column 1 -sticky ns
+        }
+        my update_band_tabs
+        my update_band_glyphs
+    }
+
+    # Open the band (re-grids its body row) on the given tab.
+    method band_show {tab} {
+        set BandOpen 1
+        grid $Band
+        my set_tab $tab
+    }
+
+    # Collapse the band: grid-remove gives row 0 back to the transcript.
+    method band_hide {} {
+        set BandOpen 0
+        grid remove $Band
+        my update_band_glyphs
+    }
+
+    # The head-strip counts route here. Clicking the count of the tab already
+    # open collapses the band; clicking the other count swaps the front tab and
+    # leaves it open; otherwise open on that tab.
+    method band_toggle {tab} {
+        if {$BandOpen && $BandTab eq $tab} {
+            my band_hide
+        } elseif {$BandOpen} {
+            my set_tab $tab
+        } else {
+            my band_show $tab
+        }
+    }
+
+    # Show only the tabs whose list has rows, mark the active one, and carry the
+    # active tab's count in the band header. Forget both first, then re-pack the
+    # present ones in canonical Matches-then-Tools order, so a tab that was
+    # hidden for the prior session never re-packs after its sibling.
+    method update_band_tabs {} {
+        pack forget $TabMatches $TabTools
+        set hasm [expr {[llength $FindMatches] > 0}]
+        set hast [expr {[llength $ToolLines] > 0}]
+        if {$hasm} { pack $TabMatches -side left }
+        if {$hast} { pack $TabTools -side left -padx [expr {$hasm ? "10 0" : "0"}] }
+        set active     [::questlog::ui::theme::c sessionhead]
+        set inactive   [::questlog::ui::theme::c faint]
+        $TabMatches configure \
+            -foreground [expr {$BandTab eq "matches" ? $active : $inactive}]
+        $TabTools configure \
+            -foreground [expr {$BandTab eq "tools" ? $active : $inactive}]
+        $BandCount configure -text \
+            [expr {$BandTab eq "matches" ? $MatchCountText : $ToolCountText}]
+    }
+
+    # Keep the ▾/▴ glyph on both head-strip counts: ▴ on the count whose tab is
+    # the open front tab, ▾ otherwise. Each count may be unpacked (its list is
+    # empty), so guard on existence in the strip.
+    method update_band_glyphs {} {
+        set mglyph [expr {$BandOpen && $BandTab eq "matches" ? "▴" : "▾"}]
+        set tglyph [expr {$BandOpen && $BandTab eq "tools" ? "▴" : "▾"}]
+        if {$MatchCountText ne ""} {
+            $MatchBtn configure -text "$mglyph $MatchCountText"
+        }
+        if {$ToolCountText ne ""} {
+            $ToolBtn configure -text "$tglyph $ToolCountText"
         }
     }
 
@@ -1144,7 +1219,8 @@ oo::class create ::questlog::ui::Viewer {
     # head-strip count. Records are already in chronological order, so the
     # walk needs no sort. Each row remembers its record's jsonl line (in
     # ToolLines, parallel to the listbox rows) so a click jumps the reading
-    # view there. With no tool calls both the panel and the toggle stay hidden.
+    # view there. With no tool calls both the band's Tools tab and the head
+    # count stay hidden.
     method index_tool_calls {} {
         set ToolLines [list]
         $ToolList delete 0 end
@@ -1175,54 +1251,29 @@ oo::class create ::questlog::ui::Viewer {
     }
 
     # Fill the head-strip count and size the listbox from the collected calls,
-    # then place the toggle. With no calls both the toggle and the panel stay
-    # hidden, mirroring the match control. The toggle starts closed (▾): unlike
-    # a search, the audit is an opt-in the reader reaches for, and the two floats
-    # share the body's top-right anchor, so auto-opening here would cover the
-    # match index the search just produced. Runs after index_matches, so the
-    # toggle packs to the left of the match count, keeping that rightmost slot.
+    # then expose the Tools entry point. With no calls the count is hidden and a
+    # band already on Tools collapses. Unlike a search, the audit is opt-in: this
+    # never opens the band, it only makes the Tools tab and count available, so
+    # the matches that index_matches auto-opened (it runs first) stay in front.
     method refresh_tool_control {} {
         set n [llength $ToolLines]
         if {$n == 0} {
             pack forget $ToolBtn
-            place forget $ToolPanel
+            set ToolCountText ""
+            if {$BandOpen && $BandTab eq "tools"} { my band_hide }
+            my update_band_tabs
             return
         }
         $ToolList configure -height [expr {min($n, 8)}]
         $ToolList selection clear 0 end
-        $ToolPanel.hdr.title configure -text \
-            "$n tool [expr {$n == 1 ? {call} : {calls}}]"
+        set ToolCountText "$n tool [expr {$n == 1 ? {call} : {calls}}]"
         # Reserve the count's width on the strip before the path fills the rest,
         # so a long file path clips rather than squeezing it out.
         pack forget $PathLabel
         pack $ToolBtn -side right -padx 6
         pack $PathLabel -side left -padx 6 -pady 1 -fill x -expand 1
-        $ToolBtn configure -text "▾ [$ToolPanel.hdr.title cget -text]"
-    }
-
-    # Place the panel over the body's top-right, offset left of the scrollbar so
-    # the drag thumb stays reachable. It shares the match index's corner; `raise`
-    # brings whichever was shown last to the front, so toggling one covers the
-    # other rather than the two interleaving. The head-strip glyph turns up (▴)
-    # when open.
-    method tool_panel_show {} {
-        if {[llength $ToolLines] == 0} return
-        place $ToolPanel -relx 1.0 -x -18 -rely 0 -y 2 -anchor ne
-        raise $ToolPanel
-        $ToolBtn configure -text "▴ [$ToolPanel.hdr.title cget -text]"
-    }
-
-    method tool_panel_hide {} {
-        place forget $ToolPanel
-        $ToolBtn configure -text "▾ [$ToolPanel.hdr.title cget -text]"
-    }
-
-    method tool_panel_toggle {} {
-        if {[winfo ismapped $ToolPanel]} {
-            my tool_panel_hide
-        } else {
-            my tool_panel_show
-        }
+        my update_band_tabs
+        my update_band_glyphs
     }
 
     # Jump the reading view to the clicked call's line.
