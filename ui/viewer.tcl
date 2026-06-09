@@ -196,6 +196,7 @@ oo::class create ::questlog::ui::Viewer {
         my render
         my index_matches $query
         my index_tool_calls
+        my add_endhint
         if {$scroll_to_line > 0} {
             my scroll_to_line $scroll_to_line
         } else {
@@ -418,6 +419,15 @@ oo::class create ::questlog::ui::Viewer {
         $Text tag configure i-code       -font QLMono
         $Text tag configure recap     -background [::questlog::ui::theme::c recap]
         $Text tag configure find      -background [::questlog::ui::theme::c find]
+        # End-of-session hint: a centred, deeply inset cue that the reader can
+        # send one more prompt. The wide left/right margin (derived from the mono
+        # font so it scales with the reading size) sets it apart from the
+        # full-width transcript, so it does not read as session content.
+        set hintpad [expr {[font measure QLMono "0"] * 8}]
+        $Text tag configure endhint -justify center -font QLMono \
+            -foreground [::questlog::ui::theme::c muted] \
+            -lmargin1 $hintpad -lmargin2 $hintpad -rmargin $hintpad \
+            -spacing1 [font metrics QLMono -linespace] -spacing3 6
 
         # Right-click copy (issue #4) and width tracking for the embedded
         # quote boxes that drafts render into.
@@ -736,6 +746,36 @@ oo::class create ::questlog::ui::Viewer {
         return $new
     }
 
+    # The boundary between session content and the trailing end-of-session
+    # hint: searches and the match index stop here so the hint's words are not
+    # treated as transcript matches. Returns "end" when no hint is present.
+    method content_end {} {
+        set r [$Text tag ranges endhint]
+        if {[llength $r]} { return [lindex $r 0] }
+        return "end"
+    }
+
+    # Add the centred end-of-session hint at the very bottom, once. Kept out of
+    # the match index by being added after indexing, and out of later searches
+    # by content_end. Cleared before a turn streams in (clear_endhint) so new
+    # content appends below the last turn, not below the hint.
+    method add_endhint {} {
+        if {!$Shown} return
+        if {[llength [$Text tag ranges endhint]]} return
+        $Text configure -state normal
+        $Text insert end "\nContinue with one more prompt\n" endhint
+        $Text insert end "Ctrl-Enter, or the ⋯ menu\n" endhint
+        $Text configure -state disabled
+    }
+
+    method clear_endhint {} {
+        set r [$Text tag ranges endhint]
+        if {![llength $r]} return
+        $Text configure -state normal
+        $Text delete [lindex $r 0] [lindex $r end]
+        $Text configure -state disabled
+    }
+
     # ---- one-prompt resume (streamed) --------------------------------------
 
     # Summon the prompt bar at the viewer bottom and focus the entry. Mirrors
@@ -792,6 +832,7 @@ oo::class create ::questlog::ui::Viewer {
         set Detached 0
         set RunPath $Path
         set ErrBuf ""
+        my clear_endhint
         chan configure $Pipe -blocking 0 -buffering line
         chan event $Pipe readable [list [self] resume_drain]
         my set_prompt_enabled 0
@@ -852,6 +893,7 @@ oo::class create ::questlog::ui::Viewer {
             my append_new
             my index_matches $Query
             my index_tool_calls
+            my add_endhint
             my set_prompt_enabled 1
             if {$status} {
                 my prompt_status \
@@ -1224,7 +1266,7 @@ oo::class create ::questlog::ui::Viewer {
         set start 1.0
         while {1} {
             set len 0
-            set m [$Text search -count len -nocase -- $pattern $start end]
+            set m [$Text search -count len -nocase -- $pattern $start [my content_end]]
             if {$m eq ""} break
             $Text tag add find $m "$m + ${len}c"
             lappend results $m
@@ -1268,9 +1310,9 @@ oo::class create ::questlog::ui::Viewer {
             while {1} {
                 set len 0
                 if {$nocase} {
-                    set m [$Text search -nocase -count len -- $term $start end]
+                    set m [$Text search -nocase -count len -- $term $start [my content_end]]
                 } else {
-                    set m [$Text search -count len -- $term $start end]
+                    set m [$Text search -count len -- $term $start [my content_end]]
                 }
                 if {$m eq ""} break
                 if {$len <= 0} { set len 1 }
