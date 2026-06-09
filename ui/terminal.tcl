@@ -1,7 +1,7 @@
 package require Tcl 9
 
 namespace eval ::questlog::ui::terminal {
-    namespace export launch_tab resume_command
+    namespace export launch_tab resume_command oneshot_command permission_flags
     variable Detected ""
 }
 
@@ -10,6 +10,28 @@ namespace eval ::questlog::ui::terminal {
 proc ::questlog::ui::terminal::resume_command {cwd uuid {fork 0}} {
     set extra [expr {$fork ? " --fork-session" : ""}]
     return "cd [shquote $cwd] && claude --resume $uuid$extra"
+}
+
+# Build the shell command for one non-interactive resume turn, streamed back
+# into the viewer. Like resume_command, cd carries the cwd. The turn is
+# written to the session jsonl (the viewer tails that); stdout is only the
+# turn's text and any error, so no --output-format is needed. perm_flags is
+# the pre-built string from permission_flags; cwd and prompt are shell-quoted.
+proc ::questlog::ui::terminal::oneshot_command {cwd uuid prompt perm_flags} {
+    return "cd [shquote $cwd] && claude -p --resume $uuid $perm_flags [shquote $prompt]"
+}
+
+# Map a prompt-bar permission choice to claude flags. A -p turn cannot answer
+# a permission prompt, so any tool access must be granted up front: read-only
+# leaves the default mode (tools needing approval are skipped), the edit modes
+# auto-accept, and full bypasses all checks.
+proc ::questlog::ui::terminal::permission_flags {mode} {
+    switch -- $mode {
+        edits     { return "--permission-mode acceptEdits" }
+        edits-git { return {--permission-mode acceptEdits --allowedTools "Bash(git*)"} }
+        full      { return "--dangerously-skip-permissions" }
+        default   { return "--permission-mode default" }
+    }
 }
 
 # Detection order from design.md §Resume command and terminal integration:
