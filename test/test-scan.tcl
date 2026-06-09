@@ -165,6 +165,56 @@ set qb [$s2 query [dict create since all one_turn 0 bookmarked_only 1]]
 check query_bookmarked_only 1 [llength $qb]
 
 $s2 destroy
+
+# ---- slug read: tail window + full-file fallback --------------------
+# scan_one reads the slug from a 64 KB tail window as a fast path, with a
+# full-file sweep when that window holds no title. Three cases:
+#   (a) title more than tail_window_bytes before EOF (a long, busy session) -
+#       the tail misses it, the fallback recovers it;
+#   (b) a short session whose only title precedes the forward break - the
+#       tail starts after the break and misses it, the fallback recovers it;
+#   (c) title inside the window - read by the fast path, no fallback.
+# (a) and (b) both read as nameless without the fallback.
+set s3 [::questlog::Scan new "" ""]
+set win [::questlog::config::get tail_window_bytes]
+
+set far /tmp/questlog-test-projects/-home-test-code-foo/far-title.jsonl
+set fh [open $far w]
+chan configure $fh -encoding utf-8 -translation lf
+puts $fh {{"type":"user","message":{"content":"first"},"cwd":"/home/test/code/foo","timestamp":"2026-05-01T10:00:00.000Z"}}
+puts $fh {{"type":"agent-name","agentName":"far-back-title","sessionId":"far"}}
+puts $fh {{"type":"user","message":{"content":"second"},"timestamp":"2026-05-01T10:01:00.000Z"}}
+set pad [string repeat x 200]
+set written 0
+while {$written < $win + 4096} {
+    set line "{\"type\":\"assistant\",\"message\":{\"content\":\"$pad\"}}"
+    puts $fh $line
+    incr written [expr {[string length $line] + 1}]
+}
+close $fh
+check slug_far_title_fallback far-back-title [dict get [$s3 scan_one $far] slug]
+
+set early /tmp/questlog-test-projects/-home-test-code-foo/early-title.jsonl
+set fh [open $early w]
+chan configure $fh -encoding utf-8 -translation lf
+puts $fh {{"type":"user","message":{"content":"q1"},"cwd":"/home/test/code/foo","timestamp":"2026-05-02T10:00:00.000Z"}}
+puts $fh {{"type":"agent-name","agentName":"early-named","sessionId":"early"}}
+puts $fh {{"type":"user","message":{"content":"q2"},"timestamp":"2026-05-02T10:01:00.000Z"}}
+puts $fh {{"type":"assistant","message":{"content":"done"}}}
+close $fh
+check slug_early_title_fallback early-named [dict get [$s3 scan_one $early] slug]
+
+set near /tmp/questlog-test-projects/-home-test-code-foo/near-title.jsonl
+set fh [open $near w]
+chan configure $fh -encoding utf-8 -translation lf
+puts $fh {{"type":"user","message":{"content":"q1"},"cwd":"/home/test/code/foo","timestamp":"2026-05-03T10:00:00.000Z"}}
+puts $fh {{"type":"user","message":{"content":"q2"},"timestamp":"2026-05-03T10:01:00.000Z"}}
+puts $fh {{"type":"agent-name","agentName":"near-named","sessionId":"near"}}
+close $fh
+check slug_near_title near-named [dict get [$s3 scan_one $near] slug]
+
+$s3 destroy
+
 ::questlog::path::_real_file delete -force /tmp/questlog-test-projects
 
 if {$fails > 0} {

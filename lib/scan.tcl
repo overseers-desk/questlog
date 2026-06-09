@@ -30,6 +30,21 @@ proc ::questlog::scan::cmp_mtime {a b} {
     return 0
 }
 
+# Read from the channel's current position to EOF and return the LAST agentName
+# and aiTitle seen, as {agent_name ai_title}; "" for either that never appears.
+# The single home for the slug field regexes and their last-wins rule, shared by
+# scan_one's tail read and its full-file fallback.
+proc ::questlog::scan::last_titles {fh} {
+    set agent_name ""
+    set ai_title ""
+    while {[chan gets $fh line] >= 0} {
+        if {$line eq ""} continue
+        if {[regexp {"agentName":"([^"]+)"} $line -> m]} { set agent_name $m }
+        if {[regexp {"aiTitle":"([^"]+)"} $line -> m]} { set ai_title $m }
+    }
+    return [list $agent_name $ai_title]
+}
+
 # Resume a coroutine from an `after` callback. The coroutine command deletes
 # itself when it returns, so a resume scheduled before a cancel can fire after
 # the coroutine is already gone; skip it then. An error the coroutine itself
@@ -246,14 +261,16 @@ oo::class create ::questlog::Scan {
     # no shared state, returns a fresh dict. The caller decides whether
     # to publish.
     #
-    # Two-phase read. The forward scan keeps its existing early break on
-    # users/cwd/first_ts. Slug records (agentName, aiTitle) are NOT read
-    # forward: Claude Code appends rename records at the end of the file,
-    # so the first occurrence is always the original auto title, never
-    # the rename. After the forward break, a tail scan over the last
-    # ~64 KB takes the LAST agentName and the LAST aiTitle, which is the
-    # window the most recent rename and its mirrored agent-name record
-    # live in. Slug priority is unchanged: agentName wins over aiTitle.
+    # The slug read has a fast path and a fallback. The forward scan keeps
+    # its early break on users/cwd/first_ts. The slug (agentName, aiTitle) is
+    # the LAST occurrence, not the first: Claude Code rewrites the title
+    # through a session's life and a rename appends fresh records at EOF, so
+    # only the final occurrence is current. The fast path reads it from a tail
+    # scan over the last ~64 KB, which holds the latest title whenever Claude
+    # wrote one recently. When that window holds no title - a long session
+    # whose last title record is more than ~64 KB back, or a short one whose
+    # only title precedes the forward break - a full forward sweep recovers
+    # it. Slug priority is unchanged: agentName wins over aiTitle.
     method scan_one {path} {
         if {[catch {open $path r} fh]} { return [dict create] }
         # -profile replace: the tail scan below seeks to an arbitrary byte
@@ -283,8 +300,6 @@ oo::class create ::questlog::Scan {
         # Tail scan. Seek to max(current_pos, size - 64KB) so a short file
         # is read whole and a long file pays only the tail. Skip the first
         # (probably partial) line after the seek when seeking mid-file.
-        set agent_name ""
-        set ai_title ""
         if {[catch {file size $path} fsz]} { set fsz 0 }
         set tail_start [expr {$fsz - [::questlog::config::get tail_window_bytes]}]
         set pos [chan tell $fh]
@@ -292,14 +307,15 @@ oo::class create ::questlog::Scan {
             chan seek $fh $tail_start
             chan gets $fh _
         }
-        while {[chan gets $fh line] >= 0} {
-            if {$line eq ""} continue
-            if {[regexp {"agentName":"([^"]+)"} $line -> m]} {
-                set agent_name $m
-            }
-            if {[regexp {"aiTitle":"([^"]+)"} $line -> m]} {
-                set ai_title $m
-            }
+        lassign [::questlog::scan::last_titles $fh] agent_name ai_title
+        # Fallback: an empty tail window means the latest title sits further
+        # back than tail_window_bytes (a long, busy session) or before the
+        # forward break (a short one). Re-read the whole file for it. Only
+        # sessions the tail missed pay this sweep; a title inside the window
+        # never reaches here.
+        if {$agent_name eq "" && $ai_title eq ""} {
+            chan seek $fh 0
+            lassign [::questlog::scan::last_titles $fh] agent_name ai_title
         }
         close $fh
         if {[catch {file mtime $path} mtime]} { set mtime 0 }
