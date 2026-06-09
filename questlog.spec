@@ -1,5 +1,5 @@
 Name:           questlog
-Version:        1.1.2
+Version:        1.1.3
 Release:        1%{?dist}
 Summary:        GUI for finding, reading, and reopening past Claude Code sessions
 License:        MIT
