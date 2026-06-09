@@ -492,8 +492,11 @@ oo::class create ::questlog::ui::Viewer {
         pack $Prompt.row -side top -fill x
         bind $PromptEntry <Return> [list [self] resume_submit]
         bind $PromptEntry <Escape> [list [self] prompt_hide]
-        # Ctrl-Return summons the bar; Ctrl-F is already Find.
-        bind $Text <Control-Return> [list [self] prompt_show]
+        # Ctrl-Return summons the bar from anywhere in the window, not only when
+        # the transcript holds focus: bind on the toplevel, which is in every
+        # widget's bindtags, so a key event reaches it whatever has focus.
+        # prompt_show no-ops until a session is shown.
+        bind [winfo toplevel $Top] <Control-Return> [list [self] prompt_show]
     }
 
     # Build a sidebar-toggle photo from the design's inline SVG (screens.jsx),
