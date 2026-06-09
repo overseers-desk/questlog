@@ -152,7 +152,8 @@ proc ::questlog::ui::app::start {root {initial_criteria {}} {init_since ""} {ini
         [namespace code toggle_sidebar] \
         [namespace code on_move_request] \
         [namespace code on_bookmark_toggle] \
-        [namespace code on_rename_request]]
+        [namespace code on_rename_request] \
+        [namespace code on_scan_path]]
     pack $ViewFrame.v -side top -fill both -expand 1
     $PW add $ViewFrame -weight 42
 

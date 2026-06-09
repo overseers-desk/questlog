@@ -92,8 +92,27 @@ oo::class create ::questlog::ui::Viewer {
     variable CollapseBtn      ;# the header toggle label
     variable IconOpen         ;# toggle photo, list shown (solid left pane)
     variable IconClosed       ;# toggle photo, list hidden (dim left pane)
+    variable Query            ;# the active search ({terms .. nocase ..} or {}), re-applied after a streamed turn
+    variable LoadedLines      ;# count of physical jsonl lines consumed, so a streamed turn tails only the new ones
+    variable RenderTs         ;# trailing render state: epoch of the last content turn, carried into append_new
+    variable RenderInSection  ;# trailing render state: 1 while a section header is open
+    # Resume prompt bar: a one-shot `claude -p --resume` for the loaded session,
+    # summoned like Find, its turn streamed back into the transcript.
+    variable Prompt           ;# the bar frame, packed at the viewer bottom on demand
+    variable PromptEntry      ;# the prompt entry widget
+    variable PromptVar        ;# entry text
+    variable PermVar          ;# picked permission mode (readonly|edits|edits-git|full)
+    variable PromptSend       ;# the Send button
+    variable PromptStatus     ;# bar status label (running / error)
+    variable OnRefresh        ;# cb: path -> app re-scans the row after a streamed turn lands
+    variable Pipe             ;# the running claude -p pipe channel, "" when idle
+    variable Tick             ;# after-id of the jsonl tail tick while streaming
+    variable Running          ;# 1 while a streamed turn renders into the current view
+    variable Detached         ;# 1 when the user navigated away mid-stream (drain only, do not render)
+    variable RunPath          ;# the jsonl the running turn targets, for the row refresh
+    variable ErrBuf           ;# merged stdout+stderr of the running turn, shown on failure
 
-    constructor {parent {on_toggle ""} {on_move ""} {on_bookmark ""} {on_rename ""}} {
+    constructor {parent {on_toggle ""} {on_move ""} {on_bookmark ""} {on_rename ""} {on_refresh ""}} {
         set Top $parent
         set Shown 0
         set Path ""
@@ -119,9 +138,22 @@ oo::class create ::questlog::ui::Viewer {
         set OnMove $on_move
         set OnBookmark $on_bookmark
         set OnRename $on_rename
+        set OnRefresh $on_refresh
         set Uuid ""
         set Cwd ""
         set CwdFull ""
+        set Query ""
+        set LoadedLines 0
+        set RenderTs 0
+        set RenderInSection 0
+        set PromptVar ""
+        set PermVar readonly
+        set Pipe ""
+        set Tick ""
+        set Running 0
+        set Detached 0
+        set RunPath ""
+        set ErrBuf ""
         my build
     }
 
@@ -130,6 +162,14 @@ oo::class create ::questlog::ui::Viewer {
     # nocase 0|1}, or {}); its terms are matched literally, highlighted, and
     # listed in the docked match index band.
     method show {jsonl_path {scroll_to_line 0} {query {}}} {
+        # Leaving a session mid-stream detaches its turn (it finishes on disk and
+        # reloads on next open) and folds the prompt bar away, like find_hide.
+        # The bar is reset for the new session; a detached run no longer touches
+        # it, so its eventual finish cannot re-enable or clear the wrong session.
+        my resume_detach
+        my prompt_hide
+        my set_prompt_enabled 1
+        my prompt_status ""
         if {!$Shown} {
             grid remove $Empty
             grid $Text        -row 1 -column 0 -sticky nsew
@@ -137,8 +177,10 @@ oo::class create ::questlog::ui::Viewer {
             set Shown 1
         }
         set Path $jsonl_path
+        set Query $query
         set Records [list]
         set LineMap [dict create]
+        set LoadedLines 0
         set Uuid [file rootname [file tail $Path]]
         set Cwd [::questlog::jsonl::first_cwd $Path]
         # Show the working directory the session ran in (it survives a move,
@@ -401,6 +443,47 @@ oo::class create ::questlog::ui::Viewer {
         bind $Text <Escape>     [list [self] find_hide]
         bind $Find.e <Escape>   [list [self] find_hide]
         bind $Find.e <Return>   [list [self] find_next]
+
+        # Resume prompt bar (hidden until summoned). Two stacked rows: the
+        # permission chips above the entry, every choice one click with no menu
+        # to open. prompt_show packs it at the bottom, so the options sit just
+        # above the entry as it rises into view.
+        set Prompt $Top.prompt
+        ttk::frame $Prompt
+        ttk::frame $Prompt.opts
+        ttk::label $Prompt.opts.lbl -text "Permissions:"
+        pack $Prompt.opts.lbl -side left -padx {4 6}
+        foreach {val text} {
+            readonly  "read-only"
+            edits     "accept edits"
+            edits-git "accept edits + git"
+            full      "full access"
+        } {
+            set w $Prompt.opts.[string map {- _} $val]
+            ttk::radiobutton $w -text $text \
+                -variable [my varname PermVar] -value $val
+            pack $w -side left -padx {0 8}
+        }
+        pack $Prompt.opts -side top -fill x -pady {2 0}
+        ttk::frame $Prompt.row
+        ttk::label $Prompt.row.lbl -text "Resume:"
+        set PromptEntry $Prompt.row.e
+        ttk::entry $PromptEntry -textvariable [my varname PromptVar]
+        set PromptSend $Prompt.row.send
+        ttk::button $PromptSend -text "Send" -command [list [self] resume_submit]
+        set PromptStatus $Prompt.row.status
+        ttk::label $PromptStatus -text "" -foreground [::questlog::ui::theme::c muted]
+        ttk::button $Prompt.row.close -text "✕" -command [list [self] prompt_hide]
+        pack $Prompt.row.lbl   -side left -padx 4
+        pack $PromptEntry      -side left -fill x -expand 1
+        pack $PromptSend       -side left -padx 2
+        pack $PromptStatus     -side left -padx 6
+        pack $Prompt.row.close -side left -padx 2
+        pack $Prompt.row -side top -fill x
+        bind $PromptEntry <Return> [list [self] resume_submit]
+        bind $PromptEntry <Escape> [list [self] prompt_hide]
+        # Ctrl-Return summons the bar; Ctrl-F is already Find.
+        bind $Text <Control-Return> [list [self] prompt_show]
     }
 
     # Build a sidebar-toggle photo from the design's inline SVG (screens.jsx),
@@ -471,6 +554,8 @@ oo::class create ::questlog::ui::Viewer {
         ::questlog::ui::session_actions::apply_state \
             $ActionMenu $idx [dict get $ctx state]
         $ActionMenu add separator
+        $ActionMenu add command -label "Continue with one prompt…" \
+            -command [list [self] prompt_show]
         $ActionMenu add command -label "Font…" -command [list [self] choose_font]
         tk_popup $ActionMenu {*}[winfo pointerxy .]
     }
@@ -528,81 +613,255 @@ oo::class create ::questlog::ui::Viewer {
             lappend Records $rec
         }
         close $fh
+        set LoadedLines $lineno
     }
 
     method render {} {
         $Text configure -state normal
         $Text delete 1.0 end
         set Roles [dict create]
-
-        set last_ts 0
-        set in_section 0
+        set RenderTs 0
+        set RenderInSection 0
         foreach rec $Records {
-            set t [dict getdef $rec type ""]
-            # last-prompt records are repeated, truncated harness snapshots of
-            # the most recent user prompt: the harness writes the same value
-            # many times, and it echoes the real user turn already shown. Not
-            # part of the conversation, so omit it from the reading view.
-            if {$t eq "last-prompt"} continue
-            set ts_iso [::questlog::jsonl::record_timestamp $rec]
-            set ts_epoch [my parse_iso $ts_iso]
-            set lineno [dict get $rec _line]
-
-            # Compact boundary primary divider.
-            if {[::questlog::jsonl::is_compact_boundary $rec]} {
-                $Text insert end "─── /compact ───\n" compact-divider
-                set in_section 0
-                set last_ts 0
-                continue
-            }
-
-            # Records that carry no text body (permission-mode, file-history
-            # snapshots, attachments) head no section and draw no line; they
-            # only keep the clock moving for gap detection. Tested before the
-            # header so a leading metadata record never leaves a bare section
-            # glyph at the top of the transcript. Tool-only assistant turns
-            # now render (extract_text emits Tool(args), [thinking], [image]
-            # placeholders), so they pass through to the body path below.
-            set body [::questlog::jsonl::extract_text $rec]
-            if {[::questlog::debug::enabled]} {
-                ::questlog::debug::log render "line $lineno type=$t\
-                    empty=[expr {$body eq ""}]\
-                    tools=[llength [::questlog::jsonl::record_tool_uses $rec]]"
-            }
-            if {$body eq ""} {
-                if {$ts_epoch > 0} { set last_ts $ts_epoch }
-                continue
-            }
-
-            # Idle-gap secondary divider, between content turns.
-            if {$last_ts > 0 && $ts_epoch > 0} {
-                set gap [expr {($ts_epoch - $last_ts) / 60}]
-                if {$gap >= $IdleGap} {
-                    $Text insert end "─── [my fmt_gap $gap] later ───\n" divider
-                    set in_section 0
-                }
-            }
-
-            if {!$in_section} {
-                $Text insert end "[my section_header $ts_iso]\n" section-header
-                set in_section 1
-            }
-
-            # Map this jsonl line to the current text index.
-            set start_idx [$Text index "end-1l linestart"]
-            dict set LineMap $lineno $start_idx
-            dict set Bodies $lineno $body
-            dict set Roles $lineno [string toupper $t]
-            set ltag "lbl-$t"
-            if {$t ne "user" && $t ne "assistant" && $t ne "system"} {
-                set ltag lbl-system
-            }
-            $Text insert end "[string toupper $t]  " $ltag
-            my insert_body $t $body
-
-            if {$ts_epoch > 0} { set last_ts $ts_epoch }
+            lassign [my render_record $rec $RenderTs $RenderInSection] \
+                RenderTs RenderInSection
         }
         $Text configure -state disabled
+    }
+
+    # Render one record at the end of the transcript and return the trailing
+    # {last_ts in_section} state it advances: last_ts is the epoch of the most
+    # recent content turn (for idle-gap detection), in_section is 1 while a
+    # section header is open. Pulled out of render so the wholesale fill and the
+    # streamed append (append_new) make identical divider and header decisions.
+    # The caller holds $Text in -state normal.
+    method render_record {rec last_ts in_section} {
+        set t [dict getdef $rec type ""]
+        # last-prompt records are repeated, truncated harness snapshots of the
+        # most recent user prompt: the harness writes the same value many times,
+        # and it echoes the real user turn already shown. Not part of the
+        # conversation, so omit it from the reading view.
+        if {$t eq "last-prompt"} { return [list $last_ts $in_section] }
+        set ts_iso [::questlog::jsonl::record_timestamp $rec]
+        set ts_epoch [my parse_iso $ts_iso]
+        set lineno [dict get $rec _line]
+
+        # Compact boundary primary divider.
+        if {[::questlog::jsonl::is_compact_boundary $rec]} {
+            $Text insert end "─── /compact ───\n" compact-divider
+            return [list 0 0]
+        }
+
+        # Records that carry no text body (permission-mode, file-history
+        # snapshots, attachments) head no section and draw no line; they only
+        # keep the clock moving for gap detection. Tested before the header so a
+        # leading metadata record never leaves a bare section glyph at the top of
+        # the transcript. Tool-only assistant turns now render (extract_text
+        # emits Tool(args), [thinking], [image] placeholders), so they pass
+        # through to the body path below.
+        set body [::questlog::jsonl::extract_text $rec]
+        if {[::questlog::debug::enabled]} {
+            ::questlog::debug::log render "line $lineno type=$t\
+                empty=[expr {$body eq ""}]\
+                tools=[llength [::questlog::jsonl::record_tool_uses $rec]]"
+        }
+        if {$body eq ""} {
+            if {$ts_epoch > 0} { set last_ts $ts_epoch }
+            return [list $last_ts $in_section]
+        }
+
+        # Idle-gap secondary divider, between content turns.
+        if {$last_ts > 0 && $ts_epoch > 0} {
+            set gap [expr {($ts_epoch - $last_ts) / 60}]
+            if {$gap >= $IdleGap} {
+                $Text insert end "─── [my fmt_gap $gap] later ───\n" divider
+                set in_section 0
+            }
+        }
+
+        if {!$in_section} {
+            $Text insert end "[my section_header $ts_iso]\n" section-header
+            set in_section 1
+        }
+
+        # Map this jsonl line to the current text index.
+        set start_idx [$Text index "end-1l linestart"]
+        dict set LineMap $lineno $start_idx
+        dict set Bodies $lineno $body
+        dict set Roles $lineno [string toupper $t]
+        set ltag "lbl-$t"
+        if {$t ne "user" && $t ne "assistant" && $t ne "system"} {
+            set ltag lbl-system
+        }
+        $Text insert end "[string toupper $t]  " $ltag
+        my insert_body $t $body
+
+        if {$ts_epoch > 0} { set last_ts $ts_epoch }
+        return [list $last_ts $in_section]
+    }
+
+    # Append jsonl lines written since the last load/append (a streamed turn
+    # growing the file) to the end of the transcript, reusing render_record so
+    # the new turns look exactly like a fresh load. Re-reads from the top and
+    # skips already-rendered lines; cheap enough for one active stream. A line
+    # without a trailing newline is the partial tail claude is mid-write on, so
+    # it is left for the next pass. Auto-scrolls only if the reader was already
+    # at the bottom. Returns the number of records appended.
+    method append_new {} {
+        if {$Path eq "" || ![winfo exists $Text]} { return 0 }
+        if {[catch {open $Path r} fh]} { return 0 }
+        chan configure $fh -encoding utf-8 -profile replace
+        set at_bottom [expr {[lindex [$Text yview] 1] >= 0.999}]
+        $Text configure -state normal
+        set lineno 0
+        set new 0
+        while {1} {
+            if {[chan gets $fh line] < 0} break
+            if {[chan eof $fh]} break
+            incr lineno
+            if {$lineno <= $LoadedLines} continue
+            if {$line eq ""} continue
+            set rec [::questlog::jsonl::parse_line $line]
+            if {$rec eq ""} continue
+            dict set rec _line $lineno
+            lappend Records $rec
+            lassign [my render_record $rec $RenderTs $RenderInSection] \
+                RenderTs RenderInSection
+            incr new
+        }
+        close $fh
+        set LoadedLines $lineno
+        $Text configure -state disabled
+        if {$new > 0 && $at_bottom} { $Text see end }
+        return $new
+    }
+
+    # ---- one-prompt resume (streamed) --------------------------------------
+
+    # Summon the prompt bar at the viewer bottom and focus the entry. Mirrors
+    # find_show; the permission chips sit just above the entry as it appears.
+    method prompt_show {} {
+        if {!$Shown} return
+        pack $Prompt -side bottom -fill x
+        focus $PromptEntry
+    }
+
+    # Fold the bar away. A no-op while a turn streams into this view, so the ✕
+    # cannot drop the running indicator; navigating away detaches first, which
+    # clears the guard.
+    method prompt_hide {} {
+        if {$Running && !$Detached} return
+        pack forget $Prompt
+    }
+
+    method set_prompt_enabled {on} {
+        set st [expr {$on ? "normal" : "disabled"}]
+        $PromptEntry configure -state $st
+        $PromptSend configure -state $st
+        foreach val {readonly edits edits-git full} {
+            $Prompt.opts.[string map {- _} $val] configure -state $st
+        }
+    }
+
+    method prompt_status {msg} {
+        if {[winfo exists $PromptStatus]} { $PromptStatus configure -text $msg }
+    }
+
+    # Launch one non-interactive `claude -p --resume` turn for the loaded
+    # session and stream it back in. Refuses if a turn is already running here,
+    # the prompt is empty, or the session is live in an interactive resume
+    # elsewhere (which would write the same jsonl underneath us).
+    method resume_submit {} {
+        if {$Running} return
+        if {$Path eq "" || $Uuid eq ""} return
+        set prompt [string trim $PromptVar]
+        if {$prompt eq ""} return
+        if {[dict exists [::questlog::ui::live::running_uuids] $Uuid]} {
+            my prompt_status "session is already running"
+            return
+        }
+        set flags [::questlog::ui::terminal::permission_flags $PermVar]
+        set inner [::questlog::ui::terminal::oneshot_command \
+            $Cwd $Uuid $prompt $flags]
+        if {[catch {open [list |bash -c "$inner 2>&1"] r} pipe]} {
+            my prompt_status "launch failed: $pipe"
+            return
+        }
+        set Pipe $pipe
+        set Running 1
+        set Detached 0
+        set RunPath $Path
+        set ErrBuf ""
+        chan configure $Pipe -blocking 0 -buffering line
+        chan event $Pipe readable [list [self] resume_drain]
+        my set_prompt_enabled 0
+        my prompt_status "running…"
+        set Tick [after 300 [list [self] resume_tick]]
+    }
+
+    # Drain the pipe's merged output (kept for a failure message) and finish on
+    # EOF. Non-blocking: a -1 while the channel is blocked just means no full
+    # line yet, so wait for the next event.
+    method resume_drain {} {
+        if {$Pipe eq ""} return
+        while {1} {
+            set n [chan gets $Pipe line]
+            if {$n >= 0} { append ErrBuf $line "\n"; continue }
+            if {[chan blocked $Pipe]} return
+            break
+        }
+        my resume_finish
+    }
+
+    # While streaming, tail the jsonl into the view on a short cadence so the
+    # turn appears as it is written.
+    method resume_tick {} {
+        my append_new
+        if {$Running && !$Detached} {
+            set Tick [after 300 [list [self] resume_tick]]
+        } else {
+            set Tick ""
+        }
+    }
+
+    # Stop rendering a running stream into this view without killing claude: the
+    # turn finishes on disk and reloads on next open. The pipe keeps draining
+    # (so claude is not blocked on a full stdout buffer) until EOF, when
+    # resume_finish reaps it and refreshes the row.
+    method resume_detach {} {
+        if {!$Running || $Detached} return
+        set Detached 1
+        if {$Tick ne ""} { after cancel $Tick; set Tick "" }
+    }
+
+    # The turn's process has closed its output. Reap it for the exit status, do
+    # a final tail and bar reset unless detached to another view, and refresh
+    # the streamed session's list row so its cost and activity catch up.
+    method resume_finish {} {
+        if {$Pipe eq ""} return
+        if {$Tick ne ""} { after cancel $Tick; set Tick "" }
+        catch {chan event $Pipe readable {}}
+        set status 0
+        if {[catch {close $Pipe} err]} { set status 1; append ErrBuf $err "\n" }
+        set Pipe ""
+        set was_detached $Detached
+        set rpath $RunPath
+        set Running 0
+        set Detached 0
+        if {!$was_detached} {
+            my append_new
+            my index_matches $Query
+            my index_tool_calls
+            my set_prompt_enabled 1
+            if {$status} {
+                my prompt_status \
+                    "claude error: [string range [string trim $ErrBuf] end-80 end]"
+            } else {
+                my prompt_status ""
+                set PromptVar ""
+            }
+        }
+        if {$OnRefresh ne "" && $rpath ne ""} { {*}$OnRefresh $rpath }
     }
 
     # Insert inline-parsed runs into a text widget. The style->tag mapping lives
