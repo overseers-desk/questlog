@@ -449,7 +449,11 @@ oo::class create ::questlog::ui::Viewer {
 
         # The text widget takes focus when clicked, so bind the find keys
         # there rather than on the (focus-less) container frame.
-        bind $Text <Control-f>  [list [self] find_show]
+        # Summon Find from anywhere in the window, not only when the transcript
+        # holds focus (see the Ctrl-Return note below); find_show guards on a
+        # shown session. Escape stays on the transcript: it closes Find when the
+        # reader presses it there, and the find entry has its own Escape.
+        bind [winfo toplevel $Top] <Control-f> [list [self] find_show]
         bind $Text <Escape>     [list [self] find_hide]
         bind $Find.e <Escape>   [list [self] find_hide]
         bind $Find.e <Return>   [list [self] find_next]
@@ -1235,6 +1239,7 @@ oo::class create ::questlog::ui::Viewer {
     }
 
     method find_show {} {
+        if {!$Shown} return
         pack $Find -side bottom -fill x
         focus $Find.e
     }
