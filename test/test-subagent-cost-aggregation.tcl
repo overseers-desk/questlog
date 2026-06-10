@@ -91,7 +91,7 @@ check "parent initially has subagents flag" [dict get $s has_subagents] 1
 
 # 2. Simulate arrival of parent cost:
 # Input: 100, Output: 50 => $0.00105
-$SL refresh_cost $F [dict create cost_usd 0.00105 input_tokens 100 output_tokens 50 turns 1 duration_secs 5 model_breakdown {}]
+$SL refresh_cost $F [dict create cost_usd 0.00105 input_tokens 100 output_tokens 50 turns 1 duration_secs 5 human_secs 3 model_breakdown {}]
 
 set s [$SL session_payload $F]
 check "parent own_cost set" [dict get $s own_cost] 0.00105
@@ -101,7 +101,7 @@ check "parent total duration matches own_duration initially" [dict get $s durati
 
 # 3. Simulate arrival of child/subagent cost:
 # Input: 200, Output: 80 => $0.0018
-$SL refresh_cost $child_path [dict create cost_usd 0.0018 input_tokens 200 output_tokens 80 turns 1 duration_secs 5 model_breakdown {}]
+$SL refresh_cost $child_path [dict create cost_usd 0.0018 input_tokens 200 output_tokens 80 turns 1 duration_secs 5 human_secs 0 model_breakdown {}]
 
 # Check aggregated totals on parent session!
 set s [$SL session_payload $F]
@@ -109,6 +109,7 @@ check "parent own_cost remains unchanged" [dict get $s own_cost] 0.00105
 check "parent aggregated cost summed up" [dict get $s cost] 0.00285
 check "parent aggregated turns summed up" [dict get $s turns] 2
 check "parent duration stays own, subagent durations not summed" [dict get $s duration_secs] 5
+check "parent human time stays own, subagent human time not summed" [dict get $s human_secs] 3
 
 # Check running total Cost
 check "running TotalCost summed up" [set ${ns}::TotalCost] 0.00285

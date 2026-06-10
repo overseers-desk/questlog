@@ -592,6 +592,7 @@ oo::class create ::questlog::ui::SessionList {
         set cost  [dict getdef $row cost_usd ""]
         set turns [dict getdef $row turns ""]
         set dsecs [dict getdef $row duration_secs ""]
+        set hsecs [dict getdef $row human_secs ""]
         set model [dict getdef $row model ""]
         # The session node: payload carries the per-session domain dict; the
         # node's expanded/rendered flags, start/end marks, tag and children
@@ -600,9 +601,9 @@ oo::class create ::questlog::ui::SessionList {
         set sid [my node_new session $fid $path [dict create \
             folder $folder label $label slug $slug ai_title $aitt \
             when $when mtime $mtime size $size uuid $uuid cost $cost \
-            turns $turns duration_secs $dsecs model $model \
+            turns $turns duration_secs $dsecs human_secs $hsecs model $model \
             own_cost $cost own_turns $turns own_duration_secs $dsecs \
-            own_model $model \
+            own_human_secs $hsecs own_model $model \
             count 0 first_lineno $first_lineno snippets [list] \
             has_subagents [dict getdef $row has_subagents 0] \
             sub_total 0 children_listed 0 all_child_paths [list]]]
@@ -886,7 +887,7 @@ oo::class create ::questlog::ui::SessionList {
             when [my fmt_time [dict getdef $crow mtime 0]] \
             mtime [dict getdef $crow mtime 0] \
             size [dict getdef $crow size 0] \
-            cost "" turns "" duration_secs "" model "" \
+            cost "" turns "" duration_secs "" human_secs "" model "" \
             agent_type [dict getdef $crow agent_type ""] \
             agent_id [dict getdef $crow agent_id [file rootname [file tail $cp]]] \
             label $label hits [list] open_lineoff 0]]
@@ -1559,6 +1560,7 @@ oo::class create ::questlog::ui::SessionList {
         my sset $path own_cost [dict get $cost_dict cost_usd]
         my sset $path own_turns [dict getdef $cost_dict turns ""]
         my sset $path own_duration_secs [dict getdef $cost_dict duration_secs ""]
+        my sset $path own_human_secs [dict getdef $cost_dict human_secs ""]
         my sset $path own_model [dict getdef $cost_dict model ""]
 
         my recompute_parent_totals $path
@@ -1591,6 +1593,7 @@ oo::class create ::questlog::ui::SessionList {
         my cset $cp cost [dict get $cost_dict cost_usd]
         my cset $cp turns [dict getdef $cost_dict turns ""]
         my cset $cp duration_secs [dict getdef $cost_dict duration_secs ""]
+        my cset $cp human_secs [dict getdef $cost_dict human_secs ""]
         my cset $cp model [dict getdef $cost_dict model ""]
         set parent [my cget_field $cp parent_path]
         if {[my has_session $parent]} {
@@ -1669,14 +1672,20 @@ oo::class create ::questlog::ui::SessionList {
         # are not added in: the parent's active span already overlaps the
         # wall-clock during which its subagents ran (they run inside the
         # parent's turns), and parallel subagents would push the figure past
-        # real time, so summing would double count.
+        # real time, so summing would double count. Human time follows the
+        # same rule: a sidechain's records are machine or neutral by
+        # construction, so a subagent's human time is noise.
         set own_duration [dict getdef $s own_duration_secs ""]
         set dur [expr {($own_duration ne "" && $own_duration >= 0) \
                        ? $own_duration : ""}]
+        set own_human [dict getdef $s own_human_secs ""]
+        set hum [expr {($own_human ne "" && $own_human >= 0) \
+                       ? $own_human : ""}]
 
         my sset $path cost [expr {$has_any_cost ? $sum_cost : ""}]
         my sset $path turns [expr {$has_any_turns ? $sum_turns : ""}]
         my sset $path duration_secs $dur
+        my sset $path human_secs $hum
         # Model is the session's own, never summed: a parent shows the model it
         # ran on, not its subagents'.
         my sset $path model [dict getdef $s own_model ""]
