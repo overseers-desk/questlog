@@ -31,6 +31,7 @@ proc ::questlog::ui::session_columns {} {
         {cost     Cost     {$9999.99}         right 1}
         {turns    Turns    {9999}             right 1}
         {duration Duration {0:00:00}          right 1}
+        {ratio    H%       {100%}             right 1}
         {model    Model    {Sonnet 4.6}       right 0}
         {actions  {}       {⋯}                right 0}
     }
@@ -1161,6 +1162,15 @@ oo::class create ::questlog::ui::SessionList {
                 duration {
                     set v [::questlog::cost::fmt_dur [dict getdef $s duration_secs ""]]
                 }
+                ratio {
+                    # Human share of the engaged time, human/(human+machine).
+                    # Blank until both figures exist and they amount to
+                    # anything, so an unscanned or empty session shows no 0%.
+                    set h [dict getdef $s human_secs ""]
+                    set m [dict getdef $s duration_secs ""]
+                    set v [expr {($h ne "" && $m ne "" && $h + $m > 0) \
+                                 ? "[expr {round(100.0 * $h / ($h + $m))}]%" : ""}]
+                }
                 model { set v [dict getdef $s model ""] }
                 actions { set v $::questlog::ui::GLYPH_ACTIONS }
                 default { set v "" }
@@ -1264,6 +1274,12 @@ oo::class create ::questlog::ui::SessionList {
                 set v [dict getdef $s duration_secs ""]
                 if {$v eq ""} { return -1 }
                 return $v
+            }
+            ratio {
+                set h [dict getdef $s human_secs ""]
+                set m [dict getdef $s duration_secs ""]
+                if {$h eq "" || $m eq "" || $h + $m == 0} { return -1 }
+                return [expr {double($h) / ($h + $m)}]
             }
             default { return -1 }
         }
@@ -1580,8 +1596,9 @@ oo::class create ::questlog::ui::SessionList {
         }
         if {[my sflag $path rendered]} { my redraw_header $path }
         $Text configure -state disabled
-        # The worker result can change cost-, turns- or duration-sorted order.
-        if {$SortKey in {cost turns duration}} { my schedule_resort }
+        # The worker result can change cost-, turns-, duration- or
+        # ratio-sorted order.
+        if {$SortKey in {cost turns duration ratio}} { my schedule_resort }
     }
 
     # A subagent's cost/turns/duration arriving from the second pass. Stored on
@@ -1620,8 +1637,9 @@ oo::class create ::questlog::ui::SessionList {
                 my rerender_children $parent
             }
             $Text configure -state disabled
-            # The worker result can change cost-, turns- or duration-sorted order.
-            if {$SortKey in {cost turns duration}} { my schedule_resort }
+            # The worker result can change cost-, turns-, duration- or
+            # ratio-sorted order.
+            if {$SortKey in {cost turns duration ratio}} { my schedule_resort }
         }
     }
 
