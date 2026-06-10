@@ -32,6 +32,13 @@ proc ::questlog::cli::main::format_cost {usd} {
     return $usd
 }
 
+# A seconds count for JSON: blank (unknown, under two timestamped records)
+# serializes as null, a genuine figure passes through.
+proc ::questlog::cli::main::format_secs {secs} {
+    if {$secs eq ""} { return "null" }
+    return $secs
+}
+
 # Print JSON to stdout. Hand-crafted serializer is extremely robust and
 # completely free of external dependencies or type-guessing bugs.
 proc ::questlog::cli::main::format_json {folders_dict} {
@@ -44,24 +51,26 @@ proc ::questlog::cli::main::format_json {folders_dict} {
         foreach sess $sessions {
             set subagents_parts [list]
             foreach sub [dict get $sess subagents] {
-                lappend subagents_parts [format {{"agent_id":"%s","agent_type":"%s","description":"%s","cost_usd":%s,"turns":%d,"duration_secs":%s,"matches":[%s]}} \
+                lappend subagents_parts [format {{"agent_id":"%s","agent_type":"%s","description":"%s","cost_usd":%s,"turns":%d,"duration_secs":%s,"human_secs":%s,"matches":[%s]}} \
                     [escape_json [dict get $sub agent_id]] \
                     [escape_json [dict get $sub agent_type]] \
                     [escape_json [dict get $sub description]] \
                     [format_cost [dict get $sub cost_usd]] \
                     [dict get $sub turns] \
-                    [expr {[dict get $sub duration_secs] eq "" ? "null" : [dict get $sub duration_secs]}] \
+                    [format_secs [dict get $sub duration_secs]] \
+                    [format_secs [dict getdef $sub human_secs ""]] \
                     [format_matches [dict get $sub matches]]]
             }
             
-            lappend session_parts [format {{"uuid":"%s","path":"%s","title":"%s","first_ts":"%s","cost_usd":%s,"turns":%d,"duration_secs":%s,"matches":[%s],"subagents":[%s]}} \
+            lappend session_parts [format {{"uuid":"%s","path":"%s","title":"%s","first_ts":"%s","cost_usd":%s,"turns":%d,"duration_secs":%s,"human_secs":%s,"matches":[%s],"subagents":[%s]}} \
                 [escape_json [dict get $sess uuid]] \
                 [escape_json [dict get $sess path]] \
                 [escape_json [dict get $sess title]] \
                 [escape_json [dict get $sess first_ts]] \
                 [format_cost [dict get $sess cost_usd]] \
                 [dict get $sess turns] \
-                [expr {[dict get $sess duration_secs] eq "" ? "null" : [dict get $sess duration_secs]}] \
+                [format_secs [dict get $sess duration_secs]] \
+                [format_secs [dict getdef $sess human_secs ""]] \
                 [format_matches [dict get $sess matches]] \
                 [join $subagents_parts ","]]
         }
@@ -430,6 +439,7 @@ proc ::questlog::cli::main::run {argv} {
         set parent_cost [dict getdef $cost_info cost_usd ""]
         set parent_turns [dict getdef $cost_info turns 0]
         set parent_duration [dict getdef $cost_info duration_secs ""]
+        set parent_human [dict getdef $cost_info human_secs ""]
 
         incr n_sessions
         if {[string is double -strict $parent_cost] && $parent_cost > 0} {
@@ -470,6 +480,7 @@ proc ::questlog::cli::main::run {argv} {
                 "cost_usd" [dict getdef $sub_cost_info cost_usd ""] \
                 "turns" [dict getdef $sub_cost_info turns 0] \
                 "duration_secs" [dict getdef $sub_cost_info duration_secs ""] \
+                "human_secs" [dict getdef $sub_cost_info human_secs ""] \
                 "matches" $limited_sub_matches]
         }
 
@@ -481,6 +492,7 @@ proc ::questlog::cli::main::run {argv} {
             "cost_usd" $parent_cost \
             "turns" $parent_turns \
             "duration_secs" $parent_duration \
+            "human_secs" $parent_human \
             "matches" $limited_sess_matches \
             "subagents" $subagents_list]
 
