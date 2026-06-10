@@ -75,6 +75,11 @@ namespace eval ::questlog::config {
     # flood of results does not churn the list during interaction.
     dict set Config cost_render      coalesced
     dict set Config cost_coalesce_ms 80
+    # Composing-time cap for the human side of the duration split, in minutes.
+    # A gap that ends at a human record (a typed prompt, a dialog answer)
+    # counts as human time up to this cap; a longer gap means the user was
+    # away, and the excess counts as nobody's time.
+    dict set Config cost_human_gap_cap_min 5
 
     # ---- search render -----------------------------------------------------
     # How found sessions reach the list as a search runs. coalesced = buffer the

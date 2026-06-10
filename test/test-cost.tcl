@@ -8,6 +8,7 @@ package require json
 
 set ROOT [file dirname [file dirname [file normalize [info script]]]]
 namespace eval ::questlog::cost {}
+source [file join $ROOT config.tcl]
 source [file join $ROOT lib cost.tcl]
 source [file join $ROOT cli cost.tcl]
 set failures 0
@@ -24,19 +25,22 @@ proc check {name got want} {
 
 # ---- duration helpers ----------------------------------------------------
 
-# active_secs sums the gaps between records but drops the gap that precedes a
-# typed human prompt (the assistant had finished and the session sat idle), so
-# resuming a session long after the last reply adds nothing to the duration.
-check "active_secs sums the gaps inside a turn" \
-    [::questlog::cost::active_secs {{0 1} {10 0} {40 0}}] 40
-check "active_secs drops the gap before a human prompt" \
-    [::questlog::cost::active_secs {{0 1} {10 0} {1000 1} {1015 0}}] 25
-check "active_secs drops a long resume gap" \
-    [::questlog::cost::active_secs {{0 1} {5 0} {1000000 1} {1000030 0}}] 35
-check "active_secs sorts before summing" \
-    [::questlog::cost::active_secs {{10 0} {0 1}}] 10
-check "active_secs blank under two stamps" \
-    [::questlog::cost::active_secs {{0 1}}] ""
+# split_secs partitions the wall clock by the class of the record ending each
+# gap: machine gaps count in full, human gaps count as composing time up to
+# the cap (here passed as 300s), neutral gaps count for neither side. So a
+# resume long after the last reply credits at most one cap of human time.
+check "split_secs sums machine gaps inside a turn" \
+    [::questlog::cost::split_secs {{0 human} {10 machine} {40 machine}} 300] {40 0}
+check "split_secs credits a short human gap in full" \
+    [::questlog::cost::split_secs {{0 human} {10 machine} {130 human}} 300] {10 120}
+check "split_secs clips a long human gap to the cap" \
+    [::questlog::cost::split_secs {{0 human} {10 machine} {1000000 human} {1000030 machine}} 300] {40 300}
+check "split_secs credits a neutral gap to neither side" \
+    [::questlog::cost::split_secs {{0 human} {10 machine} {500 neutral} {510 machine}} 300] {20 0}
+check "split_secs sorts before summing" \
+    [::questlog::cost::split_secs {{10 machine} {0 human}} 300] {10 0}
+check "split_secs blank under two stamps" \
+    [::questlog::cost::split_secs {{0 human}} 300] {{} {}}
 
 check "fmt_dur under an hour"   [::questlog::cost::fmt_dur 2588] "43:08"
 check "fmt_dur pads minutes"    [::questlog::cost::fmt_dur 125]  "02:05"
@@ -60,7 +64,8 @@ check "fmt_model blank on unknown" [::questlog::cost::fmt_model unknown] ""
 # record whose content is an array (must NOT count as a turn), two assistant
 # records, spanning 10:00:00 to 10:43:08. Of that 43:08 span, the gaps before
 # the second (10:10:00->10:20:00) and third (10:30:00->10:43:08) prompts are
-# the user sitting idle, leaving 20:00 of active work.
+# the session waiting for the user, leaving 20:00 of machine work; each of
+# the two waits credits the 5-minute composing cap, 10:00 of human time.
 set fd [file tempfile fix]
 puts $fd {{"type":"user","timestamp":"2026-04-25T10:00:00.000Z","message":{"role":"user","content":"first prompt"}}}
 puts $fd {{"type":"assistant","timestamp":"2026-04-25T10:00:05.000Z","message":{"model":"claude-opus-4-8","usage":{"input_tokens":100,"output_tokens":50}}}}
@@ -81,10 +86,53 @@ check "last_model is the last non-sidechain assistant model" \
 check "first_ts is the earliest record"  [dict get $r first_ts] 2026-04-25T10:00:00.000Z
 check "last_ts is the latest record"      [dict get $r last_ts]  2026-04-25T10:43:08.000Z
 set cost_dict [::questlog::cli::cost::compute_sync $fix]
-check "active duration from the fixture (idle gaps before prompts dropped)" \
+check "machine duration from the fixture (waits before prompts excluded)" \
     [::questlog::cost::fmt_dur [dict get $cost_dict duration_secs]] "20:00"
+check "human time from the fixture (two waits, each capped)" \
+    [::questlog::cost::fmt_dur [dict get $cost_dict human_secs]] "10:00"
 check "cost dict carries the formatted model label" \
     [dict get $cost_dict model] "Opus 4.8"
+file delete $fix
+
+# ---- compute_cost: record-class fixture -----------------------------------
+
+# One line per record shape the classifier must handle. A file-history-
+# snapshot's nested timestamp must not enter the timeline (else the five days
+# before the first prompt would count as work, and first_ts would predate the
+# session). An AskUserQuestion answer is a tool_result yet human: the dialog
+# sat open 17 hours, credited as one 5-minute cap. An ordinary tool_result is
+# machine. away_summary, <synthetic> fillers and <task-notification> records
+# are neutral: written while the user is away or at the moment of return.
+# queue-operation: enqueue is the user typing, remove is queue management.
+# Machine: 10 + 30 + 30 + 60 = 02:10. Human: 300 + 60 + 100 = 07:40.
+# Turns: the two typed prompts only. Model: <synthetic> must not blank it.
+set fd [file tempfile fix]
+puts $fd {{"type":"file-history-snapshot","messageId":"m1","isSnapshotUpdate":false,"snapshot":{"timestamp":"2026-04-20T10:00:00.000Z","files":{}}}}
+puts $fd {{"type":"user","timestamp":"2026-04-25T10:00:00.000Z","message":{"role":"user","content":"do the thing"}}}
+puts $fd {{"type":"assistant","timestamp":"2026-04-25T10:00:10.000Z","message":{"model":"claude-opus-4-8","content":[{"type":"tool_use","id":"toolu_ask1","name":"AskUserQuestion","input":{}}],"usage":{"input_tokens":10,"output_tokens":5}}}}
+puts $fd {{"type":"user","timestamp":"2026-04-26T03:00:10.000Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_ask1","content":"Option A"}]}}}
+puts $fd {{"type":"assistant","timestamp":"2026-04-26T03:00:40.000Z","message":{"model":"claude-opus-4-8","content":[{"type":"tool_use","id":"toolu_bash1","name":"Bash","input":{}}],"usage":{"input_tokens":20,"output_tokens":10}}}}
+puts $fd {{"type":"user","timestamp":"2026-04-26T03:01:10.000Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_bash1","content":"ok"}]}}}
+puts $fd {{"type":"system","subtype":"away_summary","timestamp":"2026-04-26T04:01:10.000Z","content":"Goal: the thing. Next: commit."}}
+puts $fd {{"type":"assistant","timestamp":"2026-04-26T20:00:00.000Z","message":{"model":"<synthetic>","content":[{"type":"text","text":"No response requested."}]}}}
+puts $fd {{"type":"queue-operation","operation":"enqueue","timestamp":"2026-04-26T20:01:00.000Z","content":"and fix the test"}}
+puts $fd {{"type":"queue-operation","operation":"remove","timestamp":"2026-04-26T20:02:00.000Z"}}
+puts $fd {{"type":"user","timestamp":"2026-04-26T21:00:00.000Z","message":{"role":"user","content":"<task-notification>task b1 done</task-notification>"}}}
+puts $fd {{"type":"user","timestamp":"2026-04-26T21:01:40.000Z","message":{"role":"user","content":"now commit"}}}
+close $fd
+
+set r [::questlog::cost::parse_file $fix]
+check "turns counts written prompts, not harness-tagged user records" \
+    [dict get $r turns] 2
+check "first_ts ignores the snapshot's nested timestamp" \
+    [dict get $r first_ts] 2026-04-25T10:00:00.000Z
+check "a trailing <synthetic> record does not blank the model" \
+    [dict get $r last_model] claude-opus-4-8
+set cost_dict [::questlog::cli::cost::compute_sync $fix]
+check "machine time: tool runs and queue management only" \
+    [::questlog::cost::fmt_dur [dict get $cost_dict duration_secs]] "02:10"
+check "human time: capped dialog answer + enqueue + final prompt" \
+    [::questlog::cost::fmt_dur [dict get $cost_dict human_secs]] "07:40"
 file delete $fix
 
 if {$failures == 0} {

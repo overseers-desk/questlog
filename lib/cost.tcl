@@ -3,7 +3,9 @@ package require json
 
 # ::questlog::cost - per-session token cost computation.
 #
-# Pure domain module. Computes cost and durations.
+# Domain module. Computes cost and the machine/human duration split; the
+# composing cap comes from ::questlog::config (loaded everywhere
+# build_cost_dict runs; the isolated cost worker calls parse_file only).
 
 namespace eval ::questlog::cost {
     variable Rates [dict create]
@@ -87,25 +89,32 @@ proc ::questlog::cost::format_usd {usd} {
     return [format "\$%.2f" $usd]
 }
 
-# Active work seconds: the wall-clock span with idle gaps removed. The gap
-# between two consecutive records is idle when the later record is a typed
-# human prompt, meaning the assistant had finished its turn and the session
-# sat waiting for the user. Resuming a session after hours or days adds one
-# such gap, so it contributes nothing; only the time the session was actually
-# working (including the minutes a tool or subagent ran inside a turn) is
-# counted. `stamps` is a list of {epoch is_human_prompt} pairs in any order.
-# Blank when fewer than two records carry a timestamp.
-proc ::questlog::cost::active_secs {stamps} {
-    if {[llength $stamps] < 2} { return "" }
+# Split the wall clock into machine and human seconds. `stamps` is a list of
+# {epoch class} pairs in any order; the class of the record that ENDS a gap
+# decides whose time the gap is. machine (model output, tool runs, subagent
+# activity inside a turn) counts in full. human (the session waiting for the
+# user: a typed prompt, a dialog answer) counts as composing time up to `cap`
+# seconds; beyond the cap the user was away, and the excess is nobody's time,
+# so resuming a session after hours or days credits at most one cap. neutral
+# (harness records written during the user's absence or at the moment of
+# return) counts for neither side. Returns {machine human}, both blank when
+# fewer than two records carry a timestamp.
+proc ::questlog::cost::split_secs {stamps cap} {
+    if {[llength $stamps] < 2} { return [list "" ""] }
     set stamps [lsort -integer -index 0 $stamps]
-    set active 0
+    set machine 0
+    set human 0
     set prev [lindex [lindex $stamps 0] 0]
     foreach pair [lrange $stamps 1 end] {
-        lassign $pair e is_human
-        if {!$is_human} { incr active [expr {$e - $prev}] }
+        lassign $pair e class
+        set gap [expr {$e - $prev}]
+        switch -- $class {
+            machine { incr machine $gap }
+            human   { incr human [expr {min($gap, $cap)}] }
+        }
         set prev $e
     }
-    return $active
+    return [list $machine $human]
 }
 
 # A second count as MM:SS, or H:MM:SS once it passes an hour, for the Duration
@@ -153,6 +162,7 @@ proc ::questlog::cost::parse_file {path} {
     set last_ts ""
     set turns 0
     set stamps [list]
+    set ask_ids [dict create]
     set last_model ""
     if {[catch {open $path r} fh]} {
         return [dict create per_model {} first_ts "" last_ts "" turns 0 stamps {} last_model "" ok 0]
@@ -160,22 +170,61 @@ proc ::questlog::cost::parse_file {path} {
     chan configure $fh -encoding utf-8 -profile replace
     while {[chan gets $fh line] >= 0} {
         if {$line eq ""} continue
-        set user_prompt [regexp {"role":"user","content":"} $line]
+        # file-history-snapshot records carry no top-level timestamp; the
+        # regex below would read the nested snapshot.timestamp as the
+        # record's time and turn the away gap before a resume into work.
+        # They are no part of the conversation timeline, so skip outright.
+        if {[regexp {"type":"file-history-snapshot"} $line]} continue
+        # A turn is a prompt the user actually wrote. Harness-generated user
+        # records (slash-command echoes, background-task notifications)
+        # announce themselves with a leading tag in the content.
+        set user_prompt [expr {[regexp {"role":"user","content":"} $line] \
+            && ![regexp {"content":"<(?:command-name|local-command-stdout|local-command-caveat|task-notification)>} $line]}]
         if {$user_prompt} { incr turns }
         if {[regexp {"timestamp":"([^"]+)"} $line -> m]} {
             if {$first_ts eq ""} { set first_ts $m }
             set last_ts $m
             set e [iso_to_epoch $m]
             if {$e ne ""} {
-                # Idle time is the gap before a human turn: a user record that
-                # is neither a tool result nor a subagent's own (sidechain)
-                # prompt. Its content may be a string or an array (text plus a
-                # pasted block), so key on the role and exclude tool-result and
-                # sidechain records rather than on the string-content shape.
-                set is_human [expr {[regexp {"role":"user"} $line] \
-                    && ![regexp {"type":"tool_result"} $line] \
-                    && ![regexp {"isSidechain":true} $line]}]
-                lappend stamps [list $e $is_human]
+                # Classify the record for split_secs: the class of the record
+                # ending a gap decides whose time the gap is. Quotes inside
+                # message text arrive escaped (\"), so these plain-quote
+                # regexes cannot fire on conversation content.
+                if {[regexp {"subtype":"away_summary"} $line] \
+                        || [regexp {"model":"<synthetic>"} $line] \
+                        || [regexp {"content":"<task-notification>} $line]} {
+                    # Written during the user's absence or at the moment of
+                    # return (away recaps, synthetic fillers, background-task
+                    # exits): the gap before them is nobody's work.
+                    set class neutral
+                } elseif {[regexp {"type":"queue-operation"} $line]} {
+                    # enqueue is the user typing into the queue; remove and
+                    # the rest are machine-initiated queue management.
+                    set class [expr {[regexp {"operation":"enqueue"} $line] \
+                        ? "human" : "machine"}]
+                } elseif {[regexp {"role":"user"} $line] \
+                        && ![regexp {"isSidechain":true} $line]} {
+                    if {![regexp {"type":"tool_result"} $line]} {
+                        # A prompt the user wrote (string or array content),
+                        # or a slash-command echo: the user acting.
+                        set class human
+                    } else {
+                        # A tool_result is machine work landing, except an
+                        # AskUserQuestion answer: that is the user returning
+                        # to a dialog that sat open waiting for them.
+                        set class machine
+                        foreach {_ id} [regexp -all -inline \
+                                {"tool_use_id":"([^"]+)"} $line] {
+                            if {[dict exists $ask_ids $id]} {
+                                set class human
+                                break
+                            }
+                        }
+                    }
+                } else {
+                    set class machine
+                }
+                lappend stamps [list $e $class]
             }
         }
         if {![regexp {"type":"assistant"} $line]} continue
@@ -183,14 +232,29 @@ proc ::questlog::cost::parse_file {path} {
         if {![dict exists $rec message]} continue
         set msg [dict get $rec message]
 
+        # Remember AskUserQuestion tool_use ids so the classifier above can
+        # recognise their tool_result as the user answering a dialog. The
+        # tool_use line always precedes its tool_result, so one pass suffices.
+        if {[regexp {"name":"AskUserQuestion"} $line]} {
+            foreach blk [dict getdef $msg content {}] {
+                if {[dict getdef $blk type ""] eq "tool_use" \
+                        && [dict getdef $blk name ""] eq "AskUserQuestion"} {
+                    dict set ask_ids [dict get $blk id] 1
+                }
+            }
+        }
+
         set req_id [dict getdef $rec requestId [dict getdef $msg requestId ""]]
         if {$req_id eq ""} { set req_id "dummy-[incr dummy_req]" }
 
         set model [dict getdef $msg model "unknown"]
         # The session's own (non-sidechain) last assistant model drives the
         # Model cell. A subagent runs as a sidechain inside this same file; its
-        # records carry isSidechain, so skip them for the parent's label.
-        if {$model ne "unknown" && ![regexp {"isSidechain":true} $line]} {
+        # records carry isSidechain, so skip them for the parent's label. Skip
+        # harness-written <synthetic> fillers too: they carry no real model
+        # and would blank the cell when they come last.
+        if {$model ne "unknown" && $model ne "<synthetic>" \
+                && ![regexp {"isSidechain":true} $line]} {
             set last_model $model
         }
         if {![dict exists $msg usage]} continue
@@ -226,7 +290,7 @@ proc ::questlog::cost::parse_file {path} {
 
 proc ::questlog::cost::build_cost_dict {res} {
     if {![dict get $res ok]} {
-        return [dict create cost_usd 0.0 turns 0 duration_secs 0 input_tokens 0 output_tokens 0 cache_write_tokens 0 cache_read_tokens 0 model_breakdown {} model ""]
+        return [dict create cost_usd 0.0 turns 0 duration_secs 0 human_secs 0 input_tokens 0 output_tokens 0 cache_write_tokens 0 cache_read_tokens 0 model_breakdown {} model ""]
     }
     set per_model [dict get $res per_model]
     set first_ts [dict get $res first_ts]
@@ -242,6 +306,11 @@ proc ::questlog::cost::build_cost_dict {res} {
         lassign $c i o w r
         incr in $i; incr out $o; incr cw $w; incr cr $r
     }
+    # Reading the cap here keeps the isolated cost worker config-free: the
+    # worker runs parse_file only, and build_cost_dict runs on the main
+    # thread (GUI) or in the CLI process, both of which load config.tcl.
+    set cap [expr {60 * [::questlog::config::get cost_human_gap_cap_min]}]
+    lassign [split_secs [dict get $res stamps] $cap] active human
     return [dict create \
         cost_usd $usd \
         input_tokens $in \
@@ -251,6 +320,7 @@ proc ::questlog::cost::build_cost_dict {res} {
         model_breakdown $per_model \
         model [fmt_model [dict getdef $res last_model ""]] \
         turns $turns \
-        duration_secs [active_secs [dict get $res stamps]]]
+        duration_secs $active \
+        human_secs $human]
 }
 
