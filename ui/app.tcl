@@ -39,6 +39,11 @@ namespace eval ::questlog::ui::app {
     variable CostPool         ;# Thread pool for background cost calculation
     variable CostEpoch        ;# Epoch to drop stale results after a filter change
     variable CostWorkerScript ;# Script evaluated in each cost worker
+    variable StatusMode       ;# browse|scanning|searching|search_done|search_cancelled
+    variable SearchSummary    ;# persistent terminal search line, "" when no criteria active
+    variable ViewerPath       ;# opened-session path line; overrides every mode, "" when none
+    variable CriteriaActive   ;# 1 while search criteria are active (mirror of the snapshot)
+    variable ProgressLine     ;# in-flight "Scanning…" / "Searching…" text, owned by the mode
 }
 
 proc ::questlog::ui::app::start {root {initial_criteria {}} {init_since ""} {init_search ""}} {
@@ -63,8 +68,18 @@ proc ::questlog::ui::app::start {root {initial_criteria {}} {init_since ""} {ini
     variable CostPool
     variable CostEpoch
     variable CostWorkerScript
+    variable StatusMode
+    variable SearchSummary
+    variable ViewerPath
+    variable CriteriaActive
+    variable ProgressLine
 
     set Root $root
+    set StatusMode browse
+    set SearchSummary ""
+    set ViewerPath ""
+    set CriteriaActive 0
+    set ProgressLine ""
     set StatusVar [scope_status]
     set Running [dict create]
     set CurrentQuery {}
@@ -331,8 +346,17 @@ proc ::questlog::ui::app::on_filter {snapshot} {
     variable SessionList
     variable Running
     variable CurrentQuery
+    variable StatusMode
+    variable SearchSummary
+    variable ViewerPath
+    variable CriteriaActive
+    variable ProgressLine
 
     set has_criteria [::questlog::ui::any_criteria $snapshot]
+    # A new filter or search supersedes the opened-session path on the bar and
+    # records whether the search modes own it (the scan-progress clobber guard).
+    set ViewerPath ""
+    set CriteriaActive $has_criteria
 
     # A new filter/search invalidates the previous result set; drop any buffered
     # per-file results and cancel a pending flush before the list is cleared, so
@@ -370,11 +394,17 @@ proc ::questlog::ui::app::on_filter {snapshot} {
         # literal search terms; read/write/edit clauses match files, not text,
         # so they contribute no in-transcript highlight.
         set CurrentQuery [dict create terms $terms nocase $nocase]
+        set StatusMode searching
+        set SearchSummary ""
+        set ProgressLine "Searching…"
         $Search start $snapshot
     } else {
         set CurrentQuery {}
         $Search cancel
+        set StatusMode browse
+        set SearchSummary ""
     }
+    refresh_status
 }
 
 # ---- scan callbacks ----------------------------------------------------
@@ -427,14 +457,38 @@ proc ::questlog::ui::app::flush_cost {} {
     $SessionList refresh_cost_batch $batch
 }
 
-# The bottom status bar's resting line: what questlog reads and how many
+# The single writer of the bottom bar's text. An opened session's path overrides
+# every mode; otherwise the text follows StatusMode: the in-flight ProgressLine
+# while scanning or searching, the persistent SearchSummary once a search has
+# finished or been cancelled, and the resting scope line while browsing. Every
+# callback that changes a mode or a stored line ends by calling this, so the bar
+# is always whatever the current state says it is and nothing leaks across.
+proc ::questlog::ui::app::refresh_status {} {
+    variable StatusVar
+    variable StatusMode
+    variable SearchSummary
+    variable ViewerPath
+    variable ProgressLine
+    if {$ViewerPath ne ""} {
+        set StatusVar $ViewerPath
+        return
+    }
+    switch -- $StatusMode {
+        scanning - searching { set StatusVar $ProgressLine }
+        search_done - search_cancelled { set StatusVar $SearchSummary }
+        default { set StatusVar [scope_status] }
+    }
+}
+
+# The bottom status bar's resting line: where questlog reads from and how many
 # sessions sit on disk in scope, so a first-time reader never has to ask where
-# the list comes from. It is the default whenever no transient message (a scan
-# in flight, or the path of an opened session) is showing. (No "this Mac": the
-# design's wording is from a macOS mock; questlog is the native Linux tool.)
+# the list comes from. A noun phrase, not a verb, so the resting bar does not
+# read as work in progress (the spinner, not the wording, signals activity). The
+# browse default behind refresh_status. (No "this Mac": the design's wording is
+# from a macOS mock; questlog is the native Linux tool.)
 proc ::questlog::ui::app::scope_status {} {
     set pretty [::questlog::path::pretty_home [::questlog::path::projects_root]]
-    return "Reading from $pretty · Claude Code CLI sessions only · [corpus_count] total"
+    return "$pretty · Claude Code CLI sessions · [corpus_count] total"
 }
 
 # Count the session files across every project folder, independent of the
@@ -450,18 +504,29 @@ proc ::questlog::ui::app::corpus_count {} {
     return $n
 }
 
+# The corpus scan runs even while a search is active (it builds Search's corpus),
+# so its progress must not stamp "Scanning…" over the search text the user came
+# for: under active criteria the search owns the bar and scan progress is silent.
 proc ::questlog::ui::app::on_scan_progress {done total} {
-    variable StatusVar
+    variable StatusMode
+    variable ProgressLine
+    variable CriteriaActive
+    if {$CriteriaActive} return
     if {$done < $total} {
-        set StatusVar "Scanning $done / $total…"
+        set StatusMode scanning
+        set ProgressLine "Scanning $done / $total…"
+        refresh_status
     }
 }
 
-# Scan finished: fall back to the resting corpus-scope line rather than a
-# transient "scanned N" message, so the bar's idle state always names the source.
+# Scan finished. While browsing, return to the resting scope line; under active
+# criteria leave the mode (searching/search_done) untouched so a background-scan
+# completion never wipes the search summary.
 proc ::questlog::ui::app::on_scan_done {scanned} {
-    variable StatusVar
-    set StatusVar [scope_status]
+    variable StatusMode
+    variable CriteriaActive
+    if {!$CriteriaActive} { set StatusMode browse }
+    refresh_status
 }
 
 # ---- search callbacks --------------------------------------------------
@@ -529,18 +594,40 @@ proc ::questlog::ui::app::discard_search_buffer {} {
 
 proc ::questlog::ui::app::on_search_progress {done total matches} {
     variable SessionList
+    variable StatusMode
+    variable ProgressLine
     $SessionList set_progress $done $total $matches
+    set StatusMode searching
+    set ProgressLine "Searching $done / $total · $matches matches"
+    refresh_status
 }
 
+# Search finished: a persistent, past-tense summary on the bar the user watches,
+# so a zero-match search reads as a finished answer rather than as ongoing work.
+# It stays until the criteria change (which returns the bar to browse).
 proc ::questlog::ui::app::on_search_done {total matches} {
     variable SessionList
+    variable StatusMode
+    variable SearchSummary
     $SessionList set_done $total $matches
+    set StatusMode search_done
+    if {$matches == 0} {
+        set SearchSummary "No matches · searched $total Claude Code CLI sessions"
+    } else {
+        set SearchSummary "Found $matches matches · searched $total Claude Code CLI sessions"
+    }
+    refresh_status
 }
 
 proc ::questlog::ui::app::on_search_cancel {} {
     variable Search
+    variable StatusMode
+    variable SearchSummary
     $Search cancel
     discard_search_buffer
+    set StatusMode search_cancelled
+    set SearchSummary "Search cancelled"
+    refresh_status
 }
 
 # The Show-all banner in SessionList calls this when the user clicks
@@ -559,14 +646,15 @@ proc ::questlog::ui::app::on_show_all {} {
 # matches in-transcript.
 proc ::questlog::ui::app::on_open {path lineno} {
     variable Viewer
-    variable StatusVar
+    variable ViewerPath
     variable CurrentQuery
     $Viewer show $path $lineno $CurrentQuery
     if {$lineno > 0} {
-        set StatusVar "$path  (line $lineno)"
+        set ViewerPath "$path  (line $lineno)"
     } else {
-        set StatusVar $path
+        set ViewerPath $path
     }
+    refresh_status
 }
 
 # ---- move callbacks ----------------------------------------------------
