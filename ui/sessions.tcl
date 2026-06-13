@@ -2197,7 +2197,11 @@ oo::class create ::questlog::ui::SessionList {
         my refresh_status
     }
     method set_done {total matches} {
-        set StatusBase "Done. $total sessions, $matches matches."
+        if {$matches == 0} {
+            set StatusBase "Done. $total sessions, no matches."
+        } else {
+            set StatusBase "Done. $total sessions, $matches matches."
+        }
         my refresh_status
     }
     method cancel {} {
