@@ -61,7 +61,7 @@ oo::class create ::questlog::ui::TextTree {
     variable RelayoutPending  ;# 1 while a debounced relayout is queued
     variable SortKey          ;# active sort column id
     variable SortDir          ;# desc | asc
-    variable ResortPending    ;# 1 while a debounced redraw is queued under a non-default sort
+    variable ResortTimer      ;# after-id of the debounced resort, or "" when none is pending
     variable AtTop            ;# anchor state across a streaming insert
 
     # ---- generic node store ------------------------------------------
@@ -284,6 +284,7 @@ oo::class create ::questlog::ui::TextTree {
             set SortKey $id
             set SortDir "desc"
         }
+        my cancel_resort
         my redraw_all
         my draw_header
     }
@@ -346,19 +347,27 @@ oo::class create ::questlog::ui::TextTree {
         return [expr {$SortKey eq "date" && $SortDir eq "desc"}]
     }
 
-    # A row streamed or recosted under a non-default sort lands out of order;
-    # coalesce a single full re-render at idle to restore the sort. The default
+    # A row streamed or recosted under a non-default sort lands out of order.
+    # Debounce a single full re-render to restore the sort: each arrival resets
+    # the timer, so a metric flood resolves to one rebuild when arrivals pause,
+    # and the list stays still (in arrival order) while they stream. The default
     # sort needs none (streaming order is already correct), so this no-ops then.
     method schedule_resort {} {
         if {[my is_default_sort]} return
-        if {$ResortPending} return
-        set ResortPending 1
-        after idle [list [self] do_resort]
+        if {$ResortTimer ne ""} { after cancel $ResortTimer }
+        set ResortTimer [after [::questlog::config::get resort_debounce_ms] \
+            [list [self] do_resort]]
     }
     method do_resort {} {
-        set ResortPending 0
+        set ResortTimer ""
         if {[my is_default_sort]} return
         my redraw_all
+    }
+    # Drop a pending debounced resort. Called before a synchronous redraw_all
+    # (a header click), so a stale timer cannot fire a second redundant rebuild
+    # just after the user starts interacting with the freshly-sorted list.
+    method cancel_resort {} {
+        if {$ResortTimer ne ""} { after cancel $ResortTimer; set ResortTimer "" }
     }
 
     # ---- view-anchoring around streaming inserts ----------------------
@@ -381,6 +390,47 @@ oo::class create ::questlog::ui::TextTree {
             catch {$Text yview AnchorTop}
         }
         catch {$Text mark unset AnchorTop}
+    }
+
+    # The rendered node whose row sits at the top of the viewport, as {kind key},
+    # or "" when the list is empty. redraw_all re-anchors the view by this rather
+    # than by the AnchorTop mark, which cannot survive its `$Text delete 1.0 end`.
+    # Scans node start marks (not tags) so a snippet or child-snippet line, which
+    # owns no node, resolves to its containing node: the answer is the rendered
+    # node with the greatest start line <= the top visible line.
+    method top_visible_node {} {
+        set topline [lindex [split [$Text index @0,0] .] 0]
+        set best ""
+        set bestline -1
+        foreach id [my all_rendered_nodes] {
+            set m [my node_field $id start]
+            if {$m eq ""} continue
+            set ln [lindex [split [$Text index $m] .] 0]
+            if {$ln <= $topline && $ln > $bestline} {
+                set bestline $ln
+                set best $id
+            }
+        }
+        if {$best eq ""} { return "" }
+        return [list [my node_field $best kind] [my node_field $best key]]
+    }
+
+    # Every node currently drawn in the widget, parents before children: each
+    # root (folder headings are always drawn), each root's rendered session
+    # children, and those sessions' rendered subagent children.
+    method all_rendered_nodes {} {
+        set out [list]
+        foreach fid $Roots {
+            lappend out $fid
+            foreach sid [my node_field $fid children] {
+                if {![my node_field $sid rendered]} continue
+                lappend out $sid
+                foreach cid [my node_field $sid children] {
+                    if {[my node_field $cid rendered]} { lappend out $cid }
+                }
+            }
+        }
+        return $out
     }
 
     # ---- generic line engine ------------------------------------------

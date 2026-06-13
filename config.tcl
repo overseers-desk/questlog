@@ -75,6 +75,12 @@ namespace eval ::questlog::config {
     # flood of results does not churn the list during interaction.
     dict set Config cost_render      coalesced
     dict set Config cost_coalesce_ms 80
+    # Under a non-default sort, a late metric (cost/turns/duration/H%) reorders
+    # the list, which means a full re-render. Debounce that re-render by this
+    # many ms: each arrival resets the timer, so a metric flood resolves to one
+    # rebuild when arrivals pause and the list stays still (in arrival order)
+    # while they stream, instead of wiping on every coalesced batch.
+    dict set Config resort_debounce_ms 250
     # Composing-time cap for the human side of the duration split, in minutes.
     # A gap that ends at a human record (a typed prompt, a dialog answer)
     # counts as human time up to this cap; a longer gap means the user was

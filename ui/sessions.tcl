@@ -90,7 +90,7 @@ oo::class create ::questlog::ui::SessionList {
     variable RelayoutPending
     variable SortKey
     variable SortDir
-    variable ResortPending
+    variable ResortTimer
     variable StatusVar
     variable CancelCb
     variable ResolveFolder    ;# cb: folder -> display cwd
@@ -105,6 +105,7 @@ oo::class create ::questlog::ui::SessionList {
     variable Snapshot
     variable CriteriaActive
     variable RunningSet       ;# dict uuid -> 1, replaced wholesale each tick
+    variable PrevRunning      ;# the prior tick's running set, to redraw only the rows that flipped
     variable Query            ;# {terms <list> nocase 0|1} for hit highlighting
     variable HitTags
     # Domain indices into the node store: a folder name or a session/subagent
@@ -146,6 +147,7 @@ oo::class create ::questlog::ui::SessionList {
         set Snapshot [dict create]
         set CriteriaActive 0
         set RunningSet [dict create]
+        set PrevRunning [dict create]
         set Query [dict create terms [list] nocase 0]
         set Selected ""
         set NextId 0
@@ -153,7 +155,7 @@ oo::class create ::questlog::ui::SessionList {
         # fresh list looks exactly as before any header is clicked.
         set SortKey "date"
         set SortDir "desc"
-        set ResortPending 0
+        set ResortTimer ""
         set LayoutW 0
         set RelayoutPending 0
         my reset_model
@@ -1992,8 +1994,15 @@ oo::class create ::questlog::ui::SessionList {
                 set keep [expr {($row ne "" && [my row_matches_snapshot $row]) || $is_running}]
             }
             if {!$keep} { my forget_session $path; continue }
-            my redraw_header $path
+            # The poll only changes the running glyph; redraw a header just when
+            # this session's running-state flipped since the last tick, not every
+            # tick for every row (which churned the whole list and blinked the
+            # hovered row's bright actions glyph off each tick).
+            if {$is_running != [dict exists $PrevRunning $uuid]} {
+                my redraw_header $path
+            }
         }
+        set PrevRunning $running
         my anchor_restore
         $Text configure -state disabled
         # Surfacing or dropping running sessions changes the set, so a
@@ -2117,7 +2126,13 @@ oo::class create ::questlog::ui::SessionList {
 
     method redraw_all {} {
         $Text configure -state normal
-        my anchor_save
+        # Anchor by node identity, not the AnchorTop mark: the mark cannot
+        # survive the full-buffer delete below (it collapses to line 1, which is
+        # what snapped the view to the top on every recost). Capture the
+        # top-visible node and its folder while the model is still live.
+        set at_top [expr {[lindex [$Text yview] 0] <= 0.0001}]
+        set anchor [my top_visible_node]
+        set anchor_folder [my anchor_folder_of $anchor]
         $Text delete 1.0 end
         my purge_tags_and_marks
         $Text mark set TailMark "end-1c"
@@ -2186,8 +2201,44 @@ oo::class create ::questlog::ui::SessionList {
             set sm [my node_field [my sid $Selected] start]
             $Text tag add selected $sm "$sm lineend"
         }
-        my anchor_restore
+        if {$at_top} {
+            $Text yview moveto 0
+        } else {
+            my restore_anchor $anchor $anchor_folder
+        }
         $Text configure -state disabled
+    }
+
+    # The folder name owning a captured {kind key} anchor, read while the model
+    # is still live (before redraw_all resets it), so restore_anchor can fall
+    # back to the folder heading when the node itself is gone after the rebuild.
+    method anchor_folder_of {anchor} {
+        if {$anchor eq ""} { return "" }
+        lassign $anchor kind key
+        if {$kind eq "folder"} { return $key }
+        if {[dict exists $PathNode $key]} {
+            return [my node_pget [dict get $PathNode $key] folder ""]
+        }
+        return ""
+    }
+
+    # Scroll the rebuilt list so the captured top node sits at the top again.
+    # Falls back, in order, to: the node's folder heading (the node was forgotten
+    # or its folder is now collapsed), then the absolute top.
+    method restore_anchor {anchor folder} {
+        if {$anchor eq ""} { $Text yview moveto 0; return }
+        lassign $anchor kind key
+        set m ""
+        if {$kind eq "folder"} {
+            if {[my has_folder $key]} { set m [my node_field [my fid $key] start] }
+        } elseif {[dict exists $PathNode $key]} {
+            set id [dict get $PathNode $key]
+            if {[my node_field $id rendered]} { set m [my node_field $id start] }
+        }
+        if {$m eq "" && $folder ne "" && [my has_folder $folder]} {
+            set m [my node_field [my fid $folder] start]
+        }
+        if {$m eq ""} { $Text yview moveto 0 } else { catch {$Text yview $m} }
     }
 
     # ---- status ------------------------------------------------------
