@@ -44,6 +44,9 @@ namespace eval ::questlog::ui::app {
     variable ViewerPath       ;# opened-session path line; overrides every mode, "" when none
     variable CriteriaActive   ;# 1 while search criteria are active (mirror of the snapshot)
     variable ProgressLine     ;# in-flight "Scanning…" / "Searching…" text, owned by the mode
+    variable ScanActive       ;# 1 while the corpus scan coroutine is in flight
+    variable SearchActive     ;# 1 while a search is in flight
+    variable CostOutstanding  ;# cost jobs posted but not yet returned (the cost pass is live when > 0)
 }
 
 proc ::questlog::ui::app::start {root {initial_criteria {}} {init_since ""} {init_search ""}} {
@@ -73,6 +76,9 @@ proc ::questlog::ui::app::start {root {initial_criteria {}} {init_since ""} {ini
     variable ViewerPath
     variable CriteriaActive
     variable ProgressLine
+    variable ScanActive
+    variable SearchActive
+    variable CostOutstanding
 
     set Root $root
     set StatusMode browse
@@ -80,6 +86,9 @@ proc ::questlog::ui::app::start {root {initial_criteria {}} {init_since ""} {ini
     set ViewerPath ""
     set CriteriaActive 0
     set ProgressLine ""
+    set ScanActive 0
+    set SearchActive 0
+    set CostOutstanding 0
     set StatusVar [scope_status]
     set Running [dict create]
     set CurrentQuery {}
@@ -178,9 +187,18 @@ proc ::questlog::ui::app::start {root {initial_criteria {}} {init_since ""} {ini
     # to the edge) is never snapped back.
     bind $PW <Map> [namespace code [list init_sash %W]]
 
-    ttk::label .top.status -textvariable [namespace which -variable StatusVar] \
+    # Bottom strip: a sunken status label that fills the width, with an
+    # indeterminate progress bar docked at the right that update_spinner packs
+    # only while work is in flight (gone at rest, so the label reclaims the row).
+    # Indeterminate, not determinate: the cost pass has no denominator and the
+    # liveness predicate spans scan, search and cost; the numeric counts already
+    # live in the text.
+    ttk::frame .top.statusbar
+    pack .top.statusbar -side bottom -fill x
+    ttk::progressbar .top.statusbar.spin -mode indeterminate -length 90
+    ttk::label .top.statusbar.status -textvariable [namespace which -variable StatusVar] \
         -anchor w -relief sunken
-    pack .top.status -side bottom -fill x
+    pack .top.statusbar.status -side left -fill x -expand 1
 
     set Scan [::questlog::Scan new \
         [namespace code on_scan_row] \
@@ -335,6 +353,9 @@ proc ::questlog::ui::app::run_tick {} {
     variable RunTimer
     set Running [::questlog::ui::live::running_uuids]
     $SessionList reconcile_running $Running
+    # Heartbeat backstop: if a done-signal is ever missed, the next tick settles
+    # the spinner once the liveness flags have all cleared.
+    update_spinner
     set RunTimer [after [::questlog::config::get running_poll_ms] [namespace code run_tick]]
 }
 
@@ -351,6 +372,8 @@ proc ::questlog::ui::app::on_filter {snapshot} {
     variable ViewerPath
     variable CriteriaActive
     variable ProgressLine
+    variable ScanActive
+    variable SearchActive
 
     set has_criteria [::questlog::ui::any_criteria $snapshot]
     # A new filter or search supersedes the opened-session path on the bar and
@@ -378,6 +401,7 @@ proc ::questlog::ui::app::on_filter {snapshot} {
         foreach row [$Scan query $snapshot] {
             $SessionList on_scan_row $row
         }
+        set ScanActive 1
         $Scan extend $snapshot
     }
 
@@ -397,14 +421,17 @@ proc ::questlog::ui::app::on_filter {snapshot} {
         set StatusMode searching
         set SearchSummary ""
         set ProgressLine "Searching…"
+        set SearchActive 1
         $Search start $snapshot
     } else {
         set CurrentQuery {}
         $Search cancel
+        set SearchActive 0
         set StatusMode browse
         set SearchSummary ""
     }
     refresh_status
+    update_spinner
 }
 
 # ---- scan callbacks ----------------------------------------------------
@@ -480,6 +507,30 @@ proc ::questlog::ui::app::refresh_status {} {
     }
 }
 
+# Show the progress bar while any background work runs (scan, search, or the
+# cost pass), hide it at rest. The single liveness authority: every site that
+# flips one of the three flags calls this, and run_tick calls it too so a missed
+# done-signal cannot leave the bar spinning. Packed -before the status label so
+# the bar reserves the right edge and the label fills the rest.
+proc ::questlog::ui::app::update_spinner {} {
+    variable ScanActive
+    variable SearchActive
+    variable CostOutstanding
+    set spin .top.statusbar.spin
+    if {![winfo exists $spin]} return
+    set busy [expr {$ScanActive || $SearchActive || $CostOutstanding > 0}]
+    set shown [expr {[winfo manager $spin] ne ""}]
+    # Act on transitions only: start/stop schedule recurring timers, so calling
+    # start on an already-running bar (the cost flood does this) would stack them.
+    if {$busy && !$shown} {
+        pack $spin -side right -padx 4 -pady 1 -before .top.statusbar.status
+        $spin start 12
+    } elseif {!$busy && $shown} {
+        $spin stop
+        pack forget $spin
+    }
+}
+
 # The bottom status bar's resting line: where questlog reads from and how many
 # sessions sit on disk in scope, so a first-time reader never has to ask where
 # the list comes from. A noun phrase, not a verb, so the resting bar does not
@@ -525,8 +576,11 @@ proc ::questlog::ui::app::on_scan_progress {done total} {
 proc ::questlog::ui::app::on_scan_done {scanned} {
     variable StatusMode
     variable CriteriaActive
+    variable ScanActive
+    set ScanActive 0
     if {!$CriteriaActive} { set StatusMode browse }
     refresh_status
+    update_spinner
 }
 
 # ---- search callbacks --------------------------------------------------
@@ -609,7 +663,9 @@ proc ::questlog::ui::app::on_search_done {total matches} {
     variable SessionList
     variable StatusMode
     variable SearchSummary
+    variable SearchActive
     $SessionList set_done $total $matches
+    set SearchActive 0
     set StatusMode search_done
     if {$matches == 0} {
         set SearchSummary "No matches · searched $total Claude Code CLI sessions"
@@ -617,17 +673,21 @@ proc ::questlog::ui::app::on_search_done {total matches} {
         set SearchSummary "Found $matches matches · searched $total Claude Code CLI sessions"
     }
     refresh_status
+    update_spinner
 }
 
 proc ::questlog::ui::app::on_search_cancel {} {
     variable Search
     variable StatusMode
     variable SearchSummary
+    variable SearchActive
     $Search cancel
     discard_search_buffer
+    set SearchActive 0
     set StatusMode search_cancelled
     set SearchSummary "Search cancelled"
     refresh_status
+    update_spinner
 }
 
 # The Show-all banner in SessionList calls this when the user clicks
@@ -928,20 +988,34 @@ proc ::questlog::ui::app::init_cost_pool {} {
 proc ::questlog::ui::app::start_cost_one {path} {
     variable CostPool
     variable CostEpoch
+    variable CostOutstanding
     if {$CostPool eq ""} return
+    incr CostOutstanding
+    update_spinner
     tpool::post -nowait $CostPool [list dispatch_main $path [thread::id] $CostEpoch]
 }
 
+# An epoch bump abandons every still-queued job: their replies will arrive under
+# the old epoch and be dropped without decrementing, so zero the counter here in
+# lockstep. Only jobs posted under the new epoch count from now on.
 proc ::questlog::ui::app::cancel_cost {} {
     variable CostEpoch
+    variable CostOutstanding
     incr CostEpoch
+    set CostOutstanding 0
+    update_spinner
 }
 
 proc ::questlog::ui::app::on_cost_worker_result {path epoch result} {
     variable CostEpoch
+    variable CostOutstanding
     if {$epoch != $CostEpoch} return
+    # Decrement for every live-epoch reply, success or failure, before the ok
+    # gate, so a failed cost parse still retires its job and the counter drains.
+    if {$CostOutstanding > 0} { incr CostOutstanding -1 }
+    update_spinner
     if {![dict get $result ok]} return
-    
+
     set cost_dict [::questlog::cost::build_cost_dict $result]
     on_cost_result $path $cost_dict
 }
