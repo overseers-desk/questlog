@@ -56,6 +56,7 @@ check "tk indices interleave" \
 
 if {$failures == 0} {
     puts "\nAll tests passed."
+    exit 0
 } else {
     puts "\n$failures test(s) failed."
     exit 1
