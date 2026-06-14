@@ -73,6 +73,17 @@ proc bound {key args} { return [dict get [::questlog::cli::main::parse_query $ar
 check bound_since   7d         [bound since --since 7d --keyword x]
 check bound_until   2026-04-01 [bound until --until 2026-04-01 --keyword x]
 check bound_until_default "" [bound until --keyword x]
+# --accrued-cost is a boolean modifier; reaching the dict means its validation
+# (needs a time bound) passed, so this also covers the accepted case.
+check bound_accrued_set     1 [bound accrued --accrued-cost --since 7d --keyword x]
+check bound_accrued_default 0 [bound accrued --keyword x]
+
+# selection_snapshot_for clears the until ceiling (so an accrued pass keeps a
+# session revived after it) while preserving the since floor and under-scope.
+set sel [::questlog::cli::main::selection_snapshot_for [dict create since 7d until 2d under /x one_turn 0]]
+check sel_clears_until "" [dict get $sel until]
+check sel_keeps_since 7d  [dict get $sel since]
+check sel_keeps_under /x  [dict get $sel under]
 
 # ---- eval_tree: the truth table for (A AND B) OR C -------------------------
 # effsat is a dict leaf-id -> effective truth; leaves 0,1,2 are A,B,C.
@@ -132,6 +143,8 @@ check err_ambig_rgn 1 [string match {*ambiguous region*}          [cli_err --key
 check err_or_edge   1 [string match {*--or needs a clause*}       [cli_err --or --keyword x]]
 check err_not_edge  1 [string match {*--not has no following*}    [cli_err --keyword x --not]]
 check err_until_bad 1 [string match {*--until: invalid*}          [cli_err --until 3x --keyword x]]
+check err_accrued_no_bound 1 [string match {*--accrued-cost needs a time bound*} [cli_err --accrued-cost --keyword x]]
+check err_accrued_all      1 [string match {*--accrued-cost needs a time bound*} [cli_err --accrued-cost --since all --keyword x]]
 
 if {$fails > 0} {
     puts "$fails failures"

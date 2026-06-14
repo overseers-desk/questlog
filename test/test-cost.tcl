@@ -135,6 +135,75 @@ check "human time: capped dialog answer + enqueue + final prompt" \
     [::questlog::cost::fmt_dur [dict get $cost_dict human_secs]] "07:40"
 file delete $fix
 
+# ---- accrue_window: cost windowed by each message's own timestamp ---------
+# Needs the rate table and the window-edge helpers, same as the CLI run path.
+source [file join $ROOT lib filter.tcl]
+::questlog::cost::load_rates $ROOT
+proc near {got want} { return [expr {abs($got - $want) < 0.001}] }
+proc write_lines {lines} {
+    set fd [file tempfile p]
+    foreach l $lines { puts $fd $l }
+    close $fd
+    return $p
+}
+# Window edges exactly as run computes them, from the user's --since/--until.
+proc win {since until} {
+    set s [dict create since $since until $until]
+    return [list [::questlog::filter::cutoff_for $s] [::questlog::filter::ceiling_for $s]]
+}
+
+# Three single-request days at the opus-4-8 rate (in 5 / out 25 per Mtok, from
+# data/anthropic-rates.csv, effective 2026-05-28). 10:00Z keeps each record in
+# its own local day in every plausible timezone.
+set fixA [write_lines {
+    {{"type":"user","timestamp":"2026-06-01T10:00:00.000Z","message":{"role":"user","content":"day one"}}}
+    {{"type":"assistant","requestId":"r1","timestamp":"2026-06-01T10:00:05.000Z","message":{"model":"claude-opus-4-8","usage":{"input_tokens":1000000,"output_tokens":0}}}}
+    {{"type":"user","timestamp":"2026-06-02T10:00:00.000Z","message":{"role":"user","content":"day two"}}}
+    {{"type":"assistant","requestId":"r2","timestamp":"2026-06-02T10:00:05.000Z","message":{"model":"claude-opus-4-8","usage":{"input_tokens":0,"output_tokens":1000000}}}}
+    {{"type":"user","timestamp":"2026-06-02T10:01:00.000Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"landed"}]}}}
+    {{"type":"user","timestamp":"2026-06-03T10:00:00.000Z","message":{"role":"user","content":"day three"}}}
+    {{"type":"assistant","requestId":"r3","timestamp":"2026-06-03T10:00:05.000Z","message":{"model":"claude-opus-4-8","usage":{"input_tokens":2000000,"output_tokens":0}}}}
+}]
+
+lassign [win 2026-06-02 2026-06-02] lo hi
+set a [::questlog::cost::accrue_window $fixA $lo $hi]
+check "accrue: only the in-window request is priced (out 1M @ 25)" [near [dict get $a cost_usd] 25.0] 1
+check "accrue: in-window output tokens" [dict get $a output_tokens] 1000000
+check "accrue: out-of-window day's tokens excluded" [dict get $a input_tokens] 0
+check "accrue: turns count in-window typed prompts only (not tool_result)" [dict get $a turns] 1
+
+# Open upper edge: from 06-02 onward includes 06-02 ($25) and 06-03 ($10).
+lassign [win 2026-06-02 all] lo hi
+set a [::questlog::cost::accrue_window $fixA $lo $hi]
+check "accrue: open hi includes every later day (25 + 10)" [near [dict get $a cost_usd] 35.0] 1
+check "accrue: open hi turns" [dict get $a turns] 2
+
+# A window before any activity: no in-window spend, the caller's drop signal.
+lassign [win 2026-05-01 2026-05-01] lo hi
+set a [::questlog::cost::accrue_window $fixA $lo $hi]
+check "accrue: empty window has no model breakdown" [dict size [dict get $a model_breakdown]] 0
+check "accrue: empty window turns 0" [dict get $a turns] 0
+file delete $fixA
+
+# Straddle + missing-timestamp. r4's two records sit either side of the upper
+# edge with the larger usage on the later one; anchored by its earliest record,
+# r4 is counted once, in full (500k in), in the window of its anchor. r5 carries
+# usage but no timestamp, so it can never be placed in time.
+set fixB [write_lines {
+    {{"type":"assistant","requestId":"r4","timestamp":"2026-06-02T10:00:00.000Z","message":{"model":"claude-opus-4-8","usage":{"input_tokens":100000,"output_tokens":0}}}}
+    {{"type":"assistant","requestId":"r4","timestamp":"2026-06-03T10:00:00.000Z","message":{"model":"claude-opus-4-8","usage":{"input_tokens":500000,"output_tokens":0}}}}
+    {{"type":"assistant","requestId":"r5","message":{"model":"claude-opus-4-8","usage":{"input_tokens":9000000,"output_tokens":0}}}}
+}]
+lassign [win 2026-06-02 2026-06-02] lo hi
+set a [::questlog::cost::accrue_window $fixB $lo $hi]
+check "accrue: straddling request counted in full at its anchor (500k @ 5)" [near [dict get $a cost_usd] 2.5] 1
+check "accrue: timestamp-less request excluded" [dict get $a input_tokens] 500000
+# The same request seen from the later day: its anchor is out, so it is excluded.
+lassign [win 2026-06-03 2026-06-03] lo hi
+set a [::questlog::cost::accrue_window $fixB $lo $hi]
+check "accrue: request not double-counted in the later window" [dict size [dict get $a model_breakdown]] 0
+file delete $fixB
+
 if {$failures == 0} {
     puts "\nAll tests passed."
 } else {
