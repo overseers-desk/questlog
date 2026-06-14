@@ -103,6 +103,9 @@ oo::class create ::questlog::ui::Toolbar {
     variable EditFocusKind    ;# kind whose editor should hold focus across a rebuild, or ""
     variable DebounceAfter    ;# after-id of the pending live-search publish, or ""
     variable TypingUntil      ;# clock-ms deadline through which the user counts as typing
+    variable LastQueryText    ;# search text the live trigger last acted on; gates out
+                              ;# key releases that move the cursor or select but leave
+                              ;# the query unchanged, so they raise no redundant search
 
     constructor {parent cwd} {
         set Top $parent
@@ -133,6 +136,7 @@ oo::class create ::questlog::ui::Toolbar {
         set EditFocusKind ""
         set DebounceAfter ""
         set TypingUntil 0
+        set LastQueryText ""
 
         my build
     }
@@ -162,10 +166,11 @@ oo::class create ::questlog::ui::Toolbar {
         catch {$Top.search.e configure -placeholder $ph}
         pack $Top.search.e -side left -fill x -expand 1
         # Return always publishes at once and cancels any pending debounce. In
-        # live mode a keystroke also schedules a debounced publish.
+        # live mode a key release that changed the query text schedules a
+        # debounced publish; one that only moved the cursor or selected does not.
         bind $Top.search.e <Return> [list [self] publish_now]
         if {$live} {
-            bind $Top.search.e <KeyRelease> [list [self] on_search_change %K]
+            bind $Top.search.e <KeyRelease> [list [self] on_search_change]
         }
         # Scope picker: where the search terms must appear. A menubutton posts
         # its menu anchored to itself - no transient popup, so nothing nests.
@@ -274,7 +279,7 @@ oo::class create ::questlog::ui::Toolbar {
 
     # Pre-fill the search field (a launch --search). The value is the raw query
     # string the search bar would hold; the one startup publish runs it.
-    method set_search {text} { set SearchVar $text }
+    method set_search {text} { set SearchVar $text; set LastQueryText $text }
 
     # Pre-select the time row from a launch --since. A preset picks its radio;
     # any other spec the engine accepts (a relative window, an absolute date)
@@ -551,11 +556,14 @@ oo::class create ::questlog::ui::Toolbar {
         }
     }
 
-    # Live-search debounce: republish after a pause in typing. The keysym is
-    # passed so the trailing KeyRelease of an Enter (handled by publish_now)
-    # does not re-arm the timer.
-    method on_search_change {{key ""}} {
-        if {$key in {Return KP_Enter}} return
+    # Live-search debounce: republish after a pause in typing. A key release
+    # that left the query text unchanged (cursor moves with Home/End/arrows,
+    # selection with Shift, bare modifiers, the trailing release of an Enter)
+    # raises no search; only an actual edit arms the timer. The ttk entry has
+    # already written SearchVar by KeyRelease, so comparing it is reliable.
+    method on_search_change {} {
+        if {$SearchVar eq $LastQueryText} return
+        set LastQueryText $SearchVar
         # The user counts as typing through the debounce window, so the browse
         # scan can defer while they type (see scan_while_typing).
         set TypingUntil [expr {[clock milliseconds] + [::questlog::config::get search_debounce_ms]}]
@@ -575,6 +583,7 @@ oo::class create ::questlog::ui::Toolbar {
     method publish_now {} {
         if {$DebounceAfter ne ""} { after cancel $DebounceAfter; set DebounceAfter "" }
         set TypingUntil 0
+        set LastQueryText $SearchVar
         my publish
     }
 
