@@ -136,6 +136,7 @@ proc ::questlog::cli::main::usage {} {
     puts stderr ""
     puts stderr "bounds (global, applied to the whole result - not clauses):"
     puts stderr "  --since <when>          Recency bound: a window (24h, 7d, 2w), a date (2026-04-01), or 'all'."
+    puts stderr "  --until <when>          Older bound: up to a window ago (7d), a date (2026-04-01), or 'all' (no bound)."
     puts stderr "  --under <dir>           Only sessions located under the directory."
     puts stderr "  --limit <N>             Cap returned sessions (unset or 0 = unlimited)."
     puts stderr "  --limit-matches <N>     Cap snippets per session/subagent (0 = none)."
@@ -196,7 +197,7 @@ proc ::questlog::cli::main::push_leaf {leavesVar curVar negVar leaf} {
 
 # parse_query argv - turn the clause and bound arguments into a query: the
 # matcher clauses (leaves + boolean tree + nocase) and the global bounds (limit,
-# limit_matches, under, since). The grammar is an OR (--or) of AND-groups
+# limit_matches, under, since, until). The grammar is an OR (--or) of AND-groups
 # (adjacency) of optionally-negated (--not) leaves; groups is the closed
 # AND-groups and cur the one being built, while bounds ride outside the tree. A
 # malformed query prints a message and exits through usage. Separated from run so
@@ -206,6 +207,7 @@ proc ::questlog::cli::main::parse_query {argv} {
     set limit_matches -1
     set under ""
     set since ""
+    set until ""
     set nocase 1
     set mode json
     set leaves [list]
@@ -258,6 +260,7 @@ proc ::questlog::cli::main::parse_query {argv} {
             --limit         { set limit [::questlog::cli::main::next_val argv i $arg] }
             --limit-matches { set limit_matches [::questlog::cli::main::next_val argv i $arg] }
             --since         { set since [::questlog::cli::main::next_val argv i $arg] }
+            --until         { set until [::questlog::cli::main::next_val argv i $arg] }
             --under         { set under [::questlog::cli::main::next_val argv i $arg] }
             --case          { set nocase 0 }
             "(" - ")" - "--(" - "--)" - --and {
@@ -295,11 +298,18 @@ proc ::questlog::cli::main::parse_query {argv} {
         puts stderr "questlog: --since: invalid '$since' (want 24h/7d/2w, a date 2026-04-01, or 'all')"
         ::questlog::cli::main::usage
     }
+    # --until shares the since spec grammar; it is the upper edge of the window.
+    if {$until ne "" && $until ne "all"
+        && [catch {::questlog::filter::parse_since $until}]} {
+        puts stderr "questlog: --until: invalid '$until' (want 24h/7d/2w, a date 2026-04-01, or 'all')"
+        ::questlog::cli::main::usage
+    }
 
     return [dict create \
         clauses [dict create leaves $leaves \
             tree [::questlog::match::tnode_or $groups] nocase $nocase] \
-        limit $limit limit_matches $limit_matches under $under since $since mode $mode]
+        limit $limit limit_matches $limit_matches under $under since $since \
+        until $until mode $mode]
 }
 
 # Apply a rename from the command line: `questlog rename <session.jsonl> [title]`.
@@ -334,6 +344,7 @@ proc ::questlog::cli::main::run {argv} {
     set limit_matches [dict get $q limit_matches]
     set under         [dict get $q under]
     set since         [dict get $q since]
+    set until         [dict get $q until]
     set mode          [dict get $q mode]
 
     # If --limit-matches is not set, default to config defaults
@@ -345,11 +356,12 @@ proc ::questlog::cli::main::run {argv} {
         set sub_limit $limit_matches
     }
 
-    # 2. The row-level bounds snapshot. The bounds (since, under, one_turn) ride
-    # outside the boolean algebra as global filters.
+    # 2. The row-level bounds snapshot. The bounds (since, until, under, one_turn)
+    # ride outside the boolean algebra as global filters.
     set snapshot [dict create \
         under [expr {$under eq "" ? {} : [list $under]}] \
         since $since \
+        until $until \
         one_turn 0]
 
     set scan [::questlog::Scan new {} {}]

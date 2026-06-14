@@ -50,6 +50,15 @@ check cutoff_7d_within 1 [expr {abs(($now - 604800) - $c7) <= 2}]
 check cutoff_abs [expr {$abs_epoch - 1}] \
     [::questlog::filter::cutoff_for [dict create since 2026-04-01]]
 
+# ---- ceiling_for: no until => no bound; rel => now - secs; abs => end of day
+check ceiling_none "" [::questlog::filter::ceiling_for [dict create]]
+check ceiling_all  "" [::questlog::filter::ceiling_for [dict create until all]]
+set u7 [::questlog::filter::ceiling_for [dict create until 7d]]
+check ceiling_7d_within 1 [expr {abs(($now - 604800) - $u7) <= 2}]
+# An absolute until covers the whole named day: the last second before next midnight.
+check ceiling_abs [expr {[clock add $abs_epoch 1 day] - 1}] \
+    [::questlog::filter::ceiling_for [dict create until 2026-04-01]]
+
 # ---- since_label: the one display-string home -----------------------
 check label_all  all          [::questlog::filter::since_label all]
 check label_week {1 week}     [::questlog::filter::since_label 7d]
@@ -84,7 +93,34 @@ check since_7d_drops_old    0 [expr {$old in $lp7}]
 set lpall [$s list_paths_for [dict create since all]]
 check since_all_keeps_recent 1 [expr {$recent in $lpall}]
 check since_all_keeps_old    1 [expr {$old in $lpall}]
+
+# ---- list_paths_for: an until bound prunes the recent end ----------
+# since all isolates the upper bound; without it cutoff_for would apply the
+# configured since_default floor and drop the 40-day-old fixture on its own.
+set lpu30 [$s list_paths_for [dict create since all until 30d]]
+check until_30d_drops_recent 0 [expr {$recent in $lpu30}]
+check until_30d_keeps_old    1 [expr {$old in $lpu30}]
+# since and until together bracket a window: 60d..30d ago keeps only the 40d-old one.
+set lpwin [$s list_paths_for [dict create since 60d until 30d]]
+check window_keeps_old    1 [expr {$old in $lpwin}]
+check window_drops_recent 0 [expr {$recent in $lpwin}]
 $s destroy
+
+# ---- row_matches: the until ceiling, day-inclusive, bookmark-pinned -
+# Each snapshot says "since all" so only the until bound under test is in force.
+set rowR [dict create mtime $now is_multi 1]
+set rowO [dict create mtime [expr {$now - 40*86400}] is_multi 1]
+check rm_until_keeps_old     1 [::questlog::filter::row_matches [dict create since all until 30d one_turn 0] $rowO]
+check rm_until_drops_recent  0 [::questlog::filter::row_matches [dict create since all until 30d one_turn 0] $rowR]
+check rm_no_until_keeps_recent 1 [::questlog::filter::row_matches [dict create since all one_turn 0] $rowR]
+# A bookmark (+x) pins a row past the ceiling, as it does past the since cutoff.
+set rowRbk [dict create mtime $now is_multi 1 bookmarked 1]
+check rm_until_bookmark_pins 1 [::questlog::filter::row_matches [dict create since all until 30d one_turn 0] $rowRbk]
+# An absolute until keeps the whole named day and drops the day after.
+set eod  [dict create mtime [expr {[clock add $abs_epoch 1 day] - 1}] is_multi 1]
+set next [dict create mtime [clock add $abs_epoch 1 day] is_multi 1]
+check rm_until_abs_keeps_eod  1 [::questlog::filter::row_matches [dict create since all until 2026-04-01 one_turn 0] $eod]
+check rm_until_abs_drops_next 0 [::questlog::filter::row_matches [dict create since all until 2026-04-01 one_turn 0] $next]
 
 ::questlog::path::_real_file delete -force /tmp/questlog-test-since
 

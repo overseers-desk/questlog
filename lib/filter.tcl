@@ -16,12 +16,13 @@ package require Tcl 9
 # criteria all fail, and a few procs over two dicts beat a class.
 
 namespace eval ::questlog::filter {
-    namespace export parse_since cutoff_for since_label time_locale \
+    namespace export parse_since cutoff_for ceiling_for since_label time_locale \
         row_under_match row_matches
 }
 
-# The one home that interprets a since value, for every consumer (the headless
-# CLI, the GUI time row, cutoff_for, and since_label). Classifies a spec into a
+# The one home that interprets a since or until value, for every consumer (the
+# headless CLI, the GUI time row, cutoff_for, ceiling_for, and since_label).
+# Classifies a spec into a
 # typed normal form and throws on a malformed one:
 #   ""  or "all"          -> {none}           no bound
 #   <int><m|h|d|w>        -> {rel <secs>}     a relative window
@@ -58,6 +59,24 @@ proc ::questlog::filter::cutoff_for {snapshot} {
         none { return 0 }
         rel  { return [expr {[clock seconds] - $val}] }
         abs  { return [expr {$val - 1}] }
+    }
+}
+
+# Epoch ceiling for a snapshot's until (upper) bound, the mirror of cutoff_for.
+# "" means no ceiling - the until key absent, or "all" - so a "" return filters
+# nothing. A row is excluded when its mtime is past the ceiling (mtime > ceiling),
+# so the ceiling is the last instant kept. A relative until is that instant ago; an
+# absolute until covers the whole named day, so the abs branch returns the second
+# before the next local midnight (clock add ... 1 day is DST-safe, unlike a flat
+# +86400). Unlike cutoff_for there is no config default: the upper bound is a
+# CLI-only filter, absent by default rather than falling back to a configured one.
+proc ::questlog::filter::ceiling_for {snapshot} {
+    set until [dict getdef $snapshot until ""]
+    lassign [parse_since $until] kind val
+    switch -- $kind {
+        none { return "" }
+        rel  { return [expr {[clock seconds] - $val}] }
+        abs  { return [expr {[clock add $val 1 day] - 1}] }
     }
 }
 
@@ -116,12 +135,15 @@ proc ::questlog::filter::row_under_match {row under_list} {
 }
 
 # 1 iff a row passes a snapshot's row-level filters. A bookmark (+x) pins the
-# row past the recency bound, so a bookmarked row survives an mtime older than
-# the cutoff and a bookmarked_only filter that a plain row would not.
+# row past either recency bound, so a bookmarked row survives an mtime outside the
+# since cutoff or the until ceiling, and a bookmarked_only filter, that a plain
+# row would not.
 proc ::questlog::filter::row_matches {snapshot row} {
     set bk [dict getdef $row bookmarked 0]
     if {[dict getdef $snapshot bookmarked_only 0] && !$bk} { return 0 }
     if {[dict get $row mtime] <= [cutoff_for $snapshot] && !$bk} { return 0 }
+    set ceiling [ceiling_for $snapshot]
+    if {$ceiling ne "" && [dict get $row mtime] > $ceiling && !$bk} { return 0 }
     if {[dict getdef $snapshot one_turn 1] && ![dict get $row is_multi]} { return 0 }
     set under [dict getdef $snapshot under {}]
     if {[llength $under] > 0 && ![row_under_match $row $under]} { return 0 }

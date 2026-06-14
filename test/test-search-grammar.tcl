@@ -68,6 +68,12 @@ check tree_bare_kw keyword [dict get [lindex [dict get [tree bareword] leaves] 0
 check tree_tool    {kind tool sel file spec read value c.tcl neg 0} \
     [lindex [dict get [tree --tool:read c.tcl] leaves] 0]
 
+# ---- parse_query: the global bounds ride beside the clause tree ------------
+proc bound {key args} { return [dict get [::questlog::cli::main::parse_query $args] $key] }
+check bound_since   7d         [bound since --since 7d --keyword x]
+check bound_until   2026-04-01 [bound until --until 2026-04-01 --keyword x]
+check bound_until_default "" [bound until --keyword x]
+
 # ---- eval_tree: the truth table for (A AND B) OR C -------------------------
 # effsat is a dict leaf-id -> effective truth; leaves 0,1,2 are A,B,C.
 set t [dict get [tree --keyword A --keyword B --or --keyword C] tree]
@@ -125,6 +131,7 @@ check err_grouping  1 [string match {*grouping is not supported*} [cli_err "("]]
 check err_ambig_rgn 1 [string match {*ambiguous region*}          [cli_err --keyword:tool x]]
 check err_or_edge   1 [string match {*--or needs a clause*}       [cli_err --or --keyword x]]
 check err_not_edge  1 [string match {*--not has no following*}    [cli_err --keyword x --not]]
+check err_until_bad 1 [string match {*--until: invalid*}          [cli_err --until 3x --keyword x]]
 
 if {$fails > 0} {
     puts "$fails failures"

@@ -176,13 +176,15 @@ oo::class create ::questlog::Scan {
         set root [::questlog::path::projects_root]
         if {![file isdirectory $root]} { return [list] }
         set cutoff [::questlog::filter::cutoff_for $snapshot]
+        set ceiling [::questlog::filter::ceiling_for $snapshot]
         set pairs [list]
         foreach folder [glob -nocomplain -directory $root -type d -- *] {
             foreach f [glob -nocomplain -directory $folder -- *.jsonl] {
                 set m [file mtime $f]
-                # A bookmarked (+x) file is kept regardless of the since bound
-                # so it always enters Rows and can be surfaced as a pin.
+                # A bookmarked (+x) file is kept regardless of either bound so it
+                # always enters Rows and can be surfaced as a pin.
                 if {$m <= $cutoff && ![file executable $f]} continue
+                if {$ceiling ne "" && $m > $ceiling && ![file executable $f]} continue
                 lappend pairs [list $f $m]
                 # A subagent belongs to its parent session, so it enters the
                 # search corpus whenever the parent is within the since bound,
