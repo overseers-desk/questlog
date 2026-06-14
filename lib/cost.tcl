@@ -155,6 +155,38 @@ proc ::questlog::cost::iso_to_epoch {ts} {
     return $e
 }
 
+# Classify a record for split_secs: the class of the record ENDING a gap decides
+# whose time the gap is (machine / human / neutral). Quotes inside message text
+# arrive escaped (\"), so these plain-quote regexes cannot fire on conversation
+# content. The one home for this rule, shared by parse_file (whole transcript)
+# and accrue_window (a single window); ask_ids carries the AskUserQuestion
+# tool_use ids seen so far, so a dialog answer's tool_result counts as the user.
+proc ::questlog::cost::classify_stamp {line ask_ids} {
+    # Written during the user's absence or at the moment of return (away recaps,
+    # synthetic fillers, background-task exits): the gap before them is nobody's.
+    if {[regexp {"subtype":"away_summary"} $line] \
+            || [regexp {"model":"<synthetic>"} $line] \
+            || [regexp {"content":"<task-notification>} $line]} {
+        return neutral
+    }
+    # enqueue is the user typing into the queue; remove and the rest are
+    # machine-initiated queue management.
+    if {[regexp {"type":"queue-operation"} $line]} {
+        return [expr {[regexp {"operation":"enqueue"} $line] ? "human" : "machine"}]
+    }
+    if {[regexp {"role":"user"} $line] && ![regexp {"isSidechain":true} $line]} {
+        # A prompt the user wrote (string or array content), or a slash-command
+        # echo: the user acting. A tool_result is machine work landing, except an
+        # AskUserQuestion answer: the user returning to a dialog left open.
+        if {![regexp {"type":"tool_result"} $line]} { return human }
+        foreach {_ id} [regexp -all -inline {"tool_use_id":"([^"]+)"} $line] {
+            if {[dict exists $ask_ids $id]} { return human }
+        }
+        return machine
+    }
+    return machine
+}
+
 proc ::questlog::cost::parse_file {path} {
     set req_usage [dict create]
     set dummy_req 0
@@ -186,45 +218,7 @@ proc ::questlog::cost::parse_file {path} {
             set last_ts $m
             set e [iso_to_epoch $m]
             if {$e ne ""} {
-                # Classify the record for split_secs: the class of the record
-                # ending a gap decides whose time the gap is. Quotes inside
-                # message text arrive escaped (\"), so these plain-quote
-                # regexes cannot fire on conversation content.
-                if {[regexp {"subtype":"away_summary"} $line] \
-                        || [regexp {"model":"<synthetic>"} $line] \
-                        || [regexp {"content":"<task-notification>} $line]} {
-                    # Written during the user's absence or at the moment of
-                    # return (away recaps, synthetic fillers, background-task
-                    # exits): the gap before them is nobody's work.
-                    set class neutral
-                } elseif {[regexp {"type":"queue-operation"} $line]} {
-                    # enqueue is the user typing into the queue; remove and
-                    # the rest are machine-initiated queue management.
-                    set class [expr {[regexp {"operation":"enqueue"} $line] \
-                        ? "human" : "machine"}]
-                } elseif {[regexp {"role":"user"} $line] \
-                        && ![regexp {"isSidechain":true} $line]} {
-                    if {![regexp {"type":"tool_result"} $line]} {
-                        # A prompt the user wrote (string or array content),
-                        # or a slash-command echo: the user acting.
-                        set class human
-                    } else {
-                        # A tool_result is machine work landing, except an
-                        # AskUserQuestion answer: that is the user returning
-                        # to a dialog that sat open waiting for them.
-                        set class machine
-                        foreach {_ id} [regexp -all -inline \
-                                {"tool_use_id":"([^"]+)"} $line] {
-                            if {[dict exists $ask_ids $id]} {
-                                set class human
-                                break
-                            }
-                        }
-                    }
-                } else {
-                    set class machine
-                }
-                lappend stamps [list $e $class]
+                lappend stamps [list $e [classify_stamp $line $ask_ids]]
             }
         }
         if {![regexp {"type":"assistant"} $line]} continue
@@ -322,5 +316,109 @@ proc ::questlog::cost::build_cost_dict {res} {
         turns $turns \
         duration_secs $active \
         human_secs $human]
+}
+
+# Cost accrued strictly inside the window [lo, hi] by each assistant message's
+# own timestamp - the accounting unit for `--accrued-cost`. A separate pass from
+# parse_file (which sums the whole transcript and runs in the GUI cost worker):
+# here a requestId is the atomic unit of spend, anchored by the earliest
+# timestamp of its assistant records, counted in full (max usage across all its
+# records, regardless of each record's own ts) iff that anchor falls in the
+# window. So a streamed request whose final, largest-usage record lands just past
+# hi is still counted once, whole, in the window of its anchor. lo is the floor
+# (a record at exactly lo is out, matching the mtime>cutoff convention); hi is
+# the inclusive ceiling, or "" for no upper edge. Returns the build_cost_dict
+# shape with every field windowed; an empty model_breakdown (cost_usd -1.0) with
+# turns 0 marks a file with no in-window spend, the caller's drop signal.
+proc ::questlog::cost::accrue_window {path lo hi} {
+    set req_usage [dict create]
+    set dummy_req 0
+    set turns 0
+    set stamps [list]
+    set ask_ids [dict create]
+    set last_model ""
+    if {[catch {open $path r} fh]} {
+        return [build_cost_dict [dict create per_model {} first_ts "" \
+            last_ts "" turns 0 stamps {} last_model "" ok 0]]
+    }
+    chan configure $fh -encoding utf-8 -profile replace
+    while {[chan gets $fh line] >= 0} {
+        if {$line eq ""} continue
+        if {[regexp {"type":"file-history-snapshot"} $line]} continue
+
+        # The record's own epoch, fresh each line (no carry-over from a prior
+        # record), and whether it lands in the window.
+        set e ""
+        if {[regexp {"timestamp":"([^"]+)"} $line -> m]} { set e [iso_to_epoch $m] }
+        set in_win [expr {$e ne "" && $e > $lo && ($hi eq "" || $e <= $hi)}]
+
+        # A turn is a typed user prompt, in-window (same predicate as parse_file).
+        if {$in_win && [regexp {"role":"user","content":"} $line] \
+                && ![regexp {"content":"<(?:command-name|local-command-stdout|local-command-caveat|task-notification)>} $line]} {
+            incr turns
+        }
+        if {$in_win} { lappend stamps [list $e [classify_stamp $line $ask_ids]] }
+
+        if {![regexp {"type":"assistant"} $line]} continue
+        if {[catch {::json::json2dict $line} rec]} continue
+        if {![dict exists $rec message]} continue
+        set msg [dict get $rec message]
+
+        if {[regexp {"name":"AskUserQuestion"} $line]} {
+            foreach blk [dict getdef $msg content {}] {
+                if {[dict getdef $blk type ""] eq "tool_use" \
+                        && [dict getdef $blk name ""] eq "AskUserQuestion"} {
+                    dict set ask_ids [dict get $blk id] 1
+                }
+            }
+        }
+
+        set model [dict getdef $msg model "unknown"]
+        if {$in_win && $model ne "unknown" && $model ne "<synthetic>" \
+                && ![regexp {"isSidechain":true} $line]} {
+            set last_model $model
+        }
+        if {![dict exists $msg usage]} continue
+        set u [dict get $msg usage]
+        set in_t  [dict getdef $u input_tokens 0]
+        set out_t [dict getdef $u output_tokens 0]
+        set cw_t  [dict getdef $u cache_creation_input_tokens 0]
+        set cr_t  [dict getdef $u cache_read_input_tokens 0]
+
+        set req_id [dict getdef $rec requestId [dict getdef $msg requestId ""]]
+        if {$req_id eq ""} { set req_id "dummy-[incr dummy_req]" }
+
+        # Anchor by earliest assistant-record ts; max usage across all records.
+        if {[dict exists $req_usage $req_id]} {
+            lassign [dict get $req_usage $req_id] at om oi oo ow or
+            if {$om eq "unknown"} { set om $model }
+            if {$e ne "" && ($at eq "" || $e < $at)} { set at $e }
+            dict set req_usage $req_id [list $at $om \
+                [expr {max($in_t, $oi)}] [expr {max($out_t, $oo)}] \
+                [expr {max($cw_t, $ow)}] [expr {max($cr_t, $or)}]]
+        } else {
+            dict set req_usage $req_id [list $e $model $in_t $out_t $cw_t $cr_t]
+        }
+    }
+    close $fh
+
+    # Keep only requests whose anchor falls in the window; fold into per_model
+    # and record the earliest in-window anchor, whose date selects the rate era
+    # that actually billed (rather than the session's possibly-older start date).
+    set per_model [dict create]
+    set anchor_min ""
+    dict for {_ v} $req_usage {
+        lassign $v at mdl i o w r
+        if {$at eq "" || !($at > $lo && ($hi eq "" || $at <= $hi))} continue
+        lassign [dict getdef $per_model $mdl {0 0 0 0}] pi po pw pr
+        dict set per_model $mdl [list [expr {$pi+$i}] [expr {$po+$o}] \
+            [expr {$pw+$w}] [expr {$pr+$r}]]
+        if {$anchor_min eq "" || $at < $anchor_min} { set anchor_min $at }
+    }
+    set first_ts [expr {$anchor_min eq "" ? "" \
+        : [clock format $anchor_min -gmt 1 -format %Y-%m-%d]}]
+
+    return [build_cost_dict [dict create per_model $per_model first_ts $first_ts \
+        last_ts "" turns $turns stamps $stamps last_model $last_model ok 1]]
 }
 

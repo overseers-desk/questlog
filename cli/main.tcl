@@ -121,6 +121,8 @@ proc ::questlog::cli::main::usage {} {
     puts stderr ""
     puts stderr "  Cost = the tokens recorded in each transcript priced at per-model API rates;"
     puts stderr "  computed here, an API-equivalent figure, not a number the harness billed."
+    puts stderr "  By default a session's whole-transcript cost counts once it falls in the"
+    puts stderr "  window; --accrued-cost instead counts only the spend dated inside the window."
     puts stderr ""
     puts stderr "clauses:"
     puts stderr "  --keyword\[:regions\] <needle>   Literal needle (aliases: --kw, --search). A bare"
@@ -141,6 +143,9 @@ proc ::questlog::cli::main::usage {} {
     puts stderr "  --since <when>          Recency bound: a window (24h, 7d, 2w), a date (2026-04-01), or 'all'."
     puts stderr "  --until <when>          Older bound: up to a window ago (7d), a date (2026-04-01), or 'all' (no bound)."
     puts stderr "  --under <dir>           Only sessions located under the directory."
+    puts stderr "  --accrued-cost          Count only spend dated inside the --since/--until window,"
+    puts stderr "                          by each message's timestamp. Needs a time bound; --until"
+    puts stderr "                          alone scans the whole corpus."
     puts stderr "  --limit <N>             Cap returned sessions (unset or 0 = unlimited)."
     puts stderr "  --limit-matches <N>     Cap snippets per session/subagent (0 = none)."
     puts stderr "  --case                  Case-sensitive keyword matching (default: insensitive)."
@@ -211,6 +216,7 @@ proc ::questlog::cli::main::parse_query {argv} {
     set under ""
     set since ""
     set until ""
+    set accrued 0
     set nocase 1
     set mode json
     set leaves [list]
@@ -264,6 +270,7 @@ proc ::questlog::cli::main::parse_query {argv} {
             --limit-matches { set limit_matches [::questlog::cli::main::next_val argv i $arg] }
             --since         { set since [::questlog::cli::main::next_val argv i $arg] }
             --until         { set until [::questlog::cli::main::next_val argv i $arg] }
+            --accrued-cost  { set accrued 1 }
             --under         { set under [::questlog::cli::main::next_val argv i $arg] }
             --case          { set nocase 0 }
             "(" - ")" - "--(" - "--)" - --and {
@@ -307,12 +314,20 @@ proc ::questlog::cli::main::parse_query {argv} {
         puts stderr "questlog: --until: invalid '$until' (want 24h/7d/2w, a date 2026-04-01, or 'all')"
         ::questlog::cli::main::usage
     }
+    # --accrued-cost windows the spend, so it has no meaning without a window:
+    # require a real --since or --until ("" and "all" both parse to {none}).
+    if {$accrued
+        && [lindex [::questlog::filter::parse_since $since] 0] eq "none"
+        && [lindex [::questlog::filter::parse_since $until] 0] eq "none"} {
+        puts stderr "questlog: --accrued-cost needs a time bound (--since and/or --until)"
+        ::questlog::cli::main::usage
+    }
 
     return [dict create \
         clauses [dict create leaves $leaves \
             tree [::questlog::match::tnode_or $groups] nocase $nocase] \
         limit $limit limit_matches $limit_matches under $under since $since \
-        until $until mode $mode]
+        until $until accrued $accrued mode $mode]
 }
 
 # Apply a rename from the command line: `questlog rename <session.jsonl> [title]`.
@@ -333,6 +348,24 @@ proc ::questlog::cli::main::rename {argv} {
     puts [::questlog::rename::apply $path [lindex $argv 1]]
 }
 
+# The snapshot used for file/row SELECTION in accrued mode: the original with the
+# until ceiling cleared, so a session revived after the ceiling (yet holding
+# pre-ceiling, in-window messages) is not pruned. The since floor and under-scope
+# stay - a file with mtime <= floor holds no in-window message, so it is a safe,
+# tight prefilter. Pure, so a test can drive it.
+proc ::questlog::cli::main::selection_snapshot_for {snapshot} {
+    dict set snapshot until ""
+    return $snapshot
+}
+
+# 1 iff an accrue_window result carries any in-window spend or activity. An
+# unpriced model yields cost_usd -1.0 yet had real activity, so test the model
+# breakdown and turn count, not the dollar figure.
+proc ::questlog::cli::main::has_window_spend {cost_info} {
+    return [expr {[dict size [dict getdef $cost_info model_breakdown {}]] > 0 \
+        || [dict getdef $cost_info turns 0] > 0}]
+}
+
 # Run the command-line search engine.
 proc ::questlog::cli::main::run {argv} {
     variable ::ROOT
@@ -348,6 +381,7 @@ proc ::questlog::cli::main::run {argv} {
     set under         [dict get $q under]
     set since         [dict get $q since]
     set until         [dict get $q until]
+    set accrued       [dict get $q accrued]
     set mode          [dict get $q mode]
 
     # If --limit-matches is not set, default to config defaults
@@ -367,13 +401,25 @@ proc ::questlog::cli::main::run {argv} {
         until $until \
         one_turn 0]
 
+    # In accrued mode, cost is windowed by each message's timestamp, so file/row
+    # SELECTION must not apply the until ceiling (a session revived after it can
+    # still hold in-window messages); the since floor is kept as a safe prefilter.
+    # The window edges [acc_lo, acc_hi] come from the original bounds.
+    if {$accrued} {
+        set acc_lo [::questlog::filter::cutoff_for $snapshot]
+        set acc_hi [::questlog::filter::ceiling_for $snapshot]
+        set sel_snapshot [::questlog::cli::main::selection_snapshot_for $snapshot]
+    } else {
+        set sel_snapshot $snapshot
+    }
+
     set scan [::questlog::Scan new {} {}]
 
     # Initialize rates for synchronous costing
     ::questlog::cost::load_rates $ROOT
 
     # 3. Discover on-disk files including subagents
-    set paths [$scan list_paths_for $snapshot 1]
+    set paths [$scan list_paths_for $sel_snapshot 1]
 
     # Group matches by parent session and subagents
     set session_groups [dict create]
@@ -400,7 +446,7 @@ proc ::questlog::cli::main::run {argv} {
         if {$row eq ""} continue
         
         # Apply snapshot-level row filters (recency bound, one_turn, bookmarked, and under-folder)
-        if {![::questlog::filter::row_matches $snapshot $row]} {
+        if {![::questlog::filter::row_matches $sel_snapshot $row]} {
             continue
         }
 
@@ -449,42 +495,46 @@ proc ::questlog::cli::main::run {argv} {
         set folder [dict get $parent_row folder]
         set parent_uuid [dict get $parent_row uuid]
 
-        # Calculate parent cost synchronously
-        set cost_info [::questlog::cli::cost::compute_sync $parent_path]
+        # Parent cost: whole-transcript by default, windowed under --accrued-cost.
+        if {$accrued} {
+            set cost_info [::questlog::cost::accrue_window $parent_path $acc_lo $acc_hi]
+        } else {
+            set cost_info [::questlog::cli::cost::compute_sync $parent_path]
+        }
         set parent_cost [dict getdef $cost_info cost_usd ""]
         set parent_turns [dict getdef $cost_info turns 0]
         set parent_duration [dict getdef $cost_info duration_secs ""]
         set parent_human [dict getdef $cost_info human_secs ""]
 
-        incr n_sessions
-        if {[string is double -strict $parent_cost] && $parent_cost > 0} {
-            set total_cost [expr {$total_cost + $parent_cost}]
-        }
-        incr total_turns $parent_turns
-        set total_in  [expr {$total_in  + [dict getdef $cost_info input_tokens 0]}]
-        set total_out [expr {$total_out + [dict getdef $cost_info output_tokens 0]}]
-        set total_cw  [expr {$total_cw  + [dict getdef $cost_info cache_write_tokens 0]}]
-        set total_cr  [expr {$total_cr  + [dict getdef $cost_info cache_read_tokens 0]}]
-
         # Limit parent matches
         set limited_sess_matches [limit_matches [dict getdef $group_data parent_matches {}] $sess_limit]
 
-        # Resolve subagents of this session
+        # Resolve subagents; under --accrued-cost drop those with no in-window
+        # spend, and accumulate their totals in temporaries so the whole subtree
+        # can be dropped (and never counted) if nothing in it landed in the window.
         set subagents_list [list]
+        set sub_n 0
+        set sub_cost_sum 0.0; set sub_turns_sum 0
+        set sub_in_sum 0; set sub_out_sum 0; set sub_cw_sum 0; set sub_cr_sum 0
         foreach sub [$scan subagents_for $parent_path] {
             set sub_path [dict get $sub path]
-            set sub_cost_info [::questlog::cli::cost::compute_sync $sub_path]
-            incr n_subagents
+            if {$accrued} {
+                set sub_cost_info [::questlog::cost::accrue_window $sub_path $acc_lo $acc_hi]
+                if {![::questlog::cli::main::has_window_spend $sub_cost_info]} continue
+            } else {
+                set sub_cost_info [::questlog::cli::cost::compute_sync $sub_path]
+            }
+            incr sub_n
             set sub_cost [dict getdef $sub_cost_info cost_usd ""]
             if {[string is double -strict $sub_cost] && $sub_cost > 0} {
-                set total_cost [expr {$total_cost + $sub_cost}]
+                set sub_cost_sum [expr {$sub_cost_sum + $sub_cost}]
             }
-            incr total_turns [dict getdef $sub_cost_info turns 0]
-            set total_in  [expr {$total_in  + [dict getdef $sub_cost_info input_tokens 0]}]
-            set total_out [expr {$total_out + [dict getdef $sub_cost_info output_tokens 0]}]
-            set total_cw  [expr {$total_cw  + [dict getdef $sub_cost_info cache_write_tokens 0]}]
-            set total_cr  [expr {$total_cr  + [dict getdef $sub_cost_info cache_read_tokens 0]}]
-            
+            incr sub_turns_sum [dict getdef $sub_cost_info turns 0]
+            set sub_in_sum  [expr {$sub_in_sum  + [dict getdef $sub_cost_info input_tokens 0]}]
+            set sub_out_sum [expr {$sub_out_sum + [dict getdef $sub_cost_info output_tokens 0]}]
+            set sub_cw_sum  [expr {$sub_cw_sum  + [dict getdef $sub_cost_info cache_write_tokens 0]}]
+            set sub_cr_sum  [expr {$sub_cr_sum  + [dict getdef $sub_cost_info cache_read_tokens 0]}]
+
             # Find and limit matching snippets for this subagent if any
             set limited_sub_matches [limit_matches [dict getdef $group_data subagent_matches {}] $sub_limit $sub_path]
 
@@ -498,6 +548,31 @@ proc ::questlog::cli::main::run {argv} {
                 "human_secs" [dict getdef $sub_cost_info human_secs ""] \
                 "matches" $limited_sub_matches]
         }
+
+        # In accrued mode, drop a whole subtree that contributed nothing to the
+        # window (neither the parent nor any surviving subagent).
+        if {$accrued && ![::questlog::cli::main::has_window_spend $cost_info] \
+                && [llength $subagents_list] == 0} {
+            continue
+        }
+
+        # The subtree is kept: commit it to the --shortstat totals now.
+        incr n_sessions
+        if {[string is double -strict $parent_cost] && $parent_cost > 0} {
+            set total_cost [expr {$total_cost + $parent_cost}]
+        }
+        incr total_turns $parent_turns
+        set total_in  [expr {$total_in  + [dict getdef $cost_info input_tokens 0]}]
+        set total_out [expr {$total_out + [dict getdef $cost_info output_tokens 0]}]
+        set total_cw  [expr {$total_cw  + [dict getdef $cost_info cache_write_tokens 0]}]
+        set total_cr  [expr {$total_cr  + [dict getdef $cost_info cache_read_tokens 0]}]
+        incr n_subagents $sub_n
+        set total_cost   [expr {$total_cost + $sub_cost_sum}]
+        incr total_turns $sub_turns_sum
+        set total_in  [expr {$total_in  + $sub_in_sum}]
+        set total_out [expr {$total_out + $sub_out_sum}]
+        set total_cw  [expr {$total_cw  + $sub_cw_sum}]
+        set total_cr  [expr {$total_cr  + $sub_cr_sum}]
 
         set session_json [dict create \
             "uuid" $parent_uuid \
