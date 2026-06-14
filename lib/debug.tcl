@@ -83,7 +83,7 @@ proc ::questlog::debug::my_user {} {
 
 # Append one diagnostic line under a category, e.g. `log render "line 42 ..."`.
 # A no-op unless enabled, so call sites can be unconditional. The category is a
-# short tag (render, index, match, scroll, session) for grepping the log. The
+# short tag (render, index, match, scroll, session, search) for grepping the log. The
 # write is wrapped so a broken channel never propagates into the UI.
 proc ::questlog::debug::log {category msg} {
     variable Enabled

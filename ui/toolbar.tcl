@@ -562,19 +562,24 @@ oo::class create ::questlog::ui::Toolbar {
     # raises no search; only an actual edit arms the timer. The ttk entry has
     # already written SearchVar by KeyRelease, so comparing it is reliable.
     method on_search_change {} {
-        if {$SearchVar eq $LastQueryText} return
+        if {$SearchVar eq $LastQueryText} {
+            ::questlog::debug::log search "keyrelease '$SearchVar' unchanged; no re-search"
+            return
+        }
         set LastQueryText $SearchVar
+        set ms [::questlog::config::get search_debounce_ms]
+        ::questlog::debug::log search "keyrelease '$SearchVar' changed; (re)arm ${ms}ms debounce"
         # The user counts as typing through the debounce window, so the browse
         # scan can defer while they type (see scan_while_typing).
-        set TypingUntil [expr {[clock milliseconds] + [::questlog::config::get search_debounce_ms]}]
+        set TypingUntil [expr {[clock milliseconds] + $ms}]
         if {$DebounceAfter ne ""} { after cancel $DebounceAfter }
-        set DebounceAfter [after [::questlog::config::get search_debounce_ms] \
-            [list [self] debounce_fire]]
+        set DebounceAfter [after $ms [list [self] debounce_fire]]
     }
 
     method debounce_fire {} {
         set DebounceAfter ""
         set TypingUntil 0
+        ::questlog::debug::log search "debounce elapsed; dispatching search '$SearchVar'"
         my publish
     }
 
@@ -584,6 +589,7 @@ oo::class create ::questlog::ui::Toolbar {
         if {$DebounceAfter ne ""} { after cancel $DebounceAfter; set DebounceAfter "" }
         set TypingUntil 0
         set LastQueryText $SearchVar
+        ::questlog::debug::log search "Return; dispatching search '$SearchVar'"
         my publish
     }
 

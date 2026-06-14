@@ -376,6 +376,7 @@ proc ::questlog::ui::app::on_filter {snapshot} {
     variable SearchActive
 
     set has_criteria [::questlog::ui::any_criteria $snapshot]
+    ::questlog::debug::log search "on_filter begin: search='[dict get $snapshot search]' has_criteria=$has_criteria"
     # A new filter or search supersedes the opened-session path on the bar and
     # records whether the search modes own it (the scan-progress clobber guard).
     set ViewerPath ""
@@ -422,6 +423,7 @@ proc ::questlog::ui::app::on_filter {snapshot} {
         set SearchSummary ""
         set ProgressLine "Searching…"
         set SearchActive 1
+        ::questlog::debug::log search "SEARCH START: scanning corpus for '[dict get $snapshot search]'"
         $Search start $snapshot
     } else {
         set CurrentQuery {}
