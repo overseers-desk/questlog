@@ -224,6 +224,96 @@ proc ::questlog::cost::parse_file {path} {
         last_model $last_model ok 1]
 }
 
+proc ::questlog::cost::parse_file_window {path start_epoch end_epoch} {
+    set req_usage [dict create]
+    set dummy_req 0
+    set first_ts ""
+    set last_ts ""
+    set turns 0
+    set stamps [list]
+    set last_model ""
+    if {[catch {open $path r} fh]} {
+        return [dict create cost_usd 0.0 per_model {} first_ts "" last_ts "" turns 0 stamps {} last_model "" ok 0]
+    }
+    chan configure $fh -encoding utf-8 -profile replace
+    while {[chan gets $fh line] >= 0} {
+        if {$line eq ""} continue
+        set ts ""
+        set e ""
+        set in_window 0
+        if {[regexp {"timestamp":"([^"]+)"} $line -> ts]} {
+            set e [iso_to_epoch $ts]
+            if {$e ne "" && $e >= $start_epoch && $e <= $end_epoch} {
+                set in_window 1
+                if {$first_ts eq ""} { set first_ts $ts }
+                set last_ts $ts
+            }
+        }
+
+        if {$in_window && [regexp {"role":"user","content":"} $line]} {
+            incr turns
+        }
+        if {$in_window && $e ne ""} {
+            set is_human [expr {[regexp {"role":"user"} $line] \
+                && ![regexp {"type":"tool_result"} $line] \
+                && ![regexp {"isSidechain":true} $line]}]
+            lappend stamps [list $e $is_human]
+        }
+
+        if {!$in_window || ![regexp {"type":"assistant"} $line]} continue
+        if {[catch {::json::json2dict $line} rec]} continue
+        if {![dict exists $rec message]} continue
+        set msg [dict get $rec message]
+        if {![dict exists $msg usage]} continue
+
+        set req_id [dict getdef $rec requestId [dict getdef $msg requestId ""]]
+        if {$req_id eq ""} { set req_id "dummy-[incr dummy_req]" }
+        set model [dict getdef $msg model "unknown"]
+        if {$model ne "unknown" && ![regexp {"isSidechain":true} $line]} {
+            set last_model $model
+        }
+        set u [dict get $msg usage]
+        set in_t  [dict getdef $u input_tokens 0]
+        set out_t [dict getdef $u output_tokens 0]
+        set cw_t  [dict getdef $u cache_creation_input_tokens 0]
+        set cr_t  [dict getdef $u cache_read_input_tokens 0]
+        set day [string range $ts 0 9]
+
+        if {[dict exists $req_usage $req_id]} {
+            lassign [dict get $req_usage $req_id] om od oi oo ow or
+            if {$om eq "unknown"} { set om $model }
+            if {$od eq ""} { set od $day }
+            dict set req_usage $req_id [list $om $od \
+                [expr {max($in_t, $oi)}] [expr {max($out_t, $oo)}] \
+                [expr {max($cw_t, $ow)}] [expr {max($cr_t, $or)}]]
+        } else {
+            dict set req_usage $req_id [list $model $day $in_t $out_t $cw_t $cr_t]
+        }
+    }
+    close $fh
+
+    set per_model [dict create]
+    set usd 0.0
+    set any_usage 0
+    set any_priced 0
+    dict for {_ counts} $req_usage {
+        lassign $counts m day i o w r
+        set any_usage 1
+        lassign [dict getdef $per_model $m {0 0 0 0}] pi po pw pr
+        dict set per_model $m [list [expr {$pi+$i}] [expr {$po+$o}] [expr {$pw+$w}] [expr {$pr+$r}]]
+        set row [rate_for $m $day]
+        if {$row eq ""} continue
+        lassign $row _ ri ro rw rr
+        set usd [expr {$usd + ($i * $ri + $o * $ro + $w * $rw + $r * $rr) / 1000000.0}]
+        set any_priced 1
+    }
+    if {$any_usage && !$any_priced} { set usd -1.0 }
+
+    return [dict create cost_usd $usd per_model $per_model \
+        first_ts $first_ts last_ts $last_ts turns $turns stamps $stamps \
+        last_model $last_model ok 1]
+}
+
 proc ::questlog::cost::build_cost_dict {res} {
     if {![dict get $res ok]} {
         return [dict create cost_usd 0.0 turns 0 duration_secs 0 input_tokens 0 output_tokens 0 cache_write_tokens 0 cache_read_tokens 0 model_breakdown {} model ""]
@@ -254,3 +344,24 @@ proc ::questlog::cost::build_cost_dict {res} {
         duration_secs [active_secs [dict get $res stamps]]]
 }
 
+proc ::questlog::cost::build_window_cost_dict {res} {
+    if {![dict get $res ok]} {
+        return [dict create cost_usd 0.0 turns 0 duration_secs 0 input_tokens 0 output_tokens 0 cache_write_tokens 0 cache_read_tokens 0 model_breakdown {} model ""]
+    }
+    set per_model [dict get $res per_model]
+    set in 0; set out 0; set cw 0; set cr 0
+    dict for {_ c} $per_model {
+        lassign $c i o w r
+        incr in $i; incr out $o; incr cw $w; incr cr $r
+    }
+    return [dict create \
+        cost_usd [dict get $res cost_usd] \
+        input_tokens $in \
+        output_tokens $out \
+        cache_write_tokens $cw \
+        cache_read_tokens $cr \
+        model_breakdown $per_model \
+        model [fmt_model [dict getdef $res last_model ""]] \
+        turns [dict get $res turns] \
+        duration_secs [active_secs [dict get $res stamps]]]
+}

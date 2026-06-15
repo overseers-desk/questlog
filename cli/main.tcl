@@ -98,7 +98,7 @@ proc ::questlog::cli::main::format_shortstat {stats limit} {
 
 # Print command-line mode usage and exit.
 proc ::questlog::cli::main::usage {} {
-    puts stderr "usage: questlog \[--json|--shortstat\] \[bounds\] \[clauses\]"
+    puts stderr "usage: questlog \[--json|--shortstat|--accrued-cost\] \[bounds\] \[clauses\]"
     puts stderr ""
     puts stderr "A session is returned when its clauses hold. Each clause is one needle in an"
     puts stderr "optional region-list; clauses combine by one algebra: adjacency is AND, --or is"
@@ -109,6 +109,9 @@ proc ::questlog::cli::main::usage {} {
     puts stderr "  --json                  Emit the full result as JSON."
     puts stderr "  --shortstat             Emit a totals summary instead: session and subagent"
     puts stderr "                          counts, turns, tokens, and total cost over the result."
+    puts stderr "  --accrued-cost          Emit the same totals shape as --shortstat, but count"
+    puts stderr "                          only assistant usage whose message timestamp falls"
+    puts stderr "                          inside --since/--until."
     puts stderr ""
     puts stderr "clauses:"
     puts stderr "  --keyword\[:regions\] <needle>   Literal needle (aliases: --kw, --search). A bare"
@@ -127,6 +130,7 @@ proc ::questlog::cli::main::usage {} {
     puts stderr ""
     puts stderr "bounds (global, applied to the whole result - not clauses):"
     puts stderr "  --since <when>          Recency bound: a window (24h, 7d, 2w), a date (2026-04-01), or 'all'."
+    puts stderr "  --until <when>          Upper time bound for --accrued-cost."
     puts stderr "  --under <dir>           Only sessions located under the directory."
     puts stderr "  --limit <N>             Cap returned sessions (unset or 0 = unlimited)."
     puts stderr "  --limit-matches <N>     Cap snippets per session/subagent (0 = none)."
@@ -197,6 +201,7 @@ proc ::questlog::cli::main::parse_query {argv} {
     set limit_matches -1
     set under ""
     set since ""
+    set until ""
     set nocase 1
     set mode json
     set leaves [list]
@@ -230,6 +235,7 @@ proc ::questlog::cli::main::parse_query {argv} {
         switch -glob -- $arg {
             --json - --cmd { set mode json }
             --shortstat { set mode shortstat }
+            --accrued-cost { set mode accrued-cost }
             --help - -h { ::questlog::cli::main::usage }
             --or {
                 if {$pending_neg || [llength $cur] == 0} {
@@ -249,6 +255,7 @@ proc ::questlog::cli::main::parse_query {argv} {
             --limit         { set limit [::questlog::cli::main::next_val argv i $arg] }
             --limit-matches { set limit_matches [::questlog::cli::main::next_val argv i $arg] }
             --since         { set since [::questlog::cli::main::next_val argv i $arg] }
+            --until         { set until [::questlog::cli::main::next_val argv i $arg] }
             --under         { set under [::questlog::cli::main::next_val argv i $arg] }
             --case          { set nocase 0 }
             "(" - ")" - "--(" - "--)" - --and {
@@ -286,11 +293,54 @@ proc ::questlog::cli::main::parse_query {argv} {
         puts stderr "questlog: --since: invalid '$since' (want 24h/7d/2w, a date 2026-04-01, or 'all')"
         ::questlog::cli::main::usage
     }
+    if {$until ne "" && $until ne "all"
+        && [catch {::questlog::filter::parse_since $until}]} {
+        puts stderr "questlog: --until: invalid '$until' (want 24h/7d/2w, a date 2026-04-01, or 'all')"
+        ::questlog::cli::main::usage
+    }
+    if {$mode ne "accrued-cost" && $until ne ""} {
+        puts stderr "questlog: --until is only supported with --accrued-cost"
+        ::questlog::cli::main::usage
+    }
+    if {$mode eq "accrued-cost"} {
+        if {$since eq "" || $since eq "all" || $until eq "" || $until eq "all"} {
+            puts stderr "questlog: --accrued-cost requires both --since and --until"
+            ::questlog::cli::main::usage
+        }
+        set start_epoch [::questlog::cli::main::bound_start_epoch $since]
+        set end_epoch [::questlog::cli::main::bound_end_epoch $until]
+        if {$start_epoch > $end_epoch} {
+            puts stderr "questlog: --accrued-cost has an empty time window"
+            ::questlog::cli::main::usage
+        }
+    } else {
+        set start_epoch ""
+        set end_epoch ""
+    }
 
     return [dict create \
         clauses [dict create leaves $leaves \
             tree [::questlog::match::tnode_or $groups] nocase $nocase] \
-        limit $limit limit_matches $limit_matches under $under since $since mode $mode]
+        limit $limit limit_matches $limit_matches under $under since $since until $until \
+        mode $mode accrued_start_epoch $start_epoch accrued_end_epoch $end_epoch]
+}
+
+proc ::questlog::cli::main::bound_start_epoch {spec} {
+    lassign [::questlog::filter::parse_since $spec] kind val
+    switch -- $kind {
+        rel { return [expr {[clock seconds] - $val}] }
+        abs { return $val }
+        none { return 0 }
+    }
+}
+
+proc ::questlog::cli::main::bound_end_epoch {spec} {
+    lassign [::questlog::filter::parse_since $spec] kind val
+    switch -- $kind {
+        rel { return [expr {[clock seconds] - $val}] }
+        abs { return [expr {$val + 86400 - 1}] }
+        none { return [expr {wide(9223372036854775807)}] }
+    }
 }
 
 # Apply a rename from the command line: `questlog rename <session.jsonl> [title]`.
@@ -326,6 +376,8 @@ proc ::questlog::cli::main::run {argv} {
     set under         [dict get $q under]
     set since         [dict get $q since]
     set mode          [dict get $q mode]
+    set accrued_start [dict get $q accrued_start_epoch]
+    set accrued_end   [dict get $q accrued_end_epoch]
 
     # If --limit-matches is not set, default to config defaults
     if {$limit_matches == -1} {
@@ -340,7 +392,7 @@ proc ::questlog::cli::main::run {argv} {
     # outside the boolean algebra as global filters.
     set snapshot [dict create \
         under [expr {$under eq "" ? {} : [list $under]}] \
-        since $since \
+        since [expr {$mode eq "accrued-cost" ? "all" : $since}] \
         one_turn 0]
 
     set scan [::questlog::Scan new {} {}]
@@ -426,7 +478,11 @@ proc ::questlog::cli::main::run {argv} {
         set parent_uuid [dict get $parent_row uuid]
 
         # Calculate parent cost synchronously
-        set cost_info [::questlog::cli::cost::compute_sync $parent_path]
+        if {$mode eq "accrued-cost"} {
+            set cost_info [::questlog::cli::cost::compute_window_sync $parent_path $accrued_start $accrued_end]
+        } else {
+            set cost_info [::questlog::cli::cost::compute_sync $parent_path]
+        }
         set parent_cost [dict getdef $cost_info cost_usd ""]
         set parent_turns [dict getdef $cost_info turns 0]
         set parent_duration [dict getdef $cost_info duration_secs ""]
@@ -448,7 +504,11 @@ proc ::questlog::cli::main::run {argv} {
         set subagents_list [list]
         foreach sub [$scan subagents_for $parent_path] {
             set sub_path [dict get $sub path]
-            set sub_cost_info [::questlog::cli::cost::compute_sync $sub_path]
+            if {$mode eq "accrued-cost"} {
+                set sub_cost_info [::questlog::cli::cost::compute_window_sync $sub_path $accrued_start $accrued_end]
+            } else {
+                set sub_cost_info [::questlog::cli::cost::compute_sync $sub_path]
+            }
             incr n_subagents
             set sub_cost [dict getdef $sub_cost_info cost_usd ""]
             if {[string is double -strict $sub_cost] && $sub_cost > 0} {
@@ -495,7 +555,7 @@ proc ::questlog::cli::main::run {argv} {
     }
 
     # Emit the result in the requested mode.
-    if {$mode eq "shortstat"} {
+    if {$mode eq "shortstat" || $mode eq "accrued-cost"} {
         puts [format_shortstat [dict create \
             sessions $n_sessions subagents $n_subagents cost $total_cost \
             turns $total_turns input_tokens $total_in output_tokens $total_out \

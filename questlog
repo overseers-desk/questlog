@@ -15,6 +15,7 @@ if {[lindex $argv 0] in {--version -v}} {
 set CLI_MODE 0
 if {[lindex $argv 0] eq "rename" \
     || "--json" in $argv || "--cmd" in $argv || "--shortstat" in $argv \
+    || "--accrued-cost" in $argv \
     || "--help" in $argv || "-h" in $argv} {
     set CLI_MODE 1
 }
@@ -149,4 +150,3 @@ if {[llength $argv] > 0 && ([string match tool:* $first] || $first in {pattern r
 ::questlog::ui::theme::init
 if {$VIEWER_FONT ne ""} { ::questlog::ui::theme::set_body_family $VIEWER_FONT }
 ::questlog::ui::app::start $ROOT $initial_criteria $INIT_SINCE $INIT_SEARCH
-
