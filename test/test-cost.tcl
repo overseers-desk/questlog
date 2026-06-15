@@ -87,6 +87,30 @@ check "cost dict carries the formatted model label" \
     [dict get $cost_dict model] "Opus 4.8"
 file delete $fix
 
+::questlog::cost::load_rates $ROOT
+set fd [file tempfile winfix]
+puts $fd {{"type":"user","timestamp":"2026-06-01T10:00:00.000Z","message":{"role":"user","content":"first day"}}}
+puts $fd {{"type":"assistant","timestamp":"2026-06-01T10:00:05.000Z","requestId":"r1","message":{"model":"claude-opus-4-8","usage":{"input_tokens":100,"output_tokens":10,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}}
+puts $fd {{"type":"user","timestamp":"2026-06-02T10:00:00.000Z","message":{"role":"user","content":"second day"}}}
+puts $fd {{"type":"assistant","timestamp":"2026-06-02T10:00:05.000Z","requestId":"r2","message":{"model":"claude-opus-4-8","usage":{"input_tokens":200,"output_tokens":20,"cache_creation_input_tokens":30,"cache_read_input_tokens":40}}}}
+close $fd
+
+set start [::questlog::cost::iso_to_epoch 2026-06-02T00:00:00.000Z]
+set end [::questlog::cost::iso_to_epoch 2026-06-02T23:59:59.000Z]
+set window_dict [::questlog::cost::build_window_cost_dict \
+    [::questlog::cost::parse_file_window $winfix $start $end]]
+check "window cost includes only assistant usage inside the timestamp window" \
+    [dict get $window_dict input_tokens] 200
+check "window cost excludes output tokens outside the timestamp window" \
+    [dict get $window_dict output_tokens] 20
+check "window cost includes cache write tokens inside the timestamp window" \
+    [dict get $window_dict cache_write_tokens] 30
+check "window cost includes cache read tokens inside the timestamp window" \
+    [dict get $window_dict cache_read_tokens] 40
+check "window cost prices the included usage only" \
+    [format %.7f [dict get $window_dict cost_usd]] 0.0017075
+file delete $winfix
+
 if {$failures == 0} {
     puts "\nAll tests passed."
 } else {
