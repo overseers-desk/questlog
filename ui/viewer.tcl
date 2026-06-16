@@ -66,6 +66,8 @@ oo::class create ::questlog::ui::Viewer {
     variable MenuTarget       ;# dict capturing the clicked target
     variable NextQid          ;# monotonic id for embedded quote boxes
     variable Drafts           ;# dict: qid -> box state
+    variable NextTableId      ;# monotonic id for rendered markdown tables
+    variable Tables           ;# dict: table id -> parsed payload, for tab re-fit
     variable Bodies           ;# dict: jsonl line -> raw body (for Copy message)
     variable MatchBtn         ;# head-strip "N matches" count, packed on demand
     variable MatchList        ;# listbox of per-match rows inside the band
@@ -126,6 +128,8 @@ oo::class create ::questlog::ui::Viewer {
         set MenuTarget [dict create]
         set NextQid 0
         set Drafts [dict create]
+        set NextTableId 0
+        set Tables [dict create]
         set Bodies [dict create]
         set MatchLabels [list]
         set MatchCountText ""
@@ -417,6 +421,10 @@ oo::class create ::questlog::ui::Viewer {
         $Text tag configure i-italic     -font QLBodyItalic
         $Text tag configure i-bolditalic -font QLBodyBoldItalic
         $Text tag configure i-code       -font QLMono
+        # Markdown table header cells: bold, so the header reads apart from the
+        # body without a drawn rule. Configured after the i-* tags so it wins on
+        # -font when it stacks over body in a header cell.
+        $Text tag configure tbl-head     -font QLBodyBold
         $Text tag configure recap     -background [::questlog::ui::theme::c recap]
         $Text tag configure find      -background [::questlog::ui::theme::c find]
         # End-of-session hint: a centred, deeply inset cue that the reader can
@@ -637,6 +645,7 @@ oo::class create ::questlog::ui::Viewer {
         $Text configure -state normal
         $Text delete 1.0 end
         set Roles [dict create]
+        set Tables [dict create]
         set RenderTs 0
         set RenderInSection 0
         foreach rec $Records {
@@ -931,13 +940,126 @@ oo::class create ::questlog::ui::Viewer {
         }
     }
 
-    # Insert a prose run into the main reading pane with inline markdown
-    # rendered. Each font tag stacks over body, so colour and margins are
-    # inherited and only the face changes. The trailing newline(s) are a
+    # Insert a prose-or-table run into the main reading pane. A run with no GFM
+    # pipe table renders unchanged: inline markdown via insert_runs, each font
+    # tag stacking over body so colour and margins are inherited and only the
+    # face changes. A run carrying a table is split into normal and table parts
+    # by segment_tables and rendered piecewise. The trailing newline(s) are a
     # rendering concern, passed as a suffix rather than parsed.
     method insert_prose {text {suffix "\n\n"}} {
-        my insert_runs $Text $text body
+        set segs [::questlog::jsonl::segment_tables $text]
+        set has_table 0
+        foreach s $segs { if {[lindex $s 0] eq "table"} { set has_table 1; break } }
+        if {!$has_table} {
+            my insert_runs $Text $text body
+            if {$suffix ne ""} { $Text insert end $suffix body }
+            return
+        }
+        foreach s $segs {
+            lassign $s kind payload
+            if {$kind eq "table"} {
+                my insert_table $payload
+            } else {
+                my insert_runs $Text $payload body
+            }
+        }
         if {$suffix ne ""} { $Text insert end $suffix body }
+    }
+
+    # Render a parsed GFM table {align rows} as tab-aligned columns. Each table
+    # gets its own tag tbl$id carrying the computed -tabs (so two tables never
+    # share column geometry) plus -wrap none (a row wider than the pane clips at
+    # the right edge rather than wrapping and breaking the columns). Cells render
+    # through insert_runs so inline markdown inside a cell still styles; header
+    # cells also carry tbl-head for bold. The payload is kept in Tables so a font
+    # change can recompute the stops (fit_table, via on_resize).
+    method insert_table {payload} {
+        set id [incr NextTableId]
+        set tag tbl$id
+        set ncol [llength [dict get $payload align]]
+        $Text tag configure $tag -wrap none -lmargin1 10 -lmargin2 10 \
+            -spacing1 1 -spacing3 1 -tabs [my compute_table_tabs $payload]
+        set first 1
+        foreach row [dict get $payload rows] {
+            for {set j 0} {$j < $ncol} {incr j} {
+                if {$j > 0} { $Text insert end "\t" [list body $tag] }
+                set base [list body $tag]
+                if {$first} { lappend base tbl-head }
+                my insert_runs $Text [lindex $row $j] $base
+            }
+            $Text insert end "\n" [list body $tag]
+            set first 0
+        }
+        $Text insert end "\n" body
+        dict set Tables $id $payload
+    }
+
+    # The -tabs spec for a table: N-1 stops (column 0 anchors at the left margin,
+    # so a delimiter asking right/center on column 0 falls back to left). A
+    # column's stop sits at its content's left edge (left), right edge (right) or
+    # centre (center); column content widths are the per-column max over all rows,
+    # the header measured bold. The gutter and stops scale with the reading font,
+    # so the table re-fits when the font changes. Floored by sane_tabs because Tk
+    # rejects a non-increasing or non-positive stop.
+    method compute_table_tabs {payload} {
+        set align [dict get $payload align]
+        set ncol [llength $align]
+        set lm 10
+        set gut [font measure QLBody "00"]
+        set cw [lrepeat $ncol 0]
+        set first 1
+        foreach row [dict get $payload rows] {
+            for {set j 0} {$j < $ncol} {incr j} {
+                set w [my cell_width [lindex $row $j] $first]
+                if {$w > [lindex $cw $j]} { lset cw $j $w }
+            }
+            set first 0
+        }
+        set stops [list]
+        set x $lm
+        for {set j 0} {$j < $ncol} {incr j} {
+            if {$j > 0} {
+                set a [lindex $align $j]
+                switch -- $a {
+                    right  { set pos [expr {$x + [lindex $cw $j]}] }
+                    center { set pos [expr {$x + [lindex $cw $j] / 2}] }
+                    default { set pos $x }
+                }
+                lappend stops $pos $a
+            }
+            set x [expr {$x + [lindex $cw $j] + $gut}]
+        }
+        return [::questlog::ui::sane_tabs $stops]
+    }
+
+    # The rendered pixel width of one cell, summing each inline run in the font
+    # it will paint in (so a bold or `code` span is measured at its real width,
+    # not under-measured in the base face). bold widens the plain runs, for a
+    # header cell.
+    method cell_width {text bold} {
+        set w 0
+        foreach run [::questlog::jsonl::parse_inline $text] {
+            lassign $run style chunk
+            switch -- $style {
+                code       { set f QLMono }
+                bold       { set f QLBodyBold }
+                italic     { set f QLBodyItalic }
+                bolditalic { set f QLBodyBoldItalic }
+                default    { set f [expr {$bold ? "QLBodyBold" : "QLBody"}] }
+            }
+            incr w [font measure $f $chunk]
+        }
+        return $w
+    }
+
+    # Recompute one table's tab stops under the current fonts. Stops depend on
+    # the font, not the pane width, so a pane resize recomputes the same values;
+    # the live path is a reading-font change, which routes through on_resize.
+    method fit_table {id} {
+        if {![dict exists $Tables $id]} return
+        set tag tbl$id
+        if {![llength [$Text tag ranges $tag]]} return
+        $Text tag configure $tag -tabs [my compute_table_tabs [dict get $Tables $id]]
     }
 
     # Insert one turn's body. Plain prose goes through insert_prose, which renders
@@ -1148,6 +1270,7 @@ oo::class create ::questlog::ui::Viewer {
 
     method on_resize {} {
         dict for {qid d} $Drafts { my fit_box $qid }
+        dict for {id  p} $Tables { my fit_table $id }
     }
 
     method build_menu {} {

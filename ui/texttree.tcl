@@ -40,6 +40,21 @@ package require Tk
 #   redraw_all                  re-render the whole list under a new sort
 #   relayout_content            re-fit every rendered row after a width change
 
+# Coerce a {pos align ...} tab spec to strictly increasing positive stops,
+# which Tk requires. Guards the degenerate column geometry a too-narrow width
+# (a build-time placeholder, or high DPI) can produce. Shared by the metadata
+# strip here and the viewer's table columns (ui/viewer.tcl).
+proc ::questlog::ui::sane_tabs {tabs} {
+    set out [list]
+    set prev 0
+    foreach {x align} $tabs {
+        if {$x <= $prev} { set x [expr {$prev + 1}] }
+        lappend out $x $align
+        set prev $x
+    }
+    return $out
+}
+
 oo::class create ::questlog::ui::TextTree {
     variable Top
     variable Text
@@ -199,7 +214,7 @@ oo::class create ::questlog::ui::TextTree {
         # right-to-left arithmetic can leave the leftmost stops non-positive, and
         # Tk rejects a tab stop that is not positive or not greater than the one
         # before it. The real positions recompute on <Configure> once mapped.
-        set ColTabs [my sane_tabs $ColTabs]
+        set ColTabs [::questlog::ui::sane_tabs $ColTabs]
         # Subject runs up to just before the leftmost metadata column.
         set first_rx [lindex $rights 0]
         set SubjectMax [expr {$first_rx - [lindex $ColW 0] - $ColGap - 12}]
@@ -210,20 +225,6 @@ oo::class create ::questlog::ui::TextTree {
         if {$FolderLabelMax < 60} { set FolderLabelMax 60 }
         my apply_column_tabs $ColTabs
         if {[winfo exists $Top.body.hdr]} { $Top.body.hdr configure -tabs $ColTabs }
-    }
-
-    # Coerce a {pos align ...} tab spec to strictly increasing positive stops,
-    # which Tk requires. Used to guard against the degenerate column geometry a
-    # too-narrow width (build-time placeholder, or high DPI) can produce.
-    method sane_tabs {tabs} {
-        set out [list]
-        set prev 0
-        foreach {x align} $tabs {
-            if {$x <= $prev} { set x [expr {$prev + 1}] }
-            lappend out $x $align
-            set prev $x
-        }
-        return $out
     }
 
     # Resize hook: when the width actually changes, re-pin the columns and
