@@ -4,7 +4,7 @@ package require json
 namespace eval ::questlog::jsonl {
     namespace export extract_text extract_blocks record_tool_uses \
         is_compact_boundary record_timestamp parse_iso fmt_gap first_cwd \
-        segment_blockquotes parse_inline
+        segment_blockquotes segment_tables parse_inline
 }
 
 # Parse one JSONL line into a Tcl dict. Returns "" on parse failure.
@@ -154,6 +154,133 @@ proc ::questlog::jsonl::segment_blockquotes {body} {
     if {[llength $buf]} { lappend segs [list normal [join $buf "\n"]] }
     if {[llength $q]}   { lappend segs [list quote  [join $q "\n"]] }
     return $segs
+}
+
+# Split a prose run into ordered {kind payload} segments, where kind is
+# "normal" (payload is raw text) or "table" (payload is a parsed GFM pipe
+# table). A table is a header line, a delimiter line of dashes with optional
+# alignment colons, and zero or more body rows, in the lenient GitHub form.
+# Both the header and the delimiter must carry a "|" so a setext underline
+# ("Heading" / "---") or a thematic break is never mistaken for a one-column
+# table; single-column tables therefore need the explicit "| h |" / "| - |"
+# form, as in cmark-gfm. Callers strip code fences first, so a fenced "|---|"
+# never reaches here. Pure; unit-tested.
+#
+# A table payload is {align <list> rows <list-of-rows>}: align is one of
+# left/right/center per column, rows[0] is the header, and every row is
+# normalised to the header's column count (short rows padded, long truncated,
+# per GFM).
+proc ::questlog::jsonl::segment_tables {text} {
+    set lines [split $text "\n"]
+    set n [llength $lines]
+    set segs [list]
+    set buf  [list]
+    set i 0
+    while {$i < $n} {
+        set tbl [::questlog::jsonl::table_at $lines $i]
+        if {$tbl eq ""} {
+            lappend buf [lindex $lines $i]
+            incr i
+            continue
+        }
+        if {[llength $buf]} {
+            lappend segs [list normal [join $buf "\n"]]
+            set buf [list]
+        }
+        lassign $tbl payload next
+        lappend segs [list table $payload]
+        set i $next
+    }
+    if {[llength $buf]} { lappend segs [list normal [join $buf "\n"]] }
+    return $segs
+}
+
+# If a GFM table starts at line index $i of $lines, return {payload next},
+# where next is the index just past the last consumed table line; else "".
+# The header is at $i, the delimiter at $i+1, body rows from $i+2 until a
+# blank line or the end of the run.
+proc ::questlog::jsonl::table_at {lines i} {
+    set n [llength $lines]
+    if {$i + 1 >= $n} { return "" }
+    set hdr_line [lindex $lines $i]
+    if {[string trim $hdr_line] eq ""} { return "" }
+    if {[string first "|" $hdr_line] < 0} { return "" }
+    set delim_line [lindex $lines [expr {$i + 1}]]
+    if {[string first "|" $delim_line] < 0} { return "" }
+    set header [::questlog::jsonl::split_row $hdr_line]
+    set ncol [llength $header]
+    if {$ncol < 1} { return "" }
+    set delim [::questlog::jsonl::split_row $delim_line]
+    if {[llength $delim] != $ncol} { return "" }
+    foreach c $delim {
+        if {![regexp {^:?-+:?$} $c]} { return "" }
+    }
+    set align [list]
+    foreach c $delim { lappend align [::questlog::jsonl::delim_align $c] }
+    set rows [list [::questlog::jsonl::norm_row $header $ncol]]
+    set j [expr {$i + 2}]
+    while {$j < $n} {
+        set ln [lindex $lines $j]
+        if {[string trim $ln] eq ""} break
+        lappend rows [::questlog::jsonl::norm_row \
+            [::questlog::jsonl::split_row $ln] $ncol]
+        incr j
+    }
+    return [list [dict create align $align rows $rows] $j]
+}
+
+# The column alignment a delimiter cell encodes: a leading colon means left,
+# a trailing colon right, both center, neither the left default.
+proc ::questlog::jsonl::delim_align {cell} {
+    set l [string match {:*} $cell]
+    set r [string match {*:} $cell]
+    if {$l && $r} { return center }
+    if {$r}       { return right }
+    return left
+}
+
+# Split one table row into trimmed cells. Splits on unescaped "|"; a
+# pipe-bounded row drops its empty leading/trailing cell; "\|" becomes a
+# literal "|" in the cell (parse_inline's escape map covers only \` \* \\, so
+# a surviving "\|" would leak a backslash into the rendered cell).
+proc ::questlog::jsonl::split_row {line} {
+    set line [string trim [string trimright $line "\r"]]
+    set cells [list]
+    set cur ""
+    set len [string length $line]
+    for {set k 0} {$k < $len} {incr k} {
+        set ch [string index $line $k]
+        if {$ch eq "\\" && [string index $line [expr {$k + 1}]] eq "|"} {
+            append cur "|"
+            incr k
+            continue
+        }
+        if {$ch eq "|"} {
+            lappend cells $cur
+            set cur ""
+            continue
+        }
+        append cur $ch
+    }
+    lappend cells $cur
+    if {[llength $cells] > 1 && [string trim [lindex $cells 0]] eq "" \
+            && [string index $line 0] eq "|"} {
+        set cells [lrange $cells 1 end]
+    }
+    if {[llength $cells] > 1 && [string trim [lindex $cells end]] eq "" \
+            && [string index $line end] eq "|"} {
+        set cells [lrange $cells 0 end-1]
+    }
+    set out [list]
+    foreach c $cells { lappend out [string trim $c] }
+    return $out
+}
+
+# Pad a row out to ncol cells, or truncate the overflow, per GFM.
+proc ::questlog::jsonl::norm_row {cells ncol} {
+    while {[llength $cells] < $ncol} { lappend cells "" }
+    if {[llength $cells] > $ncol} { set cells [lrange $cells 0 [expr {$ncol - 1}]] }
+    return $cells
 }
 
 # Parse one prose run into styled inline runs for the reading view. Returns an

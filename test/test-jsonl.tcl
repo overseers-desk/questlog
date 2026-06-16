@@ -192,6 +192,45 @@ no space}}} \
 check seg_blank_split {{quote first} {normal {}} {quote second}} \
     [::questlog::jsonl::segment_blockquotes "> first\n\n> second"]
 
+# segment_tables: split a prose run into {normal text} / {table payload}
+# segments, payload = {align <per-col> rows <header-then-body>}. Expected
+# values are built the same way the proc builds them (list + dict create), so
+# a dict-ordering quirk can never make a correct result read as a failure.
+check tbl_basic \
+    [list [list table [dict create align {left left} rows {{H1 H2} {a b}}]]] \
+    [::questlog::jsonl::segment_tables "| H1 | H2 |\n| --- | --- |\n| a | b |"]
+check tbl_align \
+    [list [list table [dict create align {left right center} \
+        rows {{L R C} {1 2 3}}]]] \
+    [::questlog::jsonl::segment_tables "| L | R | C |\n| :-- | --: | :-: |\n| 1 | 2 | 3 |"]
+check tbl_unbounded \
+    [list [list table [dict create align {left left} rows {{a b} {1 2}}]]] \
+    [::questlog::jsonl::segment_tables "a | b\n- | -\n1 | 2"]
+check tbl_escape \
+    [list [list table [dict create align {left left} \
+        rows [list {H1 H2} [list "a | b" c]]]]] \
+    [::questlog::jsonl::segment_tables "| H1 | H2 |\n| - | - |\n| a \\| b | c |"]
+check tbl_ragged \
+    [list [list table [dict create align {left left left} \
+        rows {{H1 H2 H3} {a b {}} {c d e}}]]] \
+    [::questlog::jsonl::segment_tables \
+        "| H1 | H2 | H3 |\n| - | - | - |\n| a | b |\n| c | d | e | f |"]
+check tbl_header_only \
+    [list [list table [dict create align {left left} rows {{H1 H2}}]]] \
+    [::questlog::jsonl::segment_tables "| H1 | H2 |\n| - | - |"]
+check tbl_setext \
+    [list [list normal "Heading\n---\nbody"]] \
+    [::questlog::jsonl::segment_tables "Heading\n---\nbody"]
+check tbl_pipe_no_delim \
+    [list [list normal "| not a table |\njust text"]] \
+    [::questlog::jsonl::segment_tables "| not a table |\njust text"]
+check tbl_interleave \
+    [list [list normal "intro\n"] \
+        [list table [dict create align {left left} rows {{H1 H2} {a b}}]] \
+        [list normal "\noutro"]] \
+    [::questlog::jsonl::segment_tables \
+        "intro\n\n| H1 | H2 |\n| - | - |\n| a | b |\n\noutro"]
+
 if {$fails > 0} {
     puts "$fails failures"
     exit 1
