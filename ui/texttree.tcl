@@ -250,8 +250,8 @@ oo::class create ::questlog::ui::TextTree {
     # The sortable column header lives in row 0 of the body grid (created in
     # build_body, so it shares the text's width). It shares a row's font and tab
     # stops, so its right-pinned labels sit over the columns. Clicking a metadata
-    # column sorts by it; clicking the active one flips the direction. The
-    # subject zone on the left is not sortable.
+    # column sorts by it; clicking the active one flips the direction. Clicking
+    # the subject zone sorts by the domain's subject key, when it defines one.
     method build_header {} {
         set h $Top.body.hdr
         $h tag configure colactive -font QLBold -foreground [::questlog::ui::theme::c ink]
@@ -259,9 +259,15 @@ oo::class create ::questlog::ui::TextTree {
         my draw_header
     }
 
+    # The domain's sort id for the non-metadata subject zone, or "" when the
+    # subject is not sortable (the engine default). A subclass overrides this so
+    # the leftmost header sorts.
+    method subject_sort_id {} { return "" }
+
     # Map a header click x (widget pixels) to a metadata column and sort by it.
-    # Each column occupies [right_edge - width, right_edge]; a click in the
-    # subject area or the gaps falls through and sorts nothing.
+    # Each column occupies [right_edge - width, right_edge]; a click left of the
+    # leftmost column is the subject zone and sorts by the domain's subject key,
+    # when it defines one; a click in the gaps sorts nothing.
     method on_header_click {x} {
         set cx [expr {$x - 8}]
         set cols [my column_spec]
@@ -274,16 +280,25 @@ oo::class create ::questlog::ui::TextTree {
                 return
             }
         }
+        set first_lo [expr {[lindex $ColRightX 0] - [lindex $ColW 0] - 6}]
+        if {$cx < $first_lo} {
+            set sid [my subject_sort_id]
+            if {$sid ne ""} { my set_sort $sid }
+        }
     }
 
-    # Adopt a new sort key (descending), or flip the direction when the active
-    # key is clicked again, then re-render the list in the new order.
+    # The direction a freshly-adopted sort key starts in. Metadata columns lead
+    # with their largest value (descending); a subclass may override per id.
+    method default_sort_dir {id} { return "desc" }
+
+    # Adopt a new sort key in its default direction, or flip the direction when
+    # the active key is clicked again, then re-render the list in the new order.
     method set_sort {id} {
         if {$SortKey eq $id} {
             set SortDir [expr {$SortDir eq "desc" ? "asc" : "desc"}]
         } else {
             set SortKey $id
-            set SortDir "desc"
+            set SortDir [my default_sort_dir $id]
         }
         my cancel_resort
         my redraw_all
@@ -300,6 +315,12 @@ oo::class create ::questlog::ui::TextTree {
         set line "Session"
         set act_off -1
         set act_len 0
+        set subj_id [my subject_sort_id]
+        if {$subj_id ne "" && $SortKey eq $subj_id} {
+            append line [expr {$SortDir eq "desc" ? " ▾" : " ▴"}]
+            set act_off 0
+            set act_len [string length $line]
+        }
         foreach col [my column_spec] {
             lassign $col id label
             append line "\t"
@@ -338,10 +359,13 @@ oo::class create ::questlog::ui::TextTree {
         return [lmap e [lsort -real -index 1 $dir $keyed] { lindex $e 0 }]
     }
 
-    method sort_folders {order foldercost} {
-        set keyed [lmap f $order { list $f [dict getdef $foldercost $f 0.0] }]
+    # Order folder keys by a folder->value map. mode picks the lsort comparator:
+    # -real for the numeric cost aggregate, -dictionary for the string path label.
+    method sort_folders {order valmap {mode -real}} {
+        set dflt [expr {$mode eq "-real" ? 0.0 : ""}]
+        set keyed [lmap f $order { list $f [dict getdef $valmap $f $dflt] }]
         set dir [expr {$SortDir eq "asc" ? "-increasing" : "-decreasing"}]
-        return [lmap e [lsort -real -index 1 $dir $keyed] { lindex $e 0 }]
+        return [lmap e [lsort $mode -index 1 $dir $keyed] { lindex $e 0 }]
     }
 
     method is_default_sort {} {

@@ -1287,6 +1287,12 @@ oo::class create ::questlog::ui::SessionList {
         }
     }
 
+    # The leftmost subject zone sorts the folders by their displayed path; a
+    # path reads naturally A->Z, so it adopts ascending while the metric columns
+    # keep descending.
+    method subject_sort_id {} { return "path" }
+    method default_sort_dir {id} { return [expr {$id eq "path" ? "asc" : "desc"}] }
+
     # ---- engine hook: the row subject (left side) ---------------------
 
     # Build a node's subject: the left side per kind, ellipsised to fit before
@@ -2145,11 +2151,13 @@ oo::class create ::questlog::ui::SessionList {
         set saved [dict create]          ;# session path -> payload snapshot
         set wasexp [dict create]
         set foldercost [dict create]
+        set folderlabel [dict create]
         foreach fid $Roots {
             set folder [my node_field $fid key]
             lappend order $folder
             dict set wasexp $folder [my node_field $fid expanded]
             dict set foldercost $folder [my node_pget $fid cost 0.0]
+            dict set folderlabel $folder [my node_pget $fid label ""]
             set paths [list]
             foreach sid [my node_field $fid children] {
                 set path [my node_field $sid key]
@@ -2158,9 +2166,14 @@ oo::class create ::questlog::ui::SessionList {
             }
             dict set byfolder $folder $paths
         }
-        # Sorting by cost reorders the folders by their aggregate too; the other
-        # keys keep the folders in arrival order.
-        if {$SortKey eq "cost"} { set order [my sort_folders $order $foldercost] }
+        # Cost reorders the folders by their aggregate, path by their displayed
+        # name; the other keys keep the folders in arrival order and reorder only
+        # the sessions within each.
+        if {$SortKey eq "cost"} {
+            set order [my sort_folders $order $foldercost -real]
+        } elseif {$SortKey eq "path"} {
+            set order [my sort_folders $order $folderlabel -dictionary]
+        }
         my reset_model
         # Folder costs were dropped with the model; reset TotalCost too so the
         # bumps in model_add_session re-establish both consistently.
