@@ -1,11 +1,11 @@
 #!/usr/bin/env wish9.0
 # Regression test for sorting the main column (folder path).
 #
-# The metadata columns (date/size/cost/...) sort the list; the leftmost subject
-# zone, which shows each folder's path, did not. Clicking it now orders the
-# FOLDERS by their displayed path (ascending on first click, A->Z), while the
-# sessions inside each folder keep their date-descending order. This drives that
-# and asserts:
+# The metadata columns (date/size/cost/...) sort the list, and the leftmost
+# subject zone, which shows each folder's path, sorts the FOLDERS by that
+# displayed path: ascending on the first click (A->Z), flipping on re-click,
+# while the sessions inside each folder keep their date-descending order. This
+# drives it and asserts:
 #   1. a subject-zone header click adopts the "path" sort;
 #   2. path-ascending orders the folders by label A->Z (a real reorder, not the
 #      arrival/date order);

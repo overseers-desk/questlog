@@ -21,9 +21,9 @@ namespace eval ::questlog::ui {
 # fixed strip flush to the right edge, in this left-to-right order. Turns,
 # Duration and Model are filled by the cost second pass (the forward scan stops
 # at the second user record and computes none of them); Model is the session's
-# last non-sidechain assistant model and is not sortable (the engine sorts
-# numerically only). The actions column carries the row's "⋯" overflow control
-# and is not sortable.
+# last non-sidechain assistant model and is not sortable (the per-session sort
+# keys are numeric, and a model name has none). The actions column carries the
+# row's "⋯" overflow control and is not sortable.
 proc ::questlog::ui::session_columns {} {
     return {
         {date     Date     {Wed 30 May 12:30} right 1}
