@@ -734,11 +734,33 @@ proc ::questlog::ui::app::on_move_request {paths} {
         set current_folder [dict get $row folder]
     }
     ::questlog::ui::move_dialog::open . [llength $paths] $current_folder \
-        [list [namespace current]::on_picker_done $paths]
+        [list [namespace current]::on_picker_done $paths] \
+        [list [namespace current]::live_move_names $paths]
 }
 
 proc ::questlog::ui::app::on_picker_done {paths dst_cwd} {
     do_move_batch $paths $dst_cwd
+}
+
+# The display names of the would-be-moved sessions that are running right now,
+# re-read from the live set each call so the move dialog re-enables when one
+# quits. A live session cannot be moved; the move dialog blocks on this.
+proc ::questlog::ui::app::live_move_names {paths} {
+    variable Running
+    variable Scan
+    set out [list]
+    foreach p $paths {
+        if {![dict exists $Running [file rootname [file tail $p]]]} continue
+        set row [$Scan lookup $p]
+        set name ""
+        if {$row ne ""} {
+            set name [dict getdef $row slug ""]
+            if {$name eq ""} { set name [dict getdef $row first_user ""] }
+        }
+        if {$name eq ""} { set name [file rootname [file tail $p]] }
+        lappend out $name
+    }
+    return $out
 }
 
 # Drop-move resolves the dropped-on folder basename to its real cwd via the
@@ -779,6 +801,13 @@ proc ::questlog::ui::app::do_move_batch {paths dst_cwd} {
 proc ::questlog::ui::app::move_one {src_path dst_cwd} {
     variable SessionList
     variable Scan
+    variable Running
+    # A live session must not be moved: renaming its jsonl out from under the
+    # running process splits the transcript. The move dialog disables Move while
+    # any are live; this guards the drag path too (and a race in either).
+    if {[dict exists $Running [file rootname [file tail $src_path]]]} {
+        error "session is live; close it before moving"
+    }
     set src_basename [file tail [file dirname $src_path]]
     if {![catch {::questlog::path::encode_cwd $dst_cwd} dst_basename]
         && $dst_basename eq $src_basename} {
