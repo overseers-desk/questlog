@@ -10,7 +10,7 @@
 # entry indices the host needs for the per-open `apply_state` pass. Rebuilding
 # on every popup keeps the target current with no stale-capture hazard.
 #
-# ctx keys:
+# ctx keys (single-session mode, the default):
 #   target    dict {path uuid cwd folder}
 #   parent    a window for dialogs (tk_getSaveFile / tk_messageBox -parent)
 #   clipboard command prefix; invoked {*}$clip <string>
@@ -18,6 +18,14 @@
 #   on_move   command prefix; invoked {*}$cb [list path]
 #   on_bookmark command prefix; invoked {*}$cb path
 #   on_rename command prefix; invoked {*}$cb path
+#
+# ctx keys (mode=multi, a multi-selection): only the actions that apply to many
+# sessions at once.
+#   mode           "multi"
+#   paths          the selected session paths
+#   all_bookmarked 1 iff every path already carries the bookmark bit
+#   on_move        command prefix; invoked {*}$cb $paths
+#   on_bookmark_set command prefix; invoked {*}$cb $paths
 
 namespace eval ::questlog::ui::session_actions {}
 
@@ -28,6 +36,9 @@ proc ::questlog::ui::session_actions::tget {ctx key} {
 
 proc ::questlog::ui::session_actions::populate {menu ctx} {
     $menu delete 0 end
+    if {[dict getdef $ctx mode single] eq "multi"} {
+        return [populate_multi $menu $ctx]
+    }
     set indices [dict create resume_indices {} reveal_index -1 \
         bookmark_index -1]
 
@@ -76,6 +87,22 @@ proc ::questlog::ui::session_actions::populate {menu ctx} {
         -command [concat [dict get $ctx on_rename] [list [tget $ctx path]]]
 
     return $indices
+}
+
+# The multi-selection menu: Move and Bookmark, the two actions defined over a
+# set of sessions. Labels carry the count; the bookmark label states the
+# tri-state outcome (remove from all when all already carry the bit, else add
+# to all). Static, so no apply_state pass is needed.
+proc ::questlog::ui::session_actions::populate_multi {menu ctx} {
+    set paths [dict get $ctx paths]
+    set n [llength $paths]
+    $menu add command -label "Move $n sessions to..." \
+        -command [concat [dict get $ctx on_move] [list $paths]]
+    set bm_label [expr {[dict get $ctx all_bookmarked] \
+        ? "Remove bookmark from $n sessions" : "Add bookmark to $n sessions"}]
+    $menu add command -label $bm_label \
+        -command [concat [dict get $ctx on_bookmark_set] [list $paths]]
+    return [dict create resume_indices {} reveal_index -1 bookmark_index -1]
 }
 
 # Per-open dynamic pass: grey what the target cannot support and set the

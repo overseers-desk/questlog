@@ -57,7 +57,7 @@ proc subagent_cost_cb {path} {
     lappend ::cost_calls $path
 }
 
-set SL [::questlog::ui::SessionList new .s resolvef lookup noop noop noop noop noop scanpath noop noop subagentsf subagent_cost_cb]
+set SL [::questlog::ui::SessionList new .s resolvef lookup noop noop noop noop noop noop scanpath noop noop subagentsf subagent_cost_cb]
 pack .s -fill both -expand 1
 $SL apply_filter [dict create since 7d one_turn 0]
 

@@ -1,0 +1,146 @@
+#!/usr/bin/env wish9.0
+# Multi-selection model for the session list.
+#
+# The list holds a set of selected session paths (SelectedSet) with an anchor.
+# A plain click selects one; Control toggles one across folders; Shift selects a
+# contiguous range within one folder. The set is path-keyed, so it survives a
+# move (relocate_card re-keys it) and a delete (forget_session drops it). This
+# drives the model directly over a two-folder sandbox and asserts each gesture
+# and each survival path.
+
+package require Tcl 9
+package require Tk
+
+set SAND [file join [pwd] _selection_sandbox]
+set FA "-tmp-sel-a"
+set FB "-tmp-sel-b"
+
+set ROOT [file dirname [file dirname [file normalize [info script]]]]
+foreach f {config.tcl lib/cost.tcl ui/theme.tcl lib/path.tcl lib/filter.tcl lib/jsonl.tcl \
+           lib/match.tcl ui/terminal.tcl ui/live.tcl lib/scan.tcl lib/search.tcl \
+           ui/drag.tcl ui/toolbar.tcl ui/texttree.tcl ui/sessions.tcl} {
+    source [file join $ROOT $f]
+}
+::questlog::ui::theme::init
+
+::questlog::path::_real_file delete -force $SAND
+set DIRA [file join $SAND .claude projects $FA]
+set DIRB [file join $SAND .claude projects $FB]
+::questlog::path::_real_file mkdir $DIRA
+::questlog::path::_real_file mkdir $DIRB
+set ::env(HOME) $SAND
+
+proc noop {args} {}
+
+proc write_session {path ts} {
+    set fh [open $path w]
+    puts $fh "{\"type\":\"user\",\"cwd\":\"/tmp/proj\",\"timestamp\":\"${ts}Z\",\"message\":{\"role\":\"user\",\"content\":\"hello\"}}"
+    puts $fh "{\"type\":\"assistant\",\"timestamp\":\"${ts}Z\",\"message\":{\"model\":\"claude-3-5-sonnet-20241022\",\"usage\":{\"input_tokens\":100,\"output_tokens\":50}}}"
+    puts $fh "{\"type\":\"user\",\"timestamp\":\"${ts}Z\",\"message\":{\"role\":\"user\",\"content\":\"more\"}}"
+    close $fh
+}
+
+# Folder A: a01 newest .. a03 oldest, so date-descending display order is
+# a01, a02, a03. Folder B: b01, b02.
+set A {}
+for {set i 1} {$i <= 3} {incr i} {
+    set p [file join $DIRA [format a%02d $i].jsonl]
+    set day [format %02d [expr {13 - $i}]]
+    write_session $p "2026-06-${day}T10:00:00"
+    file mtime $p [clock scan "2026-06-${day} 10:00:00" -gmt 1]
+    lappend A $p
+}
+set B {}
+for {set i 1} {$i <= 2} {incr i} {
+    set p [file join $DIRB [format b%02d $i].jsonl]
+    set day [format %02d [expr {9 - $i}]]
+    write_session $p "2026-06-${day}T10:00:00"
+    file mtime $p [clock scan "2026-06-${day} 10:00:00" -gmt 1]
+    lappend B $p
+}
+lassign $A a01 a02 a03
+lassign $B b01 b02
+
+set SL ""
+set ::Scan [::questlog::Scan new [list apply {{r} { $::SL on_scan_row $r }}] noop]
+proc lookup {path}   { return [$::Scan lookup $path] }
+proc scanpath {path} { return [$::Scan scan_path $path] }
+proc resolvef {f}    { return "/tmp/proj" }
+proc subagentsf {path} { return [$::Scan subagents_for $path] }
+
+set SL [::questlog::ui::SessionList new .s resolvef lookup noop noop noop noop noop \
+            noop scanpath noop noop subagentsf noop]
+pack .s -fill both -expand 1
+
+set fails 0
+proc check {name got want} {
+    if {$got eq $want} {
+        puts "ok   - $name"
+    } else {
+        puts "FAIL - $name"
+        puts "       got:  $got"
+        puts "       want: $want"
+        incr ::fails
+    }
+}
+# Selection as a sorted list, so order of toggles does not make the test flap.
+proc sel {} { return [lsort [$::SL selection_paths]] }
+
+$SL apply_filter [dict create since 30d one_turn 0]
+set ::scan_done 0
+$::Scan extend [dict create since 30d one_turn 0]
+after 200 [list set ::scan_done 1]
+vwait ::scan_done
+$SL toggle_folder $FA
+$SL toggle_folder $FB
+update
+
+check "both folders streamed in" \
+    [list [llength [$SL folder_session_paths $FA]] [llength [$SL folder_session_paths $FB]]] \
+    {3 2}
+check "folder_visible_paths is date-descending order" \
+    [$SL folder_visible_paths $FA] [list $a01 $a02 $a03]
+
+# ---- plain select --------------------------------------------------------
+$SL selection_set $a02
+check "plain select picks exactly one" [sel] [list $a02]
+check "is_selected true for the member" [$SL is_selected $a02] 1
+check "is_selected false for a non-member" [$SL is_selected $a01] 0
+
+# ---- Control toggle, same folder then across folders ---------------------
+$SL selection_toggle $a01
+check "ctrl-add a second in the same folder" [sel] [lsort [list $a01 $a02]]
+$SL selection_toggle $b01
+check "ctrl-add across folders (safe)" [sel] [lsort [list $a01 $a02 $b01]]
+$SL selection_toggle $a01
+check "ctrl-remove drops just that one" [sel] [lsort [list $a02 $b01]]
+
+# ---- Shift range, confined to one folder ---------------------------------
+$SL selection_set $a01
+$SL selection_range $a03
+check "shift-range covers the folder slice anchor..target" [sel] [lsort [list $a01 $a02 $a03]]
+$SL selection_set $a03
+$SL selection_range $a01
+check "shift-range is order-independent (target above anchor)" [sel] [lsort [list $a01 $a02 $a03]]
+
+# A shift-click in another folder than the anchor re-anchors there instead of
+# selecting an undefined cross-folder range.
+$SL selection_set $a01
+$SL selection_range $b02
+check "cross-folder shift re-anchors to the target alone" [sel] [list $b02]
+
+# ---- selection survives a move (relocate_card re-keys the set) -----------
+$SL selection_set $a02
+set moved [file join $DIRB moved.jsonl]
+$SL relocate_card $a02 $moved $FB
+check "moved member follows to its new path" [$SL is_selected $moved] 1
+check "old path is no longer selected" [$SL is_selected $a02] 0
+
+# ---- selection survives a delete (forget_session drops the member) -------
+$SL selection_set $a01
+$SL forget_session $a01
+check "deleting the selected session empties the set" [$SL selection_count] 0
+
+::questlog::path::_real_file delete -force $SAND
+puts [expr {$fails ? "FAILED ($fails)" : "PASS"}]
+exit $fails

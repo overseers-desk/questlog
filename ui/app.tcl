@@ -159,6 +159,7 @@ proc ::questlog::ui::app::start {root {initial_criteria {}} {init_since ""} {ini
         [namespace code on_move_request] \
         [namespace code on_drop_move] \
         [namespace code on_bookmark_toggle] \
+        [namespace code on_bookmark_set] \
         [namespace code on_rename_request] \
         [namespace code on_scan_path] \
         [namespace code on_search_cancel] \
@@ -811,6 +812,32 @@ proc ::questlog::ui::app::on_bookmark_toggle {path} {
     }
     $Scan set_bookmark_field $path
     $SessionList reconcile_one $path
+}
+
+# Bookmark a whole selection. The bit is the truth: add it to every session
+# unless they all already carry it, in which case remove it from all (the same
+# tri-state the multi menu's label states). Failures are collected and reported
+# once. Each successful flip refreshes its cached field and re-derives that
+# row's marker, like the single toggle.
+proc ::questlog::ui::app::on_bookmark_set {paths} {
+    variable Scan
+    variable SessionList
+    set add 0
+    foreach p $paths { if {![file executable $p]} { set add 1; break } }
+    set failures [list]
+    foreach p $paths {
+        set op [expr {$add ? "set_bookmark" : "clear_bookmark"}]
+        if {[catch {::questlog::path::$op $p} err]} {
+            lappend failures "[file tail $p]: $err"
+            continue
+        }
+        $Scan set_bookmark_field $p
+        $SessionList reconcile_one $p
+    }
+    if {[llength $failures] > 0} {
+        tk_messageBox -icon error -title "Bookmark" \
+            -message "Bookmark failed:\n[join $failures \n]"
+    }
 }
 
 # Rename, GUI side. The rename itself is a path-only domain op in lib/rename.tcl,

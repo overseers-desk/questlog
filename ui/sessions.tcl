@@ -99,6 +99,7 @@ oo::class create ::questlog::ui::SessionList {
     variable OnMoveRequest    ;# cb: paths -> open move picker
     variable OnDropMove       ;# cb: paths folder -> direct move
     variable OnBookmarkToggle ;# cb: path -> flip the +x bookmark bit
+    variable OnBookmarkSet    ;# cb: paths -> flip the +x bit across a selection
     variable OnRename         ;# cb: path -> app rename router (dialog + apply + refresh)
     variable OnScanPath       ;# cb: path -> row (synchronous single-file scan)
     variable OnShowAll        ;# cb: () -> ask the toolbar to drop the auto-under
@@ -113,7 +114,8 @@ oo::class create ::questlog::ui::SessionList {
     variable FolderNode       ;# folder name -> node id
     variable PathNode         ;# session path OR subagent path -> node id
     variable TagNode          ;# folder node.tag -> node id, for drop hit-testing
-    variable Selected         ;# currently selected session path, or ""
+    variable SelectedSet      ;# ordered set (dict path->1) of selected sessions
+    variable SelectAnchor     ;# path a Shift-range extends from, or ""
     variable Menu
     variable MenuPath
     variable MenuTarget
@@ -126,7 +128,8 @@ oo::class create ::questlog::ui::SessionList {
     variable OnSubagentCost   ;# cb: child path -> start the cost pass for it
 
     constructor {parent resolve_cb lookup_cb on_open on_move_request \
-                 on_drop_move on_bookmark_toggle on_rename on_scan_path cancel_cb \
+                 on_drop_move on_bookmark_toggle on_bookmark_set on_rename \
+                 on_scan_path cancel_cb \
                  on_show_all on_subagents on_subagent_cost} {
         set Top $parent
         set ResolveFolder $resolve_cb
@@ -135,6 +138,7 @@ oo::class create ::questlog::ui::SessionList {
         set OnMoveRequest $on_move_request
         set OnDropMove $on_drop_move
         set OnBookmarkToggle $on_bookmark_toggle
+        set OnBookmarkSet $on_bookmark_set
         set OnRename $on_rename
         set OnScanPath $on_scan_path
         set CancelCb $cancel_cb
@@ -149,7 +153,8 @@ oo::class create ::questlog::ui::SessionList {
         set RunningSet [dict create]
         set PrevRunning [dict create]
         set Query [dict create terms [list] nocase 0]
-        set Selected ""
+        set SelectedSet [dict create]
+        set SelectAnchor ""
         set NextId 0
         # Default sort reproduces the streaming order (mtime descending), so a
         # fresh list looks exactly as before any header is clicked.
@@ -170,7 +175,6 @@ oo::class create ::questlog::ui::SessionList {
         set FolderNode [dict create]
         set PathNode [dict create]
         set TagNode [dict create]
-        set Selected ""
     }
 
     # ---- public payload accessors (white-box tests, and any caller that
@@ -422,6 +426,10 @@ oo::class create ::questlog::ui::SessionList {
         $Text mark gravity TailMark right
         $Text configure -state disabled
         my reset_model
+        # A fresh filter/search is a new view; drop the selection (reset_model
+        # keeps the node store only, so a rebuild via redraw_all preserves it).
+        set SelectedSet [dict create]
+        set SelectAnchor ""
         set TotalCost 0.0
         set StatusBase ""
         my refresh_status
@@ -670,6 +678,15 @@ oo::class create ::questlog::ui::SessionList {
             [list [self] on_session_press $path %X %Y]
         $Text tag bind $stag <ButtonRelease-1> \
             [list [self] on_session_release $path %X %Y]
+        # Shift/Control extend the selection. The modifier press is a no-op that
+        # only outranks the plain <ButtonPress-1> above, so a modified click arms
+        # no drag; the gesture resolves on the modified release.
+        $Text tag bind $stag <Shift-ButtonPress-1>   [list [self] on_modified_press]
+        $Text tag bind $stag <Control-ButtonPress-1> [list [self] on_modified_press]
+        $Text tag bind $stag <Shift-ButtonRelease-1> \
+            [list [self] on_session_shift_release $path %X %Y]
+        $Text tag bind $stag <Control-ButtonRelease-1> \
+            [list [self] on_session_ctrl_release $path %X %Y]
         # Tk's <<ContextMenu>> virtual event already maps to the right button
         # per platform (Button-2 on Aqua, Button-3 elsewhere); app.tcl extends
         # it with Control-Button-1 on Aqua so Ctrl+click works too.
@@ -685,7 +702,7 @@ oo::class create ::questlog::ui::SessionList {
             my render_snippet $path $btype $content $lineoff
         }
         if {[my node_field $sid expanded]} { my render_children $path }
-        if {$Selected eq $path} {
+        if {[my is_selected $path]} {
             $Text tag add selected $smark "$smark lineend"
         }
     }
@@ -1246,7 +1263,7 @@ oo::class create ::questlog::ui::SessionList {
             }
             actions {
                 if {$kind eq "session" \
-                    && $Selected eq [my node_field $node key]} {
+                    && [my is_selected [my node_field $node key]]} {
                     return {actioncell actioncell-bright}
                 }
                 return {actioncell}
@@ -1398,7 +1415,7 @@ oo::class create ::questlog::ui::SessionList {
             [list sessionhead $stag]
         $Text mark set $smark $s0
         my apply_line $sid $s0 $info
-        if {$Selected eq $path} {
+        if {[my is_selected $path]} {
             $Text tag add selected $s0 [my node_field $sid end]
         }
     }
@@ -1483,9 +1500,17 @@ oo::class create ::questlog::ui::SessionList {
     }
 
     method expand_folder {folder} {
-        foreach path [my sort_paths [my folder_session_paths $folder] [my folder_session_src $folder]] {
+        foreach path [my folder_visible_paths $folder] {
             my render_session $path
         }
+    }
+
+    # A folder's session paths in the on-screen (sorted) order - the order a
+    # Shift-range walks and that expand_folder renders. The one place the
+    # display order of a folder's sessions is defined.
+    method folder_visible_paths {folder} {
+        return [my sort_paths [my folder_session_paths $folder] \
+                              [my folder_session_src $folder]]
     }
 
     # A folder's session paths, in the order they sit under the folder node.
@@ -1753,25 +1778,96 @@ oo::class create ::questlog::ui::SessionList {
     }
 
     # ---- selection / open --------------------------------------------
+    #
+    # The selection is a set of session paths (SelectedSet, a dict path->1 in
+    # insertion order) with a SelectAnchor the Shift-range extends from. A plain
+    # click selects one and opens it; Control toggles one (across folders);
+    # Shift selects a contiguous range within one folder. Membership is keyed by
+    # path, so it survives the frequent re-renders and follows a moved session.
 
-    # Select the whole session object - its header and any snippets - as one
-    # highlighted block (the full-width region, not a text run).
-    method select {path} {
-        set prev $Selected
-        if {$Selected ne "" && [my has_session $Selected] \
-            && [my sflag $Selected rendered]} {
-            set osid [my sid $Selected]
-            catch {$Text tag remove selected [my node_field $osid start] \
-                                             [my node_field $osid end]}
-        }
-        set Selected $path
+    method is_selected {path}   { return [dict exists $SelectedSet $path] }
+    method selection_paths {}   { return [dict keys $SelectedSet] }
+    method selection_count {}   { return [dict size $SelectedSet] }
+
+    # Add or remove the `selected` highlight on one rendered session, and match
+    # its ⋯ control brightness. A no-op for an absent or unrendered row (the
+    # render path reapplies from membership when the row appears).
+    method apply_selection_tag {path on} {
         if {[my has_session $path] && [my sflag $path rendered]} {
             set sid [my sid $path]
-            $Text tag add selected [my node_field $sid start] [my node_field $sid end]
+            if {$on} {
+                $Text tag add selected [my node_field $sid start] [my node_field $sid end]
+            } else {
+                catch {$Text tag remove selected [my node_field $sid start] \
+                                                 [my node_field $sid end]}
+            }
         }
-        # The selected row shows its ⋯ bright; the row losing selection re-fades.
-        if {$prev ne "" && $prev ne $path} { my action_set_bright $prev 0 }
-        my action_set_bright $path 1
+        my action_set_bright $path $on
+    }
+
+    # Reapply every member's highlight; the repaint hook after a full rebuild.
+    method repaint_selection {} {
+        foreach path [my selection_paths] { my apply_selection_tag $path 1 }
+    }
+
+    # Replace the selection with the new set (a path list), repainting only the
+    # rows that entered or left it. Shared by every gesture.
+    method set_selection {paths} {
+        set new [dict create]
+        foreach p $paths { dict set new $p 1 }
+        foreach p [dict keys $SelectedSet] {
+            if {![dict exists $new $p]} { my apply_selection_tag $p 0 }
+        }
+        foreach p [dict keys $new] {
+            if {![dict exists $SelectedSet $p]} { my apply_selection_tag $p 1 }
+        }
+        set SelectedSet $new
+    }
+
+    # Plain click: the selection is exactly this one, and it anchors a range.
+    method selection_set {path} {
+        my set_selection [list $path]
+        set SelectAnchor $path
+    }
+
+    # Control click: add or drop one session, across folders; re-anchor to it.
+    method selection_toggle {path} {
+        if {[my is_selected $path]} {
+            set keep [list]
+            foreach p [my selection_paths] { if {$p ne $path} { lappend keep $p } }
+            my set_selection $keep
+        } else {
+            my set_selection [concat [my selection_paths] [list $path]]
+        }
+        set SelectAnchor $path
+    }
+
+    # Shift click: the contiguous run between the anchor and this row, in the
+    # folder's visible (sorted) order. A range spans one folder only; a Shift
+    # click in another folder re-anchors there instead (a range across folders
+    # is not a meaningful selection). The anchor stays put so dragging the
+    # endpoint grows or shrinks the run from the same origin.
+    method selection_range {path} {
+        if {$SelectAnchor eq "" || ![my has_session $SelectAnchor]} {
+            my selection_set $path
+            return
+        }
+        set folder [my sget $SelectAnchor folder]
+        if {![my has_session $path] || [my sget $path folder] ne $folder} {
+            my selection_set $path
+            return
+        }
+        set ordered [my folder_visible_paths $folder]
+        set ia [lsearch -exact $ordered $SelectAnchor]
+        set ib [lsearch -exact $ordered $path]
+        if {$ia < 0 || $ib < 0} { my selection_set $path; return }
+        if {$ia > $ib} { lassign [list $ib $ia] ia ib }
+        my set_selection [lrange $ordered $ia $ib]
+    }
+
+    method selection_clear {} {
+        my set_selection [list]
+        set SelectAnchor ""
     }
 
     method open_session {path {lineno -1}} {
@@ -1802,13 +1898,31 @@ oo::class create ::questlog::ui::SessionList {
         }
         set was_drag [::questlog::ui::drag::release $X $Y]
         if {$was_drag} return
-        my select $path
+        # A plain click collapses any multi-selection back to this one row.
+        my selection_set $path
         my open_session $path
     }
 
+    # Control release: toggle this row in the selection, across folders. No open.
+    method on_session_ctrl_release {path X Y} {
+        if {[my click_on_action $X $Y] || [my click_on_chevron $X $Y]} return
+        if {[::questlog::ui::drag::release $X $Y]} return
+        my selection_toggle $path
+    }
+
+    # Shift release: extend the range to this row within its folder. No open.
+    method on_session_shift_release {path X Y} {
+        if {[my click_on_action $X $Y] || [my click_on_chevron $X $Y]} return
+        if {[::questlog::ui::drag::release $X $Y]} return
+        my selection_range $path
+    }
+
+    # A modified press only outranks the plain <ButtonPress-1> so no drag arms.
+    method on_modified_press {args} {}
+
     # A snippet click opens the session too, deep-linked to that match's line.
     method on_snippet_release {path lineno} {
-        my select $path
+        my selection_set $path
         my open_session $path $lineno
     }
 
@@ -1818,7 +1932,12 @@ oo::class create ::questlog::ui::SessionList {
         # A press on the ⋯ control or the chevron is a control click, not a drag.
         if {[my click_on_action $X $Y]} return
         if {[my click_on_chevron $X $Y]} return
-        ::questlog::ui::drag::watch $Text $X $Y [list $path] \
+        # Dragging a selected row carries the whole selection; dragging an
+        # unselected row carries just it (and leaves the selection untouched
+        # unless the gesture resolves as a plain click on release).
+        set payload [expr {[my is_selected $path] \
+            ? [my selection_paths] : [list $path]}]
+        ::questlog::ui::drag::watch $Text $X $Y $payload \
             [list [self] handle_drop] \
             [list [self] drag_hit] [list [self] drag_paint]
     }
@@ -1858,7 +1977,7 @@ oo::class create ::questlog::ui::SessionList {
     method on_row_leave {path} {
         $Text configure -cursor arrow
         # Keep the ⋯ bright if this row stays selected; otherwise re-fade it.
-        my action_set_bright $path [expr {$Selected eq $path}]
+        my action_set_bright $path [my is_selected $path]
     }
 
     # Resolve a drag point to the folder under it: the engine maps the point to a
@@ -1890,6 +2009,15 @@ oo::class create ::questlog::ui::SessionList {
     # ---- right-click menu --------------------------------------------
 
     method on_session_right {path X Y} {
+        # A right-click on a row outside the current selection retargets the
+        # selection to it (the menu then acts on what is highlighted). A click
+        # on a member of a multi-selection keeps the set and shows the multi
+        # menu - the actions that apply to many sessions at once.
+        if {![my is_selected $path]} { my selection_set $path }
+        if {[my selection_count] > 1} {
+            my popup_multi_menu $X $Y
+            return
+        }
         set row [{*}$LookupSession $path]
         set uuid [file rootname [file tail $path]]
         set folder ""
@@ -1918,6 +2046,20 @@ oo::class create ::questlog::ui::SessionList {
         set MenuIndices [::questlog::ui::session_actions::populate $Menu $ctx]
         ::questlog::ui::session_actions::apply_state \
             $Menu $MenuIndices [dict get $ctx state]
+        tk_popup $Menu $X $Y
+    }
+
+    # The menu for a multi-selection: only the actions that apply to many
+    # sessions at once (Move, Bookmark). The bookmark label reflects the
+    # tri-state rule the handler applies - add to all unless all already carry
+    # the bit, in which case remove from all.
+    method popup_multi_menu {X Y} {
+        set paths [my selection_paths]
+        set all_bm 1
+        foreach p $paths { if {![file executable $p]} { set all_bm 0; break } }
+        set ctx [dict create mode multi paths $paths all_bookmarked $all_bm \
+            on_move $OnMoveRequest on_bookmark_set $OnBookmarkSet]
+        ::questlog::ui::session_actions::populate $Menu $ctx
         tk_popup $Menu $X $Y
     }
 
@@ -2079,7 +2221,8 @@ oo::class create ::questlog::ui::SessionList {
         dict unset PathNode $path
         my node_set $fid children \
             [lsearch -all -inline -not -exact [my node_field $fid children] $sid]
-        if {$Selected eq $path} { set Selected "" }
+        dict unset SelectedSet $path
+        if {$SelectAnchor eq $path} { set SelectAnchor "" }
         if {[llength [my node_field $fid children]] == 0} {
             my forget_folder $folder
         } else {
@@ -2126,7 +2269,11 @@ oo::class create ::questlog::ui::SessionList {
         set new_fid [my fid $new_folder]
         my node_set $sid parent $new_fid
         my node_set $new_fid children [linsert [my node_field $new_fid children] end $sid]
-        if {$Selected eq $old_path} { set Selected $new_path }
+        if {[dict exists $SelectedSet $old_path]} {
+            dict unset SelectedSet $old_path
+            dict set SelectedSet $new_path 1
+        }
+        if {$SelectAnchor eq $old_path} { set SelectAnchor $new_path }
         my redraw_all
     }
 
@@ -2209,11 +2356,7 @@ oo::class create ::questlog::ui::SessionList {
             }
             my redraw_folder_heading $folder
         }
-        if {$Selected ne "" && [my has_session $Selected] \
-            && [my sflag $Selected rendered]} {
-            set sm [my node_field [my sid $Selected] start]
-            $Text tag add selected $sm "$sm lineend"
-        }
+        my repaint_selection
         if {$at_top} {
             $Text yview moveto 0
         } else {
