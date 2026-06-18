@@ -72,6 +72,9 @@ oo::class create ::questlog::Scan {
     variable OnProgress   ;# cb {done total} or {}
     variable Active       ;# 1 while a coroutine is running
     variable IsTyping     ;# cb -> 1 while the user is typing, or {} for never
+    variable Kind         ;# dict: path -> {mtime kind}; memoised session origin
+                          ;# (cli|sdk), so the search corpus filter pays one head
+                          ;# read per file once, not on every query
 
     constructor {on_row on_done {on_progress {}} {is_typing {}}} {
         set Rows [dict create]
@@ -83,6 +86,33 @@ oo::class create ::questlog::Scan {
         set OnProgress $on_progress
         set Active 0
         set IsTyping $is_typing
+        set Kind [dict create]
+    }
+
+    # Session origin from the opening record. An sdk-cli session (a skill or
+    # Agent-SDK spawn) opens with a queue-operation record; an interactive cli
+    # session opens with a mode / permission-mode record. One line is enough.
+    # Memoised by mtime so a rewritten file reclassifies. scan_one fills this
+    # cache for free as it reads each head, so a warm corpus answers without a
+    # second read; an unscanned path (a wider search window than the browse
+    # scan covered) is classified here on demand. Returns cli|sdk.
+    method session_kind {path} {
+        if {[catch {file mtime $path} m]} { return cli }
+        if {[dict exists $Kind $path] && [lindex [dict get $Kind $path] 0] == $m} {
+            return [lindex [dict get $Kind $path] 1]
+        }
+        set kind cli
+        if {![catch {open $path r} fh]} {
+            chan configure $fh -encoding utf-8 -profile replace
+            while {[chan gets $fh line] >= 0} {
+                if {$line eq ""} continue
+                if {[regexp {"type":"queue-operation"} $line]} { set kind sdk }
+                break
+            }
+            close $fh
+        }
+        dict set Kind $path [list $m $kind]
+        return $kind
     }
 
     # Cancel any in-flight scan. Stale coroutine drains itself at the
@@ -172,7 +202,12 @@ oo::class create ::questlog::Scan {
     # corpus is the one consumer that needs them up front, so include_subagents
     # appends each kept session's subagent files (issue #13, search case B/C).
     # Pre-sorted by mtime DESC so consumers see rows in display order.
-    method list_paths_for {snapshot {include_subagents 0}} {
+    # cli_only drops sdk-cli (skill / Agent-SDK) sessions from the result, so the
+    # search corpus is the interactive sessions a person would browse, not the
+    # automation exhaust that dwarfs them (~70x the file count). This is the one
+    # switch that would let a future toggle re-admit sdk-cli to search: flip
+    # cli_only off (and include_subagents back on) to restore the full corpus.
+    method list_paths_for {snapshot {include_subagents 0} {cli_only 0}} {
         set root [::questlog::path::projects_root]
         if {![file isdirectory $root]} { return [list] }
         set cutoff [::questlog::filter::cutoff_for $snapshot]
@@ -202,6 +237,13 @@ oo::class create ::questlog::Scan {
         set sorted [lsort -integer -decreasing -index 1 $pairs]
         set out [list]
         foreach p $sorted { lappend out [lindex $p 0] }
+        if {$cli_only} {
+            set keep [list]
+            foreach p $out {
+                if {[my session_kind $p] eq "cli"} { lappend keep $p }
+            }
+            set out $keep
+        }
         return $out
     }
 
@@ -284,8 +326,14 @@ oo::class create ::questlog::Scan {
         set first ""
         set cwd ""
         set first_ts ""
+        set kind ""
         while {[chan gets $fh line] >= 0} {
             if {$line eq ""} continue
+            # Origin from the opening record (see session_kind): a queue-operation
+            # opener marks an sdk-cli spawn, anything else an interactive cli.
+            if {$kind eq ""} {
+                set kind [expr {[regexp {"type":"queue-operation"} $line] ? "sdk" : "cli"}]
+            }
             if {$cwd eq "" && [regexp {"cwd":"([^"]+)"} $line -> m]} {
                 set cwd $m
             }
@@ -340,6 +388,7 @@ oo::class create ::questlog::Scan {
             uuid $uuid \
             first_ts $first_ts \
             is_multi [expr {$users >= 2}] \
+            kind [expr {$kind eq "" ? "cli" : $kind}] \
             first_user $first_clean \
             slug $slug \
             ai_title $ai_title \
@@ -382,6 +431,11 @@ oo::class create ::questlog::Scan {
             }
         }
         dict set Rows $path $row
+        # Carry the origin classification into the search-corpus cache for free;
+        # scan_file republishes (the search path) carry no kind, so guard on it.
+        if {[dict exists $row kind]} {
+            dict set Kind $path [list [dict getdef $row mtime 0] [dict get $row kind]]
+        }
         set folder [dict get $row folder]
         set cwd [dict get $row cwd_hint]
         # cwd_hint is the cwd the conversation ran in, read from the file.
