@@ -138,11 +138,13 @@ proc ::questlog::ui::session_actions::act_copy_last_assistant {ctx} {
         [::questlog::jsonl::last_assistant_text [tget $ctx path]]
 }
 # The whole session as Markdown on the clipboard: the text-only transcript
-# (USER/ASSISTANT/SYSTEM turns, segmented at compaction boundaries and idle
-# gaps the way the viewer breaks it). Tool calls are out of scope by design.
+# (USER/ASSISTANT/SYSTEM turns, segmented at compaction boundaries and idle gaps
+# the way the viewer breaks it), with tool calls, results and thinking folded
+# inline exactly as the viewer renders them. The CLI `questlog show` shares this
+# emitter; the GUI leaves its record-number anchors off.
 proc ::questlog::ui::session_actions::act_copy_markdown {ctx} {
     {*}[dict get $ctx clipboard] \
-        [::questlog::ui::markdown::export_session [tget $ctx path]]
+        [::questlog::markdown::export_session [tget $ctx path]]
 }
 # The same Markdown to a file the reader picks. A cancelled dialog returns
 # empty and does nothing; a write failure is surfaced rather than swallowed.
@@ -154,7 +156,7 @@ proc ::questlog::ui::session_actions::act_export_markdown {ctx} {
         -defaultextension .md -initialfile $initial \
         -filetypes {{Markdown {.md}} {{All files} *}}]
     if {$dest eq ""} return
-    set md [::questlog::ui::markdown::export_session $path]
+    set md [::questlog::markdown::export_session $path]
     if {[catch {
         set fh [open $dest w]
         chan configure $fh -encoding utf-8

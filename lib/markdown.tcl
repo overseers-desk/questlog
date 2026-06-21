@@ -3,8 +3,8 @@ package require Tcl 9
 # Markdown export of a session transcript. The text-only mirror of what the
 # viewer's `render` shows: USER / ASSISTANT / SYSTEM turns in document order,
 # broken into the same segments by the same two cues. The export mirrors the
-# viewer body verbatim: ::questlog::jsonl::extract_text now renders tool_use
-# as `Tool(args)`, thinking as `[thinking] ...`, and image blocks as `[image]`
+# viewer body verbatim: ::questlog::jsonl::extract_text renders tool_use as
+# `Tool(args)`, thinking as `[thinking] ...`, and image blocks as `[image]`
 # placeholders, and prefixes tool_result with `ERROR: ` when is_error is true,
 # so all of that flows through into the exported markdown alongside the prose.
 #
@@ -17,7 +17,7 @@ package require Tcl 9
 # A record whose extract_text is empty (a metadata snapshot or attachment)
 # emits no turn but still advances the clock, the same as the viewer, so an idle
 # gap is measured from the last real message either side of the quiet records.
-namespace eval ::questlog::ui::markdown {
+namespace eval ::questlog::markdown {
     namespace export export_session
 }
 
@@ -25,14 +25,22 @@ namespace eval ::questlog::ui::markdown {
 # line (the read+parse idiom of ::questlog::jsonl::last_assistant_text: utf-8,
 # replace profile), classifies each record by type, and emits a role heading
 # plus the text body. Returns "" for a file that cannot be opened.
-proc ::questlog::ui::markdown::export_session {path} {
+#
+# With anchors true, each turn's heading carries its 1-based jsonl record number
+# (the physical line, the same index the viewer's LineMap and the search --json
+# "line" field use), so the headless `questlog show` output can be cited and a
+# reader can jump back to a record. The GUI copy/export-markdown actions leave
+# anchors off, so their output stays clean.
+proc ::questlog::markdown::export_session {path {anchors 0}} {
     if {[catch {open $path r} fh]} { return "" }
     chan configure $fh -encoding utf-8 -profile replace
 
     set idle_gap [::questlog::config::get viewer_idle_gap_min]
     set out [list]
     set last_ts 0
+    set lineno 0
     while {[chan gets $fh line] >= 0} {
+        incr lineno
         if {$line eq ""} continue
         set rec [::questlog::jsonl::parse_line $line]
         if {$rec eq ""} continue
@@ -66,7 +74,7 @@ proc ::questlog::ui::markdown::export_session {path} {
             }
         }
 
-        lappend out [list turn [role_label [dict getdef $rec type ""]] $body]
+        lappend out [list turn [role_label [dict getdef $rec type ""]] $body $lineno]
         if {$ts_epoch > 0} { set last_ts $ts_epoch }
     }
     close $fh
@@ -78,8 +86,12 @@ proc ::questlog::ui::markdown::export_session {path} {
     set blocks [list]
     foreach item $out {
         if {[lindex $item 0] eq "turn"} {
-            lassign $item _ role text
-            lappend blocks "**$role**\n\n$text"
+            lassign $item _ role text ln
+            if {$anchors} {
+                lappend blocks "**\[#$ln] $role**\n\n$text"
+            } else {
+                lappend blocks "**$role**\n\n$text"
+            }
         } else {
             lappend blocks [lindex $item 1]
         }
@@ -90,7 +102,7 @@ proc ::questlog::ui::markdown::export_session {path} {
 # Map a record type to its export role heading. Conversation types only;
 # anything else has already been filtered out by an empty extract_text, but a
 # defensive default keeps an unexpected type labelled rather than blank.
-proc ::questlog::ui::markdown::role_label {type} {
+proc ::questlog::markdown::role_label {type} {
     switch -- $type {
         user      { return USER }
         assistant { return ASSISTANT }

@@ -348,6 +348,50 @@ proc ::questlog::cli::main::rename {argv} {
     puts [::questlog::rename::apply $path [lindex $argv 1]]
 }
 
+# Print a finished session as the reading-view transcript:
+# `questlog show <session.jsonl|uuid>`. The headless twin of the GUI reading
+# view: it reuses the same emitter (::questlog::markdown::export_session) the
+# viewer's copy/export-markdown actions use, so the two never drift, and asks it
+# for record-number anchors so each turn can be cited. Runs with no GUI and no
+# display. A session that cannot be read is a hard error.
+proc ::questlog::cli::main::show {argv} {
+    if {[llength $argv] != 1} {
+        puts stderr "usage: questlog show <session.jsonl|uuid>"
+        puts stderr "  Prints the session as a readable transcript, each turn anchored by its record number."
+        exit 2
+    }
+    set path [resolve_session [lindex $argv 0]]
+    set md [::questlog::markdown::export_session $path 1]
+    if {$md eq ""} {
+        puts stderr "questlog: could not read session: $path"
+        exit 1
+    }
+    puts $md
+}
+
+# Resolve a `show` argument to a session jsonl path. An existing file is taken
+# as-is; otherwise the argument is read as a session uuid and matched against
+# <projects_root>/<folder>/<uuid>.jsonl across every folder. A uuid naming no
+# session, or (defensively, since uuids are unique) more than one, is a hard
+# error rather than a silent pick.
+proc ::questlog::cli::main::resolve_session {arg} {
+    if {[file isfile $arg]} { return $arg }
+    set root [::questlog::path::projects_root]
+    set hits [glob -nocomplain -- [file join $root * $arg.jsonl]]
+    switch -- [llength $hits] {
+        0 {
+            puts stderr "questlog: no such session: $arg"
+            exit 1
+        }
+        1 { return [lindex $hits 0] }
+        default {
+            puts stderr "questlog: ambiguous session uuid: $arg"
+            foreach h [lsort $hits] { puts stderr "  $h" }
+            exit 1
+        }
+    }
+}
+
 # The snapshot used for file/row SELECTION in accrued mode: the original with the
 # until ceiling cleared, so a session revived after the ceiling (yet holding
 # pre-ceiling, in-window messages) is not pruned. The since floor and under-scope
