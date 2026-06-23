@@ -34,7 +34,7 @@ allowed-tools: Bash
 
 # questlog
 
-questlog searches, reads, and totals the user's finished Claude Code sessions (the JSONL transcripts under ~/.claude/projects) through the questlog CLI. Each headless run takes one query and prints to stdout, so drive it from Bash. The GUI needs an X display and is for the user to browse visually, so open it only when asked to show the window.
+questlog searches, reads, and totals the user's finished Claude Code sessions (the JSONL transcripts under ~/.claude/projects) through the questlog CLI. Each run takes one query and prints to stdout, so drive it from Bash.
 
 ## Searching
 
@@ -44,7 +44,7 @@ questlog --json --since 7d --keyword "stripe webhook" | jq '[.[].sessions[] | {u
 
 A session is returned when its clauses hold somewhere in its log. Clauses combine by one algebra: adjacency is AND, `--or` is OR, `--not` negates the next clause, with precedence NOT, then AND, then OR. There is no grouping, so write `A AND (B OR C)` as `A B --or A C`. The clause kinds:
 
-- `--keyword <text>` is a literal needle, and a bare argument is the same; `--regex <re>` is a pattern. Either takes an optional `:regions` suffix to confine the match, e.g. `--keyword:user`, `--regex:assistant,tool-use`, where a region is one of user, assistant, tool-use, tool-result, any.
+- `--keyword <text>` is a literal needle; `--regex <re>` is a pattern. Either takes an optional `:regions` suffix to confine the match, e.g. `--keyword:user`, `--regex:assistant,tool-use`, where a region is one of user, assistant, tool-use, tool-result, any.
 - `--tool:read|write|edit|file <path>` finds a session that read, wrote, edited, or touched a file, matched by path suffix, so a bare filename finds it in any directory.
 - `--tool:<name> <key>` finds a session that used a tool (Bash, Grep, ...) whose invocation contains the key, and an empty key means any use.
 
@@ -68,9 +68,9 @@ questlog --shortstat --since 7d
 
 Emits session and subagent counts, turns, token categories, and total cost over the same result set the matching `--json` query would return. Cost is the recorded tokens priced at per-model API rates, an API-equivalent figure rather than a number the harness billed. Add `--accrued-cost` (with a time bound) to count only the spend dated inside the window instead of each matching session's whole-transcript cost.
 
-## Reopening, renaming, browsing
+## Reopening and renaming
 
-To reopen a found session, give the user the resume command `cd <project_path> && claude --resume <uuid>`, where `project_path` is the folder field and `uuid` the session field from a `--json` hit; append `--fork-session` to branch instead of continue. `questlog rename <session.jsonl> [title]` sets a session's title, and an empty or omitted title reverts it to the auto title. `questlog` with no headless flag opens the GUI for the user, optionally pre-seeded, e.g. `questlog tool:edit lib/scan.tcl` or `questlog --since 30d`.
+To reopen a found session, give the user the resume command `cd <project_path> && claude --resume <uuid>`, where `project_path` is the folder field and `uuid` the session field from a `--json` hit; append `--fork-session` to branch instead of continue. `questlog rename <session.jsonl> [title]` sets a session's title, and an empty or omitted title reverts it to the auto title.
 }
 
 # ~/.claude, or "" when HOME is unknown.
