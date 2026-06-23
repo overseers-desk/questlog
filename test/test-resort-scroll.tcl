@@ -71,7 +71,7 @@ proc subagentsf {path} { return [$::Scan subagents_for $path] }
 set SL [::questlog::ui::SessionList new .s resolvef lookup noop noop noop noop noop \
             noop scanpath noop noop subagentsf noop]
 pack .s -fill both -expand 1
-$SL apply_filter [dict create since 30d one_turn 0]
+$SL apply_filter [dict create since 30d listview [dict create one_turn 0]]
 
 set ns [info object namespace $SL]
 set TX [set ${ns}::Text]
@@ -99,7 +99,7 @@ proc topkey {} { lindex [$::SL top_visible_node] 1 }
 # date sort (no resort fires there), then shrink the viewport so the list
 # overflows and scroll has somewhere to go.
 set ::scan_done 0
-$::Scan extend [dict create since 30d one_turn 0]
+$::Scan extend [dict create since 30d listview [dict create one_turn 0]]
 after 200 [list set ::scan_done 1]
 vwait ::scan_done
 $SL toggle_folder $FOLDER

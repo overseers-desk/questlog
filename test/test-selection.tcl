@@ -86,9 +86,9 @@ proc check {name got want} {
 # Selection as a sorted list, so order of toggles does not make the test flap.
 proc sel {} { return [lsort [$::SL selection_paths]] }
 
-$SL apply_filter [dict create since 30d one_turn 0]
+$SL apply_filter [dict create since 30d listview [dict create one_turn 0]]
 set ::scan_done 0
-$::Scan extend [dict create since 30d one_turn 0]
+$::Scan extend [dict create since 30d listview [dict create one_turn 0]]
 after 200 [list set ::scan_done 1]
 vwait ::scan_done
 $SL toggle_folder $FA

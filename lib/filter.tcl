@@ -140,11 +140,11 @@ proc ::questlog::filter::row_under_match {row under_list} {
 # row would not.
 proc ::questlog::filter::row_matches {snapshot row} {
     set bk [dict getdef $row bookmarked 0]
-    if {[dict getdef $snapshot bookmarked_only 0] && !$bk} { return 0 }
+    if {[dict getdef [dict getdef $snapshot listview {}] bookmarked_only 0] && !$bk} { return 0 }
     if {[dict get $row mtime] <= [cutoff_for $snapshot] && !$bk} { return 0 }
     set ceiling [ceiling_for $snapshot]
     if {$ceiling ne "" && [dict get $row mtime] > $ceiling && !$bk} { return 0 }
-    if {[dict getdef $snapshot one_turn 1] && ![dict get $row is_multi]} { return 0 }
+    if {[dict getdef [dict getdef $snapshot listview {}] one_turn 1] && ![dict get $row is_multi]} { return 0 }
     set under [dict getdef $snapshot under {}]
     if {[llength $under] > 0 && ![row_under_match $row $under]} { return 0 }
     return 1

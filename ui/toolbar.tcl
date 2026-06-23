@@ -16,9 +16,11 @@ package require Tk
 #                    empty key = any use of the tool)
 #   pattern          list of regex strings   (case-sensitive, always)
 #   under_auto       1 iff `under` is the launch-seeded chip, untouched
-#   one_turn         0 | 1   (exclude one-turn sessions)
-#   running_only     0 | 1
-#   bookmarked_only  0 | 1
+#   listview         the session-list view toggles, grouped away from the search
+#                    and scope keys above so no reader mistakes one for a search:
+#                    one_turn 0|1 (exclude one-turn), running_only 0|1,
+#                    bookmarked_only 0|1. They narrow what the left pane shows, not
+#                    what is searched - see lib/sessionlist.tcl.
 #   cwd              launch cwd, constant after startup
 
 namespace eval ::questlog::ui {}
@@ -541,9 +543,10 @@ oo::class create ::questlog::ui::Toolbar {
             tool           [dict get $Clauses tool] \
             pattern        [dict get $Clauses pattern] \
             under_auto     $UnderAuto \
-            one_turn       $OneTurnVar \
-            running_only   $RunningOnlyVar \
-            bookmarked_only $BookmarkedOnlyVar \
+            listview       [dict create \
+                one_turn        $OneTurnVar \
+                running_only    $RunningOnlyVar \
+                bookmarked_only $BookmarkedOnlyVar] \
             cwd            $Cwd]
     }
 

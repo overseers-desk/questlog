@@ -397,8 +397,7 @@ proc ::questlog::ui::app::on_filter {snapshot} {
     # seen (e.g. 24h to 7d) - then extend for newly-windowed files. With
     # criteria active the list is built from matches, but the scan still runs
     # so Search has a corpus and lookup_session resolves rows.
-    set running_only [expr {[dict exists $snapshot running_only]
-                            ? [dict get $snapshot running_only] : 0}]
+    set running_only [dict getdef [dict getdef $snapshot listview {}] running_only 0]
     if {!$running_only} {
         foreach row [$Scan query $snapshot] {
             $SessionList on_scan_row $row

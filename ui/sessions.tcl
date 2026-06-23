@@ -500,7 +500,7 @@ oo::class create ::questlog::ui::SessionList {
     # owns the display then) and when criteria are active (the result index
     # is built from matches, not the scan stream).
     method on_scan_row {row} {
-        if {[dict getdef $Snapshot running_only 0]} return
+        if {[dict getdef [dict getdef $Snapshot listview {}] running_only 0]} return
         if {$CriteriaActive} return
         if {![my row_matches_snapshot $row]} return
         set path [dict get $row path]
@@ -2087,8 +2087,8 @@ oo::class create ::questlog::ui::SessionList {
     # self-corrects on the next.
     method reconcile_running {running} {
         set RunningSet $running
-        set running_only    [dict getdef $Snapshot running_only 0]
-        set bookmarked_only [dict getdef $Snapshot bookmarked_only 0]
+        set running_only    [dict getdef [dict getdef $Snapshot listview {}] running_only 0]
+        set bookmarked_only [dict getdef [dict getdef $Snapshot listview {}] bookmarked_only 0]
         set before [my session_count]
 
         $Text configure -state normal

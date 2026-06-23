@@ -40,7 +40,7 @@ proc on_row {row}      { incr ::row_count }
 proc on_done {scanned} { set ::done 1 }
 
 set s [::questlog::Scan new on_row on_done]
-$s extend [dict create since all one_turn 0]
+$s extend [dict create since all listview [dict create one_turn 0]]
 vwait ::done
 check coro_scanned_all 300 $::row_count
 
@@ -61,9 +61,9 @@ for {set i 0} {$i < 200} {incr i} {
 # not leak a partial state.
 set ::done 0
 set ::row_count 0
-$s extend [dict create since all one_turn 0]
-after 5 [list $s extend [dict create since all one_turn 0]]
-after 10 [list $s extend [dict create since all one_turn 0]]
+$s extend [dict create since all listview [dict create one_turn 0]]
+after 5 [list $s extend [dict create since all listview [dict create one_turn 0]]]
+after 10 [list $s extend [dict create since all listview [dict create one_turn 0]]]
 vwait ::done
 # Drain residual events.
 update

@@ -79,7 +79,7 @@ proc subagentsf {path} { return [$::Scan subagents_for $path] }
 set SL [::questlog::ui::SessionList new .s resolvef lookup noop noop noop noop noop \
             noop scanpath noop noop subagentsf noop]
 pack .s -fill both -expand 1
-$SL apply_filter [dict create since 30d one_turn 0]
+$SL apply_filter [dict create since 30d listview [dict create one_turn 0]]
 
 set ns [info object namespace $SL]
 set fails 0
@@ -104,7 +104,7 @@ proc rootlabels {} {
 
 # Stream the three folders in under the default (date-desc) sort.
 set ::scan_done 0
-$::Scan extend [dict create since 30d one_turn 0]
+$::Scan extend [dict create since 30d listview [dict create one_turn 0]]
 after 300 [list set ::scan_done 1]
 vwait ::scan_done
 update

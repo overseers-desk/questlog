@@ -60,7 +60,7 @@ proc on_row {row} { lappend ::rows $row }
 proc on_done {scanned} { set ::scan_done 1 }
 
 set s [::questlog::Scan new on_row on_done]
-$s extend [dict create since all one_turn 0]
+$s extend [dict create since all listview [dict create one_turn 0]]
 vwait ::scan_done
 
 # ---- assertions ------------------------------------------------------
@@ -91,13 +91,13 @@ check resolve_absent_dir "" [$s resolve_folder "-no-such-folder-xyz"]
 ::questlog::path::_real_file delete -force [file join /tmp/questlog-test-projects $rf]
 
 # query with one_turn=1 drops the single-turn bbb-2 file.
-set qrows [$s query [dict create since all one_turn 1]]
+set qrows [$s query [dict create since all listview [dict create one_turn 1]]]
 check query_one_turn 2 [llength $qrows]
 
 # Memoisation: re-extending shouldn't re-scan unchanged paths.
 set ::scan_done 0
 set ::rows [list]
-$s extend [dict create since all one_turn 0]
+$s extend [dict create since all listview [dict create one_turn 0]]
 vwait ::scan_done
 check memo_re_scanned_count 0 [llength $::rows]
 
@@ -107,13 +107,13 @@ check memo_re_scanned_count 0 [llength $::rows]
 file mtime /tmp/questlog-test-projects/-home-test-code-foo/aaa-1.jsonl [expr {[clock seconds] + 60}]
 set ::scan_done 0
 set ::rows [list]
-$s extend [dict create since all one_turn 0]
+$s extend [dict create since all listview [dict create one_turn 0]]
 vwait ::scan_done
 check mtime_invalidation_count 1 [llength $::rows]
 check mtime_invalidation_path /tmp/questlog-test-projects/-home-test-code-foo/aaa-1.jsonl [dict get [lindex $::rows 0] path]
 
 # Ordering: query result is mtime-DESC. The just-touched aaa-1 should be first.
-set qall [$s query [dict create since all one_turn 0]]
+set qall [$s query [dict create since all listview [dict create one_turn 0]]]
 set first_path [dict get [lindex $qall 0] path]
 check ordering_first_is_touched /tmp/questlog-test-projects/-home-test-code-foo/aaa-1.jsonl $first_path
 
@@ -121,11 +121,11 @@ check ordering_first_is_touched /tmp/questlog-test-projects/-home-test-code-foo/
 # memoised rows. App's on_filter relies on this to repopulate the tree
 # after a since-bound tighten-then-widen sequence (24h → 7d). Without it the
 # coroutine skips memoised paths and the tree stays empty.
-set q_before [$s query [dict create since all one_turn 0]]
+set q_before [$s query [dict create since all listview [dict create one_turn 0]]]
 set ::scan_done 0
-$s extend [dict create since all one_turn 1]   ;# tighter (one_turn=1)
+$s extend [dict create since all listview [dict create one_turn 1]]   ;# tighter (one_turn=1)
 vwait ::scan_done
-set q_back [$s query [dict create since all one_turn 0]]
+set q_back [$s query [dict create since all listview [dict create one_turn 0]]]
 check query_replay_after_since_change [llength $q_before] [llength $q_back]
 
 $s destroy
@@ -144,14 +144,14 @@ file mtime $ccc [expr {[clock seconds] - 40*24*3600}]
 set ::scan_done 0
 set ::rows [list]
 set s2 [::questlog::Scan new on_row on_done]
-$s2 extend [dict create since all one_turn 0]
+$s2 extend [dict create since all listview [dict create one_turn 0]]
 vwait ::scan_done
 
 set bbb_row ""
 foreach r $::rows { if {[dict get $r path] eq $bbb} { set bbb_row $r } }
 check bbb_bookmarked_flag 1 [dict get $bbb_row bookmarked]
 
-set q7 [$s2 query [dict create since 7d one_turn 0]]
+set q7 [$s2 query [dict create since 7d listview [dict create one_turn 0]]]
 set paths7 [lmap r $q7 {dict get $r path}]
 check query_bookmark_kept   1 [expr {$bbb in $paths7}]
 check query_old_plain_dropped 0 [expr {$ccc in $paths7}]
@@ -161,7 +161,7 @@ check enum_bookmark_kept     1 [expr {$bbb in $lp}]
 check enum_old_plain_dropped 0 [expr {$ccc in $lp}]
 
 # bookmarked_only filter keeps only the bookmarked row.
-set qb [$s2 query [dict create since all one_turn 0 bookmarked_only 1]]
+set qb [$s2 query [dict create since all listview [dict create one_turn 0 bookmarked_only 1]]]
 check query_bookmarked_only 1 [llength $qb]
 
 $s2 destroy

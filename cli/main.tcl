@@ -437,13 +437,14 @@ proc ::questlog::cli::main::run {argv} {
         set sub_limit $limit_matches
     }
 
-    # 2. The row-level bounds snapshot. The bounds (since, until, under, one_turn)
-    # ride outside the boolean algebra as global filters.
+    # 2. The row-level bounds snapshot: since, until, under, plus the listview
+    # one_turn toggle set off so the CLI keeps single-turn sessions. These ride
+    # outside the boolean algebra as global filters.
     set snapshot [dict create \
         under [expr {$under eq "" ? {} : [list $under]}] \
         since $since \
         until $until \
-        one_turn 0]
+        listview [dict create one_turn 0]]
 
     # In accrued mode, cost is windowed by each message's timestamp, so file/row
     # SELECTION must not apply the until ceiling (a session revived after it can
