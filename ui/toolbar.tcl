@@ -44,25 +44,6 @@ proc ::questlog::ui::any_criteria {snapshot} {
     return 0
 }
 
-# Tokenise the search field's contents. Space-separated; double-quoted runs
-# preserve a phrase. Trailing/leading whitespace ignored. Empty input yields
-# an empty list.
-proc ::questlog::ui::search_terms {s} {
-    set out [list]
-    set buf ""
-    set in_quotes 0
-    foreach ch [split $s ""] {
-        if {$ch eq "\""} { set in_quotes [expr {!$in_quotes}]; continue }
-        if {$ch eq " " && !$in_quotes} {
-            if {$buf ne ""} { lappend out $buf; set buf "" }
-            continue
-        }
-        append buf $ch
-    }
-    if {$buf ne ""} { lappend out $buf }
-    return $out
-}
-
 # highlight_terms snapshot - terms for the result pane's in-place highlighter
 # and the viewer's match index. Returns the tokenised search terms, matched
 # literally downstream; the pattern row, while regex-typed, is uncommon and
@@ -70,7 +51,7 @@ proc ::questlog::ui::search_terms {s} {
 proc ::questlog::ui::highlight_terms {snapshot} {
     set s ""
     if {[dict exists $snapshot search]} { set s [dict get $snapshot search] }
-    return [::questlog::ui::search_terms $s]
+    return [::questlog::search::search_terms $s]
 }
 
 oo::class create ::questlog::ui::Toolbar {
