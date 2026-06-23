@@ -42,6 +42,25 @@ if {!$CLI_MODE} {
 
 set ROOT [file dirname [file normalize [info script]]]
 
+# Command-line mode prints to stdout and must never raise a window. Tk enters
+# the process only through the ui/ layer (every ui/ file requires it), and the
+# CLI path below sources none of it. Harden that seam: in CLI mode, refuse to
+# source any ui/ file, so a GUI source mistakenly wired onto a CLI path fails
+# loudly here instead of pulling Tk in and popping a dialog. Installed before
+# path.tcl wraps `file`; the check is a plain string match so it stays
+# independent of that wrapper. GUI mode leaves `source` untouched.
+if {$CLI_MODE} {
+    set QL_UI_DIR [file join $ROOT ui]
+    rename source _ql_real_source
+    proc source {args} {
+        if {[string match $::QL_UI_DIR/* [lindex $args end]]} {
+            return -code error "questlog: command-line mode will not load the\
+                GUI ([lindex $args end])"
+        }
+        return [uplevel 1 [linsert $args 0 _ql_real_source]]
+    }
+}
+
 # Register questlog with Claude Code. This keeps ~/.claude/commands/questlog.md
 # current so a Claude Code session reaches for questlog when the user asks to
 # search a past session. It is a system-level install, unrelated to the
