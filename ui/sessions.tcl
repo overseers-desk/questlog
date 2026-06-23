@@ -239,6 +239,16 @@ oo::class create ::questlog::ui::SessionList {
         pack $Top.banner.text -side left -padx 8 -pady 5 -fill x -expand 1
         pack $Top.banner.showall -side right -padx 8 -pady 5
 
+        # The list-view toggle strip: the row the toolbar fills with the three
+        # view toggles (exclude one-turn / running only / bookmarked only). It
+        # sits between the banner and the body's column-header strip, taking that
+        # strip's #ececec colour, so the toggles read as the top of the list they
+        # filter, not as search chrome. Packed before build_body so it lands
+        # above the header band; the banner re-packs itself -after $Top.bar, so it
+        # always stays above this strip.
+        ttk::frame $Top.lvt -style LVStrip.TFrame -padding {8 4}
+        pack $Top.lvt -side top -fill x
+
         # The engine assembles the body (header text, list text, scrollbar, the
         # <Configure> relayout hook, the selection suppression and TailMark);
         # the session-domain tags, sort header and menus go on top of it.
@@ -491,6 +501,12 @@ oo::class create ::questlog::ui::SessionList {
     method on_show_all_clicked {} {
         if {$OnShowAll ne ""} { {*}$OnShowAll }
     }
+
+    # The frame at the top of the list region that hosts the list-view toggles.
+    # app.tcl hands it to the Toolbar's build_listview_toggles after both widgets
+    # exist, so the toggle state stays owned by the Toolbar while the widgets read
+    # as chrome of the list.
+    method listview_slot {} { return $Top.lvt }
 
     method set_query {terms nocase} {
         set Query [dict create terms $terms nocase $nocase]

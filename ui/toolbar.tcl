@@ -208,25 +208,40 @@ oo::class create ::questlog::ui::Toolbar {
             pack $AddRail.b$k -side left -padx {0 4}
         }
 
-        # Row 2: legacy result-set filters, unchanged by this refactor.
-        ttk::frame $Top.row2
-        pack $Top.row2 -side top -fill x -padx 6 -pady {4 6}
-        ttk::checkbutton $Top.row2.oneturn -text "exclude one-turn sessions" \
-            -variable [my varname OneTurnVar] \
-            -command [list [self] publish]
-        pack $Top.row2.oneturn -side left
-        ttk::checkbutton $Top.row2.running -text "running only" \
-            -variable [my varname RunningOnlyVar] \
-            -command [list [self] publish]
-        pack $Top.row2.running -side left -padx {16 0}
-        ttk::checkbutton $Top.row2.booked -text "bookmarked only" \
-            -variable [my varname BookmarkedOnlyVar] \
-            -command [list [self] publish]
-        pack $Top.row2.booked -side left -padx {16 0}
+        # The three list-view toggles (exclude one-turn / running only /
+        # bookmarked only) are not part of the toolbar's chrome: they belong to
+        # the session list, so app.tcl hosts them at the top of the list region
+        # via build_listview_toggles. The Toolbar still owns their state and the
+        # publish wiring; only their on-screen home moved.
 
         # Render the persistent folder/file rows up front.
         my rebuild_clause_rows
         my refresh_add_rail
+    }
+
+    # Build the three list-view toggles into a caller-owned frame, so they read
+    # as the top of the session list (the region they filter) rather than as a
+    # search control. The Toolbar keeps the state (OneTurnVar / RunningOnlyVar /
+    # BookmarkedOnlyVar) and the publish wiring; only the widgets live in the
+    # passed parent. $parent is styled by its host to match the list surface, and
+    # the checkbuttons take the LV.TCheckbutton style so their background ties to
+    # that surface too.
+    method build_listview_toggles {parent} {
+        ttk::checkbutton $parent.oneturn -text "exclude one-turn sessions" \
+            -style LV.TCheckbutton \
+            -variable [my varname OneTurnVar] \
+            -command [list [self] publish]
+        pack $parent.oneturn -side left
+        ttk::checkbutton $parent.running -text "running only" \
+            -style LV.TCheckbutton \
+            -variable [my varname RunningOnlyVar] \
+            -command [list [self] publish]
+        pack $parent.running -side left -padx {16 0}
+        ttk::checkbutton $parent.booked -text "bookmarked only" \
+            -style LV.TCheckbutton \
+            -variable [my varname BookmarkedOnlyVar] \
+            -command [list [self] publish]
+        pack $parent.booked -side left -padx {16 0}
     }
 
     # The search-scope picker. The value is the region-spec the search terms are

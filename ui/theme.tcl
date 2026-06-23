@@ -265,6 +265,18 @@ proc ::questlog::ui::theme::build_chrome {} {
 
         rrect_img qlPill_$t $pw $ch $r [c crit_${t}_bg] [c crit_${t}_bd] 1
     }
+    # ---- list-view toggle strip ------------------------------------------
+    # The three list-view checkbuttons (exclude one-turn / running only /
+    # bookmarked only) sit at the top of the session-list region, not in the
+    # search toolbar, so they read as chrome of the list they filter. Their
+    # strip and the checkbuttons take the list's column-header strip colour, so
+    # the toggles tie to the #ececec header band directly below them rather than
+    # to the toolbar panel above. clam is a pure-Tk drawing theme, so the
+    # checkbutton -background (the area around the indicator and behind the
+    # label) honours the style here, unlike a native theme.
+    ttk::style configure LVStrip.TFrame -background [c strip]
+    ttk::style configure LV.TCheckbutton -background [c strip] -foreground [c ink]
+    ttk::style map LV.TCheckbutton -background [list active [c strip]]
     # ---- rounded snippet-badge pills (shape only; Tk draws the label) ------
     set bh [font metrics QLBold -linespace]
     set bw [expr {[font measure QLBold "TOOL RESULT"] + 16}]

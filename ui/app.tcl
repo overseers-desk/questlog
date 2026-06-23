@@ -171,6 +171,10 @@ proc ::questlog::ui::app::start {root {initial_criteria {}} {init_since ""} {ini
         [namespace code on_subagents] \
         [namespace code on_subagent_cost]]
     pack $list_frame.s -side top -fill both -expand 1
+    # The list-view toggles (exclude one-turn / running only / bookmarked only)
+    # belong to the session list visually but are owned by the toolbar (state +
+    # publish). Now both widgets exist, fill the list's toggle slot.
+    $Toolbar build_listview_toggles [$SessionList listview_slot]
     $PW add $list_frame -weight 58
 
     # Viewer pane: a full-height peer of the list, present from launch. It
