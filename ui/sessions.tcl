@@ -460,6 +460,17 @@ oo::class create ::questlog::ui::SessionList {
         my clear
     }
 
+    # A list-view-toggle-only snapshot change: the search and scope are unchanged, so the
+    # result set is unchanged; only which in-model sessions are shown changes. Re-derive
+    # the visible set in place (no clear, no re-scan, no re-search), preserving selection
+    # and scroll, by recomputing each row's hidden flag and re-rendering the affected
+    # folders - which reconcile_running already does.
+    method apply_listview {snapshot} {
+        set Snapshot $snapshot
+        set CriteriaActive [::questlog::ui::any_criteria $snapshot]
+        my reconcile_running $RunningSet
+    }
+
     # Show the launch-scope banner when the toolbar's under chip was the
     # one the app seeded (under_auto == 1), since the user did not type it
     # and may not realise it is filtering their results. Hide otherwise.
@@ -494,6 +505,15 @@ oo::class create ::questlog::ui::SessionList {
         return [::questlog::filter::row_matches $Snapshot $row]
     }
 
+    # 1 iff a session is shown under the current snapshot: a running session
+    # always surfaces; otherwise it must pass the list-view toggles. row may be
+    # "" (no cached row) -> treat as shown.
+    method session_shown {path row} {
+        if {[dict exists $RunningSet [my sget $path uuid ""]]} { return 1 }
+        if {$row eq ""} { return 1 }
+        return [::questlog::sessionlist::row_visible $Snapshot $row $RunningSet]
+    }
+
     # ---- streaming inserts -------------------------------------------
 
     # Browse-mode row from Scan. Skipped under running-only (the reconciler
@@ -502,16 +522,19 @@ oo::class create ::questlog::ui::SessionList {
     method on_scan_row {row} {
         if {[::questlog::sessionlist::toggle $Snapshot running_only 0]} return
         if {$CriteriaActive} return
-        # Scope (row_matches) decides eligibility; the list-view toggles
-        # (row_visible) decide whether an eligible row is shown.
-        if {![my row_matches_snapshot $row] \
-            || ![::questlog::sessionlist::row_visible $Snapshot $row {}]} return
+        if {![my row_matches_snapshot $row]} return   ;# scope = model membership
         set path [dict get $row path]
         if {[dict exists $PathNode $path]} return
         $Text configure -state normal
         my anchor_save
         my model_add_session $path $row
-        if {[my folder_expanded [dict get $row folder]]} { my render_session $path }
+        set shown [my session_shown $path $row]
+        my sset $path hidden [expr {!$shown}]
+        # The model holds every in-scope session; the toggles decide only whether it is
+        # drawn, so a later toggle hides/shows it in place without a re-scan.
+        if {$shown && [my folder_expanded [dict get $row folder]]} {
+            my render_session $path
+        }
         my anchor_restore
         $Text configure -state disabled
         my schedule_resort
@@ -1504,6 +1527,7 @@ oo::class create ::questlog::ui::SessionList {
 
     method expand_folder {folder} {
         foreach path [my folder_visible_paths $folder] {
+            if {[my sget $path hidden 0]} continue
             my render_session $path
         }
     }
@@ -2090,8 +2114,7 @@ oo::class create ::questlog::ui::SessionList {
     # self-corrects on the next.
     method reconcile_running {running} {
         set RunningSet $running
-        set running_only    [::questlog::sessionlist::toggle $Snapshot running_only 0]
-        set bookmarked_only [::questlog::sessionlist::toggle $Snapshot bookmarked_only 0]
+        set running_only [::questlog::sessionlist::toggle $Snapshot running_only 0]
         set before [my session_count]
 
         $Text configure -state normal
@@ -2112,48 +2135,48 @@ oo::class create ::questlog::ui::SessionList {
                 # and is added below, so running sessions always surface.
                 if {[my has_session $path]} continue
                 my model_add_session $path $row
-                if {[my folder_expanded [dict get $row folder]]} {
+                set shown [my session_shown $path $row]
+                my sset $path hidden [expr {!$shown}]
+                if {$shown && [my folder_expanded [dict get $row folder]]} {
                     my render_session $path
                 }
             }
         }
+        set dirty [dict create]
         foreach path [my all_session_paths] {
             if {![my has_session $path]} continue
             set uuid [my sget $path uuid]
             set is_running [dict exists $running $uuid]
-            # A session that is not running and whose backing jsonl is gone is
-            # a phantom in every mode - a Resume-forked session quit before any
-            # input leaves no file, but its cached Rows row outlives the file
-            # and would otherwise keep it (and its folder count) forever. A
-            # still-running session is exempt: its file may be mid-creation.
-            if {!$is_running && ![file isfile $path]} {
-                my forget_session $path
-                continue
-            }
+            # Phantom: not running and the backing jsonl is gone (a Resume-fork that quit
+            # before any input). Drop it from every mode.
+            if {!$is_running && ![file isfile $path]} { my forget_session $path; continue }
             set row [{*}$LookupSession $path]
-            set bk 0
-            if {$row ne ""} { set bk [dict getdef $row bookmarked 0] }
-            if {$running_only && $bookmarked_only} {
-                set keep [expr {$is_running && $bk}]
-            } elseif {$running_only} {
-                set keep $is_running
-            } elseif {$bookmarked_only} {
-                set keep $bk
-            } elseif {$CriteriaActive} {
-                set keep 1
+            # Retain in the model: a matched search row always; a browse row while it is
+            # in scope or running. An out-of-scope, non-running browse row leaves.
+            if {$CriteriaActive} {
+                set retained 1
             } else {
-                set keep [expr {($row ne "" && [my row_matches_snapshot $row] \
-                    && [::questlog::sessionlist::row_visible $Snapshot $row $running]) \
-                    || $is_running}]
+                set retained [expr {($row ne "" && [my row_matches_snapshot $row]) || $is_running}]
             }
-            if {!$keep} { my forget_session $path; continue }
-            # The poll only changes the running glyph; redraw a header just when
-            # this session's running-state flipped since the last tick, not every
-            # tick for every row (which churned the whole list and blinked the
-            # hovered row's bright actions glyph off each tick).
-            if {$is_running != [dict exists $PrevRunning $uuid]} {
+            if {!$retained} { my forget_session $path; continue }
+            set now_hidden [expr {![my session_shown $path $row]}]
+            if {$now_hidden != [my sget $path hidden 0]} {
+                my sset $path hidden $now_hidden
+                dict set dirty [my sget $path folder] 1
+            }
+            # Running glyph flip: redraw the header only when it changed AND the folder is
+            # not being re-rendered below (the re-render redraws it anyway), and only when
+            # the row is actually drawn.
+            if {$is_running != [dict exists $PrevRunning $uuid] \
+                && [my sflag $path rendered] \
+                && ![dict exists $dirty [my sget $path folder]]} {
                 my redraw_header $path
             }
+        }
+        # Re-render the folders whose visible set changed, reusing collapse/expand
+        # (no new mark surgery; render_session re-applies the selection).
+        dict for {f _} $dirty {
+            if {[my folder_expanded $f]} { my collapse_folder $f; my expand_folder $f }
         }
         set PrevRunning $running
         my anchor_restore

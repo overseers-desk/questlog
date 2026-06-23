@@ -47,6 +47,7 @@ namespace eval ::questlog::ui::app {
     variable ScanActive       ;# 1 while the corpus scan coroutine is in flight
     variable SearchActive     ;# 1 while a search is in flight
     variable CostOutstanding  ;# cost jobs posted but not yet returned (the cost pass is live when > 0)
+    variable PrevSnapshot     ;# the last published snapshot, to detect a view-toggle-only change
 }
 
 proc ::questlog::ui::app::start {root {initial_criteria {}} {init_since ""} {init_search ""}} {
@@ -79,6 +80,7 @@ proc ::questlog::ui::app::start {root {initial_criteria {}} {init_since ""} {ini
     variable ScanActive
     variable SearchActive
     variable CostOutstanding
+    variable PrevSnapshot
 
     set Root $root
     set StatusMode browse
@@ -89,6 +91,8 @@ proc ::questlog::ui::app::start {root {initial_criteria {}} {init_since ""} {ini
     set ScanActive 0
     set SearchActive 0
     set CostOutstanding 0
+    # The first publish has nothing to diff against, so it always takes the heavy path.
+    set PrevSnapshot {}
     set StatusVar [scope_status]
     set Running [dict create]
     set CurrentQuery {}
@@ -362,6 +366,16 @@ proc ::questlog::ui::app::run_tick {} {
 
 # ---- toolbar callback --------------------------------------------------
 
+# The snapshot keys that define the search and scope. A change confined to the
+# listview sub-key (the view toggles) is a view-only change and takes the fast
+# path; any difference here forces the full rebuild.
+proc ::questlog::ui::app::scope_equal {a b} {
+    foreach k {search search_case search_regions file tool pattern under under_auto since until} {
+        if {[dict getdef $a $k {}] ne [dict getdef $b $k {}]} { return 0 }
+    }
+    return 1
+}
+
 proc ::questlog::ui::app::on_filter {snapshot} {
     variable Scan
     variable Search
@@ -375,6 +389,20 @@ proc ::questlog::ui::app::on_filter {snapshot} {
     variable ProgressLine
     variable ScanActive
     variable SearchActive
+    variable PrevSnapshot
+
+    # A view-toggle-only change (search and scope unchanged) leaves the result set
+    # intact: only which in-model rows are shown changes. Take the fast path - no
+    # clear, no re-scan, no re-search - so the toggle is reversible and keeps the
+    # selection and scroll. Any scope/search difference falls through to the rebuild.
+    if {$PrevSnapshot ne {} && [scope_equal $PrevSnapshot $snapshot]} {
+        set CriteriaActive [::questlog::ui::any_criteria $snapshot]
+        $SessionList apply_listview $snapshot
+        refresh_status
+        update_spinner
+        set PrevSnapshot $snapshot
+        return
+    }
 
     set has_criteria [::questlog::ui::any_criteria $snapshot]
     ::questlog::debug::log search "on_filter begin: search='[dict get $snapshot search]' has_criteria=$has_criteria"
@@ -434,6 +462,7 @@ proc ::questlog::ui::app::on_filter {snapshot} {
     }
     refresh_status
     update_spinner
+    set PrevSnapshot $snapshot
 }
 
 # ---- scan callbacks ----------------------------------------------------
