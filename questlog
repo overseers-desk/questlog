@@ -13,7 +13,7 @@ if {[lindex $argv 0] in {--version -v}} {
 # Tk is absent until a GUI file requires it: CLI mode never loads Tk and runs
 # without a display, while GUI mode pulls Tk in through the GUI layer below.
 set CLI_MODE 0
-if {[lindex $argv 0] in {rename show} \
+if {[lindex $argv 0] in {rename show install-claude-command} \
     || "--json" in $argv || "--cmd" in $argv || "--shortstat" in $argv \
     || "--help" in $argv || "-h" in $argv} {
     set CLI_MODE 1
@@ -41,6 +41,19 @@ if {!$CLI_MODE} {
 }
 
 set ROOT [file dirname [file normalize [info script]]]
+
+# Register questlog with Claude Code. This keeps ~/.claude/commands/questlog.md
+# current so a Claude Code session reaches for questlog when the user asks to
+# search a past session. It is a system-level install, unrelated to the
+# ~/.claude/projects store that lib/path.tcl guards, so it runs here, before any
+# library loads, using the native `file` command. The explicit subcommand writes
+# with feedback and exits; every other launch silently refreshes the copy.
+source [file join $ROOT cli claude_command.tcl]
+if {[lindex $argv 0] eq "install-claude-command"} {
+    ::questlog::claude::install
+    exit 0
+}
+::questlog::claude::refresh
 
 source [file join $ROOT config.tcl]
 source [file join $ROOT lib debug.tcl]
