@@ -242,6 +242,7 @@ oo::class create ::questlog::Search {
     variable Workers           ;# tids of in-flight worker threads
     variable WorkersRemaining  ;# slices yet to report on_worker_done
     variable YieldClock        ;# clock-ms of the coroutine path's last yield
+    variable Snapshot          ;# the snapshot this run searches under (scope gate)
 
     constructor {scan on_file on_progress on_done} {
         set Scan $scan
@@ -254,6 +255,23 @@ oo::class create ::questlog::Search {
         set Active 0
         set Workers [list]
         set WorkersRemaining 0
+        set Snapshot [dict create]
+    }
+
+    # 1 iff a matched row passes the snapshot's row-level SCOPE. Today that is the
+    # under-folder scope, the one scope filter list_paths_for cannot pre-prune:
+    # since/until are mtime bounds it already applies, but `under` needs the row's
+    # cwd_hint, read only once the file is scanned. The CLI applies this via
+    # filter::row_matches (cli/main.tcl); the GUI search corpus skipped it, so an
+    # under-scoped search returned sessions from other folders. Bookmarked and
+    # one-turn are session-list view toggles, not search scope, so they are
+    # deliberately not applied here.
+    method row_in_scope {row} {
+        set under [dict getdef $Snapshot under {}]
+        if {[llength $under] > 0 && ![::questlog::filter::row_under_match $row $under]} {
+            return 0
+        }
+        return 1
     }
 
     method cancel {} {
@@ -267,6 +285,7 @@ oo::class create ::questlog::Search {
     }
 
     method start {snapshot} {
+        set Snapshot $snapshot
         set N [my pick_thread_count]
         if {$N > 0} {
             my start_threaded $snapshot $N
@@ -353,7 +372,8 @@ oo::class create ::questlog::Search {
             # A session qualifies only when every clause is satisfied (scan_file
             # returns no matches otherwise); deliver the whole match list at once
             # so the session renders in one pass.
-            if {[llength $matches] > 0 && ![dict exists $MatchedSessions $path]} {
+            if {[llength $matches] > 0 && [my row_in_scope $row] \
+                && ![dict exists $MatchedSessions $path]} {
                 dict set MatchedSessions $path 1
                 dict incr Counts matches [llength $matches]
                 {*}$OnFile $matches
@@ -389,6 +409,7 @@ oo::class create ::questlog::Search {
     }
 
     method start_threaded {snapshot N} {
+        set Snapshot $snapshot
         package require Thread
         my cancel
         set clauses [::questlog::search::build_clauses $snapshot]
@@ -449,6 +470,7 @@ oo::class create ::questlog::Search {
             {*}$OnProgress $d $t [dict get $Counts matches]
         }
         if {[llength $matches] == 0} return
+        if {![my row_in_scope $row]} return
         set path [dict get $row path]
         if {[dict exists $MatchedSessions $path]} return
         dict set MatchedSessions $path 1

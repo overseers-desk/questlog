@@ -10,9 +10,11 @@
 # filter::row_matches and the CLI applies but the GUI search corpus does not)
 # shows up as a GUI-vs-truth and GUI-vs-CLI mismatch, not a silent pass.
 #
-# Pure Tcl, no Tk: QUESTLOG_SEARCH_THREADS=0 forces the single-thread coroutine
-# search path so the GUI engine runs headless under one vwait. Fixture mtimes
-# are relative to now, so the since-bound cases never rot.
+# Pure Tcl, no Tk: each case runs the GUI engine through BOTH search paths - the
+# single-thread coroutine (QUESTLOG_SEARCH_THREADS=0) and the worker-thread
+# fan-out the app uses by default - so a scope filter dropped in either delivery
+# path is caught. Both run headless under one vwait. Fixture mtimes are relative
+# to now, so the since-bound cases never rot.
 
 package require Tcl 9
 package require TclOO
@@ -35,8 +37,6 @@ source [file join $ROOT lib search.tcl]
     snippet_trail   [::questlog::config::get snippet_trail] \
     tool_param_cap  [::questlog::config::get tool_param_cap] \
     tool_render_cap [::questlog::config::get tool_render_cap]]
-
-set ::env(QUESTLOG_SEARCH_THREADS) 0
 
 # Isolated corpus. HOME points the exec'd CLI at the same tree the in-process
 # resolver returns, so both engines read one corpus.
@@ -100,7 +100,8 @@ proc uuids {paths} {
 # The GUI search engine: Scan + Search wired as the app wires them, collecting
 # the matched session paths the way on_search_file does, run to completion under
 # one vwait.
-proc gui_search {snapshot} {
+proc gui_search {snapshot threads} {
+    set ::env(QUESTLOG_SEARCH_THREADS) $threads
     set ::g_done 0
     set ::g_hits [dict create]
     set scan   [::questlog::Scan new {} {}]
@@ -144,10 +145,13 @@ proc run_case {name search since under truth} {
         dict set snap under [list $under]
     }
     set cli [cli_search $argv]
-    set gui [gui_search $snap]
     check "$name / CLI == truth" $truth $cli
-    check "$name / GUI == truth" $truth $gui
-    check "$name / CLI == GUI"   $cli   $gui
+    # Both GUI delivery paths: the coroutine (0) and the worker-thread fan-out.
+    foreach threads {0 3} {
+        set gui [gui_search $snap $threads]
+        check "$name / GUI threads=$threads == truth" $truth $gui
+        check "$name / GUI threads=$threads == CLI"   $cli   $gui
+    }
 }
 
 # ---- truth table ----------------------------------------------------
