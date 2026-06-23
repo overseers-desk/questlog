@@ -20,7 +20,7 @@ package require Tcl 9
 
 namespace eval ::questlog::filter {
     namespace export parse_since cutoff_for ceiling_for since_label time_locale \
-        row_under_match row_matches
+        row_under_match row_matches folder_under_candidate
 }
 
 # The one home that interprets a since or until value, for every consumer (the
@@ -119,6 +119,24 @@ proc ::questlog::filter::since_label {spec} {
             return "$val seconds"
         }
     }
+}
+
+# 1 iff the project folder named $fname could hold a session under one of the
+# directories in under_list, judged from its encoded name alone (no file read).
+# This is the test that restricts which folders the scanner walks. encode_cwd
+# maps every non-alphanumeric to "-", so a folder under $u encodes to
+# encode_cwd($u) (the folder itself) or encode_cwd($u)-... (a descendant); the
+# "$enc-*" boundary excludes a same-prefix sibling (encode_cwd(.../code/app)
+# does not match .../code/apptest). The encoding is lossy - .../proj/sub and
+# .../proj-sub both encode to ...-proj-sub - so this can over-include a
+# hyphenated sibling repo; row_under_match settles that from the real cwd_hint.
+# The pair: this narrows the walk for speed, row_under_match confirms each row.
+proc ::questlog::filter::folder_under_candidate {fname under_list} {
+    foreach u $under_list {
+        set enc [::questlog::path::encode_cwd $u]
+        if {$fname eq $enc || [string match "$enc-*" $fname]} { return 1 }
+    }
+    return 0
 }
 
 # 1 iff the row's cwd is at or below any folder in under_list. An exact-cwd hit

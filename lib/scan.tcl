@@ -212,8 +212,17 @@ oo::class create ::questlog::Scan {
         if {![file isdirectory $root]} { return [list] }
         set cutoff [::questlog::filter::cutoff_for $snapshot]
         set ceiling [::questlog::filter::ceiling_for $snapshot]
+        # `under` is the scan's root, not a post-filter: when it is set, walk only
+        # the folders whose encoded name places them at or below an under
+        # directory, so sessions outside the scope are never enumerated or opened.
+        # The name test can over-include a hyphenated sibling (encode_cwd is
+        # lossy); row_under_match confirms each kept row from its real cwd. Empty
+        # under walks every folder (the show-all path).
+        set under [dict getdef $snapshot under {}]
         set pairs [list]
         foreach folder [glob -nocomplain -directory $root -type d -- *] {
+            if {[llength $under] > 0 \
+                && ![::questlog::filter::folder_under_candidate [file tail $folder] $under]} continue
             foreach f [glob -nocomplain -directory $folder -- *.jsonl] {
                 set m [file mtime $f]
                 # A bookmarked (+x) file is kept regardless of either bound so it
