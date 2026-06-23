@@ -35,6 +35,10 @@ set fh [open /tmp/questlog-test-projects/-home-test-code-foo/aaa-1.jsonl w]
 puts $fh {{"type":"user","message":{"content":"first prompt about foo"},"cwd":"/home/test/code/foo","timestamp":"2026-04-25T10:00:00.000Z"}}
 puts $fh {{"type":"assistant","message":{"content":"reply"},"timestamp":"2026-04-25T10:00:05.000Z"}}
 puts $fh {{"type":"user","message":{"content":"second prompt"},"timestamp":"2026-04-25T10:00:30.000Z"}}
+puts $fh {{"type":"assistant","message":{"content":"reply two"},"timestamp":"2026-04-25T10:00:35.000Z"}}
+# Third user turn: the scanner must count past the old early-break of 2 to
+# record nturns 3, so this also proves the raised turn_count_cap loop.
+puts $fh {{"type":"user","message":{"content":"third prompt"},"timestamp":"2026-04-25T10:01:00.000Z"}}
 close $fh
 
 set fh [open /tmp/questlog-test-projects/-home-test-code-foo/bbb-2.jsonl w]
@@ -61,7 +65,7 @@ proc on_row {row} { lappend ::rows $row }
 proc on_done {scanned} { set ::scan_done 1 }
 
 set s [::questlog::Scan new on_row on_done]
-$s extend [dict create since all listview [dict create one_turn 0]]
+$s extend [dict create since all]
 vwait ::scan_done
 
 # ---- assertions ------------------------------------------------------
@@ -91,20 +95,25 @@ check resolve_absent_dir "" [$s resolve_folder "-no-such-folder-xyz"]
 ::questlog::path::_real_file delete -force $realcwd
 ::questlog::path::_real_file delete -force [file join /tmp/questlog-test-projects $rf]
 
-# query is scope-only; the one_turn view toggle is applied separately by
-# sessionlist::row_visible. The scope query returns all 3 in-window rows; with
-# one_turn=1 the single-turn bbb-2 row fails the view toggle.
-set snap1 [dict create since all listview [dict create one_turn 1]]
-set qrows [$s query $snap1]
+# min_turns is scope: the scanner records each row's nturns (capped), and
+# filter::row_matches drops a row below the floor. The 3-turn aaa session records
+# nturns 3; the single-turn bbb-2 records nturns 1. A min_turns 2 scope keeps the
+# two multi-turn rows (aaa 3, ccc 2) and drops bbb-2.
+set snap1 [dict create since all min_turns 2]
+set qrows [$s query [dict create since all]]
 check query_scope_all 3 [llength $qrows]
-set vis 0
-foreach r $qrows { if {[::questlog::sessionlist::row_visible $snap1 $r]} { incr vis } }
-check row_visible_one_turn 2 $vis
+array set nturns_of {}
+foreach r $qrows { set nturns_of([dict get $r path]) [dict get $r nturns] }
+check nturns_recorded_aaa 3 $nturns_of(/tmp/questlog-test-projects/-home-test-code-foo/aaa-1.jsonl)
+check nturns_recorded_bbb 1 $nturns_of(/tmp/questlog-test-projects/-home-test-code-foo/bbb-2.jsonl)
+set inscope 0
+foreach r $qrows { if {[::questlog::filter::row_matches $snap1 $r]} { incr inscope } }
+check row_matches_min_turns 2 $inscope
 
 # Memoisation: re-extending shouldn't re-scan unchanged paths.
 set ::scan_done 0
 set ::rows [list]
-$s extend [dict create since all listview [dict create one_turn 0]]
+$s extend [dict create since all]
 vwait ::scan_done
 check memo_re_scanned_count 0 [llength $::rows]
 
@@ -114,13 +123,13 @@ check memo_re_scanned_count 0 [llength $::rows]
 file mtime /tmp/questlog-test-projects/-home-test-code-foo/aaa-1.jsonl [expr {[clock seconds] + 60}]
 set ::scan_done 0
 set ::rows [list]
-$s extend [dict create since all listview [dict create one_turn 0]]
+$s extend [dict create since all]
 vwait ::scan_done
 check mtime_invalidation_count 1 [llength $::rows]
 check mtime_invalidation_path /tmp/questlog-test-projects/-home-test-code-foo/aaa-1.jsonl [dict get [lindex $::rows 0] path]
 
 # Ordering: query result is mtime-DESC. The just-touched aaa-1 should be first.
-set qall [$s query [dict create since all listview [dict create one_turn 0]]]
+set qall [$s query [dict create since all]]
 set first_path [dict get [lindex $qall 0] path]
 check ordering_first_is_touched /tmp/questlog-test-projects/-home-test-code-foo/aaa-1.jsonl $first_path
 
@@ -128,11 +137,11 @@ check ordering_first_is_touched /tmp/questlog-test-projects/-home-test-code-foo/
 # memoised rows. App's on_filter relies on this to repopulate the tree
 # after a since-bound tighten-then-widen sequence (24h → 7d). Without it the
 # coroutine skips memoised paths and the tree stays empty.
-set q_before [$s query [dict create since all listview [dict create one_turn 0]]]
+set q_before [$s query [dict create since all]]
 set ::scan_done 0
-$s extend [dict create since all listview [dict create one_turn 1]]   ;# tighter (one_turn=1)
+$s extend [dict create since all min_turns 2]   ;# tighter (min_turns 2)
 vwait ::scan_done
-set q_back [$s query [dict create since all listview [dict create one_turn 0]]]
+set q_back [$s query [dict create since all]]
 check query_replay_after_since_change [llength $q_before] [llength $q_back]
 
 $s destroy
@@ -151,14 +160,14 @@ file mtime $ccc [expr {[clock seconds] - 40*24*3600}]
 set ::scan_done 0
 set ::rows [list]
 set s2 [::questlog::Scan new on_row on_done]
-$s2 extend [dict create since all listview [dict create one_turn 0]]
+$s2 extend [dict create since all]
 vwait ::scan_done
 
 set bbb_row ""
 foreach r $::rows { if {[dict get $r path] eq $bbb} { set bbb_row $r } }
 check bbb_bookmarked_flag 1 [dict get $bbb_row bookmarked]
 
-set q7 [$s2 query [dict create since 7d listview [dict create one_turn 0]]]
+set q7 [$s2 query [dict create since 7d]]
 set paths7 [lmap r $q7 {dict get $r path}]
 check query_bookmark_kept   1 [expr {$bbb in $paths7}]
 check query_old_plain_dropped 0 [expr {$ccc in $paths7}]
@@ -169,7 +178,7 @@ check enum_old_plain_dropped 0 [expr {$ccc in $lp}]
 
 # bookmarked_only is a view toggle, not a query filter: the scope query returns
 # every in-window row; row_visible keeps only the bookmarked one (bbb).
-set snapb [dict create since all listview [dict create one_turn 0 bookmarked_only 1]]
+set snapb [dict create since all listview [dict create bookmarked_only 1]]
 set qb [$s2 query $snapb]
 set visb 0
 foreach r $qb { if {[::questlog::sessionlist::row_visible $snapb $r]} { incr visb } }

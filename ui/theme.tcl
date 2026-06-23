@@ -266,9 +266,9 @@ proc ::questlog::ui::theme::build_chrome {} {
         rrect_img qlPill_$t $pw $ch $r [c crit_${t}_bg] [c crit_${t}_bd] 1
     }
     # ---- list-view toggle strip ------------------------------------------
-    # The three list-view checkbuttons (exclude one-turn / running only /
-    # bookmarked only) sit at the top of the session-list region, not in the
-    # search toolbar, so they read as chrome of the list they filter. Their
+    # The list-view checkbuttons (running only / bookmarked only) sit at the top
+    # of the session-list region, not in the search toolbar, so they read as
+    # chrome of the list they filter. Their
     # strip and the checkbuttons take the list's column-header strip colour, so
     # the toggles tie to the #ececec header band directly below them rather than
     # to the toolbar panel above. clam is a pure-Tk drawing theme, so the

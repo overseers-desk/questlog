@@ -258,21 +258,17 @@ oo::class create ::questlog::Search {
         set Snapshot [dict create]
     }
 
-    # 1 iff a matched row passes the snapshot's row-level SCOPE. Today that is the
-    # under-folder scope, the one scope filter list_paths_for cannot pre-prune:
-    # since/until are mtime bounds it already applies, but `under` needs the row's
-    # cwd_hint, read only once the file is scanned. The CLI applies this via
-    # filter::row_matches (cli/main.tcl); the GUI search corpus skipped it, so an
-    # under-scoped search returned sessions from other folders. Bookmarked and
-    # one-turn are session-list view toggles, not search scope, so they are
-    # deliberately not applied here.
-    method row_in_scope {row} {
-        set under [dict getdef $Snapshot under {}]
-        if {[llength $under] > 0 && ![::questlog::filter::row_under_match $row $under]} {
-            return 0
-        }
-        return 1
-    }
+    # 1 iff a matched row passes the snapshot's row-level SCOPE - the full
+    # filter::row_matches predicate (under-folder scope plus the min-turns floor;
+    # since/until are already pruned by list_paths_for, and row_matches re-checks
+    # them harmlessly with the bookmark pin). under is the scope filter
+    # list_paths_for cannot pre-prune: since/until are mtime bounds it already
+    # applies, but `under` needs the row's cwd_hint, read only once the file is
+    # scanned. The GUI search corpus once skipped this, so an under-scoped search
+    # returned sessions from other folders. Bookmarked, running, and the
+    # bookmarked-only/running-only toggles are session-list view toggles, not
+    # search scope, so they are deliberately not applied here.
+    method row_in_scope {row} { return [::questlog::filter::row_matches $Snapshot $row] }
 
     method cancel {} {
         incr Epoch

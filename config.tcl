@@ -113,6 +113,15 @@ namespace eval ::questlog::config {
     dict set Config since_presets {24h 7d 30d all}
     dict set Config since_default 7d
 
+    # ---- minimum turns -----------------------------------------------------
+    # The "min turns" scope filter. The scanner counts a session's user turns
+    # up to turn_count_cap (so a row's recorded nturns saturates there, and the
+    # spinbox max is this cap); the spinbox spans 1..turn_count_cap.
+    # min_turns_default is the GUI's startup value - 2 keeps the old "exclude
+    # one-turn sessions" default - while 1 means no filter (include all).
+    dict set Config turn_count_cap   9
+    dict set Config min_turns_default 2
+
     # ---- display caps ------------------------------------------------------
     # Tail bytes read for the most-recent agentName/aiTitle rename records.
     dict set Config tail_window_bytes 65536

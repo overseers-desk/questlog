@@ -327,6 +327,7 @@ oo::class create ::questlog::Scan {
         set cwd ""
         set first_ts ""
         set kind ""
+        set cap [::questlog::config::get turn_count_cap]
         while {[chan gets $fh line] >= 0} {
             if {$line eq ""} continue
             # Origin from the opening record (see session_kind): a queue-operation
@@ -345,7 +346,7 @@ oo::class create ::questlog::Scan {
                 incr users
                 if {$users == 1} { set first $uc }
             }
-            if {$users >= 2 && $cwd ne "" && $first_ts ne ""} break
+            if {$users >= $cap && $cwd ne "" && $first_ts ne ""} break
         }
         # Tail scan. Seek to max(current_pos, size - 64KB) so a short file
         # is read whole and a long file pays only the tail. Skip the first
@@ -388,6 +389,7 @@ oo::class create ::questlog::Scan {
             uuid $uuid \
             first_ts $first_ts \
             is_multi [expr {$users >= 2}] \
+            nturns [expr {min($users, $cap)}] \
             kind [expr {$kind eq "" ? "cli" : $kind}] \
             first_user $first_clean \
             slug $slug \

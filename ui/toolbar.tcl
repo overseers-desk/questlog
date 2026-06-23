@@ -16,11 +16,13 @@ package require Tk
 #                    empty key = any use of the tool)
 #   pattern          list of regex strings   (case-sensitive, always)
 #   under_auto       1 iff `under` is the launch-seeded chip, untouched
+#   min_turns        the minimum-turns scope floor (1 = include all). A scope
+#                    filter alongside since/under: a session below the floor leaves
+#                    the corpus, not just the view - see lib/filter.tcl.
 #   listview         the session-list view toggles, grouped away from the search
 #                    and scope keys above so no reader mistakes one for a search:
-#                    one_turn 0|1 (exclude one-turn), running_only 0|1,
-#                    bookmarked_only 0|1. They narrow what the left pane shows, not
-#                    what is searched - see lib/sessionlist.tcl.
+#                    running_only 0|1, bookmarked_only 0|1. They narrow what the
+#                    left pane shows, not what is searched - see lib/sessionlist.tcl.
 #   cwd              launch cwd, constant after startup
 
 namespace eval ::questlog::ui {}
@@ -70,7 +72,7 @@ oo::class create ::questlog::ui::Toolbar {
     variable SearchCaseVar
     variable SearchScopeVar   ;# region-spec: any | user,assistant | tool-use | tool-result
     variable ScopeLabelVar    ;# the menubutton's friendly label for the scope
-    variable OneTurnVar
+    variable MinTurnsVar
     variable RunningOnlyVar
     variable BookmarkedOnlyVar
     variable Clauses          ;# dict kind -> list of values; file/tool are pairs
@@ -105,7 +107,7 @@ oo::class create ::questlog::ui::Toolbar {
         set SearchCaseVar 0
         set SearchScopeVar any
         set ScopeLabelVar "anywhere"
-        set OneTurnVar 1
+        set MinTurnsVar [::questlog::config::get min_turns_default]
         set RunningOnlyVar    0
         set BookmarkedOnlyVar 0
         set Clauses [dict create under {} file {} tool {} pattern {}]
@@ -197,6 +199,27 @@ oo::class create ::questlog::ui::Toolbar {
         pack $Restrict.time.custom -side left -padx {6 0}
         my refresh_custom_member
 
+        # Minimum-turns scope floor: a spinbox over 1..turn_count_cap. 1 includes
+        # all; a higher floor drops shorter sessions from the corpus (it is scope,
+        # not a view toggle - see lib/filter.tcl). The same -width-18 label as the
+        # time row keeps the column aligned. set_min_turns clamps to the valid
+        # range and publishes, so a bad keystroke can never leave an out-of-range
+        # value; it is wired to the buttons (-command, <<Increment>>/<<Decrement>>)
+        # and to <Return>/<FocusOut> for typed edits.
+        ttk::frame $Restrict.minturns
+        pack $Restrict.minturns -side top -fill x -pady {0 3}
+        ttk::label $Restrict.minturns.label -text "min turns" -width 18 -anchor w
+        pack $Restrict.minturns.label -side left -padx {0 4}
+        set sb $Restrict.minturns.sb
+        ttk::spinbox $sb -from 1 -to [::questlog::config::get turn_count_cap] \
+            -width 3 -textvariable [my varname MinTurnsVar] \
+            -command [list [self] set_min_turns]
+        pack $sb -side left
+        bind $sb <<Increment>>  [list [self] set_min_turns]
+        bind $sb <<Decrement>>  [list [self] set_min_turns]
+        bind $sb <Return>       [list [self] set_min_turns]
+        bind $sb <FocusOut>     [list [self] set_min_turns]
+
         set AddRail $Restrict.add
         ttk::frame $AddRail
         pack $AddRail -side top -fill x -pady {4 0}
@@ -208,40 +231,37 @@ oo::class create ::questlog::ui::Toolbar {
             pack $AddRail.b$k -side left -padx {0 4}
         }
 
-        # The three list-view toggles (exclude one-turn / running only /
-        # bookmarked only) are not part of the toolbar's chrome: they belong to
-        # the session list, so app.tcl hosts them at the top of the list region
-        # via build_listview_toggles. The Toolbar still owns their state and the
-        # publish wiring; only their on-screen home moved.
+        # The list-view toggles (running only / bookmarked only) are not part of
+        # the toolbar's chrome: they belong to the session list, so app.tcl hosts
+        # them at the top of the list region via build_listview_toggles. The
+        # Toolbar still owns their state and the publish wiring; only their
+        # on-screen home moved.
 
         # Render the persistent folder/file rows up front.
         my rebuild_clause_rows
         my refresh_add_rail
     }
 
-    # Build the three list-view toggles into a caller-owned frame, so they read
-    # as the top of the session list (the region they filter) rather than as a
-    # search control. The Toolbar keeps the state (OneTurnVar / RunningOnlyVar /
-    # BookmarkedOnlyVar) and the publish wiring; only the widgets live in the
-    # passed parent. $parent is styled by its host to match the list surface, and
-    # the checkbuttons take the LV.TCheckbutton style so their background ties to
-    # that surface too.
+    # Build the list-view toggles into a caller-owned frame, so they read as the
+    # top of the session list (the region they filter) rather than as a search
+    # control. The Toolbar keeps the state (RunningOnlyVar / BookmarkedOnlyVar)
+    # and the publish wiring; only the widgets live in the passed parent. $parent
+    # is styled by its host to match the list surface, and the checkbuttons take
+    # the LV.TCheckbutton style so their background ties to that surface too. The
+    # two sit flush right: pack bookmarked-only first with -side right, then
+    # running-only, so the reading order stays "running only" then "bookmarked
+    # only" while both hug the strip's right edge.
     method build_listview_toggles {parent} {
-        ttk::checkbutton $parent.oneturn -text "exclude one-turn sessions" \
-            -style LV.TCheckbutton \
-            -variable [my varname OneTurnVar] \
-            -command [list [self] publish]
-        pack $parent.oneturn -side left
-        ttk::checkbutton $parent.running -text "running only" \
-            -style LV.TCheckbutton \
-            -variable [my varname RunningOnlyVar] \
-            -command [list [self] publish]
-        pack $parent.running -side left -padx {16 0}
         ttk::checkbutton $parent.booked -text "bookmarked only" \
             -style LV.TCheckbutton \
             -variable [my varname BookmarkedOnlyVar] \
             -command [list [self] publish]
-        pack $parent.booked -side left -padx {16 0}
+        pack $parent.booked -side right
+        ttk::checkbutton $parent.running -text "running only" \
+            -style LV.TCheckbutton \
+            -variable [my varname RunningOnlyVar] \
+            -command [list [self] publish]
+        pack $parent.running -side right -padx {0 16}
     }
 
     # The search-scope picker. The value is the region-spec the search terms are
@@ -261,6 +281,19 @@ oo::class create ::questlog::ui::Toolbar {
     method set_scope {val label} {
         set SearchScopeVar $val
         set ScopeLabelVar $label
+        my publish
+    }
+
+    # Clamp MinTurnsVar to 1..turn_count_cap and publish. The spinbox lets a user
+    # type freely, so a non-integer or out-of-range value is coerced back to a
+    # sane one (a blank or garbage entry snaps to 1) before it ever reaches the
+    # snapshot; the visible value is rewritten too, so the field never shows the
+    # rejected text.
+    method set_min_turns {} {
+        set cap [::questlog::config::get turn_count_cap]
+        if {![string is integer -strict $MinTurnsVar]} { set MinTurnsVar 1 }
+        if {$MinTurnsVar < 1}    { set MinTurnsVar 1 }
+        if {$MinTurnsVar > $cap} { set MinTurnsVar $cap }
         my publish
     }
 
@@ -539,8 +572,8 @@ oo::class create ::questlog::ui::Toolbar {
             tool           [dict get $Clauses tool] \
             pattern        [dict get $Clauses pattern] \
             under_auto     $UnderAuto \
+            min_turns      $MinTurnsVar \
             listview       [dict create \
-                one_turn        $OneTurnVar \
                 running_only    $RunningOnlyVar \
                 bookmarked_only $BookmarkedOnlyVar] \
             cwd            $Cwd]

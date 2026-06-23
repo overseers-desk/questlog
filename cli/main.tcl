@@ -489,7 +489,7 @@ proc ::questlog::cli::main::run {argv} {
         lassign [::questlog::match::scan_file $path $clauses] row matches
         if {$row eq ""} continue
         
-        # Apply snapshot-level row filters (recency bound, one_turn, bookmarked, and under-folder)
+        # Apply snapshot-level row filters (recency bound, bookmark pin, and under-folder)
         if {![::questlog::filter::row_matches $sel_snapshot $row]} {
             continue
         }

@@ -80,7 +80,7 @@ check bound_accrued_default 0 [bound accrued --keyword x]
 
 # selection_snapshot_for clears the until ceiling (so an accrued pass keeps a
 # session revived after it) while preserving the since floor and under-scope.
-set sel [::questlog::cli::main::selection_snapshot_for [dict create since 7d until 2d under /x listview [dict create one_turn 0]]]
+set sel [::questlog::cli::main::selection_snapshot_for [dict create since 7d until 2d under /x]]
 check sel_clears_until "" [dict get $sel until]
 check sel_keeps_since 7d  [dict get $sel since]
 check sel_keeps_under /x  [dict get $sel under]

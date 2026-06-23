@@ -3,15 +3,15 @@ package require Tcl 9
 # ::questlog::filter - the single home for snapshot row-level matching.
 #
 # Whether a session row passes the toolbar's snapshot SCOPE - the since/until
-# recency bounds and the under-folder scope - is one question with one answer,
-# asked by both the model (Scan, when it filters its memoised rows) and the view
-# (SessionList, when it reconciles which rows stay shown). The cutoff computation
-# and the under-scope predicate used to live in both, so the model logic was
-# mirrored into the view. These procs are that one answer; Scan and SessionList
-# call them rather than each carrying a copy. The session-list view toggles
-# (one_turn, running_only, bookmarked_only) are a separate question with a
-# separate home, ::questlog::sessionlist: they shape which in-scope rows the list
-# shows, not which rows are in scope at all.
+# recency bounds, the under-folder scope, and the min-turns floor - is one
+# question with one answer, asked by both the model (Scan, when it filters its
+# memoised rows) and the view (SessionList, when it reconciles which rows stay
+# shown). The cutoff computation and the under-scope predicate used to live in
+# both, so the model logic was mirrored into the view. These procs are that one
+# answer; Scan and SessionList call them rather than each carrying a copy. The
+# session-list view toggles (running_only, bookmarked_only) are a separate
+# question with a separate home, ::questlog::sessionlist: they shape which
+# in-scope rows the list shows, not which rows are in scope at all.
 #
 # A namespace of pure predicates, not a class: the snapshot is an immutable
 # dict the toolbar publishes and the row is a dict passed in, so there is no
@@ -138,10 +138,15 @@ proc ::questlog::filter::row_under_match {row under_list} {
 }
 
 # 1 iff a row is in a snapshot's row-level SCOPE: the since cutoff, the until
-# ceiling, and the under-folder scope. A bookmark (+x) pins the row past either
-# recency bound, so a bookmarked row survives an mtime outside the since cutoff
-# or the until ceiling that a plain row would not. The session-list view toggles
-# are applied separately, by ::questlog::sessionlist::row_visible.
+# ceiling, the under-folder scope, and the min-turns floor. A bookmark (+x) pins
+# the row past either recency bound, so a bookmarked row survives an mtime
+# outside the since cutoff or the until ceiling that a plain row would not. The
+# min-turns floor drops a session whose recorded nturns is below the threshold
+# (default 1 = no filter). Both row builders record nturns - scan_one (browse,
+# capped at turn_count_cap) and scan_file (search, the full count) - so the floor
+# scopes browse and search alike; a row that somehow lacks nturns defaults to the
+# threshold and passes. The session-list view toggles are applied separately, by
+# ::questlog::sessionlist::row_visible.
 proc ::questlog::filter::row_matches {snapshot row} {
     set bk [dict getdef $row bookmarked 0]
     if {[dict get $row mtime] <= [cutoff_for $snapshot] && !$bk} { return 0 }
@@ -149,5 +154,7 @@ proc ::questlog::filter::row_matches {snapshot row} {
     if {$ceiling ne "" && [dict get $row mtime] > $ceiling && !$bk} { return 0 }
     set under [dict getdef $snapshot under {}]
     if {[llength $under] > 0 && ![row_under_match $row $under]} { return 0 }
+    set min_turns [dict getdef $snapshot min_turns 1]
+    if {$min_turns > 1 && [dict getdef $row nturns $min_turns] < $min_turns} { return 0 }
     return 1
 }

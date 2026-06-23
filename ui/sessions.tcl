@@ -239,8 +239,8 @@ oo::class create ::questlog::ui::SessionList {
         pack $Top.banner.text -side left -padx 8 -pady 5 -fill x -expand 1
         pack $Top.banner.showall -side right -padx 8 -pady 5
 
-        # The list-view toggle strip: the row the toolbar fills with the three
-        # view toggles (exclude one-turn / running only / bookmarked only). It
+        # The list-view toggle strip: the row the toolbar fills with the view
+        # toggles (running only / bookmarked only). It
         # sits between the banner and the body's column-header strip, taking that
         # strip's #ececec colour, so the toggles read as the top of the list they
         # filter, not as search chrome. Packed before build_body so it lands
@@ -2147,8 +2147,9 @@ oo::class create ::questlog::ui::SessionList {
                 # fires OnRow, which in browse mode is on_scan_row, which has
                 # already added (and rendered) this session. Re-check so we do
                 # not add it a second time. A running session that on_scan_row
-                # filtered out (out of window / one-turn) is still absent here
-                # and is added below, so running sessions always surface.
+                # filtered out (out of window / below the min-turns floor) is
+                # still absent here and is added below, so running sessions
+                # always surface.
                 if {[my has_session $path]} continue
                 my model_add_session $path $row
                 set shown [my session_shown $path $row]

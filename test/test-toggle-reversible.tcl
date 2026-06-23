@@ -31,8 +31,7 @@ set ::env(HOME) $SAND
 proc noop {args} {}
 
 # Two multi-turn sessions in one folder. write_session emits two user turns so
-# both are is_multi (users >= 2) and survive one_turn; B is bookmarked (its +x
-# bit is set), A is not.
+# both clear a min-turns floor; B is bookmarked (its +x bit is set), A is not.
 proc write_session {path prompts ts} {
     set fh [open $path w]
     set t 0
@@ -79,9 +78,9 @@ proc check {name got want} {
 }
 
 # --- 1. Stream both rows in, expand the folder; both render and are in the model.
-$SL apply_filter [dict create since all listview [dict create one_turn 0 bookmarked_only 0]]
+$SL apply_filter [dict create since all listview [dict create bookmarked_only 0]]
 set ::scan_done 0
-$::Scan extend [dict create since all listview [dict create one_turn 0 bookmarked_only 0]]
+$::Scan extend [dict create since all listview [dict create bookmarked_only 0]]
 after 200 [list set ::scan_done 1]
 vwait ::scan_done
 $SL toggle_folder $FOLDER
@@ -101,7 +100,7 @@ check "A is selected" [$SL is_selected $Ap] 1
 # --- 3. Toggle bookmarked_only on via the fast path. A hides in place but stays
 #        in the model; B keeps rendering; folder count is the model total still;
 #        A's selection is retained (path-keyed) though it is unpainted.
-$SL apply_listview [dict create since all listview [dict create one_turn 0 bookmarked_only 1]]
+$SL apply_listview [dict create since all listview [dict create bookmarked_only 1]]
 update
 check "A not rendered (hidden)" [$SL sflag $Ap rendered] 0
 check "A still in model"        [$SL has_session $Ap] 1
@@ -111,7 +110,7 @@ check "A selection retained"    [$SL is_selected $Ap] 1
 
 # --- 4. Toggle bookmarked_only back off: A renders again and is still selected
 #        (the selected tag is re-applied by render_session from SelectedSet).
-$SL apply_listview [dict create since all listview [dict create one_turn 0 bookmarked_only 0]]
+$SL apply_listview [dict create since all listview [dict create bookmarked_only 0]]
 update
 check "A rendered again"        [$SL sflag $Ap rendered] 1
 check "A still selected"        [$SL is_selected $Ap] 1

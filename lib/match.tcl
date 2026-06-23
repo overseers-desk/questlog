@@ -432,6 +432,7 @@ proc ::questlog::match::scan_file {path clauses {tick ""} {yield_lines 0}} {
         uuid [file rootname [file tail $path]] \
         first_ts $first_ts \
         is_multi [expr {$users >= 2}] \
+        nturns $users \
         first_user [::questlog::match::clean_preview $first_user] \
         bookmarked [file executable $path] \
         has_subagents $has_sub \

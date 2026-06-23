@@ -171,9 +171,9 @@ proc ::questlog::ui::app::start {root {initial_criteria {}} {init_since ""} {ini
         [namespace code on_subagents] \
         [namespace code on_subagent_cost]]
     pack $list_frame.s -side top -fill both -expand 1
-    # The list-view toggles (exclude one-turn / running only / bookmarked only)
-    # belong to the session list visually but are owned by the toolbar (state +
-    # publish). Now both widgets exist, fill the list's toggle slot.
+    # The list-view toggles (running only / bookmarked only) belong to the
+    # session list visually but are owned by the toolbar (state + publish). Now
+    # both widgets exist, fill the list's toggle slot.
     $Toolbar build_listview_toggles [$SessionList listview_slot]
     $PW add $list_frame -weight 58
 
@@ -374,7 +374,7 @@ proc ::questlog::ui::app::run_tick {} {
 # listview sub-key (the view toggles) is a view-only change and takes the fast
 # path; any difference here forces the full rebuild.
 proc ::questlog::ui::app::scope_equal {a b} {
-    foreach k {search search_case search_regions file tool pattern under under_auto since until} {
+    foreach k {search search_case search_regions file tool pattern under under_auto since until min_turns} {
         if {[dict getdef $a $k {}] ne [dict getdef $b $k {}]} { return 0 }
     }
     return 1

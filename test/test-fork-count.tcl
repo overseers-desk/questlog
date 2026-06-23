@@ -53,7 +53,7 @@ proc resolvef {f}    { return "/tmp/proj" }
 proc subagentsf {path} { return [$::Scan subagents_for $path] }
 set SL [::questlog::ui::SessionList new .s resolvef lookup noop noop noop noop noop noop scanpath noop noop subagentsf noop]
 pack .s -fill both -expand 1
-$SL apply_filter [dict create since 7d listview [dict create one_turn 1]]
+$SL apply_filter [dict create since 7d min_turns 2]
 
 set fails 0
 proc check {label expected} {
