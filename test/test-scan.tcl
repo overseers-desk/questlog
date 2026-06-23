@@ -5,6 +5,7 @@ set ROOT [file dirname [file dirname [file normalize [info script]]]]
 source [file join $ROOT config.tcl]
 source [file join $ROOT lib path.tcl]
 source [file join $ROOT lib filter.tcl]
+source [file join $ROOT lib sessionlist.tcl]
 source [file join $ROOT lib jsonl.tcl]
 source [file join $ROOT lib match.tcl]
 source [file join $ROOT lib scan.tcl]
@@ -90,9 +91,15 @@ check resolve_absent_dir "" [$s resolve_folder "-no-such-folder-xyz"]
 ::questlog::path::_real_file delete -force $realcwd
 ::questlog::path::_real_file delete -force [file join /tmp/questlog-test-projects $rf]
 
-# query with one_turn=1 drops the single-turn bbb-2 file.
-set qrows [$s query [dict create since all listview [dict create one_turn 1]]]
-check query_one_turn 2 [llength $qrows]
+# query is scope-only; the one_turn view toggle is applied separately by
+# sessionlist::row_visible. The scope query returns all 3 in-window rows; with
+# one_turn=1 the single-turn bbb-2 row fails the view toggle.
+set snap1 [dict create since all listview [dict create one_turn 1]]
+set qrows [$s query $snap1]
+check query_scope_all 3 [llength $qrows]
+set vis 0
+foreach r $qrows { if {[::questlog::sessionlist::row_visible $snap1 $r]} { incr vis } }
+check row_visible_one_turn 2 $vis
 
 # Memoisation: re-extending shouldn't re-scan unchanged paths.
 set ::scan_done 0
@@ -160,9 +167,13 @@ set lp [$s2 list_paths_for [dict create since 7d]]
 check enum_bookmark_kept     1 [expr {$bbb in $lp}]
 check enum_old_plain_dropped 0 [expr {$ccc in $lp}]
 
-# bookmarked_only filter keeps only the bookmarked row.
-set qb [$s2 query [dict create since all listview [dict create one_turn 0 bookmarked_only 1]]]
-check query_bookmarked_only 1 [llength $qb]
+# bookmarked_only is a view toggle, not a query filter: the scope query returns
+# every in-window row; row_visible keeps only the bookmarked one (bbb).
+set snapb [dict create since all listview [dict create one_turn 0 bookmarked_only 1]]
+set qb [$s2 query $snapb]
+set visb 0
+foreach r $qb { if {[::questlog::sessionlist::row_visible $snapb $r]} { incr visb } }
+check row_visible_bookmarked_only 1 $visb
 
 $s2 destroy
 

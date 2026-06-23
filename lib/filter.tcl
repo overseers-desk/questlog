@@ -2,13 +2,16 @@ package require Tcl 9
 
 # ::questlog::filter - the single home for snapshot row-level matching.
 #
-# Whether a session row passes the toolbar's snapshot (recency bound, one_turn,
-# bookmarked_only, and the under-scope) is one question with one answer, asked
-# by both the model (Scan, when it filters its memoised rows) and the view
-# (SessionList, when it reconciles which rows stay shown). The cutoff
-# computation and the under-scope predicate used to live in both, so the model
-# logic was mirrored into the view. These procs are that one answer; Scan and
-# SessionList call them rather than each carrying a copy.
+# Whether a session row passes the toolbar's snapshot SCOPE - the since/until
+# recency bounds and the under-folder scope - is one question with one answer,
+# asked by both the model (Scan, when it filters its memoised rows) and the view
+# (SessionList, when it reconciles which rows stay shown). The cutoff computation
+# and the under-scope predicate used to live in both, so the model logic was
+# mirrored into the view. These procs are that one answer; Scan and SessionList
+# call them rather than each carrying a copy. The session-list view toggles
+# (one_turn, running_only, bookmarked_only) are a separate question with a
+# separate home, ::questlog::sessionlist: they shape which in-scope rows the list
+# shows, not which rows are in scope at all.
 #
 # A namespace of pure predicates, not a class: the snapshot is an immutable
 # dict the toolbar publishes and the row is a dict passed in, so there is no
@@ -134,17 +137,16 @@ proc ::questlog::filter::row_under_match {row under_list} {
     return 0
 }
 
-# 1 iff a row passes a snapshot's row-level filters. A bookmark (+x) pins the
-# row past either recency bound, so a bookmarked row survives an mtime outside the
-# since cutoff or the until ceiling, and a bookmarked_only filter, that a plain
-# row would not.
+# 1 iff a row is in a snapshot's row-level SCOPE: the since cutoff, the until
+# ceiling, and the under-folder scope. A bookmark (+x) pins the row past either
+# recency bound, so a bookmarked row survives an mtime outside the since cutoff
+# or the until ceiling that a plain row would not. The session-list view toggles
+# are applied separately, by ::questlog::sessionlist::row_visible.
 proc ::questlog::filter::row_matches {snapshot row} {
     set bk [dict getdef $row bookmarked 0]
-    if {[dict getdef [dict getdef $snapshot listview {}] bookmarked_only 0] && !$bk} { return 0 }
     if {[dict get $row mtime] <= [cutoff_for $snapshot] && !$bk} { return 0 }
     set ceiling [ceiling_for $snapshot]
     if {$ceiling ne "" && [dict get $row mtime] > $ceiling && !$bk} { return 0 }
-    if {[dict getdef [dict getdef $snapshot listview {}] one_turn 1] && ![dict get $row is_multi]} { return 0 }
     set under [dict getdef $snapshot under {}]
     if {[llength $under] > 0 && ![row_under_match $row $under]} { return 0 }
     return 1

@@ -500,9 +500,12 @@ oo::class create ::questlog::ui::SessionList {
     # owns the display then) and when criteria are active (the result index
     # is built from matches, not the scan stream).
     method on_scan_row {row} {
-        if {[dict getdef [dict getdef $Snapshot listview {}] running_only 0]} return
+        if {[::questlog::sessionlist::toggle $Snapshot running_only 0]} return
         if {$CriteriaActive} return
-        if {![my row_matches_snapshot $row]} return
+        # Scope (row_matches) decides eligibility; the list-view toggles
+        # (row_visible) decide whether an eligible row is shown.
+        if {![my row_matches_snapshot $row] \
+            || ![::questlog::sessionlist::row_visible $Snapshot $row {}]} return
         set path [dict get $row path]
         if {[dict exists $PathNode $path]} return
         $Text configure -state normal
@@ -2087,8 +2090,8 @@ oo::class create ::questlog::ui::SessionList {
     # self-corrects on the next.
     method reconcile_running {running} {
         set RunningSet $running
-        set running_only    [dict getdef [dict getdef $Snapshot listview {}] running_only 0]
-        set bookmarked_only [dict getdef [dict getdef $Snapshot listview {}] bookmarked_only 0]
+        set running_only    [::questlog::sessionlist::toggle $Snapshot running_only 0]
+        set bookmarked_only [::questlog::sessionlist::toggle $Snapshot bookmarked_only 0]
         set before [my session_count]
 
         $Text configure -state normal
@@ -2139,7 +2142,9 @@ oo::class create ::questlog::ui::SessionList {
             } elseif {$CriteriaActive} {
                 set keep 1
             } else {
-                set keep [expr {($row ne "" && [my row_matches_snapshot $row]) || $is_running}]
+                set keep [expr {($row ne "" && [my row_matches_snapshot $row] \
+                    && [::questlog::sessionlist::row_visible $Snapshot $row $running]) \
+                    || $is_running}]
             }
             if {!$keep} { my forget_session $path; continue }
             # The poll only changes the running glyph; redraw a header just when

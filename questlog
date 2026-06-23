@@ -83,6 +83,7 @@ dict set ::questlog::config::Config debug_enabled $DEBUG_ENABLED
 if {$DEBUG_ENABLED ne "0" && $DEBUG_ENABLED ne ""} { ::questlog::debug::enable }
 source [file join $ROOT lib path.tcl]
 source [file join $ROOT lib filter.tcl]
+source [file join $ROOT lib sessionlist.tcl]
 source [file join $ROOT lib jsonl.tcl]
 source [file join $ROOT lib match.tcl]
 source [file join $ROOT lib scan.tcl]

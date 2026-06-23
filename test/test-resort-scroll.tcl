@@ -22,7 +22,7 @@ set SAND [file join [pwd] _resortscroll_sandbox]
 set FOLDER "-tmp-resortscroll-proj"
 
 set ROOT [file dirname [file dirname [file normalize [info script]]]]
-foreach f {config.tcl lib/cost.tcl ui/theme.tcl lib/path.tcl lib/filter.tcl lib/jsonl.tcl \
+foreach f {config.tcl lib/cost.tcl ui/theme.tcl lib/path.tcl lib/filter.tcl lib/sessionlist.tcl lib/jsonl.tcl \
            lib/match.tcl ui/terminal.tcl ui/live.tcl lib/scan.tcl lib/search.tcl \
            ui/drag.tcl ui/toolbar.tcl ui/texttree.tcl ui/sessions.tcl} {
     source [file join $ROOT $f]
