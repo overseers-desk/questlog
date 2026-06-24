@@ -167,7 +167,6 @@ proc ::questlog::ui::app::start {root {initial_criteria {}} {init_since ""} {ini
         [namespace code on_rename_request] \
         [namespace code on_scan_path] \
         [namespace code on_search_cancel] \
-        [namespace code on_show_all] \
         [namespace code on_subagents] \
         [namespace code on_subagent_cost]]
     pack $list_frame.s -side top -fill both -expand 1
@@ -367,7 +366,7 @@ proc ::questlog::ui::app::run_tick {} {
 # listview sub-key (the view toggles) is a view-only change and takes the fast
 # path; any difference here forces the full rebuild.
 proc ::questlog::ui::app::scope_equal {a b} {
-    foreach k {search search_case search_regions file tool pattern under under_auto since until min_turns} {
+    foreach k {search search_case search_regions file tool pattern under since until min_turns} {
         if {[dict getdef $a $k {}] ne [dict getdef $b $k {}]} { return 0 }
     }
     return 1
@@ -716,14 +715,6 @@ proc ::questlog::ui::app::on_search_cancel {} {
     set SearchSummary "Search cancelled"
     refresh_status
     update_spinner
-}
-
-# The Show-all banner in SessionList calls this when the user clicks
-# Show all. Drop the auto-applied under chip; the toolbar will republish
-# the snapshot and the banner will hide on the next apply_filter.
-proc ::questlog::ui::app::on_show_all {} {
-    variable Toolbar
-    $Toolbar clear_under_auto
 }
 
 # ---- open in the docked viewer -----------------------------------------

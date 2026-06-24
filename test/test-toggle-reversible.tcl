@@ -62,7 +62,7 @@ proc subagentsf {path} { return [$::Scan subagents_for $path] }
 proc subagent_cost_cb {path} {}
 
 set SL [::questlog::ui::SessionList new .s resolvef lookup noop noop noop noop noop \
-            noop scanpath noop noop subagentsf subagent_cost_cb]
+            noop scanpath noop subagentsf subagent_cost_cb]
 pack .s -fill both -expand 1
 
 set fails 0

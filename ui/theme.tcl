@@ -56,9 +56,6 @@ namespace eval ::questlog::ui::theme {
         chip_bg         #ffffff
         ctrl_border     #c4c4c4
         ctrl_border_hi  #9a9a9a
-        banner_bg       #fff5c2
-        banner_fg       #5a4a0a
-        banner_border   #e6d36a
         onboard_bg      #e2eeff
         onboard_fg      #1d1d1d
         onboard_sub     #41597e

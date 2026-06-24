@@ -15,7 +15,6 @@ package require Tk
 #   tool             list of {name key} pairs (key matches the invocation text;
 #                    empty key = any use of the tool)
 #   pattern          list of regex strings   (case-sensitive, always)
-#   under_auto       1 iff `under` is the launch-seeded chip, untouched
 #   min_turns        the minimum-turns scope floor (1 = include all). A scope
 #                    filter alongside since/under: a session below the floor leaves
 #                    the corpus, not just the view - see lib/filter.tcl.
@@ -76,7 +75,6 @@ oo::class create ::questlog::ui::Toolbar {
     variable RunningOnlyVar
     variable BookmarkedOnlyVar
     variable Clauses          ;# dict kind -> list of values; file/tool are pairs
-    variable UnderAuto        ;# 1 iff `under` is exactly the launch-seeded chip
     variable Restrict         ;# the padded content frame holding the restrict rows
     variable RestrictHd       ;# the heading label above that frame (the legend)
     variable AddRail          ;# the "add:" rail frame inside Restrict
@@ -111,7 +109,6 @@ oo::class create ::questlog::ui::Toolbar {
         set RunningOnlyVar    0
         set BookmarkedOnlyVar 0
         set Clauses [dict create under {} file {} tool {} pattern {}]
-        set UnderAuto 0
         set Subscribers [list]
         set RowFrames [dict create]
         set TailShown [dict create]
@@ -571,7 +568,6 @@ oo::class create ::questlog::ui::Toolbar {
             file           [dict get $Clauses file] \
             tool           [dict get $Clauses tool] \
             pattern        [dict get $Clauses pattern] \
-            under_auto     $UnderAuto \
             min_turns      $MinTurnsVar \
             listview       [dict create \
                 running_only    $RunningOnlyVar \
@@ -635,14 +631,12 @@ oo::class create ::questlog::ui::Toolbar {
 
     # Add a value to a clause, creating/revealing the row as needed. For file
     # the value is an {op path} pair, for tool a {name key} pair, for under and
-    # pattern a plain string. The first user action on `under` clears the auto
-    # flag, since the user is now editing the row.
+    # pattern a plain string.
     method add_value {kind value} {
         set vals [dict get $Clauses $kind]
         if {$value in $vals} return
         lappend vals $value
         dict set Clauses $kind $vals
-        if {$kind eq "under"} { set UnderAuto 0 }
         if {$kind in {tool pattern}} { dict set TailShown $kind 1 }
         my rebuild_clause_rows
         my refresh_add_rail
@@ -655,7 +649,6 @@ oo::class create ::questlog::ui::Toolbar {
         if {$i < 0} return
         set vals [lreplace $vals $i $i]
         dict set Clauses $kind $vals
-        if {$kind eq "under"} { set UnderAuto 0 }
         my rebuild_clause_rows
         my refresh_add_rail
         my publish
@@ -754,27 +747,6 @@ oo::class create ::questlog::ui::Toolbar {
     method browse_file {} {
         set f [tk_getOpenFile -initialdir $Cwd]
         if {$f ne ""} { set AddState(file) collapsed; my add_value file [list $AddOp $f] }
-    }
-
-    # Seed the `under` row with the launch cwd. Marks UnderAuto so the
-    # Show-all banner knows the chip was not user-typed. Any later edit
-    # clears the flag.
-    method seed_under {path} {
-        dict set Clauses under [list $path]
-        set UnderAuto 1
-        my rebuild_clause_rows
-        my refresh_add_rail
-        my publish
-    }
-
-    # Drop the auto-applied under chip. Used by the "Show all" banner.
-    method clear_under_auto {} {
-        if {!$UnderAuto} return
-        dict set Clauses under [list]
-        set UnderAuto 0
-        my rebuild_clause_rows
-        my refresh_add_rail
-        my publish
     }
 
     # ---- row management ----------------------------------------------------

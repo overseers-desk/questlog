@@ -102,7 +102,6 @@ oo::class create ::questlog::ui::SessionList {
     variable OnBookmarkSet    ;# cb: paths -> flip the +x bit across a selection
     variable OnRename         ;# cb: path -> app rename router (dialog + apply + refresh)
     variable OnScanPath       ;# cb: path -> row (synchronous single-file scan)
-    variable OnShowAll        ;# cb: () -> ask the toolbar to drop the auto-under
     variable Snapshot
     variable CriteriaActive
     variable RunningSet       ;# dict uuid -> 1, replaced wholesale each tick
@@ -130,7 +129,7 @@ oo::class create ::questlog::ui::SessionList {
     constructor {parent resolve_cb lookup_cb on_open on_move_request \
                  on_drop_move on_bookmark_toggle on_bookmark_set on_rename \
                  on_scan_path cancel_cb \
-                 on_show_all on_subagents on_subagent_cost} {
+                 on_subagents on_subagent_cost} {
         set Top $parent
         set ResolveFolder $resolve_cb
         set LookupSession $lookup_cb
@@ -142,7 +141,6 @@ oo::class create ::questlog::ui::SessionList {
         set OnRename $on_rename
         set OnScanPath $on_scan_path
         set CancelCb $cancel_cb
-        set OnShowAll $on_show_all
         set OnSubagents $on_subagents
         set OnSubagentCost $on_subagent_cost
         set StatusVar "Idle"
@@ -224,28 +222,12 @@ oo::class create ::questlog::ui::SessionList {
         ttk::button $Top.bar.cancel -text "Cancel" -command [list [self] cancel]
         pack $Top.bar.cancel -side right -padx 4 -pady 2
 
-        # Show-all banner: visible only when the toolbar's `under` chip was
-        # seeded at launch (under_auto == 1) and so is hiding sessions the
-        # user did not ask to hide. Update_banner manages visibility.
-        # A soft-tinted alert strip (plain tk frame/label so -background takes;
-        # ttk would ignore it), so the launch-scope notice reads as a banner
-        # rather than blending into the chrome.
-        frame $Top.banner -background [::questlog::ui::theme::c banner_bg]
-        label $Top.banner.text -anchor w \
-            -background [::questlog::ui::theme::c banner_bg] \
-            -foreground [::questlog::ui::theme::c banner_fg]
-        ttk::button $Top.banner.showall -text "Show all" \
-            -command [list [self] on_show_all_clicked]
-        pack $Top.banner.text -side left -padx 8 -pady 5 -fill x -expand 1
-        pack $Top.banner.showall -side right -padx 8 -pady 5
-
         # The list-view toggle strip: the row the toolbar fills with the view
-        # toggles (running only / bookmarked only). It
-        # sits between the banner and the body's column-header strip, taking that
-        # strip's #ececec colour, so the toggles read as the top of the list they
-        # filter, not as search chrome. Packed before build_body so it lands
-        # above the header band; the banner re-packs itself -after $Top.bar, so it
-        # always stays above this strip.
+        # toggles (running only / bookmarked only). It sits between the status
+        # bar and the body's column-header strip, taking that strip's #ececec
+        # colour, so the toggles read as the top of the list they filter, not as
+        # search chrome. Packed before build_body so it lands above the header
+        # band.
         ttk::frame $Top.lvt -style LVStrip.TFrame -padding {8 4}
         pack $Top.lvt -side top -fill x
 
@@ -466,7 +448,6 @@ oo::class create ::questlog::ui::SessionList {
     method apply_filter {snapshot} {
         set Snapshot $snapshot
         set CriteriaActive [::questlog::ui::any_criteria $snapshot]
-        my update_banner
         my clear
     }
 
@@ -479,27 +460,6 @@ oo::class create ::questlog::ui::SessionList {
         set Snapshot $snapshot
         set CriteriaActive [::questlog::ui::any_criteria $snapshot]
         my reconcile_running $RunningSet
-    }
-
-    # Show the launch-scope banner when the toolbar's under chip was the
-    # one the app seeded (under_auto == 1), since the user did not type it
-    # and may not realise it is filtering their results. Hide otherwise.
-    method update_banner {} {
-        set under_auto [dict getdef $Snapshot under_auto 0]
-        set under_list [dict getdef $Snapshot under {}]
-        if {$under_auto && [llength $under_list] > 0} {
-            set path [lindex $under_list 0]
-            set pretty [::questlog::path::pretty_home $path]
-            $Top.banner.text configure -text \
-                "ⓘ  Showing sessions from $pretty only."
-            pack $Top.banner -side top -fill x -after $Top.bar
-        } else {
-            pack forget $Top.banner
-        }
-    }
-
-    method on_show_all_clicked {} {
-        if {$OnShowAll ne ""} { {*}$OnShowAll }
     }
 
     # The frame at the top of the list region that hosts the list-view toggles.
