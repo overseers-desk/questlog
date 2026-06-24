@@ -1465,7 +1465,7 @@ oo::class create ::questlog::ui::SessionList {
     method folder_subject {node} {
         set f [my node_payload $node]
         set marker [expr {[my node_field $node expanded] ? "▾" : "▸"}]
-        set n [dict get $f count]
+        set n [my folder_visible_count [my node_field $node key]]
         set count_str [expr {$n > 0 ? " ($n)" : ""}]
         # Marker joined to the label by a space; the label is truncated so it
         # never runs into the right-pinned aggregates.
@@ -1477,7 +1477,7 @@ oo::class create ::questlog::ui::SessionList {
     }
 
     method redraw_folder_heading {folder} {
-        if {![my has_folder $folder]} return
+        if {![my has_folder $folder] || ![my folder_attached $folder]} return
         set fid [my fid $folder]
         set fmark [my node_field $fid start]
         set info [my build_line $fid]
@@ -1534,6 +1534,51 @@ oo::class create ::questlog::ui::SessionList {
             dict set src $path [my session_payload $path]
         }
         return $src
+    }
+
+    # True while a list-view toggle is narrowing the view, so some loaded
+    # sessions may be hidden. When none is, the model count is exact and the
+    # per-session walk below is skipped.
+    method any_view_toggle {} {
+        return [expr {[::questlog::sessionlist::toggle $Snapshot running_only 0]
+                   || [::questlog::sessionlist::toggle $Snapshot bookmarked_only 0]}]
+    }
+
+    # The number of a folder's sessions that are currently shown (not hidden by
+    # a toggle). This is the count the heading displays and the value that, at
+    # zero, detaches the folder from the view.
+    method folder_visible_count {folder} {
+        if {![my any_view_toggle]} { return [my fget $folder count] }
+        set n 0
+        foreach path [my folder_session_paths $folder] {
+            if {![my sget $path hidden 0]} { incr n }
+        }
+        return $n
+    }
+
+    # Whether a folder's heading is currently drawn. A folder left with no
+    # viewable session is detached (heading and body removed) but kept in the
+    # model; this reads 0 until the next redraw_all rebuilds it (recreating the
+    # folder node from a clean buffer resets the flag to its 1 default).
+    method folder_attached {folder} {
+        return [my node_pget [my fid $folder] attached 1]
+    }
+
+    # Remove a folder's heading and body from the view while keeping its node and
+    # sessions in the model, so a folder with no viewable session leaves the list
+    # but returns once a toggle stops hiding its sessions. Called from redraw_all,
+    # which holds the text in -state normal.
+    method detach_folder {folder} {
+        if {![my has_folder $folder] || ![my folder_attached $folder]} return
+        set fid [my fid $folder]
+        if {[my node_field $fid expanded]} { my collapse_folder $folder }
+        set fmark [my node_field $fid start]
+        set femark [my node_field $fid end]
+        # After collapse the body is gone and femark sits just past the heading's
+        # newline, so fmark..femark is exactly the heading line; deleting it
+        # removes the folder from the view.
+        $Text delete $fmark $femark
+        my node_pset $fid attached 0
     }
 
     # Delete every rendered line of the folder's body and drop the per-session
@@ -2166,17 +2211,22 @@ oo::class create ::questlog::ui::SessionList {
                 my redraw_header $path
             }
         }
-        # Re-render the folders whose visible set changed, reusing collapse/expand
-        # (no new mark surgery; render_session re-applies the selection).
-        dict for {f _} $dirty {
-            if {[my folder_expanded $f]} { my collapse_folder $f; my expand_folder $f }
-        }
         set PrevRunning $running
-        my anchor_restore
-        $Text configure -state disabled
-        # Surfacing or dropping running sessions changes the set, so a
-        # non-default sort needs a re-render to reseat them.
-        if {[my session_count] != $before} { my schedule_resort }
+        if {[dict size $dirty]} {
+            # A toggle changed which sessions are viewable. Rebuild from the model
+            # rather than edit in place: redraw_all is hidden-aware (it skips
+            # hidden rows and detaches a folder left with none), renumbers the
+            # headings to the viewable count, and reseats every folder in order
+            # from a clean buffer - so nothing accumulates the stale marks that
+            # in-place attach/detach left behind across repeated poll ticks.
+            my redraw_all
+        } else {
+            my anchor_restore
+            $Text configure -state disabled
+            # Surfacing or dropping running sessions changes the set, so a
+            # non-default sort needs a re-render to reseat them.
+            if {[my session_count] != $before} { my schedule_resort }
+        }
     }
 
     # The number of session nodes in the model (subagents excluded), so a
@@ -2363,6 +2413,9 @@ oo::class create ::questlog::ui::SessionList {
                 my sset $path when [dict get $s when]
                 my sset $path snippets [dict get $s snippets]
                 my sset $path count [dict get $s count]
+                # Carry the toggle's hidden flag across the rebuild so the render
+                # pass below can skip it and the heading count stays viewable.
+                my sset $path hidden [dict getdef $s hidden 0]
             }
             if {[dict exists $wasexp $folder] && [my has_folder $folder]} {
                 my node_set [my fid $folder] expanded [dict get $wasexp $folder]
@@ -2370,8 +2423,16 @@ oo::class create ::questlog::ui::SessionList {
         }
         foreach fid $Roots {
             set folder [my node_field $fid key]
+            # A folder left with no viewable session (every row hidden by a
+            # toggle) detaches: its heading leaves the view but its node and
+            # sessions stay in the model, so turning the toggle off rebuilds it.
+            if {[my folder_visible_count $folder] == 0} {
+                my detach_folder $folder
+                continue
+            }
             if {[my node_field $fid expanded]} {
                 foreach path [my folder_session_paths $folder] {
+                    if {[my sget $path hidden 0]} continue
                     my render_session $path
                 }
             }

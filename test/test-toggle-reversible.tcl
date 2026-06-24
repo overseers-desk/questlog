@@ -6,8 +6,11 @@
 # Invariant under test: MODEL membership is scope (a browse row that passes
 # row_matches), independent of the view toggles. A toggle sets a per-session
 # `hidden` flag and re-renders the affected folders via collapse+expand; the
-# row stays in the model (folder count unchanged), and the selection - keyed by
-# path, not by a rendered mark - survives the hide and re-paints on the show.
+# row stays in the model (model total unchanged, so the toggle is reversible),
+# and the selection - keyed by path, not by a rendered mark - survives the hide
+# and re-paints on the show. The heading's displayed count, by contrast, tracks
+# the viewable sessions and so drops when a row hides (see test-folder-detach
+# for the folder that detaches once its viewable count reaches zero).
 
 package require Tcl 9
 package require Tk
@@ -98,15 +101,17 @@ update
 check "A is selected" [$SL is_selected $Ap] 1
 
 # --- 3. Toggle bookmarked_only on via the fast path. A hides in place but stays
-#        in the model; B keeps rendering; folder count is the model total still;
-#        A's selection is retained (path-keyed) though it is unpainted.
+#        in the model; B keeps rendering; the model total holds at 2 (so the
+#        toggle is reversible) while the viewable count drops to 1; A's selection
+#        is retained (path-keyed) though it is unpainted.
 $SL apply_listview [dict create since all listview [dict create bookmarked_only 1]]
 update
-check "A not rendered (hidden)" [$SL sflag $Ap rendered] 0
-check "A still in model"        [$SL has_session $Ap] 1
-check "B still rendered"        [$SL sflag $Bp rendered] 1
-check "folder count unchanged"  [$SL fget $FOLDER count] 2
-check "A selection retained"    [$SL is_selected $Ap] 1
+check "A not rendered (hidden)"   [$SL sflag $Ap rendered] 0
+check "A still in model"          [$SL has_session $Ap] 1
+check "B still rendered"          [$SL sflag $Bp rendered] 1
+check "model total unchanged"     [$SL fget $FOLDER count] 2
+check "viewable count drops to 1" [$SL folder_visible_count $FOLDER] 1
+check "A selection retained"      [$SL is_selected $Ap] 1
 
 # --- 4. Toggle bookmarked_only back off: A renders again and is still selected
 #        (the selected tag is re-applied by render_session from SelectedSet).
