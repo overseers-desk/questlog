@@ -292,7 +292,7 @@ proc ::questlog::match::leaf_record_hit {leaf rec nocase} {
 # Scan one session file against a built clauses dict. Pure except for reading
 # $path. Returns {row matches}:
 #   row     the publish_row dict (path/mtime/size/folder/uuid/first_ts/
-#           is_multi/first_user/bookmarked/cwd_hint), or "" if $path could not
+#           nturns/first_user/bookmarked/cwd_hint), or "" if $path could not
 #           be opened or the scan was cancelled.
 #   matches list of matchcore dicts {path lineoff ts btype content folder} in
 #           line order, non-empty only if the clause tree is satisfied for the
@@ -431,7 +431,6 @@ proc ::questlog::match::scan_file {path clauses {tick ""} {yield_lines 0}} {
         folder $folder \
         uuid [file rootname [file tail $path]] \
         first_ts $first_ts \
-        is_multi [expr {$users >= 2}] \
         nturns $users \
         first_user [::questlog::match::clean_preview $first_user] \
         bookmarked [file executable $path] \

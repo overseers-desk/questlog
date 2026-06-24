@@ -397,7 +397,6 @@ oo::class create ::questlog::Scan {
             folder $folder \
             uuid $uuid \
             first_ts $first_ts \
-            is_multi [expr {$users >= 2}] \
             nturns [expr {min($users, $cap)}] \
             kind [expr {$kind eq "" ? "cli" : $kind}] \
             first_user $first_clean \

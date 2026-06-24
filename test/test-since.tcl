@@ -108,17 +108,17 @@ $s destroy
 
 # ---- row_matches: the until ceiling, day-inclusive, bookmark-pinned -
 # Each snapshot says "since all" so only the until bound under test is in force.
-set rowR [dict create mtime $now is_multi 1]
-set rowO [dict create mtime [expr {$now - 40*86400}] is_multi 1]
+set rowR [dict create mtime $now]
+set rowO [dict create mtime [expr {$now - 40*86400}]]
 check rm_until_keeps_old     1 [::questlog::filter::row_matches [dict create since all until 30d] $rowO]
 check rm_until_drops_recent  0 [::questlog::filter::row_matches [dict create since all until 30d] $rowR]
 check rm_no_until_keeps_recent 1 [::questlog::filter::row_matches [dict create since all] $rowR]
 # A bookmark (+x) pins a row past the ceiling, as it does past the since cutoff.
-set rowRbk [dict create mtime $now is_multi 1 bookmarked 1]
+set rowRbk [dict create mtime $now bookmarked 1]
 check rm_until_bookmark_pins 1 [::questlog::filter::row_matches [dict create since all until 30d] $rowRbk]
 # An absolute until keeps the whole named day and drops the day after.
-set eod  [dict create mtime [expr {[clock add $abs_epoch 1 day] - 1}] is_multi 1]
-set next [dict create mtime [clock add $abs_epoch 1 day] is_multi 1]
+set eod  [dict create mtime [expr {[clock add $abs_epoch 1 day] - 1}]]
+set next [dict create mtime [clock add $abs_epoch 1 day]]
 check rm_until_abs_keeps_eod  1 [::questlog::filter::row_matches [dict create since all until 2026-04-01] $eod]
 check rm_until_abs_drops_next 0 [::questlog::filter::row_matches [dict create since all until 2026-04-01] $next]
 
