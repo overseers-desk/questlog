@@ -464,14 +464,14 @@ oo::class create ::questlog::Scan {
     }
 
     # Filter rows by a snapshot. Used by the session list and Search to read
-    # the current memoised view. The snapshot row-level predicate lives in
-    # ::questlog::filter (shared with SessionList); this adds only the optional
-    # folder-scoped narrowing. Returns a list of row dicts, mtime DESC.
-    method query {snapshot {folder ""}} {
+    # the current memoised view. The snapshot row-level predicate (the since
+    # cutoff, the until ceiling, the under-folder scope, the min-turns floor)
+    # lives in ::questlog::filter, shared with SessionList. Returns a list of
+    # row dicts, mtime DESC.
+    method query {snapshot} {
         set out [list]
         dict for {path row} $Rows {
             if {![::questlog::filter::row_matches $snapshot $row]} continue
-            if {$folder ne "" && [dict get $row folder] ne $folder} continue
             lappend out $row
         }
         return [lsort -decreasing -command ::questlog::scan::cmp_mtime $out]
