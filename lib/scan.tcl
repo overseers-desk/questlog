@@ -45,6 +45,15 @@ proc ::questlog::scan::last_titles {fh} {
     return [list $agent_name $ai_title]
 }
 
+# Session origin from a single opening-record line: an sdk-cli spawn (a skill
+# or Agent-SDK run) opens with a queue-operation record, anything else is an
+# interactive cli session. The one home for the queue-operation marker, shared
+# by session_kind (which reads the head of a file) and scan_one (which already
+# holds the line in its forward pass). Returns cli|sdk.
+proc ::questlog::scan::opener_kind {line} {
+    return [expr {[regexp {"type":"queue-operation"} $line] ? "sdk" : "cli"}]
+}
+
 # Resume a coroutine from an `after` callback. The coroutine command deletes
 # itself when it returns, so a resume scheduled before a cancel can fire after
 # the coroutine is already gone; skip it then. An error the coroutine itself
@@ -89,13 +98,12 @@ oo::class create ::questlog::Scan {
         set Kind [dict create]
     }
 
-    # Session origin from the opening record. An sdk-cli session (a skill or
-    # Agent-SDK spawn) opens with a queue-operation record; an interactive cli
-    # session opens with a mode / permission-mode record. One line is enough.
-    # Memoised by mtime so a rewritten file reclassifies. scan_one fills this
-    # cache for free as it reads each head, so a warm corpus answers without a
-    # second read; an unscanned path (a wider search window than the browse
-    # scan covered) is classified here on demand. Returns cli|sdk.
+    # Session origin from the opening record, classified by the shared
+    # opener_kind rule. One line is enough. Memoised by mtime so a rewritten
+    # file reclassifies. scan_one fills this cache for free as it reads each
+    # head, so a warm corpus answers without a second read; an unscanned path
+    # (a wider search window than the browse scan covered) is classified here
+    # on demand. Returns cli|sdk.
     method session_kind {path} {
         if {[catch {file mtime $path} m]} { return cli }
         if {[dict exists $Kind $path] && [lindex [dict get $Kind $path] 0] == $m} {
@@ -106,7 +114,7 @@ oo::class create ::questlog::Scan {
             chan configure $fh -encoding utf-8 -profile replace
             while {[chan gets $fh line] >= 0} {
                 if {$line eq ""} continue
-                if {[regexp {"type":"queue-operation"} $line]} { set kind sdk }
+                set kind [::questlog::scan::opener_kind $line]
                 break
             }
             close $fh
@@ -339,10 +347,9 @@ oo::class create ::questlog::Scan {
         set cap [::questlog::config::get turn_count_cap]
         while {[chan gets $fh line] >= 0} {
             if {$line eq ""} continue
-            # Origin from the opening record (see session_kind): a queue-operation
-            # opener marks an sdk-cli spawn, anything else an interactive cli.
+            # Origin from the opening record, via the shared opener_kind rule.
             if {$kind eq ""} {
-                set kind [expr {[regexp {"type":"queue-operation"} $line] ? "sdk" : "cli"}]
+                set kind [::questlog::scan::opener_kind $line]
             }
             if {$cwd eq "" && [regexp {"cwd":"([^"]+)"} $line -> m]} {
                 set cwd $m
