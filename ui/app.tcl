@@ -239,19 +239,12 @@ proc ::questlog::ui::app::start {root {initial_criteria {}} {init_since ""} {ini
     if {$init_since ne ""} { $Toolbar set_window $init_since }
     if {$init_search ne ""} { $Toolbar set_search $init_search }
 
-    # Launch from inside a known project: seed an `under` chip with that
-    # folder and flag it as auto-applied, so the Show-all banner can
-    # reveal that the result set is being narrowed on the user's behalf.
-    # Skipped when CLI criteria or a --search query were given, since the user
-    # is then asking for a specific query rather than a default scope.
-    if {[llength $initial_criteria] == 0 && $init_search eq ""} {
-        set launch_cwd [::questlog::path::launch_cwd]
-        set folder [::questlog::path::encode_cwd $launch_cwd]
-        set proj [file join [::questlog::path::projects_root] $folder]
-        if {[file isdirectory $proj]} {
-            $Toolbar seed_under $launch_cwd
-        }
-    }
+    # No default `under`: the list opens across every project, and a scope is
+    # added only when the user asks for one. A launch-cwd default scoped the list
+    # to wherever questlog happened to be started - often the home directory, a
+    # parent of everything - which both assumed the user keeps code under home and
+    # silenced any scope they then added (under entries are OR'd, so a home entry
+    # kept the whole corpus in view until it was removed).
     $Toolbar publish
 
     bind . <Control-q> [namespace code quit]
