@@ -2084,10 +2084,14 @@ oo::class create ::questlog::ui::SessionList {
     # ---- running / bookmark reconciliation ---------------------------
 
     # Re-derive the running glyph for every shown session from a fresh
-    # running set, surfacing running sessions that are not yet shown and
-    # dropping rows that no longer pass a running-only / bookmarked-only
-    # filter. Idempotent: running it twice is a no-op, and a missed tick
-    # self-corrects on the next.
+    # running set and re-apply the running-only / bookmarked-only filter to
+    # the loaded model (hiding rows that no longer pass, showing rows that
+    # now do). In plain browse it also surfaces a newly-started running
+    # session that the scan has not reached yet; under running-only it is a
+    # pure local filter over what is already loaded and imports nothing (the
+    # toggle chooses which loaded sessions to show, it does not pull sessions
+    # in from other projects). Idempotent: running it twice is a no-op, and a
+    # missed tick self-corrects on the next.
     method reconcile_running {running} {
         set RunningSet $running
         set running_only [::questlog::sessionlist::toggle $Snapshot running_only 0]
@@ -2099,7 +2103,7 @@ oo::class create ::questlog::ui::SessionList {
 
         $Text configure -state normal
         my anchor_save
-        if {$running_only || !$CriteriaActive} {
+        if {!$running_only && !$CriteriaActive} {
             dict for {uuid path} $running {
                 if {[my has_session $path]} continue
                 set row [{*}$LookupSession $path]
@@ -2112,8 +2116,8 @@ oo::class create ::questlog::ui::SessionList {
                 # already added (and rendered) this session. Re-check so we do
                 # not add it a second time. A running session that on_scan_row
                 # filtered out (out of window / below the min-turns floor) is
-                # still absent here and is added below, so running sessions
-                # always surface.
+                # still absent here and is added below, so a running session in
+                # scope surfaces in plain browse.
                 if {[my has_session $path]} continue
                 if {[llength $under] > 0 \
                     && ![::questlog::filter::row_under_match $row $under]} continue
