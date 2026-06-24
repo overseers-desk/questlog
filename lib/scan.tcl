@@ -357,10 +357,11 @@ oo::class create ::questlog::Scan {
             if {$first_ts eq "" && [regexp {"timestamp":"([^"]+)"} $line -> m]} {
                 set first_ts $m
             }
-            # User-record predicate - same heuristic as cs-grep.
-            if {[regexp {"type":"user"} $line] && [regexp {"content":"([^"]+)"} $line -> uc]} {
+            # A real user turn (the shared is_user_turn predicate): count it,
+            # and take the first one's content as the first-prompt preview.
+            if {[::questlog::jsonl::is_user_turn $line]} {
                 incr users
-                if {$users == 1} { set first $uc }
+                if {$users == 1 && [regexp {"content":"([^"]+)"} $line -> uc]} { set first $uc }
             }
             if {$users >= $cap && $cwd ne "" && $first_ts ne ""} break
         }

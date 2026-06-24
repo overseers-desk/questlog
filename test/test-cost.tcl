@@ -9,6 +9,7 @@ package require json
 set ROOT [file dirname [file dirname [file normalize [info script]]]]
 namespace eval ::questlog::cost {}
 source [file join $ROOT config.tcl]
+source [file join $ROOT lib jsonl.tcl]
 source [file join $ROOT lib cost.tcl]
 source [file join $ROOT cli cost.tcl]
 set failures 0

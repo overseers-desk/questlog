@@ -207,12 +207,9 @@ proc ::questlog::cost::parse_file {path} {
         # record's time and turn the away gap before a resume into work.
         # They are no part of the conversation timeline, so skip outright.
         if {[regexp {"type":"file-history-snapshot"} $line]} continue
-        # A turn is a prompt the user actually wrote. Harness-generated user
-        # records (slash-command echoes, background-task notifications)
-        # announce themselves with a leading tag in the content.
-        set user_prompt [expr {[regexp {"role":"user","content":"} $line] \
-            && ![regexp {"content":"<(?:command-name|local-command-stdout|local-command-caveat|task-notification)>} $line]}]
-        if {$user_prompt} { incr turns }
+        # A turn is a prompt the user actually wrote: the shared is_user_turn
+        # predicate, the same count the scanner records as nturns.
+        if {[::questlog::jsonl::is_user_turn $line]} { incr turns }
         if {[regexp {"timestamp":"([^"]+)"} $line -> m]} {
             if {$first_ts eq ""} { set first_ts $m }
             set last_ts $m
@@ -352,9 +349,9 @@ proc ::questlog::cost::accrue_window {path lo hi} {
         if {[regexp {"timestamp":"([^"]+)"} $line -> m]} { set e [iso_to_epoch $m] }
         set in_win [expr {$e ne "" && $e > $lo && ($hi eq "" || $e <= $hi)}]
 
-        # A turn is a typed user prompt, in-window (same predicate as parse_file).
-        if {$in_win && [regexp {"role":"user","content":"} $line] \
-                && ![regexp {"content":"<(?:command-name|local-command-stdout|local-command-caveat|task-notification)>} $line]} {
+        # A turn is a typed user prompt, in-window (the shared is_user_turn
+        # predicate, same as parse_file).
+        if {$in_win && [::questlog::jsonl::is_user_turn $line]} {
             incr turns
         }
         if {$in_win} { lappend stamps [list $e [classify_stamp $line $ask_ids]] }

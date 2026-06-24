@@ -1061,7 +1061,10 @@ proc ::questlog::ui::app::init_cost_pool {} {
     variable CostWorkerScript
     variable Root
     package require Thread
-    set initcmd "source [list [file join $Root lib cost.tcl]]\n$CostWorkerScript"
+    # The worker runs parse_file, which counts turns through
+    # ::questlog::jsonl::is_user_turn, so jsonl.tcl is sourced ahead of cost.tcl.
+    set initcmd "source [list [file join $Root lib jsonl.tcl]]
+source [list [file join $Root lib cost.tcl]]\n$CostWorkerScript"
     set CostPool [tpool::create \
         -minworkers [::questlog::config::get cost_workers_min] \
         -maxworkers [::questlog::config::get cost_workers_max] \

@@ -366,9 +366,9 @@ proc ::questlog::match::scan_file {path clauses {tick ""} {yield_lines 0}} {
         if {$line eq ""} continue
         if {$cwd_hint eq "" && [regexp {"cwd":"([^"]+)"} $line -> m]} { set cwd_hint $m }
         if {$first_ts eq "" && [regexp {"timestamp":"([^"]+)"} $line -> m]} { set first_ts $m }
-        if {[regexp {"type":"user"} $line] && [regexp {"content":"([^"]+)"} $line -> uc]} {
+        if {[::questlog::jsonl::is_user_turn $line]} {
             incr users
-            if {$users == 1} { set first_user $uc }
+            if {$users == 1 && [regexp {"content":"([^"]+)"} $line -> uc]} { set first_user $uc }
         }
         set candidate 0
         if {[llength $kw_needles] > 0} {

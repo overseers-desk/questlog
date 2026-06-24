@@ -4,13 +4,27 @@ package require json
 namespace eval ::questlog::jsonl {
     namespace export extract_text extract_blocks record_tool_uses \
         is_compact_boundary record_timestamp parse_iso fmt_gap first_cwd \
-        segment_blockquotes segment_tables parse_inline
+        segment_blockquotes segment_tables parse_inline is_user_turn
 }
 
 # Parse one JSONL line into a Tcl dict. Returns "" on parse failure.
 proc ::questlog::jsonl::parse_line {line} {
     if {[catch {::json::json2dict $line} d]} { return "" }
     return $d
+}
+
+# 1 iff this raw line is a real user turn: a user record carrying a typed
+# prompt, not a harness-written echo. The message holds "role":"user" with a
+# string "content" (so a tool_result record, whose content is an array, is
+# excluded), and the content is not one of the harness echoes the user never
+# typed - a slash-command expansion, its captured stdout or caveat, or a
+# background-task notification. The one home for the turn predicate: the
+# scanner counts nturns with it and the cost pass counts turns with it, so the
+# min-turns floor and the displayed Turns count agree. A line-level regex, no
+# parse: it runs over every line of every session file.
+proc ::questlog::jsonl::is_user_turn {line} {
+    return [expr {[regexp {"role":"user","content":"} $line] \
+        && ![regexp {"content":"<(?:command-name|local-command-stdout|local-command-caveat|task-notification)>} $line]}]
 }
 
 # Extract the canonical text body of a record. Mirrors the jq pipeline

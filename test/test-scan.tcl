@@ -9,6 +9,7 @@ source [file join $ROOT lib sessionlist.tcl]
 source [file join $ROOT lib jsonl.tcl]
 source [file join $ROOT lib match.tcl]
 source [file join $ROOT lib scan.tcl]
+source [file join $ROOT lib cost.tcl]
 
 # Synthetic projects tree under /tmp/questlog-test-projects.
 proc ::questlog::path::projects_root {} { return /tmp/questlog-test-projects }
@@ -32,29 +33,29 @@ proc check {name expected actual} {
 ::questlog::path::_real_file mkdir /tmp/questlog-test-projects/-home-test-code-foo/[set u 11111111-1111-1111-1111-111111111111]/subagents
 
 set fh [open /tmp/questlog-test-projects/-home-test-code-foo/aaa-1.jsonl w]
-puts $fh {{"type":"user","message":{"content":"first prompt about foo"},"cwd":"/home/test/code/foo","timestamp":"2026-04-25T10:00:00.000Z"}}
+puts $fh {{"type":"user","message":{"role":"user","content":"first prompt about foo"},"cwd":"/home/test/code/foo","timestamp":"2026-04-25T10:00:00.000Z"}}
 puts $fh {{"type":"assistant","message":{"content":"reply"},"timestamp":"2026-04-25T10:00:05.000Z"}}
-puts $fh {{"type":"user","message":{"content":"second prompt"},"timestamp":"2026-04-25T10:00:30.000Z"}}
+puts $fh {{"type":"user","message":{"role":"user","content":"second prompt"},"timestamp":"2026-04-25T10:00:30.000Z"}}
 puts $fh {{"type":"assistant","message":{"content":"reply two"},"timestamp":"2026-04-25T10:00:35.000Z"}}
 # Third user turn: the scanner must count past the old early-break of 2 to
 # record nturns 3, so this also proves the raised turn_count_cap loop.
-puts $fh {{"type":"user","message":{"content":"third prompt"},"timestamp":"2026-04-25T10:01:00.000Z"}}
+puts $fh {{"type":"user","message":{"role":"user","content":"third prompt"},"timestamp":"2026-04-25T10:01:00.000Z"}}
 close $fh
 
 set fh [open /tmp/questlog-test-projects/-home-test-code-foo/bbb-2.jsonl w]
-puts $fh {{"type":"user","message":{"content":"only one turn here"},"cwd":"/home/test/code/foo","timestamp":"2026-04-25T11:00:00.000Z"}}
+puts $fh {{"type":"user","message":{"role":"user","content":"only one turn here"},"cwd":"/home/test/code/foo","timestamp":"2026-04-25T11:00:00.000Z"}}
 close $fh
 
 set fh [open /tmp/questlog-test-projects/-home-test-code-bar-baz/ccc-3.jsonl w]
-puts $fh {{"type":"user","message":{"content":"prompt in bar/baz"},"cwd":"/home/test/code/bar/baz","timestamp":"2026-04-25T12:00:00.000Z"}}
+puts $fh {{"type":"user","message":{"role":"user","content":"prompt in bar/baz"},"cwd":"/home/test/code/bar/baz","timestamp":"2026-04-25T12:00:00.000Z"}}
 puts $fh {{"type":"assistant","message":{"content":"reply"}}}
-puts $fh {{"type":"user","message":{"content":"another"}}}
+puts $fh {{"type":"user","message":{"role":"user","content":"another"}}}
 close $fh
 
 # Subagent fixture - must NOT appear in Rows.
 set fh [open /tmp/questlog-test-projects/-home-test-code-foo/$u/subagents/x.jsonl w]
-puts $fh {{"type":"user","message":{"content":"subagent should be ignored"}}}
-puts $fh {{"type":"user","message":{"content":"second subagent line"}}}
+puts $fh {{"type":"user","message":{"role":"user","content":"subagent should be ignored"}}}
+puts $fh {{"type":"user","message":{"role":"user","content":"second subagent line"}}}
 close $fh
 
 # ---- run scan --------------------------------------------------------
@@ -87,8 +88,8 @@ set realcwd /tmp/questlog-test-realcwd
 set rf [::questlog::path::encode_cwd $realcwd]
 ::questlog::path::_real_file mkdir [file join /tmp/questlog-test-projects $rf]
 set fh [open [file join /tmp/questlog-test-projects $rf real-1.jsonl] w]
-puts $fh "{\"type\":\"user\",\"message\":{\"content\":\"a\"},\"cwd\":\"$realcwd\"}"
-puts $fh "{\"type\":\"user\",\"message\":{\"content\":\"b\"}}"
+puts $fh "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":\"a\"},\"cwd\":\"$realcwd\"}"
+puts $fh "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":\"b\"}}"
 close $fh
 check resolve_real_dir $realcwd [$s resolve_folder $rf]
 check resolve_absent_dir "" [$s resolve_folder "-no-such-folder-xyz"]
@@ -201,9 +202,9 @@ set win [::questlog::config::get tail_window_bytes]
 set far /tmp/questlog-test-projects/-home-test-code-foo/far-title.jsonl
 set fh [open $far w]
 chan configure $fh -encoding utf-8 -translation lf
-puts $fh {{"type":"user","message":{"content":"first"},"cwd":"/home/test/code/foo","timestamp":"2026-05-01T10:00:00.000Z"}}
+puts $fh {{"type":"user","message":{"role":"user","content":"first"},"cwd":"/home/test/code/foo","timestamp":"2026-05-01T10:00:00.000Z"}}
 puts $fh {{"type":"agent-name","agentName":"far-back-title","sessionId":"far"}}
-puts $fh {{"type":"user","message":{"content":"second"},"timestamp":"2026-05-01T10:01:00.000Z"}}
+puts $fh {{"type":"user","message":{"role":"user","content":"second"},"timestamp":"2026-05-01T10:01:00.000Z"}}
 set pad [string repeat x 200]
 set written 0
 while {$written < $win + 4096} {
@@ -217,9 +218,9 @@ check slug_far_title_fallback far-back-title [dict get [$s3 scan_one $far] slug]
 set early /tmp/questlog-test-projects/-home-test-code-foo/early-title.jsonl
 set fh [open $early w]
 chan configure $fh -encoding utf-8 -translation lf
-puts $fh {{"type":"user","message":{"content":"q1"},"cwd":"/home/test/code/foo","timestamp":"2026-05-02T10:00:00.000Z"}}
+puts $fh {{"type":"user","message":{"role":"user","content":"q1"},"cwd":"/home/test/code/foo","timestamp":"2026-05-02T10:00:00.000Z"}}
 puts $fh {{"type":"agent-name","agentName":"early-named","sessionId":"early"}}
-puts $fh {{"type":"user","message":{"content":"q2"},"timestamp":"2026-05-02T10:01:00.000Z"}}
+puts $fh {{"type":"user","message":{"role":"user","content":"q2"},"timestamp":"2026-05-02T10:01:00.000Z"}}
 puts $fh {{"type":"assistant","message":{"content":"done"}}}
 close $fh
 check slug_early_title_fallback early-named [dict get [$s3 scan_one $early] slug]
@@ -227,13 +228,61 @@ check slug_early_title_fallback early-named [dict get [$s3 scan_one $early] slug
 set near /tmp/questlog-test-projects/-home-test-code-foo/near-title.jsonl
 set fh [open $near w]
 chan configure $fh -encoding utf-8 -translation lf
-puts $fh {{"type":"user","message":{"content":"q1"},"cwd":"/home/test/code/foo","timestamp":"2026-05-03T10:00:00.000Z"}}
-puts $fh {{"type":"user","message":{"content":"q2"},"timestamp":"2026-05-03T10:01:00.000Z"}}
+puts $fh {{"type":"user","message":{"role":"user","content":"q1"},"cwd":"/home/test/code/foo","timestamp":"2026-05-03T10:00:00.000Z"}}
+puts $fh {{"type":"user","message":{"role":"user","content":"q2"},"timestamp":"2026-05-03T10:01:00.000Z"}}
 puts $fh {{"type":"agent-name","agentName":"near-named","sessionId":"near"}}
 close $fh
 check slug_near_title near-named [dict get [$s3 scan_one $near] slug]
 
 $s3 destroy
+
+# ---- nturns and the cost turns count identically (F3) ---------------
+# The scanner's nturns (which the min-turns floor reads) and the cost pass's
+# turns (which the Turns column shows) must agree. A session of N typed prompts
+# plus a slash-command echo (a harness user record the user never typed) and a
+# tool_result user record (array content): is_user_turn counts only the N real
+# prompts, so the floor and the column land on the same number.
+::questlog::match::set_caps [dict create \
+    content_cap     [::questlog::config::get content_cap] \
+    snippet_lead    [::questlog::config::get snippet_lead] \
+    snippet_trail   [::questlog::config::get snippet_trail] \
+    tool_param_cap  [::questlog::config::get tool_param_cap] \
+    tool_render_cap [::questlog::config::get tool_render_cap]]
+
+set turns_fix /tmp/questlog-test-projects/-home-test-code-foo/turns-1.jsonl
+set fh [open $turns_fix w]
+chan configure $fh -encoding utf-8 -translation lf
+puts $fh {{"type":"user","message":{"role":"user","content":"real prompt one"},"cwd":"/home/test/code/foo","timestamp":"2026-05-10T10:00:00.000Z"}}
+puts $fh {{"type":"assistant","message":{"role":"assistant","model":"claude-opus-4-8","content":"reply"},"timestamp":"2026-05-10T10:00:05.000Z"}}
+puts $fh {{"type":"user","message":{"role":"user","content":"<command-name>/clear</command-name>"},"timestamp":"2026-05-10T10:00:10.000Z"}}
+puts $fh {{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"ok"}]},"timestamp":"2026-05-10T10:00:20.000Z"}}
+puts $fh {{"type":"user","message":{"role":"user","content":"real prompt two"},"timestamp":"2026-05-10T10:00:30.000Z"}}
+puts $fh {{"type":"user","message":{"role":"user","content":"real prompt three"},"timestamp":"2026-05-10T10:01:00.000Z"}}
+close $fh
+
+set s4 [::questlog::Scan new "" ""]
+set row3 [$s4 scan_one $turns_fix]
+set scan_one_turns [dict get $row3 nturns]
+# scan_file returns {row matches}; an empty clause set leaves the row's nturns
+# intact while matching nothing.
+set empty_clauses [dict create leaves {} tree {t and nodes {}} nocase 1]
+lassign [::questlog::match::scan_file $turns_fix $empty_clauses] sf_row _
+set scan_file_turns [dict get $sf_row nturns]
+set cost_turns [dict get [::questlog::cost::parse_file $turns_fix] turns]
+
+check turns_scan_one_is_three  3 $scan_one_turns
+check turns_scan_file_is_three 3 $scan_file_turns
+check turns_scan_one_eq_cost  $cost_turns $scan_one_turns
+check turns_scan_file_eq_cost $cost_turns $scan_file_turns
+
+# The floor reads nturns, the column shows the cost turns; with both 3, a floor
+# of 3 keeps the row and a floor of 4 drops it, and that decision is the one the
+# displayed turns count would predict.
+check floor_3_keeps 1 [::questlog::filter::row_matches [dict create since all min_turns 3] $row3]
+check floor_4_drops 0 [::questlog::filter::row_matches [dict create since all min_turns 4] $row3]
+check floor_agrees_with_column 1 [expr {$cost_turns >= 3}]
+
+$s4 destroy
 
 ::questlog::path::_real_file delete -force /tmp/questlog-test-projects
 
