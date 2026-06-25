@@ -728,11 +728,13 @@ oo::class create ::questlog::ui::TextTree {
         return $id
     }
 
-    # delete: remove a node and its subtree from both the view and the store.
+    # delete: remove a node and its subtree from both the view and the store. The
+    # node's whole region (its line and any descendant rows) goes in one delete,
+    # then the subtree is unregistered: every node, descendants first, runs its
+    # on_before_delete hook so the subclass drops that node's domain indices.
     method delete {id} {
         set st [$Text cget -state]
         $Text configure -state normal
-        my on_before_delete $id
         if {[my node_field $id rendered]} {
             $Text delete [my node_field $id start] [my node_field $id end]
         }
@@ -742,11 +744,12 @@ oo::class create ::questlog::ui::TextTree {
         my check_invariant delete
     }
 
-    # Unregister a node and its descendants from the store, dropping any marks
-    # and tags they still hold. The text is assumed already gone (a bulk delete
-    # of the parent region, or the node was never rendered).
+    # Unregister a node and its descendants from the store, running each node's
+    # on_before_delete and dropping any marks and tags it still holds. The text
+    # is assumed already gone (a bulk delete of the region, or never rendered).
     method forget_subtree {id} {
         foreach c [my node_field $id children] { my forget_subtree $c }
+        my on_before_delete $id
         my drop_render_marks $id
         dict unset Nodes $id
     }

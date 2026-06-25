@@ -237,6 +237,7 @@ oo::class create ::questlog::ui::SessionList {
                 dict set TagNode $htag $id
                 $Text tag bind $htag <Button-1> [list [self] toggle_folder $folder]
             }
+            session { my wire_session_row $id }
         }
     }
     method on_before_delete {id} {
@@ -246,6 +247,8 @@ oo::class create ::questlog::ui::SessionList {
                 if {$tag ne ""} { dict unset TagNode $tag }
                 dict unset FolderNode [my node_field $id key]
             }
+            session { my forget_session_domain $id }
+            subagent { dict unset PathNode [my node_field $id key] }
         }
     }
 
@@ -687,35 +690,25 @@ oo::class create ::questlog::ui::SessionList {
     method render_session {path} {
         set sid [my sid $path]
         if {[my node_field $sid rendered]} return
-        set folder [my sget $path folder]
-        set femark [my node_field [my fid $folder] end]
-        set stag "s#[incr NextId]"
-        set sstart [$Text index $femark]
-        set info [my build_line $sid]
-        $Text insert $femark "[dict get $info line]\n" \
-            [list sessionhead $stag]
-        my apply_line $sid $sstart $info
+        # The render_row primitive lays the header at the folder's append point,
+        # owns the start/end marks (start right gravity per start_gravity, so the
+        # mark follows its own header down when a sibling above expands) and
+        # advances the folder end. on_row_rendered then wires this row's
+        # bindings, stored snippets, subagents and selection.
+        my render_row $sid
+    }
+
+    # The bindings, nested content and selection a freshly-laid session row
+    # carries, run by render_row's on_row_rendered tail.
+    method wire_session_row {id} {
+        set path [my node_field $id key]
+        set stag [my node_field $id tag]
+        set sm   [my node_field $id start]
         # Single-line rows: the subject preview is ellipsised to stop before the
-        # right-pinned metadata (render_subject), and -wrap none guards
-        # against any residual overflow. The full prompt is read in the viewer,
-        # which a click on the row opens.
+        # right-pinned metadata (render_subject), and -wrap none guards against
+        # any residual overflow. The full prompt is read in the viewer, which a
+        # click on the row opens.
         $Text tag configure $stag -wrap none
-        set smark "sm[incr NextId]"
-        $Text mark set $smark $sstart
-        # Right gravity: when a sibling above this session expands and inserts
-        # its child rows at this start point, the mark follows its own header
-        # down instead of being left behind among those children (redraw_header
-        # repins it to the line start after its own header re-insert).
-        $Text mark gravity $smark right
-        set send [$Text index "$smark lineend +1c"]
-        set semark "se[incr NextId]"
-        $Text mark set $semark $send
-        $Text mark gravity $semark left
-        $Text mark set $femark $send
-        my node_set $sid tag $stag
-        my node_set $sid start $smark
-        my node_set $sid end $semark
-        my node_set $sid rendered 1
         $Text tag bind $stag <ButtonPress-1> \
             [list [self] on_session_press $path %X %Y]
         $Text tag bind $stag <ButtonRelease-1> \
@@ -743,9 +736,9 @@ oo::class create ::questlog::ui::SessionList {
             lassign $snip btype content lineoff
             my render_snippet $path $btype $content $lineoff
         }
-        if {[my node_field $sid expanded]} { my render_children $path }
+        if {[my node_field $id expanded]} { my render_children $path }
         if {[my is_selected $path]} {
-            $Text tag add selected $smark "$smark lineend"
+            $Text tag add selected $sm "$sm lineend"
         }
     }
 
@@ -1443,22 +1436,14 @@ oo::class create ::questlog::ui::SessionList {
     # surrounding lines untouched, so a per-tick glyph refresh never shifts
     # the view.
     method redraw_header {path} {
+        # item rewrites the session line in place, re-pinning the right-gravity
+        # start mark; the selection re-paint rides on_row_rendered's wiring being
+        # untouched, so re-add the selection tag here as the old rewrite did.
         set sid [my sid $path]
-        if {![my node_field $sid rendered]} return
-        set smark [my node_field $sid start]
-        set stag  [my node_field $sid tag]
-        set info [my build_line $sid]
-        # The start mark has right gravity, so re-inserting the header at it
-        # would carry it to the end of the new text. Pin the row start as an
-        # index, lay the line there, then reset the mark to the first char.
-        set s0 [$Text index $smark]
-        $Text delete $smark "$smark lineend"
-        $Text insert $s0 [dict get $info line] \
-            [list sessionhead $stag]
-        $Text mark set $smark $s0
-        my apply_line $sid $s0 $info
-        if {[my is_selected $path]} {
-            $Text tag add selected $s0 [my node_field $sid end]
+        my item $sid
+        if {[my node_field $sid rendered] && [my is_selected $path]} {
+            $Text tag add selected [my node_field $sid start] \
+                [my node_field $sid end]
         }
     }
 
@@ -2276,45 +2261,43 @@ oo::class create ::questlog::ui::SessionList {
         set sid [my sid $path]
         set fid [my node_field $sid parent]
         set folder [my node_field $fid key]
-        if {[my node_field $sid rendered]} {
-            $Text delete [my node_field $sid start] [my node_field $sid end]
-            catch {$Text mark unset [my node_field $sid start] \
-                                    [my node_field $sid end]}
-        }
-        # Subtract this session's cost and size from the folder aggregates and
-        # the running total before the node vanishes, so a later sum over
-        # remaining sessions stays exact.
-        set cost [my sget $path cost]
         set size [my sget $path size 0]
-        if {$cost ne "" && $cost > 0} {
-            my bump_folder_cost $folder [expr {-$cost}]
-            set TotalCost [expr {$TotalCost - $cost}]
-            my refresh_status
-        }
-        # Drop the session node and any subagent nodes parented to it.
-        foreach cid [my node_field $sid children] {
-            set cp [my node_field $cid key]
-            dict unset PathNode $cp
-            dict unset Nodes $cid
-        }
-        foreach cp [my node_pget $sid all_child_paths] {
-            if {[dict exists $PathNode $cp]} {
-                dict unset Nodes [dict get $PathNode $cp]
-                dict unset PathNode $cp
-            }
-        }
-        dict unset Nodes $sid
-        dict unset PathNode $path
-        my node_set $fid children \
-            [lsearch -all -inline -not -exact [my node_field $fid children] $sid]
-        dict unset SelectedSet $path
-        if {$SelectAnchor eq $path} { set SelectAnchor "" }
+        # The delete primitive removes the row and its subagent rows in one cut
+        # and unregisters the subtree, running on_before_delete on each node:
+        # forget_session_domain subtracts this session's cost and drops its
+        # domain indices (its own and its subagents'). The folder-level
+        # bookkeeping that depends on whether the folder is now empty stays here.
+        my delete $sid
         if {[llength [my node_field $fid children]] == 0} {
             my forget_folder $folder
         } else {
             my fset $folder size [expr {[my fget $folder size 0] - $size}]
             my bump_folder_count $folder -1
         }
+    }
+
+    # A session leaving the store: subtract its cost from the folder aggregate
+    # and the running total (its node is still present, so the value is exact),
+    # then drop its path index, its selection membership, and the indices of any
+    # enumerated subagents the rendered-children subtree did not already cover.
+    method forget_session_domain {id} {
+        set path [my node_field $id key]
+        set folder [my node_pget $id folder]
+        set cost [my node_pget $id cost]
+        if {$cost ne "" && $cost > 0} {
+            my bump_folder_cost $folder [expr {-$cost}]
+            set TotalCost [expr {$TotalCost - $cost}]
+            my refresh_status
+        }
+        foreach cp [my node_pget $id all_child_paths] {
+            if {[dict exists $PathNode $cp]} {
+                catch {dict unset Nodes [dict get $PathNode $cp]}
+                dict unset PathNode $cp
+            }
+        }
+        dict unset PathNode $path
+        dict unset SelectedSet $path
+        if {$SelectAnchor eq $path} { set SelectAnchor "" }
     }
 
     method forget_folder {folder} {
