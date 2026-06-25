@@ -98,6 +98,7 @@ oo::class create ::questlog::ui::TextTree {
     variable ResizeCol        ;# index of the column being drag-resized, or "" when none
     variable ResizeX0         ;# header x (column space) the resize drag began at
     variable ResizeW0         ;# the column's width when the resize drag began
+    variable ColHandles       ;# the visible vertical resize-handle rules over the header
     variable Opts             ;# widget options decoupling the engine from any host app
     variable SubjectMax       ;# px the subject may fill before the metadata block
     variable FolderLabelMax   ;# px a root label may fill before its aggregates
@@ -372,6 +373,49 @@ oo::class create ::questlog::ui::TextTree {
         if {$FolderLabelMax < 60} { set FolderLabelMax 60 }
         my apply_column_tabs $ColTabs
         if {[winfo exists $Top.body.hdr]} { $Top.body.hdr configure -tabs $ColTabs }
+        my draw_column_handles
+    }
+
+    # The visible resize affordance: a thin vertical rule down the header at each
+    # column's left-edge handle, in the muted heading ink, so the boundary the
+    # cursor snaps to is something the eye can also find. The rules carry the
+    # resize bindings, so grabbing the line drives the same drag as the wider
+    # cursor zone the header detects. They reposition with the columns on every
+    # layout pass (including live during a drag).
+    method draw_column_handles {} {
+        if {![winfo exists $Top.body.hdr]} return
+        set h $Top.body.hdr
+        if {![info exists ColHandles]} { set ColHandles [list] }
+        set n [llength $ColW]
+        while {[llength $ColHandles] < $n} {
+            set w $h.sep[llength $ColHandles]
+            frame $w -width 1 -background [my colour muted] \
+                -cursor sb_h_double_arrow -takefocus 0
+            bind $w <ButtonPress-1>   [list [self] on_handle press %X]
+            bind $w <B1-Motion>       [list [self] on_handle drag %X]
+            bind $w <ButtonRelease-1> [list [self] on_handle release %X]
+            lappend ColHandles $w
+        }
+        for {set i 0} {$i < [llength $ColHandles]} {incr i} {
+            set w [lindex $ColHandles $i]
+            if {$i < $n} {
+                set x [expr {[lindex $ColRightX $i] - [lindex $ColW $i] + 8}]
+                place $w -in $h -x $x -rely 0 -relheight 1
+                raise $w
+            } else {
+                place forget $w
+            }
+        }
+    }
+    # A resize gesture begun on a handle rule rather than in the header's cursor
+    # zone: convert the root x to the header column space the handlers expect.
+    method on_handle {phase X} {
+        set hx [expr {$X - [winfo rootx $Top.body.hdr]}]
+        switch $phase {
+            press   { my on_header_press $hx }
+            drag    { my on_header_drag $hx }
+            release { my on_header_release $hx }
+        }
     }
 
     # Resize hook: when the width actually changes, re-pin the columns and
