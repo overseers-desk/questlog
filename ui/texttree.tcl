@@ -59,8 +59,8 @@ oo::class create ::questlog::ui::TextTree {
     variable Top
     variable Text
     # The generic node store. Nodes maps a node id to its dict
-    # {parent kind key expanded rendered start end tag children payload}; Roots
-    # is the ordered list of root node ids, in arrival order.
+    # {parent kind key expanded rendered hidden start end tag children payload};
+    # Roots is the ordered list of root node ids, in arrival order.
     variable Nodes
     variable Roots
     variable NextId
@@ -96,7 +96,7 @@ oo::class create ::questlog::ui::TextTree {
         # `key` is the node's domain key (the subclass's reverse-lookup key),
         # kept out of payload so payload stays the pristine per-entity dict.
         dict set Nodes $id [dict create \
-            parent $parent kind $kind key $key expanded 0 rendered 0 \
+            parent $parent kind $kind key $key expanded 0 rendered 0 hidden 0 \
             start "" end "" tag "" children [list] payload $payload]
         return $id
     }
@@ -579,6 +579,375 @@ oo::class create ::questlog::ui::TextTree {
                     "$row_start + [expr {$off + $len}]c"
             }
         }
+    }
+
+    # ---- structural primitives ----------------------------------------
+    #
+    # The engine owns every text-mark mutation behind a small treeview-style
+    # ensemble (insert/delete/detach/item/expand/collapse/hide/unhide/move/
+    # rebuild) plus a content door (append_open/emit/append_close) for loose
+    # in-row content that is not itself a node. A subclass drives the widget
+    # only through these; it supplies content through the render hooks
+    # (build_line/render_subject/cell_values) and reacts through the lifecycle
+    # hooks (start_gravity/row_tags/on_row_rendered/on_before_delete). Each
+    # primitive asserts the widget editable on entry (so a re-entrant call can
+    # never run against a -state disabled widget and drop its inserts) and ends
+    # in check_invariant, so the audit gate names whichever primitive breaks the
+    # mark contract.
+
+    # Run a script with the widget editable and the view anchored once, restoring
+    # the prior state after. A streaming flush brackets many inserts in one batch
+    # so the reader's scroll position is saved and restored a single time.
+    method batch {script} {
+        set st [$Text cget -state]
+        $Text configure -state normal
+        my anchor_save
+        set code [catch {uplevel 1 $script} res opts]
+        my anchor_restore
+        $Text configure -state $st
+        return -options $opts $res
+    }
+
+    # The lifecycle hooks. Defaults suit a plain list; the session subclass
+    # overrides them. start_gravity fixes a row's start mark (right keeps a
+    # heading pinned to its own line when a sibling above expands; left pins a
+    # nested row to its parent's append point). row_tags are the static style
+    # tags every row of a kind carries. on_row_rendered runs after a row is laid
+    # (bindings, nested content, selection). on_before_delete runs before a node
+    # leaves the store (drop domain indices and aggregates).
+    method start_gravity {kind} { return right }
+    method row_tags {kind} { return [list] }
+    method on_row_rendered {id} {}
+    method on_before_delete {id} {}
+
+    # Lay a node's row at its parent's append point and register its marks. The
+    # one home for the right-gravity-temp-mark insert and the ancestor-end
+    # advance that the per-kind render methods each used to repeat: a left-gravity
+    # end mark stays left of an insert, so every ancestor whose end currently
+    # sits at the append point must be carried forward past the new row (a folder
+    # end follows only its own last session down; a session in the middle relies
+    # on the insert shifting the lower end mark on its own). Both insert and
+    # expand/unhide route through here.
+    method render_row {id} {
+        set parent [my node_field $id parent]
+        set kind   [my node_field $id kind]
+        if {$parent eq ""} {
+            # A root appends after every existing one, so its append point is the
+            # true buffer end by definition: re-anchor TailMark there rather than
+            # trust a value an upstream op may have drifted into a folder body.
+            $Text mark set TailMark "end - 1 chars"
+            $Text mark gravity TailMark right
+            set ins TailMark
+        } else {
+            set ins [my node_field $parent end]
+        }
+        set insidx [$Text index $ins]
+        set climb [list]
+        for {set p $parent} {$p ne ""} {set p [my node_field $p parent]} {
+            set pe [my node_field $p end]
+            if {$pe ne "" && [$Text compare $pe == $insidx]} { lappend climb $p }
+        }
+        set tag "${id}_t"
+        set info [my build_line $id]
+        set tmp "__rowins"
+        $Text mark set $tmp $insidx
+        $Text mark gravity $tmp right
+        set rstart [$Text index $tmp]
+        $Text insert $tmp "[dict get $info line]\n" [list {*}[my row_tags $kind] $tag]
+        my apply_line $id $rstart $info
+        set rowend [$Text index $tmp]
+        $Text mark unset $tmp
+        set sm "${id}_s"
+        $Text mark set $sm $rstart
+        $Text mark gravity $sm [my start_gravity $kind]
+        set em "${id}_e"
+        $Text mark set $em $rowend
+        $Text mark gravity $em left
+        my node_set $id tag $tag
+        my node_set $id start $sm
+        my node_set $id end $em
+        my node_set $id rendered 1
+        foreach a $climb { $Text mark set [my node_field $a end] $rowend }
+        my on_row_rendered $id
+    }
+
+    # Reset a node's render state (drop its marks and tag, clear rendered) without
+    # touching the buffer: the shared tail of detach/collapse, which delete the
+    # text in bulk and then clear the per-node bookkeeping.
+    method drop_render_marks {id} {
+        set s [my node_field $id start]
+        set e [my node_field $id end]
+        if {$s ne "" || $e ne ""} { catch {$Text mark unset $s $e} }
+        set tag [my node_field $id tag]
+        if {$tag ne "" && [llength [$Text tag ranges $tag]] == 0} {
+            catch {$Text tag delete $tag}
+        }
+        my node_set $id start ""
+        my node_set $id end ""
+        my node_set $id tag ""
+        my node_set $id rendered 0
+    }
+
+    # insert: add a node and draw it if its parent is open. parent "" makes a
+    # root. -pos {before <id>} orders it before a sibling, else it appends.
+    method insert {parent kind key payload args} {
+        set before ""
+        foreach {opt val} $args {
+            if {$opt eq "-pos" && [lindex $val 0] eq "before"} { set before [lindex $val 1] }
+        }
+        set st [$Text cget -state]
+        $Text configure -state normal
+        set id [my node_new $kind $parent $key $payload]
+        if {$parent eq ""} {
+            if {$before ne ""} {
+                set i [lsearch -exact $Roots $before]
+                set Roots [linsert $Roots [expr {$i < 0 ? "end" : $i}] $id]
+            } else {
+                lappend Roots $id
+            }
+        } else {
+            set kids [my node_field $parent children]
+            if {$before ne ""} {
+                set i [lsearch -exact $kids $before]
+                set kids [linsert $kids [expr {$i < 0 ? "end" : $i}] $id]
+            } else {
+                lappend kids $id
+            }
+            my node_set $parent children $kids
+        }
+        set open [expr {$parent eq "" || [my node_field $parent expanded]}]
+        if {$open && ![my node_field $id hidden]} { my render_row $id }
+        $Text configure -state $st
+        my check_invariant insert
+        return $id
+    }
+
+    # delete: remove a node and its subtree from both the view and the store.
+    method delete {id} {
+        set st [$Text cget -state]
+        $Text configure -state normal
+        my on_before_delete $id
+        if {[my node_field $id rendered]} {
+            $Text delete [my node_field $id start] [my node_field $id end]
+        }
+        my detach_child $id
+        my forget_subtree $id
+        $Text configure -state $st
+        my check_invariant delete
+    }
+
+    # Unregister a node and its descendants from the store, dropping any marks
+    # and tags they still hold. The text is assumed already gone (a bulk delete
+    # of the parent region, or the node was never rendered).
+    method forget_subtree {id} {
+        foreach c [my node_field $id children] { my forget_subtree $c }
+        my drop_render_marks $id
+        dict unset Nodes $id
+    }
+    # Remove a node from its parent's child list (or from Roots for a root).
+    method detach_child {id} {
+        set parent [my node_field $id parent]
+        if {$parent eq ""} {
+            set Roots [lsearch -all -inline -not -exact $Roots $id]
+        } elseif {[dict exists $Nodes $parent]} {
+            my node_set $parent children \
+                [lsearch -all -inline -not -exact [my node_field $parent children] $id]
+        }
+    }
+
+    # detach: remove a node's drawn region but keep it (and its subtree) in the
+    # store, so it can be re-rendered later. Collapses first so the region is
+    # just the node's own line, then deletes it and clears the render marks.
+    method detach {id} {
+        set st [$Text cget -state]
+        $Text configure -state normal
+        if {[my node_field $id expanded]} { my collapse $id }
+        if {[my node_field $id rendered]} {
+            $Text delete [my node_field $id start] [my node_field $id end]
+        }
+        my drop_render_marks $id
+        $Text configure -state $st
+        my check_invariant detach
+    }
+
+    # item: rewrite a rendered node's own line in place, leaving its subtree and
+    # marks intact. The start mark has right gravity, so re-inserting at it would
+    # carry it to the end of the new text: pin the row start as an index, lay the
+    # line there, then reset the mark to the first char.
+    method item {id} {
+        if {![my node_field $id rendered]} return
+        set st [$Text cget -state]
+        $Text configure -state normal
+        set sm [my node_field $id start]
+        set tag [my node_field $id tag]
+        set info [my build_line $id]
+        set s0 [$Text index $sm]
+        $Text delete $sm "$sm lineend"
+        $Text mark gravity $sm left
+        $Text insert $s0 [dict get $info line] [list {*}[my row_tags [my node_field $id kind]] $tag]
+        $Text mark gravity $sm [my start_gravity [my node_field $id kind]]
+        $Text mark set $sm $s0
+        my apply_line $id $s0 $info
+        $Text configure -state $st
+        my check_invariant item
+    }
+
+    # expand: open a node and draw its not-hidden children.
+    method expand {id} {
+        set st [$Text cget -state]
+        $Text configure -state normal
+        my node_set $id expanded 1
+        foreach c [my node_field $id children] {
+            if {![my node_field $c hidden]} { my render_row $c }
+        }
+        $Text configure -state $st
+        my check_invariant expand
+    }
+
+    # collapse: close a node and delete its body, keeping its own line and its
+    # children in the store (their render marks are reset for a later expand).
+    method collapse {id} {
+        set st [$Text cget -state]
+        $Text configure -state normal
+        my node_set $id expanded 0
+        set sm [my node_field $id start]
+        set em [my node_field $id end]
+        if {$sm ne "" && $em ne ""} {
+            set bodystart [$Text index "$sm lineend +1c"]
+            if {[$Text compare $bodystart < $em]} {
+                $Text delete $bodystart $em
+                $Text mark set $em $bodystart
+            }
+            foreach c [my node_field $id children] { my reset_subtree_render $c }
+        }
+        $Text configure -state $st
+        my check_invariant collapse
+    }
+    # Clear render marks across a node and its descendants (their text just went
+    # with a bulk body delete), so a later expand redraws them from scratch.
+    method reset_subtree_render {id} {
+        foreach c [my node_field $id children] { my reset_subtree_render $c }
+        my drop_render_marks $id
+    }
+
+    # hide/unhide: a reversible per-node filter. hide removes the row in place
+    # (same mechanism as detach) and marks it hidden; unhide clears the flag and
+    # redraws it when its parent is open. Re-ordering a shown row into sorted
+    # position is a rebuild, not an unhide.
+    method hide {id} {
+        my node_set $id hidden 1
+        my detach $id
+    }
+    method unhide {id} {
+        my node_set $id hidden 0
+        set parent [my node_field $id parent]
+        if {$parent eq "" || [my node_field $parent expanded]} {
+            set st [$Text cget -state]
+            $Text configure -state normal
+            my render_row $id
+            $Text configure -state $st
+            my check_invariant unhide
+        }
+    }
+
+    # move: reparent a node, then rebuild. A move can re-key the node and folder
+    # regions are disjoint down the buffer, so an in-place splice is not honest;
+    # a rebuild keeps the mark scheme consistent and moves are rare.
+    method move {id newparent args} {
+        my detach_child $id
+        my node_set $id parent $newparent
+        set kids [my node_field $newparent children]
+        lappend kids $id
+        my node_set $newparent children $kids
+        my rebuild
+    }
+
+    # rebuild: re-render the whole list from the durable store, preserving the
+    # reader's view. The store survives (it is the model), so this wipes the
+    # buffer and re-lays each root and its open, not-hidden descendants; a
+    # subclass orders roots and children through the sort hooks by overriding
+    # rebuild_order. A root left with every child hidden is dropped from the view.
+    method rebuild {} {
+        set st [$Text cget -state]
+        $Text configure -state normal
+        set at_top [expr {[lindex [$Text yview] 0] <= 0.0001}]
+        set anchor [my top_visible_node]
+        $Text delete 1.0 end
+        $Text mark set TailMark "end-1c"
+        $Text mark gravity TailMark right
+        foreach id [my all_node_ids] {
+            my node_set $id start ""
+            my node_set $id end ""
+            my node_set $id tag ""
+            my node_set $id rendered 0
+        }
+        foreach rid [my rebuild_order $Roots] {
+            if {[my node_visible_descendants $rid] == 0 && [my node_field $rid children] ne ""} {
+                continue
+            }
+            my render_subtree $rid
+        }
+        if {$at_top} { $Text yview moveto 0 } else { my rebuild_restore $anchor }
+        $Text configure -state $st
+        my check_invariant rebuild
+    }
+    # Render a node and, when it is open, its not-hidden children in order.
+    method render_subtree {id} {
+        my render_row $id
+        if {[my node_field $id expanded]} {
+            foreach c [my rebuild_order [my node_field $id children]] {
+                if {[my node_field $c hidden]} continue
+                my render_subtree $c
+            }
+        }
+    }
+    # The count of a node's not-hidden children (a parent with children but none
+    # shown is dropped from the rebuilt view).
+    method node_visible_descendants {id} {
+        set n 0
+        foreach c [my node_field $id children] { if {![my node_field $c hidden]} { incr n } }
+        return $n
+    }
+    # Every node id in the store, for the pre-rebuild render-state reset.
+    method all_node_ids {} { return [dict keys $Nodes] }
+    # Order a list of sibling node ids for rendering. Default keeps store order;
+    # the subclass overrides to apply the active sort.
+    method rebuild_order {ids} { return $ids }
+    # Re-pin the view to a {kind key} anchor after a rebuild. Default best-effort.
+    method rebuild_restore {anchor} {}
+
+    # ---- content door -------------------------------------------------
+    #
+    # Loose in-row content (a match snippet, a badge window) is not a node: it is
+    # tagged text appended inside a node's region that must carry that node's end
+    # mark, and every ancestor end mark coincident with it, forward. open at the
+    # node's append point, emit pieces, then close to advance the marks.
+    method append_open {id} {
+        set m "__emit"
+        $Text mark set $m [$Text index [my node_field $id end]]
+        $Text mark gravity $m right
+        return $m
+    }
+    method emit {mark text tags} {
+        set i0 [$Text index $mark]
+        $Text insert $mark $text $tags
+        return [list $i0 [$Text index $mark]]
+    }
+    method emit_window {mark args} {
+        set i0 [$Text index $mark]
+        $Text window create $mark {*}$args
+        return [list $i0 [$Text index $mark]]
+    }
+    method append_close {id mark} {
+        set newend [$Text index $mark]
+        set oldend [$Text index [my node_field $id end]]
+        $Text mark set [my node_field $id end] $newend
+        for {set p [my node_field $id parent]} {$p ne ""} {set p [my node_field $p parent]} {
+            set pe [my node_field $p end]
+            if {$pe ne "" && [$Text compare $pe == $oldend]} { $Text mark set $pe $newend }
+        }
+        $Text mark unset $mark
+        my check_invariant append_close
     }
 
     # ---- drag hit-testing ---------------------------------------------
