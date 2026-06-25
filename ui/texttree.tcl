@@ -29,16 +29,33 @@ package require Tk
 # anchor_restore, which pins the top visible line back to the top, so a late
 # insert above the viewport never shifts what the reader is on.
 #
+# The engine owns every text-mark mutation behind a treeview-style primitive
+# ensemble - insert/delete/detach/item/expand/collapse/hide/unhide/move/rebuild,
+# plus reset and a content door (append_open/emit/emit_window/append_close) for
+# loose in-row content that is not itself a node. A subclass drives the widget
+# only through these and never touches the text widget.
+#
 # Hooks the subclass overrides (Template Method):
-#   column_spec                 the metadata columns {id label sample align sortable}
-#   render_subject node max     the row's left side: {subject <str> tags <ranges> meta_run 0|1}
-#                               (ranges is a list of {tag off len}, subject-relative)
-#   cell_values node            ordered {col value} pairs the engine lays as cells
-#   cell_tag node col           the tag names overlaid on that cell (empty for none)
-#   sort_key payload col        the sort value for a column, from a node's payload
-#   apply_column_tabs tabs      set the right tab stops on the subclass's row tags
-#   redraw_all                  re-render the whole list under a new sort
-#   relayout_content            re-fit every rendered row after a width change
+#   Content / layout
+#     column_spec               the metadata columns {id label sample align sortable}
+#     render_subject node max    the row's left side: {subject <str> tags <ranges> meta_run 0|1}
+#                                (ranges is a list of {tag off len}, subject-relative)
+#     cell_values node           ordered {col value} pairs the engine lays as cells
+#     cell_tag node col          the tag names overlaid on that cell (empty for none)
+#     sort_key payload col       the sort value for a column, from a node's payload
+#     apply_column_tabs tabs     set the right tab stops on the subclass's row tags
+#     relayout_content           re-fit every rendered row after a width change
+#   Row lifecycle (per node kind)
+#     start_gravity kind         the row's start-mark gravity (right keeps a heading
+#                                pinned to its line; left pins a nested row to its parent)
+#     row_tags kind              the static style tags every row of a kind carries
+#     on_node_created id         register the node's domain indices before it renders
+#     on_row_rendered id         wire a laid row (bindings, nested content, selection)
+#     on_before_delete id        drop the node's domain indices before it leaves the store
+#   Rebuild
+#     sort_siblings ids          reorder a sibling set for display, keeping every node
+#     render_skip id             leave a node out of the view while keeping it in the store
+#     rebuild_restore anchor     re-pin the view to a {kind key} top node after a rebuild
 
 # Coerce a {pos align ...} tab spec to strictly increasing positive stops,
 # which Tk requires. Guards the degenerate column geometry a too-narrow width
@@ -348,7 +365,7 @@ oo::class create ::questlog::ui::TextTree {
             set SortDir [my default_sort_dir $id]
         }
         my cancel_resort
-        my redraw_all
+        my rebuild
         my draw_header
     }
 
@@ -433,7 +450,7 @@ oo::class create ::questlog::ui::TextTree {
     method do_resort {} {
         set ResortTimer ""
         if {[my is_default_sort]} return
-        my redraw_all
+        my rebuild
     }
     # Drop a pending debounced resort. Called before a synchronous redraw_all
     # (a header click), so a stale timer cannot fire a second redundant rebuild
@@ -874,56 +891,69 @@ oo::class create ::questlog::ui::TextTree {
     }
 
     # rebuild: re-render the whole list from the durable store, preserving the
-    # reader's view. The store survives (it is the model), so this wipes the
-    # buffer and re-lays each root and its open, not-hidden descendants; a
-    # subclass orders roots and children through the sort hooks by overriding
-    # rebuild_order. A root left with every child hidden is dropped from the view.
+    # reader's view. The store survives (it is the model), so this re-sorts the
+    # sibling order in place (the sort_siblings hook, keeping every node), then
+    # wipes the buffer and re-lays each root and its open, not-hidden
+    # descendants. A node the render_skip hook rejects (a folder with no viewable
+    # row) stays in the store but leaves the view. Store order tracks display
+    # order, so a sort reorders Roots and each node's children, not just the
+    # painted sequence.
     method rebuild {} {
         set st [$Text cget -state]
         $Text configure -state normal
         set at_top [expr {[lindex [$Text yview] 0] <= 0.0001}]
         set anchor [my top_visible_node]
+        set Roots [my sort_siblings $Roots]
+        foreach id [my all_node_ids] {
+            my node_set $id children [my sort_siblings [my node_field $id children]]
+        }
         $Text delete 1.0 end
+        # Drop every node's render marks and tag (their text just went), so the
+        # re-render starts from a clean buffer with no stale marks left to be
+        # dragged into an overlap. The durable node store itself survives.
+        foreach id [my all_node_ids] { my drop_render_marks $id }
         $Text mark set TailMark "end-1c"
         $Text mark gravity TailMark right
-        foreach id [my all_node_ids] {
-            my node_set $id start ""
-            my node_set $id end ""
-            my node_set $id tag ""
-            my node_set $id rendered 0
-        }
-        foreach rid [my rebuild_order $Roots] {
-            if {[my node_visible_descendants $rid] == 0 && [my node_field $rid children] ne ""} {
-                continue
-            }
+        foreach rid $Roots {
+            if {[my render_skip $rid]} continue
             my render_subtree $rid
         }
         if {$at_top} { $Text yview moveto 0 } else { my rebuild_restore $anchor }
         $Text configure -state $st
         my check_invariant rebuild
     }
-    # Render a node and, when it is open, its not-hidden children in order.
+    # reset: empty the whole widget - wipe the buffer, drop every node's marks
+    # and tag, re-anchor TailMark and clear the store. The base of a fresh view.
+    method reset {} {
+        set st [$Text cget -state]
+        $Text configure -state normal
+        $Text delete 1.0 end
+        foreach id [my all_node_ids] { my drop_render_marks $id }
+        $Text mark set TailMark "end-1c"
+        $Text mark gravity TailMark right
+        my reset_nodes
+        $Text configure -state $st
+        my check_invariant reset
+    }
+
+    # Render a node and, when it is open, its not-hidden children in store order.
     method render_subtree {id} {
         my render_row $id
         if {[my node_field $id expanded]} {
-            foreach c [my rebuild_order [my node_field $id children]] {
+            foreach c [my node_field $id children] {
                 if {[my node_field $c hidden]} continue
                 my render_subtree $c
             }
         }
     }
-    # The count of a node's not-hidden children (a parent with children but none
-    # shown is dropped from the rebuilt view).
-    method node_visible_descendants {id} {
-        set n 0
-        foreach c [my node_field $id children] { if {![my node_field $c hidden]} { incr n } }
-        return $n
-    }
     # Every node id in the store, for the pre-rebuild render-state reset.
     method all_node_ids {} { return [dict keys $Nodes] }
-    # Order a list of sibling node ids for rendering. Default keeps store order;
-    # the subclass overrides to apply the active sort.
-    method rebuild_order {ids} { return $ids }
+    # Reorder a sibling set for display, keeping every node (a sort, not a
+    # filter). Default keeps store order; the subclass applies the active sort.
+    method sort_siblings {ids} { return $ids }
+    # Whether to leave a node (and its subtree) out of the rendered view while
+    # keeping it in the store. Default renders everything.
+    method render_skip {id} { return 0 }
     # Re-pin the view to a {kind key} anchor after a rebuild. Default best-effort.
     method rebuild_restore {anchor} {}
 

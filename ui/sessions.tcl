@@ -452,40 +452,17 @@ oo::class create ::questlog::ui::SessionList {
     # ---- filter / clear ----------------------------------------------
 
     method clear {} {
-        $Text configure -state normal
-        $Text delete 1.0 end
-        my purge_tags_and_marks
-        $Text mark set TailMark "end-1c"
-        $Text mark gravity TailMark right
-        $Text configure -state disabled
-        my reset_model
-        # A fresh filter/search is a new view; drop the selection (reset_model
-        # keeps the node store only, so a rebuild via redraw_all preserves it).
+        # The reset primitive wipes the buffer, drops every node's marks and the
+        # store; the loose snippet/match tags it leaves empty are swept after.
+        my reset
+        my sweep_loose_tags
+        # A fresh filter/search is a new view; drop the selection (the node store
+        # is empty now, and a later rebuild repaints from it).
         set SelectedSet [dict create]
         set SelectAnchor ""
         set TotalCost 0.0
         set StatusBase ""
         my refresh_status
-    }
-
-    # Drop the per-region tags and position marks left behind by a cleared
-    # body, so neither accumulates across filter changes.
-    method purge_tags_and_marks {} {
-        foreach t [$Text tag names] {
-            if {[string match "s#*" $t] || [string match "f#*" $t] \
-                || [string match "n#*" $t] || [string match "c#*" $t] \
-                || [string match "node*_t" $t]} {
-                $Text tag delete $t
-            }
-        }
-        foreach m [$Text mark names] {
-            if {[string match "sm*" $m] || [string match "se*" $m] \
-                || [string match "fm*" $m] || [string match "fe*" $m] \
-                || [string match "ch*" $m] \
-                || [string match "node*_s" $m] || [string match "node*_e" $m]} {
-                $Text mark unset $m
-            }
-        }
     }
 
     method apply_filter {snapshot} {
@@ -548,7 +525,7 @@ oo::class create ::questlog::ui::SessionList {
         my anchor_save
         my model_add_session $path $row
         set shown [my session_shown $path $row]
-        my sset $path hidden [expr {!$shown}]
+        my sflagset $path hidden [expr {!$shown}]
         # The model holds every in-scope session; the toggles decide only whether it is
         # drawn, so a later toggle hides/shows it in place without a re-scan.
         if {$shown && [my folder_expanded [dict get $row folder]]} {
@@ -1434,7 +1411,7 @@ oo::class create ::questlog::ui::SessionList {
 
     method expand_folder {folder} {
         foreach path [my folder_visible_paths $folder] {
-            if {[my sget $path hidden 0]} continue
+            if {[my sflag $path hidden]} continue
             my render_session $path
         }
     }
@@ -1482,34 +1459,9 @@ oo::class create ::questlog::ui::SessionList {
         if {![my any_view_toggle]} { return [my fget $folder count] }
         set n 0
         foreach path [my folder_session_paths $folder] {
-            if {![my sget $path hidden 0]} { incr n }
+            if {![my sflag $path hidden]} { incr n }
         }
         return $n
-    }
-
-    # Whether a folder's heading is currently drawn. A folder left with no
-    # viewable session is detached (heading and body removed) but kept in the
-    # model; this reads 0 until the next redraw_all rebuilds it (recreating the
-    # folder node from a clean buffer resets the flag to its 1 default).
-    method folder_attached {folder} {
-        return [my node_pget [my fid $folder] attached 1]
-    }
-
-    # Remove a folder's heading and body from the view while keeping its node and
-    # sessions in the model, so a folder with no viewable session leaves the list
-    # but returns once a toggle stops hiding its sessions. Called from redraw_all,
-    # which holds the text in -state normal.
-    method detach_folder {folder} {
-        if {![my has_folder $folder] || ![my folder_attached $folder]} return
-        # The detach primitive removes the folder's whole drawn region (heading
-        # and, if open, body) and unsets its marks, so it holds none to be
-        # dragged into an overlap by a neighbour's redraw, while keeping the node
-        # and its sessions in the model and its expanded state for re-attach. The
-        # snippet/match tags freed by the body delete are loose content, not
-        # nodes, so the engine cannot sweep them; do it here.
-        my detach [my fid $folder]
-        my sweep_loose_tags
-        my fset $folder attached 0
     }
 
     # Drop the per-snippet / per-child-snippet tags ("n#" / "c#") left empty by a
@@ -1584,17 +1536,15 @@ oo::class create ::questlog::ui::SessionList {
         if {$new_cost eq "" || $new_cost < 0} { set new_cost 0.0 }
         set delta [expr {$new_cost - $old_cost}]
 
-        # bump_folder_cost mutates the heading line and redraw_header
-        # mutates the session line: both go through $Text delete/insert,
-        # so the widget must be in normal state for the duration.
-        $Text configure -state normal
+        # bump_folder_cost rewrites the heading line and redraw_header the
+        # session line; both go through the item primitive, which owns its own
+        # widget state, so this method holds none.
         if {$delta != 0} {
             my bump_folder_cost $folder $delta
             set TotalCost [expr {$TotalCost + $delta}]
             my refresh_status
         }
         if {[my sflag $path rendered]} { my redraw_header $path }
-        $Text configure -state disabled
         # The worker result can change cost-, turns-, duration- or
         # ratio-sorted order.
         if {$SortKey in {cost turns duration ratio}} { my schedule_resort }
@@ -1769,11 +1719,6 @@ oo::class create ::questlog::ui::SessionList {
             }
         }
         my action_set_bright $path $on
-    }
-
-    # Reapply every member's highlight; the repaint hook after a full rebuild.
-    method repaint_selection {} {
-        foreach path [my selection_paths] { my apply_selection_tag $path 1 }
     }
 
     # Replace the selection with the new set (a path list), repainting only the
@@ -2096,7 +2041,7 @@ oo::class create ::questlog::ui::SessionList {
                     && ![::questlog::filter::row_under_match $row $under]} continue
                 my model_add_session $path $row
                 set shown [my session_shown $path $row]
-                my sset $path hidden [expr {!$shown}]
+                my sflagset $path hidden [expr {!$shown}]
                 if {$shown && [my folder_expanded [dict get $row folder]]} {
                     my render_session $path
                 }
@@ -2126,8 +2071,8 @@ oo::class create ::questlog::ui::SessionList {
             }
             if {!$retained} { my forget_session $path; continue }
             set now_hidden [expr {![my session_shown $path $row]}]
-            if {$now_hidden != [my sget $path hidden 0]} {
-                my sset $path hidden $now_hidden
+            if {$now_hidden != [my sflag $path hidden]} {
+                my sflagset $path hidden $now_hidden
                 dict set dirty [my sget $path folder] 1
             }
             # Running glyph flip: redraw the header only when it changed AND the folder is
@@ -2141,13 +2086,13 @@ oo::class create ::questlog::ui::SessionList {
         }
         set PrevRunning $running
         if {[dict size $dirty]} {
-            # A toggle changed which sessions are viewable. Rebuild from the model
-            # rather than edit in place: redraw_all is hidden-aware (it skips
-            # hidden rows and detaches a folder left with none), renumbers the
+            # A toggle changed which sessions are viewable. Rebuild from the
+            # store rather than edit in place: rebuild is hidden-aware (it skips
+            # hidden rows and drops a folder left with none), renumbers the
             # headings to the viewable count, and reseats every folder in order
-            # from a clean buffer - so nothing accumulates the stale marks that
-            # in-place attach/detach left behind across repeated poll ticks.
-            my redraw_all
+            # from a clean buffer, owning its own view anchor.
+            my rebuild
+            $Text configure -state disabled
         } else {
             my anchor_restore
             $Text configure -state disabled
@@ -2237,9 +2182,10 @@ oo::class create ::questlog::ui::SessionList {
         my delete [my fid $folder]
     }
 
-    # After a move renames the file, re-key the model and rebuild the view
-    # so the session appears under its new folder. A full rebuild keeps the
-    # mark scheme consistent; moves are rare, so the cost is not on a hot path.
+    # After a move renames the file, re-key the model and move the node under its
+    # new folder. The move primitive reparents the node off the old folder and
+    # onto the new and rebuilds, which keeps the mark scheme consistent; moves
+    # are rare, so the cost is not on a hot path.
     method relocate_card {old_path new_path new_folder} {
         if {![my has_session $old_path]} return
         set sid [my sid $old_path]
@@ -2247,11 +2193,8 @@ oo::class create ::questlog::ui::SessionList {
         my node_set $sid key $new_path
         dict unset PathNode $old_path
         dict set PathNode $new_path $sid
-        set old_fid [my node_field $sid parent]
-        my node_set $old_fid children \
-            [lsearch -all -inline -not -exact [my node_field $old_fid children] $sid]
-        # Add the destination folder structurally (no drawing) when new; the
-        # redraw_all below rebuilds the model from the node store and draws it.
+        # Create the destination folder in the store when new (no draw; the
+        # move's rebuild draws it).
         if {![my has_folder $new_folder]} {
             set new_fid [my node_new folder "" $new_folder \
                 [dict create label "" count 0 cost 0.0 size 0]]
@@ -2259,145 +2202,82 @@ oo::class create ::questlog::ui::SessionList {
             dict set FolderNode $new_folder $new_fid
             lappend Roots $new_fid
         }
-        set new_fid [my fid $new_folder]
-        my node_set $sid parent $new_fid
-        my node_set $new_fid children [linsert [my node_field $new_fid children] end $sid]
         if {[dict exists $SelectedSet $old_path]} {
             dict unset SelectedSet $old_path
             dict set SelectedSet $new_path 1
         }
         if {$SelectAnchor eq $old_path} { set SelectAnchor $new_path }
-        my redraw_all
+        my move $sid [my fid $new_folder]
     }
 
-    method redraw_all {} {
-        $Text configure -state normal
-        # Anchor by node identity, not the AnchorTop mark: the mark cannot
-        # survive the full-buffer delete below (it collapses to line 1, which is
-        # what snapped the view to the top on every recost). Capture the
-        # top-visible node and its folder while the model is still live.
-        set at_top [expr {[lindex [$Text yview] 0] <= 0.0001}]
-        set anchor [my top_visible_node]
-        set anchor_folder [my anchor_folder_of $anchor]
-        $Text delete 1.0 end
-        my purge_tags_and_marks
-        $Text mark set TailMark "end-1c"
-        $Text mark gravity TailMark right
-        # Snapshot the model from the node store, remember each folder's
-        # expanded state, then reset the store and rebuild it, re-rendering only
-        # the expanded folders' bodies.
-        set order [list]                 ;# folder names in arrival order
-        set byfolder [dict create]       ;# folder name -> ordered session paths
-        set saved [dict create]          ;# session path -> payload snapshot
-        set wasexp [dict create]
-        set foldercost [dict create]
-        set folderlabel [dict create]
-        foreach fid $Roots {
-            set folder [my node_field $fid key]
-            lappend order $folder
-            dict set wasexp $folder [my node_field $fid expanded]
-            dict set foldercost $folder [my node_pget $fid cost 0.0]
-            dict set folderlabel $folder [my node_pget $fid label ""]
-            set paths [list]
-            foreach sid [my node_field $fid children] {
-                set path [my node_field $sid key]
-                lappend paths $path
-                dict set saved $path [my node_payload $sid]
-            }
-            dict set byfolder $folder $paths
-        }
-        # Cost reorders the folders by their aggregate, path by their displayed
-        # name; the other keys keep the folders in arrival order and reorder only
-        # the sessions within each.
-        if {$SortKey eq "cost"} {
-            set order [my sort_folders $order $foldercost -real]
-        } elseif {$SortKey eq "path"} {
-            set order [my sort_folders $order $folderlabel -dictionary]
-        }
-        my reset_model
-        # Folder costs were dropped with the model; reset TotalCost too so the
-        # bumps in model_add_session re-establish both consistently.
-        set TotalCost 0.0
-        foreach folder $order {
-            foreach path [my sort_paths [dict getdef $byfolder $folder {}] $saved] {
-                if {![dict exists $saved $path]} continue
-                set s [dict get $saved $path]
-                my model_add_session $path \
-                    [dict create folder [dict get $s folder] \
-                         uuid [dict get $s uuid] mtime [dict getdef $s mtime 0] \
-                         size [dict get $s size] \
-                         first_user [dict get $s label] \
-                         slug [dict getdef $s slug ""] \
-                         ai_title [dict getdef $s ai_title ""] \
-                         cost_usd [dict getdef $s cost ""]] \
-                    [dict get $s first_lineno]
-                my sset $path label [dict get $s label]
-                my sset $path when [dict get $s when]
-                my sset $path snippets [dict get $s snippets]
-                my sset $path count [dict get $s count]
-                # Carry the toggle's hidden flag across the rebuild so the render
-                # pass below can skip it and the heading count stays viewable.
-                my sset $path hidden [dict getdef $s hidden 0]
-            }
-            if {[dict exists $wasexp $folder] && [my has_folder $folder]} {
-                my node_set [my fid $folder] expanded [dict get $wasexp $folder]
-            }
-        }
-        foreach fid $Roots {
-            set folder [my node_field $fid key]
-            # A folder left with no viewable session (every row hidden by a
-            # toggle) detaches: its heading leaves the view but its node and
-            # sessions stay in the model, so turning the toggle off rebuilds it.
-            if {[my folder_visible_count $folder] == 0} {
-                my detach_folder $folder
-                continue
-            }
-            if {[my node_field $fid expanded]} {
-                foreach path [my folder_session_paths $folder] {
-                    if {[my sget $path hidden 0]} continue
-                    my render_session $path
+    # Reorder a sibling set for a rebuild, keeping every node (the base renders
+    # from the durable store and skips the unviewable separately). Folders
+    # reorder by the active sort (cost by aggregate, path by displayed label,
+    # else arrival order); a folder's sessions reorder by sort_paths; subagents
+    # keep arrival order.
+    method sort_siblings {ids} {
+        if {[llength $ids] == 0} { return $ids }
+        switch [my node_field [lindex $ids 0] kind] {
+            folder {
+                set order [lmap id $ids { my node_field $id key }]
+                if {$SortKey eq "cost"} {
+                    set valmap [dict create]
+                    foreach id $ids { dict set valmap [my node_field $id key] [my node_pget $id cost 0.0] }
+                    set order [my sort_folders $order $valmap -real]
+                } elseif {$SortKey eq "path"} {
+                    set valmap [dict create]
+                    foreach id $ids { dict set valmap [my node_field $id key] [my node_pget $id label ""] }
+                    set order [my sort_folders $order $valmap -dictionary]
                 }
+                return [lmap k $order { my fid $k }]
             }
-            my redraw_folder_heading $folder
+            session {
+                set src [dict create]
+                foreach id $ids { dict set src [my node_field $id key] [my session_payload [my node_field $id key]] }
+                set order [my sort_paths [lmap id $ids { my node_field $id key }] $src]
+                return [lmap k $order { my sid $k }]
+            }
+            default { return $ids }
         }
-        my repaint_selection
-        if {$at_top} {
-            $Text yview moveto 0
-        } else {
-            my restore_anchor $anchor $anchor_folder
-        }
-        $Text configure -state disabled
-        my check_invariant redraw_all
     }
 
-    # The folder name owning a captured {kind key} anchor, read while the model
-    # is still live (before redraw_all resets it), so restore_anchor can fall
-    # back to the folder heading when the node itself is gone after the rebuild.
-    method anchor_folder_of {anchor} {
-        if {$anchor eq ""} { return "" }
-        lassign $anchor kind key
-        if {$kind eq "folder"} { return $key }
-        if {[dict exists $PathNode $key]} {
-            return [my node_pget [dict get $PathNode $key] folder ""]
-        }
-        return ""
+    # A folder with no viewable session (empty, or every row hidden by a
+    # list-view toggle) leaves the rendered view but stays in the store, so it
+    # returns once a session is shown again.
+    method render_skip {id} {
+        return [expr {[my node_field $id kind] eq "folder" \
+            && [my folder_visible_count [my node_field $id key]] == 0}]
     }
 
-    # Scroll the rebuilt list so the captured top node sits at the top again.
-    # Falls back, in order, to: the node's folder heading (the node was forgotten
-    # or its folder is now collapsed), then the absolute top.
-    method restore_anchor {anchor folder} {
+    # Whether a folder's heading is currently drawn: a folder dropped from the
+    # view by render_skip reads 0 until a rebuild draws it again.
+    method folder_attached {folder} {
+        return [expr {[my has_folder $folder] && [my node_field [my fid $folder] rendered]}]
+    }
+
+    # Re-pin the view after a rebuild to the captured {kind key} top node. The
+    # store survives the rebuild, so the node resolves directly; it falls back to
+    # the node's folder heading (the row is now hidden or its folder collapsed),
+    # then the absolute top.
+    method rebuild_restore {anchor} {
         if {$anchor eq ""} { $Text yview moveto 0; return }
         lassign $anchor kind key
         set m ""
         if {$kind eq "folder"} {
-            if {[my has_folder $key]} { set m [my node_field [my fid $key] start] }
+            if {[my has_folder $key] && [my node_field [my fid $key] rendered]} {
+                set m [my node_field [my fid $key] start]
+            }
         } elseif {[dict exists $PathNode $key]} {
             set id [dict get $PathNode $key]
-            if {[my node_field $id rendered]} { set m [my node_field $id start] }
-        }
-        if {$m eq "" && $folder ne "" && [my has_folder $folder]} {
-            set m [my node_field [my fid $folder] start]
+            if {[my node_field $id rendered]} {
+                set m [my node_field $id start]
+            } else {
+                set folder [my node_pget $id folder ""]
+                if {$folder ne "" && [my has_folder $folder] \
+                    && [my node_field [my fid $folder] rendered]} {
+                    set m [my node_field [my fid $folder] start]
+                }
+            }
         }
         if {$m eq ""} { $Text yview moveto 0 } else { catch {$Text yview $m} }
     }

@@ -117,7 +117,7 @@ check "all twelve sessions rendered" \
 # Spy on the full rebuild and the per-row header redraw.
 set ::redraws 0
 set ::headers 0
-oo::objdefine $SL method redraw_all {} { incr ::redraws; next }
+oo::objdefine $SL method rebuild {} { incr ::redraws; next }
 oo::objdefine $SL method redraw_header {p} { incr ::headers; next $p }
 
 set S12 [lindex $PATHS 11]   ;# highest cost -> first under cost-desc
@@ -174,11 +174,11 @@ set u [$SL sget [lindex $PATHS 0] uuid]
 $SL reconcile_running [dict create $u [lindex $PATHS 0]]
 check "one session entering redraws exactly one header" $::headers 1
 
-# ---- restore_anchor tolerates a missing/vanished anchor ------------------
-check "restore_anchor tolerates an empty anchor" \
-    [catch {$SL restore_anchor "" ""}] 0
-check "restore_anchor falls back when the node is gone" \
-    [catch {$SL restore_anchor [list session /nope.jsonl] $FOLDER}] 0
+# ---- rebuild_restore tolerates a missing/vanished anchor -----------------
+check "rebuild_restore tolerates an empty anchor" \
+    [catch {$SL rebuild_restore ""}] 0
+check "rebuild_restore falls back when the node is gone" \
+    [catch {$SL rebuild_restore [list session /nope.jsonl]}] 0
 
 ::questlog::path::_real_file delete -force $SAND
 puts [expr {$fails ? "FAILED ($fails)" : "PASS"}]
