@@ -238,6 +238,7 @@ oo::class create ::questlog::ui::SessionList {
                 $Text tag bind $htag <Button-1> [list [self] toggle_folder $folder]
             }
             session { my wire_session_row $id }
+            subagent { my wire_subagent_row $id }
         }
     }
     method on_before_delete {id} {
@@ -743,16 +744,7 @@ oo::class create ::questlog::ui::SessionList {
     }
 
     method render_snippet {path btype content lineoff} {
-        set semark [my node_field [my sid $path] end]
-        set folder [my sget $path folder]
-        # As in render_child: only the folder's last session may carry the
-        # folder append point past its new rows; a session in the middle relies
-        # on the insert shifting the lower folder-end mark on its own.
-        set was_last 0
-        if {[my has_folder $folder]} {
-            set was_last [$Text compare $semark == \
-                [my node_field [my fid $folder] end]]
-        }
+        set sid [my sid $path]
         set ntag "n#[incr NextId]"
         # Normalise to a type with a known badge pill; an unknown block type
         # falls back to the neutral system pill.
@@ -761,31 +753,29 @@ oo::class create ::questlog::ui::SessionList {
             tool_result tool_result system system
         } $btype system]
         set bt [expr {$fgrole eq "system" && $btype ne "system" ? "system" : $btype}]
-        # Build at a temporary right-gravity mark so the pieces land in order;
-        # semark is left gravity and would otherwise reverse successive inserts.
-        set tmp tmpsnip
-        $Text mark set $tmp [$Text index $semark]
-        $Text mark gravity $tmp right
-        $Text insert $tmp "▏" [list snippet snippetbar $ntag]
+        # A snippet is loose content appended inside the session's region, not a
+        # node: the content door opens a temp mark at the session's append point,
+        # emits the pieces in order, then advances the session end (and the
+        # folder end when this session is the folder's last) past them.
+        set m [my append_open $sid]
+        my emit $m "▏" [list snippet snippetbar $ntag]
         # Rounded type badge: a label drawing the type name centred over the
         # shared pill image (Tk's SVG cannot render text itself). It is created
         # lazily through -create so only the on-screen badges become real
         # widgets: a whole-corpus search can list thousands of snippets, and
         # eagerly building a widget per badge pegs a core; -create keeps it to a
         # screenful.
-        set wstart [$Text index $tmp]
-        $Text window create $tmp -align center -pady 1 -padx 3 \
-            -create [list [self] make_badge $bt $fgrole $path $lineoff]
+        set wr [my emit_window $m -align center -pady 1 -padx 3 \
+            -create [list [self] make_badge $bt $fgrole $path $lineoff]]
+        set wstart [lindex $wr 0]
         # The window segment must carry the snippet tag too, or its untagged
         # -wrap (the widget default `word`) lets the row wrap to a second line.
         $Text tag add snippet $wstart "$wstart +1c"
         $Text tag add $ntag   $wstart "$wstart +1c"
-        $Text insert $tmp "\t" [list snippet $ntag]
-        set cstart [$Text index $tmp]
-        $Text insert $tmp $content [list snippet $ntag]
-        set cend [$Text index $tmp]
-        $Text insert $tmp "\n" [list snippet $ntag]
-        my tag_hits_in_range $cstart $cend $content
+        my emit $m "\t" [list snippet $ntag]
+        set cr [my emit $m $content [list snippet $ntag]]
+        my emit $m "\n" [list snippet $ntag]
+        my tag_hits_in_range [lindex $cr 0] [lindex $cr 1] $content
         $Text tag bind $ntag <ButtonRelease-1> \
             [list [self] on_snippet_release $path $lineoff]
         # A snippet row is an extension of its session, so right-clicking it
@@ -794,14 +784,7 @@ oo::class create ::questlog::ui::SessionList {
             [list [self] on_session_right $path %X %Y]
         $Text tag bind $ntag <Enter> [list $Text configure -cursor hand2]
         $Text tag bind $ntag <Leave> [list $Text configure -cursor arrow]
-        # Advance this session's end past the snippet, and the folder append
-        # point too when this session is the folder's last (see render_child).
-        $Text mark set $semark [$Text index $tmp]
-        $Text mark unset $tmp
-        if {$was_last} {
-            $Text mark set [my node_field [my fid $folder] end] \
-                [$Text index $semark]
-        }
+        my append_close $sid $m
     }
 
     # Build one snippet badge on demand (the text widget's -create callback when
@@ -856,20 +839,6 @@ oo::class create ::questlog::ui::SessionList {
         return $out
     }
 
-    # The start mark of a session's children block, or "" when no child is
-    # rendered: the first rendered child node's start mark. This is where the
-    # old transient chmark sat (left gravity at the session's append point when
-    # the first child went in), so deleting from here to the session end drops
-    # the whole children run.
-    method children_region_start {path} {
-        foreach cid [my node_field [my sid $path] children] {
-            if {[my node_field $cid rendered]} {
-                return [my node_field $cid start]
-            }
-        }
-        return ""
-    }
-
     # Attach a subagent path to the session node's children (the rendered
     # subset), preserving arrival order and skipping a path already attached.
     method attach_child {path cp} {
@@ -888,26 +857,21 @@ oo::class create ::questlog::ui::SessionList {
     }
 
     method collapse_subagents {path} {
-        set chm [my children_region_start $path]
-        if {$chm ne ""} {
-            catch {$Text delete $chm [my node_field [my sid $path] end]}
-        }
-        foreach cp [my session_child_paths $path] {
-            if {[my has_child $cp]} { my reset_child_render $cp }
-        }
+        my detach_session_children $path
     }
 
-    # Drop a subagent's render state: its rendered flag, tag, and the start/end
-    # marks left behind by a deleted children block (so the "ch" marks do not
-    # accumulate across collapse/rerender cycles).
-    method reset_child_render {cp} {
-        set cid [my sid $cp]
-        catch {$Text mark unset [my node_field $cid start]}
-        catch {$Text mark unset [my node_field $cid end]}
-        my node_set $cid rendered 0
-        my node_set $cid tag ""
-        my node_set $cid start ""
-        my node_set $cid end ""
+    # Detach every rendered subagent of a session: each child node's region spans
+    # its header and its matched-line content, so detaching the children removes
+    # the whole subagent block while leaving the session's own match snippets in
+    # place (base collapse would take those too). The freed child-snippet tags
+    # are loose content, swept after.
+    method detach_session_children {path} {
+        foreach cp [my session_child_paths $path] {
+            if {[my has_child $cp] && [my node_field [my sid $cp] rendered]} {
+                my detach [my sid $cp]
+            }
+        }
+        my sweep_loose_tags
     }
 
     # Ask the scanner for every subagent of this session and seed their models
@@ -966,12 +930,7 @@ oo::class create ::questlog::ui::SessionList {
     method rerender_children {path} {
         if {![my has_session $path]} return
         if {![my sflag $path rendered]} return
-        set chm [my children_region_start $path]
-        if {$chm eq ""} return
-        $Text delete $chm [my node_field [my sid $path] end]
-        foreach cp [my session_child_paths $path] {
-            if {[my has_child $cp]} { my reset_child_render $cp }
-        }
+        my detach_session_children $path
         my render_children $path
     }
 
@@ -983,60 +942,31 @@ oo::class create ::questlog::ui::SessionList {
         if {![my has_child $cp]} return
         set cid [my sid $cp]
         if {[my node_field $cid rendered]} return
-        set semark [my node_field [my sid $path] end]
-        set folder [my sget $path folder]
-        # Only the folder's last session may drag the folder append point down
-        # to swallow new child rows. For a session in the middle of the folder,
-        # the insert below shifts the lower folder-end mark on its own, and
-        # forcing it back to this session's end would strand every session
-        # below inside this one's child block.
-        set was_last 0
-        if {[my has_folder $folder]} {
-            set was_last [$Text compare $semark == \
-                [my node_field [my fid $folder] end]]
-        }
-        # The subagent node's start mark sits at its row's first char, left
-        # gravity, so an insert at the session append point (right of it) keeps
-        # it pinned to this row. The first child's start mark is the children
-        # block start (where the old transient chmark sat), the anchor
-        # children_region_start hands collapse/rerender to delete from.
-        set cstart "ch[incr NextId]"
-        $Text mark set $cstart [$Text index $semark]
-        $Text mark gravity $cstart left
-        set ctag "c#[incr NextId]"
-        set info [my build_line $cid]
-        set tmp tmpchild
-        $Text mark set $tmp [$Text index $semark]
-        $Text mark gravity $tmp right
-        set rstart [$Text index $tmp]
-        $Text insert $tmp "[dict get $info line]\n" [list childhead $ctag]
-        my apply_line $cid $rstart $info
-        $Text mark set $semark [$Text index $tmp]
-        $Text mark unset $tmp
-        # The child node's end advances past its own rows so its region nests
-        # inside the session's; render_child_snippet keeps moving both forward.
-        set cend "ch[incr NextId]"
-        $Text mark set $cend [$Text index $semark]
-        $Text mark gravity $cend left
-        my node_set $cid start $cstart
-        my node_set $cid end $cend
-        set c [my node_payload $cid]
+        # A subagent is a node nested under its session: render_row lays its
+        # header at the session's append point (start mark left gravity per
+        # start_gravity, so it stays pinned to its row), advances the session end
+        # and, when this is the folder's last session, the folder end. The
+        # subagent branch of on_row_rendered then emits its matched lines and
+        # wires its bindings and cost trigger.
+        my render_row $cid
+    }
+
+    # The matched lines, bindings and cost trigger a freshly-laid subagent row
+    # carries, run by render_row's on_row_rendered tail.
+    method wire_subagent_row {id} {
+        set cp   [my node_field $id key]
+        set path [my node_field [my node_field $id parent] key]
+        set ctag [my node_field $id tag]
+        set c    [my node_payload $id]
         foreach h [dict get $c hits] {
             lassign $h btype content lineoff
             my render_child_snippet $path $cp $content $lineoff
-        }
-        $Text mark set $cend [$Text index $semark]
-        if {$was_last} {
-            $Text mark set [my node_field [my fid $folder] end] \
-                [$Text index $semark]
         }
         set lineoff 0
         if {[llength [dict get $c hits]] > 0} {
             set lineoff [lindex [lindex [dict get $c hits] 0] 2]
         }
-        my node_set $cid tag $ctag
-        my node_pset $cid open_lineoff $lineoff
-        my node_set $cid rendered 1
+        my node_pset $id open_lineoff $lineoff
         $Text tag bind $ctag <ButtonRelease-1> [list [self] on_child_release $cp]
         $Text tag bind $ctag <<ContextMenu>> [list [self] on_child_right $cp %X %Y]
         $Text tag bind $ctag <Enter> [list $Text configure -cursor hand2]
@@ -1052,23 +982,22 @@ oo::class create ::questlog::ui::SessionList {
     # parent+child view). Lighter than a parent snippet (no badge widget): a
     # deeper spine then the hit-leading content with the terms emboldened.
     method render_child_snippet {path cp content lineoff} {
-        set semark [my node_field [my sid $path] end]
+        set cid [my sid $cp]
         set ntag "c#[incr NextId]"
-        set tmp tmpcsnip
-        $Text mark set $tmp [$Text index $semark]
-        $Text mark gravity $tmp right
-        $Text insert $tmp "▏  " [list childsnip childbar $ntag]
-        set cstart [$Text index $tmp]
-        $Text insert $tmp $content [list childsnip $ntag]
-        set cend [$Text index $tmp]
-        $Text insert $tmp "\n" [list childsnip $ntag]
-        my tag_hits_in_range $cstart $cend $content
+        # A matched line is loose content inside the subagent's region: the door
+        # emits it at the subagent's append point and advances the subagent end
+        # past it, carrying the session and folder ends with it where they
+        # coincide (the same forward nesting the parent snippet uses).
+        set m [my append_open $cid]
+        my emit $m "▏  " [list childsnip childbar $ntag]
+        set cr [my emit $m $content [list childsnip $ntag]]
+        my emit $m "\n" [list childsnip $ntag]
+        my tag_hits_in_range [lindex $cr 0] [lindex $cr 1] $content
         $Text tag bind $ntag <ButtonRelease-1> [list [self] on_child_open_at $cp $lineoff]
         $Text tag bind $ntag <<ContextMenu>> [list [self] on_child_right $cp %X %Y]
         $Text tag bind $ntag <Enter> [list $Text configure -cursor hand2]
         $Text tag bind $ntag <Leave> [list $Text configure -cursor arrow]
-        $Text mark set $semark [$Text index $tmp]
-        $Text mark unset $tmp
+        my append_close $cid $m
     }
 
     # The subagent subject: the tree spine, the bold agent type, then the
