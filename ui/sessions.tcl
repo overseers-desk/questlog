@@ -1444,6 +1444,15 @@ oo::class create ::questlog::ui::SessionList {
         my node_set $fid end $femark
         my node_set $fid expanded $expanded
         dict set FolderNode $folder $fid
+        # A new root folder always appends after every existing one, so the
+        # append point is the true buffer end by definition. Re-anchor TailMark
+        # there before inserting rather than trusting a value an upstream mark op
+        # may have drifted into the middle of a folder (which splices the new
+        # heading into that folder - desync #2). This is the insert primitive's
+        # core semantic (TailMark owned, anchored to the end) landed at the one
+        # folder-append site ahead of the full P2(a) port.
+        $Text mark set TailMark "end - 1 chars"
+        $Text mark gravity TailMark right
         set fstart [$Text index TailMark]
         set info [my build_line $fid]
         $Text insert TailMark "[dict get $info line]\n" \
