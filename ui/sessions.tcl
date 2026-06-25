@@ -1581,6 +1581,15 @@ oo::class create ::questlog::ui::SessionList {
         # newline, so fmark..femark is exactly the heading line; deleting it
         # removes the folder from the view.
         $Text delete $fmark $femark
+        # A detached folder is not drawn, so it must hold no live marks: a
+        # collapsed pair left in the buffer gets dragged by a neighbour's
+        # heading redraw and reads as end-before-start or an overlap (the desync
+        # that splices headings). Unset them and blank the node's start/end so it
+        # is an unrendered node like any other; the next redraw_all rebuild gives
+        # it fresh marks if it re-attaches.
+        catch {$Text mark unset $fmark $femark}
+        my node_set $fid start ""
+        my node_set $fid end ""
         my node_pset $fid attached 0
     }
 
