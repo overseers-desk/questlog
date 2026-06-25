@@ -21,7 +21,9 @@ if {[lindex $argv 0] in {rename show install-claude-command} \
 
 # --font <family|spec> sets the session viewer's reading font. Pulled out of
 # argv before the criteria parse so it composes with a criteria chain; applied
-# after the theme is initialised.
+# after the theme is initialised. Every flag accepts a single or double dash:
+# the switch matches the dash-stripped name, and the default arm re-appends the
+# original token so criterion tokens and file paths pass through untouched.
 set VIEWER_FONT ""
 set INIT_SINCE ""
 set INIT_SEARCH ""
@@ -29,12 +31,14 @@ set DEBUG_ENABLED 0
 if {!$CLI_MODE} {
     set kept [list]
     for {set i 0} {$i < [llength $argv]} {incr i} {
-        switch -- [lindex $argv $i] {
-            --font            { set VIEWER_FONT [lindex $argv [incr i]] }
-            --since           { set INIT_SINCE [lindex $argv [incr i]] }
-            --search          { set INIT_SEARCH [lindex $argv [incr i]] }
-            -debug - --debug  { set DEBUG_ENABLED [lindex $argv [incr i]] }
-            default           { lappend kept [lindex $argv $i] }
+        set tok [lindex $argv $i]
+        if {![string match -* $tok]} { lappend kept $tok; continue }
+        switch -- [regsub {^--?} $tok {}] {
+            font    { set VIEWER_FONT [lindex $argv [incr i]] }
+            since   { set INIT_SINCE [lindex $argv [incr i]] }
+            search  { set INIT_SEARCH [lindex $argv [incr i]] }
+            debug   { set DEBUG_ENABLED [lindex $argv [incr i]] }
+            default { lappend kept $tok }
         }
     }
     set argv $kept
@@ -137,19 +141,24 @@ source [file join $ROOT ui  app.tcl]
 # A leading criterion token launches the GUI pre-seeded with that criteria
 # chain, in <type> <value> pairs: the file/tool family is tool:<selector>
 # (tool:read|write|edit|file <path>, or tool:<name> <key>), and a regex is
-# pattern <re>. Otherwise the -regex flag prefills a pattern criterion. Either
-# way the GUI opens normally.
+# pattern <re>. Each type token accepts an optional leading - or -- (so the GUI
+# answers to the same --tool:file spelling the CLI uses), stripped before the
+# match. Outside the chain, the -regex flag prefills a pattern criterion. Any
+# argument the seed grammar does not recognise is an error, not a silent drop.
 set initial_criteria [list]
 proc questlog_seed_usage {} {
-    puts stderr "usage: questlog <type> <value> \[<type> <value> ...\]"
+    puts stderr "usage: questlog \[-]\[type] <value> \[\[-]\[type] <value> ...\]"
     puts stderr "  type: tool:read | tool:write | tool:edit | tool:file | tool:<name> | pattern"
     exit 2
 }
+# Strip an optional leading - or -- off a criterion-type token.
+proc questlog_seed_type {tok} { return [regsub {^--?} $tok {}] }
 
-set first [lindex $argv 0]
+set first [questlog_seed_type [lindex $argv 0]]
 if {[llength $argv] > 0 && ([string match tool:* $first] || $first in {pattern regex})} {
     if {[llength $argv] % 2 != 0} { questlog_seed_usage }
     foreach {type value} $argv {
+        set type [questlog_seed_type $type]
         if {$value eq ""} { questlog_seed_usage }
         if {[string match tool:* $type]} {
             set selector [string range $type [string length "tool:"] end]
@@ -167,12 +176,17 @@ if {[llength $argv] > 0 && ([string match tool:* $first] || $first in {pattern r
         }
     }
 } else {
+    # No leading criterion: the only accepted form here is -regex <pattern>. A
+    # bare launch leaves argv empty and the GUI opens unseeded; anything else
+    # left over is an unrecognised argument and fails loud rather than vanishing.
     for {set i 0} {$i < [llength $argv]} {incr i} {
         set a [lindex $argv $i]
         if {$a eq "-regex" || $a eq "--regex"} {
             incr i
             lappend initial_criteria \
                 [dict create type pattern value [lindex $argv $i]]
+        } else {
+            questlog_seed_usage
         }
     }
 }
