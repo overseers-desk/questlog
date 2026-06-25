@@ -2175,6 +2175,16 @@ oo::class create ::questlog::ui::SessionList {
                 set row [{*}$LookupSession $path]
                 if {$row eq "" && [file isfile $path]} {
                     set row [{*}$OnScanPath $path]
+                    # OnScanPath re-enters on_scan_row (see below), whose tail
+                    # leaves the widget -state disabled. The model_add_session /
+                    # render_session below mutate the buffer, and a disabled
+                    # widget silently drops every insert - so a folder created
+                    # here gets its heading text dropped, its end mark lands on
+                    # its start (a collapsed [start,end] region), and the next
+                    # real insert drags the start mark past the stranded end into
+                    # end-before-start (the merged-heading desync). Re-assert the
+                    # state this method opened with so the structural inserts land.
+                    $Text configure -state normal
                 }
                 if {$row eq "" || ![dict size $row]} continue
                 # OnScanPath above is not a pure read: scan_path -> publish_row
