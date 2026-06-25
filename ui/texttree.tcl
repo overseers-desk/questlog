@@ -85,8 +85,14 @@ oo::class create ::questlog::ui::TextTree {
     # re-pinned on resize.
     variable ColTabs          ;# -tabs spec for a row (right-pinned metadata)
     variable ColRightX        ;# right-edge x px per metadata column, for header click mapping
-    variable ColW             ;# measured widths per metadata column, parallel to column_spec
+    variable ColW             ;# effective widths per metadata column, parallel to column_spec
+    variable ColWMeasured     ;# measured-from-sample widths, the override-or-measured base
+    variable ColWOverride     ;# col id -> user width px (a manual resize), else absent
+    variable ColMinW          ;# col id -> minimum width px clamp, else a default floor
     variable ColGap           ;# gap px between metadata cells
+    variable ResizeCol        ;# index of the column being drag-resized, or "" when none
+    variable ResizeX0         ;# header x (column space) the resize drag began at
+    variable ResizeW0         ;# the column's width when the resize drag began
     variable SubjectMax       ;# px the subject may fill before the metadata block
     variable FolderLabelMax   ;# px a root label may fill before its aggregates
     variable LayoutW          ;# Text width the current layout was computed for
@@ -241,7 +247,10 @@ oo::class create ::questlog::ui::TextTree {
     # into positions; doing the measuring once keeps resize cheap.
     method compute_col_widths {} {
         set ColGap [font measure QLList "  "]
-        set ColW [list]
+        if {![info exists ColWOverride]} { set ColWOverride [dict create] }
+        if {![info exists ColMinW]} { set ColMinW [dict create] }
+        if {![info exists ResizeCol]} { set ResizeCol "" }
+        set ColWMeasured [list]
         foreach col [my column_spec] {
             lassign $col id label sample
             # A column must be wide enough for both its widest cell (the sample)
@@ -249,8 +258,44 @@ oo::class create ::questlog::ui::TextTree {
             # like Turns never has its "Turns ▾" heading spill into the neighbour.
             set ws [font measure QLList $sample]
             set wl [font measure QLBold "$label ▾"]
-            lappend ColW [expr {$ws > $wl ? $ws : $wl}]
+            lappend ColWMeasured [expr {$ws > $wl ? $ws : $wl}]
         }
+        set ColW [my effective_col_widths]
+    }
+
+    # The width each column actually lays out at: a user override when set
+    # (manual resize), else the measured width, each held at or above its minimum
+    # (an explicit per-column minwidth, or a small floor so a column never
+    # collapses to nothing).
+    method effective_col_widths {} {
+        set out [list]
+        set i 0
+        foreach col [my column_spec] {
+            set id [lindex $col 0]
+            set w [lindex $ColWMeasured $i]
+            if {[dict exists $ColWOverride $id]} { set w [dict get $ColWOverride $id] }
+            set minw [dict getdef $ColMinW $id 16]
+            if {$w < $minw} { set w $minw }
+            lappend out $w
+            incr i
+        }
+        return $out
+    }
+
+    # Treeview-style column control: `column <id> -width N -minwidth M`. -width
+    # sets a manual override (the resize drag uses the same path); -minwidth sets
+    # the clamp the override and the drag honour. Re-lays out so the change
+    # round-trips to the rendered rows.
+    method column {id args} {
+        foreach {opt val} $args {
+            switch -- $opt {
+                -width    { dict set ColWOverride $id $val }
+                -minwidth { dict set ColMinW $id $val }
+                default   { error "unknown column option $opt" }
+            }
+        }
+        set ColW [my effective_col_widths]
+        my relayout
     }
 
     # Pin the metadata strip flush to the list's right edge for the current
@@ -260,6 +305,7 @@ oo::class create ::questlog::ui::TextTree {
     # cell's right edge on its stop. Called at build and on every resize; it only
     # repositions (cheap), the per-row ellipsis refit is the separate relayout.
     method layout_columns {} {
+        set ColW [my effective_col_widths]
         set w [winfo width $Text]
         if {$w <= 1} { set w 600 }
         set cw [expr {$w - 16}]          ;# inside the 8px left/right -padx
@@ -318,9 +364,73 @@ oo::class create ::questlog::ui::TextTree {
     # the subject zone sorts by the domain's subject key, when it defines one.
     method build_header {} {
         set h $Top.body.hdr
+        set ResizeCol ""
         $h tag configure colactive -font QLBold -foreground [::questlog::ui::theme::c ink]
-        bind $h <Button-1> [list [self] on_header_click %x]
+        # A drag near a column boundary resizes that column; a press-and-release
+        # that did not start on a boundary sorts (sort fires on release so a
+        # resize drag does not also sort). Motion shows the resize cursor when the
+        # pointer is over a boundary.
+        bind $h <Motion>         [list [self] on_header_motion %x]
+        bind $h <ButtonPress-1>  [list [self] on_header_press %x]
+        bind $h <B1-Motion>      [list [self] on_header_drag %x]
+        bind $h <ButtonRelease-1> [list [self] on_header_release %x]
         my draw_header
+    }
+
+    # The column whose left-edge resize handle sits within a few px of header x
+    # (column space), or "" when the pointer is not on a boundary. A column's
+    # left edge is its right edge less its width; dragging it left widens the
+    # column (the columns to its left and the subject absorb the change).
+    method boundary_col {cx} {
+        set n [llength $ColW]
+        for {set i 0} {$i < $n} {incr i} {
+            set left [expr {[lindex $ColRightX $i] - [lindex $ColW $i]}]
+            if {abs($cx - $left) <= 4} { return $i }
+        }
+        return ""
+    }
+    method on_header_motion {x} {
+        if {$ResizeCol ne ""} return
+        set cx [expr {$x - 8}]
+        if {[my boundary_col $cx] ne ""} {
+            $Top.body.hdr configure -cursor sb_h_double_arrow
+        } else {
+            $Top.body.hdr configure -cursor hand2
+        }
+    }
+    method on_header_press {x} {
+        set cx [expr {$x - 8}]
+        set col [my boundary_col $cx]
+        if {$col ne ""} {
+            set ResizeCol $col
+            set ResizeX0 $cx
+            set ResizeW0 [lindex $ColW $col]
+        } else {
+            set ResizeCol ""
+        }
+    }
+    method on_header_drag {x} {
+        if {$ResizeCol eq ""} return
+        set cx [expr {$x - 8}]
+        # The column's right edge is pinned, so dragging its left-edge handle
+        # left (cx down) widens it by the same amount.
+        set id [lindex [lindex [my column_spec] $ResizeCol] 0]
+        set w [expr {$ResizeW0 + ($ResizeX0 - $cx)}]
+        set minw [dict getdef $ColMinW $id 16]
+        if {$w < $minw} { set w $minw }
+        dict set ColWOverride $id $w
+        # Re-pin the tab stops live (cheap); the per-row subject refit waits for
+        # release, where relayout runs the full pass.
+        my layout_columns
+        my draw_header
+    }
+    method on_header_release {x} {
+        if {$ResizeCol ne ""} {
+            set ResizeCol ""
+            my relayout
+        } else {
+            my on_header_click $x
+        }
     }
 
     # The domain's sort id for the non-metadata subject zone, or "" when the
