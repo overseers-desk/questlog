@@ -640,6 +640,7 @@ oo::class create ::questlog::ui::SessionList {
             set TotalCost [expr {$TotalCost + $cost}]
             my refresh_status
         }
+        my check_invariant model_add_session
     }
 
     # Draw a session that the model already knows, inserting its header (and
@@ -1455,6 +1456,7 @@ oo::class create ::questlog::ui::SessionList {
         dict set TagNode $htag $fid
         lappend Roots $fid
         $Text tag bind $htag <Button-1> [list [self] toggle_folder $folder]
+        my check_invariant ensure_folder
     }
 
     # The folder heading subject: the marker, the (truncated) project label and a
@@ -1499,6 +1501,7 @@ oo::class create ::questlog::ui::SessionList {
         if {$exp} { my expand_folder $folder } else { my collapse_folder $folder }
         my redraw_folder_heading $folder
         $Text configure -state disabled
+        my check_invariant toggle_folder
     }
 
     method expand_folder {folder} {
@@ -2227,6 +2230,7 @@ oo::class create ::questlog::ui::SessionList {
             # non-default sort needs a re-render to reseat them.
             if {[my session_count] != $before} { my schedule_resort }
         }
+        my check_invariant reconcile_running
     }
 
     # The number of session nodes in the model (subagents excluded), so a
@@ -2445,6 +2449,7 @@ oo::class create ::questlog::ui::SessionList {
             my restore_anchor $anchor $anchor_folder
         }
         $Text configure -state disabled
+        my check_invariant redraw_all
     }
 
     # The folder name owning a captured {kind key} anchor, read while the model

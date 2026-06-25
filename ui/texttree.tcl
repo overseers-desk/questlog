@@ -114,6 +114,53 @@ oo::class create ::questlog::ui::TextTree {
     }
     method roots {} { return $Roots }
 
+    # ---- structural invariant ----------------------------------------
+    #
+    # The mark contract every structural mutation must preserve: each root's
+    # [start,end] region is well-formed (end >= start) and the roots are ordered
+    # and disjoint down the buffer. A violation means a mark desynced - the class
+    # of fault behind merged headings and rows that escape their folder. Gated on
+    # the QUESTLOG_AUDIT env var so production pays nothing; when on, it logs the
+    # first violation with the call chain and latches off, naming the primitive
+    # that broke the contract. The refactor calls this at the tail of every
+    # public mutation; today it is wired into the legacy structural methods.
+    method check_invariant {where} {
+        if {![info exists ::env(QUESTLOG_AUDIT)]} return
+        if {[info exists ::TEXTTREE_AUDIT_TRIPPED]} return
+        set probs [list]
+        set prev_end ""
+        set prev_key ""
+        foreach fid $Roots {
+            if {![dict exists $Nodes $fid]} continue
+            set s [my node_field $fid start]
+            set e [my node_field $fid end]
+            if {$s eq "" || $e eq ""} continue
+            if {[catch {$Text index $s} si]} { lappend probs "[my node_field $fid key]: unresolvable start"; continue }
+            if {[catch {$Text index $e} ei]} { lappend probs "[my node_field $fid key]: unresolvable end"; continue }
+            if {[$Text compare $e < $s]} {
+                lappend probs "[my node_field $fid key]: end($ei) before start($si)"
+            }
+            if {$prev_end ne "" && [$Text compare $s < $prev_end]} {
+                lappend probs "[my node_field $fid key] start($si) overlaps prev '$prev_key' end($prev_end)"
+            }
+            # TailMark is the append point: it must sit at or after every root's
+            # end. If a folder's content extends past TailMark, TailMark drifted
+            # up into the body and the next append will splice into that folder.
+            if {[$Text compare TailMark < $e]} {
+                lappend probs "TailMark([$Text index TailMark]) drifted above [my node_field $fid key] end($ei)"
+            }
+            set prev_end $ei
+            set prev_key [my node_field $fid key]
+        }
+        if {[llength $probs]} {
+            set ::TEXTTREE_AUDIT_TRIPPED 1
+            puts stderr "INVARIANT @ $where : [join $probs {; }] | TailMark=[$Text index TailMark] end=[$Text index end]"
+            for {set l [info level]} {$l > 0} {incr l -1} {
+                puts stderr "   <- [string range [info level $l] 0 70]"
+            }
+        }
+    }
+
     # ---- body assembly -----------------------------------------------
     #
     # The body grid: the sortable column header in row 0 (same column as the
