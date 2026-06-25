@@ -1,6 +1,11 @@
 package require Tcl 9
 package require Tk
 
+# The engine creates its own namespace so the file is self-contained: it can be
+# sourced on its own (a standalone host, the demo) without the rest of the app
+# having created ::questlog::ui first.
+namespace eval ::questlog::ui {}
+
 # ::questlog::ui::TextTree - the generic "tree drawn in one text widget" engine.
 #
 # A TextTree owns a tree of abstract NODES rendered into a single read-only
@@ -93,6 +98,7 @@ oo::class create ::questlog::ui::TextTree {
     variable ResizeCol        ;# index of the column being drag-resized, or "" when none
     variable ResizeX0         ;# header x (column space) the resize drag began at
     variable ResizeW0         ;# the column's width when the resize drag began
+    variable Opts             ;# widget options decoupling the engine from any host app
     variable SubjectMax       ;# px the subject may fill before the metadata block
     variable FolderLabelMax   ;# px a root label may fill before its aggregates
     variable LayoutW          ;# Text width the current layout was computed for
@@ -143,12 +149,11 @@ oo::class create ::questlog::ui::TextTree {
     # [start,end] region is well-formed (end >= start) and the roots are ordered
     # and disjoint down the buffer. A violation means a mark desynced - the class
     # of fault behind merged headings and rows that escape their folder. Gated on
-    # the QUESTLOG_AUDIT env var so production pays nothing; when on, it logs the
+    # the TEXTTREE_AUDIT env var so production pays nothing; when on, it logs the
     # first violation with the call chain and latches off, naming the primitive
-    # that broke the contract. The refactor calls this at the tail of every
-    # public mutation; today it is wired into the legacy structural methods.
+    # that broke the contract. Every primitive calls this at its tail.
     method check_invariant {where} {
-        if {![info exists ::env(QUESTLOG_AUDIT)]} return
+        if {![info exists ::env(TEXTTREE_AUDIT)]} return
         if {[info exists ::TEXTTREE_AUDIT_TRIPPED]} return
         set probs [list]
         set prev_end ""
@@ -184,6 +189,37 @@ oo::class create ::questlog::ui::TextTree {
         }
     }
 
+    # ---- widget options ----------------------------------------------
+    #
+    # The engine takes its host-specific bindings as options so its body holds no
+    # app references: two font names, a colours dict (the header strip background,
+    # its muted label ink, the active-column ink), the debounce a streamed resort
+    # waits out, and a motion callback the drag-to-move host wires in. Defaults
+    # are a plain Tk look so the widget runs standalone; a host overrides them
+    # through `configure` before the body is built.
+    method engine_default_opts {} {
+        return [dict create \
+            listfont TkTextFont \
+            headfont TkHeadingFont \
+            colours [dict create strip #ececec muted #767676 ink #1d1d1d] \
+            resortdelay 250 \
+            motioncb ""]
+    }
+    method configure {args} {
+        if {![info exists Opts]} { set Opts [my engine_default_opts] }
+        set known [my engine_default_opts]
+        foreach {opt val} $args {
+            set k [string trimleft $opt -]
+            if {![dict exists $known $k]} { error "unknown option $opt" }
+            dict set Opts $k $val
+        }
+    }
+    method opt {k} {
+        if {![info exists Opts]} { set Opts [my engine_default_opts] }
+        return [dict get $Opts $k]
+    }
+    method colour {role} { return [dict get [my opt colours] $role] }
+
     # ---- body assembly -----------------------------------------------
     #
     # The body grid: the sortable column header in row 0 (same column as the
@@ -195,9 +231,9 @@ oo::class create ::questlog::ui::TextTree {
         pack $Top.body -side top -fill both -expand 1
         text $Top.body.hdr -height 1 -wrap none -state disabled -takefocus 0 \
             -exportselection 0 -borderwidth 0 -highlightthickness 0 \
-            -padx 8 -pady 1 -cursor hand2 -font QLList \
-            -background [::questlog::ui::theme::c strip] \
-            -foreground [::questlog::ui::theme::c muted]
+            -padx 8 -pady 1 -cursor hand2 -font [my opt listfont] \
+            -background [my colour strip] \
+            -foreground [my colour muted]
         text $Top.body.t -wrap word -state disabled -exportselection 0 \
             -yscrollcommand [list [self] on_yscroll] \
             -borderwidth 0 -highlightthickness 0 -padx 8 -pady 8 -cursor arrow \
@@ -227,8 +263,9 @@ oo::class create ::questlog::ui::TextTree {
         # would grab the X PRIMARY clipboard and, via tk::TextAutoScan, run a
         # self-scrolling drag-select). The per-tag click/drag bindings fire
         # first; these widget-level breaks stop the class bindings that follow.
-        # B1-Motion still drives drag-to-move, then breaks the class handler.
-        bind $Text <B1-Motion> {::questlog::ui::drag::motion %X %Y; break}
+        # B1-Motion still drives the host's motion callback, then breaks the
+        # class handler (an empty callback just breaks, blocking selection).
+        bind $Text <B1-Motion> "[my opt motioncb]; break"
         foreach ev {<Button-1> <Double-Button-1> <Triple-Button-1> \
                     <Shift-Button-1> <Control-Button-1> <B1-Leave>} {
             bind $Text $ev break
@@ -242,11 +279,11 @@ oo::class create ::questlog::ui::TextTree {
 
     # ---- column geometry ---------------------------------------------
 
-    # Measure the metadata cells once in QLList (the proportional list font is
-    # fixed, so the widths never change at runtime). layout_columns turns these
-    # into positions; doing the measuring once keeps resize cheap.
+    # Measure the metadata cells once in the list font (it is fixed, so the
+    # widths never change at runtime). layout_columns turns these into positions;
+    # doing the measuring once keeps resize cheap.
     method compute_col_widths {} {
-        set ColGap [font measure QLList "  "]
+        set ColGap [font measure [my opt listfont] "  "]
         if {![info exists ColWOverride]} { set ColWOverride [dict create] }
         if {![info exists ColMinW]} { set ColMinW [dict create] }
         if {![info exists ResizeCol]} { set ResizeCol "" }
@@ -256,8 +293,8 @@ oo::class create ::questlog::ui::TextTree {
             # A column must be wide enough for both its widest cell (the sample)
             # and its header label with the sort arrow, so a short-sampled column
             # like Turns never has its "Turns ▾" heading spill into the neighbour.
-            set ws [font measure QLList $sample]
-            set wl [font measure QLBold "$label ▾"]
+            set ws [font measure [my opt listfont] $sample]
+            set wl [font measure [my opt headfont] "$label ▾"]
             lappend ColWMeasured [expr {$ws > $wl ? $ws : $wl}]
         }
         set ColW [my effective_col_widths]
@@ -365,7 +402,7 @@ oo::class create ::questlog::ui::TextTree {
     method build_header {} {
         set h $Top.body.hdr
         set ResizeCol ""
-        $h tag configure colactive -font QLBold -foreground [::questlog::ui::theme::c ink]
+        $h tag configure colactive -font [my opt headfont] -foreground [my colour ink]
         # A drag near a column boundary resizes that column; a press-and-release
         # that did not start on a boundary sorts (sort fires on release so a
         # resize drag does not also sort). Motion shows the resize cursor when the
@@ -554,7 +591,7 @@ oo::class create ::questlog::ui::TextTree {
     method schedule_resort {} {
         if {[my is_default_sort]} return
         if {$ResortTimer ne ""} { after cancel $ResortTimer }
-        set ResortTimer [after [::questlog::config::get resort_debounce_ms] \
+        set ResortTimer [after [my opt resortdelay] \
             [list [self] do_resort]]
     }
     method do_resort {} {

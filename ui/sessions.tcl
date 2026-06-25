@@ -161,6 +161,18 @@ oo::class create ::questlog::ui::SessionList {
         set ResortTimer ""
         set LayoutW 0
         set RelayoutPending 0
+        # Bind the engine to this app's look and host services: the list and
+        # heading fonts, the theme colours its header strip uses, the streamed-
+        # resort debounce from config, and the drag-to-move motion handler. These
+        # are the only app-specific values the otherwise self-contained TextTree
+        # engine needs; it carries no reference to them itself.
+        my configure -listfont QLList -headfont QLBold \
+            -colours [dict create \
+                strip [::questlog::ui::theme::c strip] \
+                muted [::questlog::ui::theme::c muted] \
+                ink   [::questlog::ui::theme::c ink]] \
+            -resortdelay [::questlog::config::get resort_debounce_ms] \
+            -motioncb {::questlog::ui::drag::motion %X %Y}
         my reset_model
         my build
     }

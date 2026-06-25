@@ -2,7 +2,7 @@
 # Run the whole test suite with the TextTree structural audit gate on.
 #
 # Each test is a standalone script that prints PASS/FAILED and exits with its
-# failure count. With QUESTLOG_AUDIT set, every TextTree mutation also checks the
+# failure count. With TEXTTREE_AUDIT set, every TextTree mutation also checks the
 # per-folder mark invariant and, on the first desync, latches and writes an
 # "INVARIANT @ ..." line to stderr. A test can desync a mark yet still print PASS
 # (it never inspects the latch), so a green test is not enough: this runner fails
@@ -19,7 +19,7 @@ Xvfb :99 -screen 0 1500x1150x24 >/tmp/ql-audit-xvfb.log 2>&1 &
 xvfb=$!
 sleep 2
 
-export QUESTLOG_AUDIT=1
+export TEXTTREE_AUDIT=1
 fails=0
 for t in test/test-*.tcl; do
     if grep -qE '^[[:space:]]*package require Tk' "$t"; then

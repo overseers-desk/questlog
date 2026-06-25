@@ -13,7 +13,7 @@ foreach f {config.tcl ui/theme.tcl ui/drag.tcl ui/texttree.tcl} {
     source [file join $ROOT $f]
 }
 ::questlog::ui::theme::init
-set ::env(QUESTLOG_AUDIT) 1
+set ::env(TEXTTREE_AUDIT) 1
 
 # A minimal concrete TextTree: three node kinds nested folder>session>subagent,
 # one metadata column, the per-kind start gravity and style tags the session

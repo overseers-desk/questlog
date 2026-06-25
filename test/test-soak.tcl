@@ -10,7 +10,7 @@
 package require Tcl 9
 package require Tk
 
-set ::env(QUESTLOG_AUDIT) 1
+set ::env(TEXTTREE_AUDIT) 1
 set SAND [file join [pwd] _soak_sandbox]
 set ROOT [file dirname [file dirname [file normalize [info script]]]]
 foreach f {config.tcl lib/cost.tcl ui/theme.tcl lib/path.tcl lib/filter.tcl lib/sessionlist.tcl lib/jsonl.tcl \
