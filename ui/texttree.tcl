@@ -617,6 +617,7 @@ oo::class create ::questlog::ui::TextTree {
     # leaves the store (drop domain indices and aggregates).
     method start_gravity {kind} { return right }
     method row_tags {kind} { return [list] }
+    method on_node_created {id} {}
     method on_row_rendered {id} {}
     method on_before_delete {id} {}
 
@@ -715,6 +716,11 @@ oo::class create ::questlog::ui::TextTree {
             }
             my node_set $parent children $kids
         }
+        # Let the subclass register its domain indices for this node before the
+        # row renders: render_subject may read the node back through an index
+        # (a folder heading counts its sessions through the folder->id map), so
+        # the index must exist by the time render_row builds the line.
+        my on_node_created $id
         set open [expr {$parent eq "" || [my node_field $parent expanded]}]
         if {$open && ![my node_field $id hidden]} { my render_row $id }
         $Text configure -state $st
@@ -755,15 +761,17 @@ oo::class create ::questlog::ui::TextTree {
         }
     }
 
-    # detach: remove a node's drawn region but keep it (and its subtree) in the
-    # store, so it can be re-rendered later. Collapses first so the region is
-    # just the node's own line, then deletes it and clears the render marks.
+    # detach: remove a node's whole drawn region (its line and, if open, its
+    # body) but keep it and its subtree in the store, so it can be re-rendered
+    # later in the same expanded state. Unlike collapse, this leaves `expanded`
+    # untouched: a node detached open re-renders open. The descendants' text went
+    # with the bulk delete, so their render marks are reset for that re-render.
     method detach {id} {
         set st [$Text cget -state]
         $Text configure -state normal
-        if {[my node_field $id expanded]} { my collapse $id }
         if {[my node_field $id rendered]} {
             $Text delete [my node_field $id start] [my node_field $id end]
+            foreach c [my node_field $id children] { my reset_subtree_render $c }
         }
         my drop_render_marks $id
         $Text configure -state $st

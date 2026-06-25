@@ -212,6 +212,43 @@ oo::class create ::questlog::ui::SessionList {
     method fget {folder key {dflt ""}} { my node_pget [my fid $folder] $key $dflt }
     method fset {folder key value} { my node_pset [my fid $folder] $key $value }
 
+    # ---- engine lifecycle hooks --------------------------------------
+    #
+    # The TextTree primitives own the marks; these hooks carry the session
+    # domain's per-kind behaviour. start_gravity and row_tags fix a row's mark
+    # gravity and style tag by kind; on_row_rendered wires a freshly-laid row's
+    # bindings (and, as later phases land, its nested content and selection);
+    # on_before_delete drops a node's domain indices before it leaves the store.
+
+    method start_gravity {kind} { return [expr {$kind eq "subagent" ? "left" : "right"}] }
+    method row_tags {kind} {
+        return [dict get {folder folderhead session sessionhead subagent childhead} $kind]
+    }
+    method on_node_created {id} {
+        switch [my node_field $id kind] {
+            folder { dict set FolderNode [my node_field $id key] $id }
+        }
+    }
+    method on_row_rendered {id} {
+        switch [my node_field $id kind] {
+            folder {
+                set htag [my node_field $id tag]
+                set folder [my node_field $id key]
+                dict set TagNode $htag $id
+                $Text tag bind $htag <Button-1> [list [self] toggle_folder $folder]
+            }
+        }
+    }
+    method on_before_delete {id} {
+        switch [my node_field $id kind] {
+            folder {
+                set tag [my node_field $id tag]
+                if {$tag ne ""} { dict unset TagNode $tag }
+                dict unset FolderNode [my node_field $id key]
+            }
+        }
+    }
+
     method build {} {
         ttk::frame $Top
 
@@ -432,14 +469,16 @@ oo::class create ::questlog::ui::SessionList {
     method purge_tags_and_marks {} {
         foreach t [$Text tag names] {
             if {[string match "s#*" $t] || [string match "f#*" $t] \
-                || [string match "n#*" $t] || [string match "c#*" $t]} {
+                || [string match "n#*" $t] || [string match "c#*" $t] \
+                || [string match "node*_t" $t]} {
                 $Text tag delete $t
             }
         }
         foreach m [$Text mark names] {
             if {[string match "sm*" $m] || [string match "se*" $m] \
                 || [string match "fm*" $m] || [string match "fe*" $m] \
-                || [string match "ch*" $m]} {
+                || [string match "ch*" $m] \
+                || [string match "node*_s" $m] || [string match "node*_e" $m]} {
                 $Text mark unset $m
             }
         }
@@ -1426,46 +1465,19 @@ oo::class create ::questlog::ui::SessionList {
     method ensure_folder {folder} {
         if {[my has_folder $folder]} return
         set label [::questlog::path::display_label [{*}$ResolveFolder $folder] $folder]
-        set htag  "f#[incr NextId]"
         # Browsing opens folders collapsed (an overview of projects); a search
         # opens them expanded so the matches under each folder are visible. A
         # collapsed folder draws only its heading - its sessions live in the
         # model and are rendered lazily on expand, so there are no hidden lines.
         set expanded [expr {$CriteriaActive ? 1 : 0}]
-        set fmark  "fm[incr NextId]"
-        set femark "fe[incr NextId]"
-        # The folder node: a root, payload {label count cost size}; its start
-        # mark is the heading start (fmark), its end the folder's append point
-        # (femark, where new sessions land), its tag the heading's drop hit-test.
-        set fid [my node_new folder "" $folder \
+        # A folder is a root: the insert primitive owns the TailMark re-anchor,
+        # the heading insert and the start/end marks; the on_row_rendered hook
+        # binds the heading toggle and registers it for drop hit-testing. The
+        # heading is drawn collapsed by default, so flip the open ones and redraw
+        # the marker in place.
+        set fid [my insert "" folder $folder \
             [dict create label $label count 0 cost 0.0 size 0]]
-        my node_set $fid tag $htag
-        my node_set $fid start $fmark
-        my node_set $fid end $femark
-        my node_set $fid expanded $expanded
-        dict set FolderNode $folder $fid
-        # A new root folder always appends after every existing one, so the
-        # append point is the true buffer end by definition. Re-anchor TailMark
-        # there before inserting rather than trusting a value an upstream mark op
-        # may have drifted into the middle of a folder (which splices the new
-        # heading into that folder - desync #2). This is the insert primitive's
-        # core semantic (TailMark owned, anchored to the end) landed at the one
-        # folder-append site ahead of the full P2(a) port.
-        $Text mark set TailMark "end - 1 chars"
-        $Text mark gravity TailMark right
-        set fstart [$Text index TailMark]
-        set info [my build_line $fid]
-        $Text insert TailMark "[dict get $info line]\n" \
-            [list folderhead $htag]
-        my apply_line $fid $fstart $info
-        $Text mark set $fmark $fstart
-        $Text mark gravity $fmark right
-        $Text mark set $femark [$Text index TailMark]
-        $Text mark gravity $femark left
-        dict set TagNode $htag $fid
-        lappend Roots $fid
-        $Text tag bind $htag <Button-1> [list [self] toggle_folder $folder]
-        my check_invariant ensure_folder
+        if {$expanded} { my node_set $fid expanded 1; my item $fid }
     }
 
     # The folder heading subject: the marker, the (truncated) project label and a
@@ -1488,17 +1500,10 @@ oo::class create ::questlog::ui::SessionList {
     }
 
     method redraw_folder_heading {folder} {
-        if {![my has_folder $folder] || ![my folder_attached $folder]} return
-        set fid [my fid $folder]
-        set fmark [my node_field $fid start]
-        set info [my build_line $fid]
-        $Text delete $fmark "$fmark lineend"
-        # Temporarily set gravity to left so the insert does not push fmark
-        $Text mark gravity $fmark left
-        $Text insert $fmark [dict get $info line] \
-            [list folderhead [my node_field $fid tag]]
-        $Text mark gravity $fmark right
-        my apply_line $fid $fmark $info
+        if {![my has_folder $folder]} return
+        # item rewrites the heading line in place; a detached folder is unrendered,
+        # so item no-ops, which is the old folder_attached guard.
+        my item [my fid $folder]
     }
 
     method toggle_folder {folder} {
@@ -1582,61 +1587,39 @@ oo::class create ::questlog::ui::SessionList {
     # which holds the text in -state normal.
     method detach_folder {folder} {
         if {![my has_folder $folder] || ![my folder_attached $folder]} return
-        set fid [my fid $folder]
-        if {[my node_field $fid expanded]} { my collapse_folder $folder }
-        set fmark [my node_field $fid start]
-        set femark [my node_field $fid end]
-        # After collapse the body is gone and femark sits just past the heading's
-        # newline, so fmark..femark is exactly the heading line; deleting it
-        # removes the folder from the view.
-        $Text delete $fmark $femark
-        # A detached folder is not drawn, so it must hold no live marks: a
-        # collapsed pair left in the buffer gets dragged by a neighbour's
-        # heading redraw and reads as end-before-start or an overlap (the desync
-        # that splices headings). Unset them and blank the node's start/end so it
-        # is an unrendered node like any other; the next redraw_all rebuild gives
-        # it fresh marks if it re-attaches.
-        catch {$Text mark unset $fmark $femark}
-        my node_set $fid start ""
-        my node_set $fid end ""
-        my node_pset $fid attached 0
+        # The detach primitive removes the folder's whole drawn region (heading
+        # and, if open, body) and unsets its marks, so it holds none to be
+        # dragged into an overlap by a neighbour's redraw, while keeping the node
+        # and its sessions in the model and its expanded state for re-attach. The
+        # snippet/match tags freed by the body delete are loose content, not
+        # nodes, so the engine cannot sweep them; do it here.
+        my detach [my fid $folder]
+        my sweep_loose_tags
+        my fset $folder attached 0
+    }
+
+    # Drop the per-snippet / per-child-snippet tags ("n#" / "c#") left empty by a
+    # body delete. They are loose row content, not nodes, so the engine's
+    # node-based cleanup does not reach them; without this they accumulate.
+    method sweep_loose_tags {} {
+        foreach tg [$Text tag names] {
+            if {([string match "n#*" $tg] || [string match "c#*" $tg]) \
+                && [llength [$Text tag ranges $tg]] == 0} {
+                $Text tag delete $tg
+            }
+        }
     }
 
     # Delete every rendered line of the folder's body and drop the per-session
     # render marks; the sessions remain in the model and redraw on the next
     # expand. No hidden text is left behind.
     method collapse_folder {folder} {
-        set fid [my fid $folder]
-        set fmark [my node_field $fid start]
-        set femark [my node_field $fid end]
-        set bodystart [$Text index "$fmark lineend +1c"]
-        $Text delete $bodystart $femark
-        $Text mark set $femark $bodystart
-        foreach path [my folder_session_paths $folder] {
-            if {![my has_session $path]} continue
-            set sid [my sid $path]
-            if {![my node_field $sid rendered]} continue
-            catch {$Text mark unset [my node_field $sid start] \
-                                    [my node_field $sid end]}
-            # The children's render marks vanished with the body; reset their
-            # flags and drop their marks so a later expand redraws them.
-            foreach cp [my session_child_paths $path] {
-                if {[my has_child $cp]} { my reset_child_render $cp }
-            }
-            my node_set $sid rendered 0
-            my node_set $sid tag ""
-            my node_set $sid start ""
-            my node_set $sid end ""
-        }
-        # Drop the now-empty per-session / per-snippet / per-child tags left by
-        # the delete.
-        foreach tg [$Text tag names] {
-            if {([string match "s#*" $tg] || [string match "n#*" $tg] \
-                 || [string match "c#*" $tg]) \
-                && [llength [$Text tag ranges $tg]] == 0} {
-                $Text tag delete $tg
-            }
-        }
+        # The collapse primitive deletes the folder's body, resets the end mark
+        # to just past the heading, and clears every descendant session's and
+        # subagent's render marks (their text just went). It drops the emptied
+        # node tags; the loose snippet/match tags are swept separately.
+        my collapse [my fid $folder]
+        my sweep_loose_tags
     }
 
     method bump_folder_count {folder delta} {
@@ -2336,15 +2319,10 @@ oo::class create ::questlog::ui::SessionList {
 
     method forget_folder {folder} {
         if {![my has_folder $folder]} return
-        set fid [my fid $folder]
-        set fmark [my node_field $fid start]
-        set femark [my node_field $fid end]
-        $Text delete $fmark $femark
-        catch {$Text mark unset $fmark $femark}
-        dict unset TagNode [my node_field $fid tag]
-        dict unset FolderNode $folder
-        dict unset Nodes $fid
-        set Roots [lsearch -all -inline -not -exact $Roots $fid]
+        # The delete primitive removes the heading region, unsets its marks and
+        # drops the node from Roots and the store; the on_before_delete hook
+        # clears the folder's domain indices.
+        my delete [my fid $folder]
     }
 
     # After a move renames the file, re-key the model and rebuild the view
