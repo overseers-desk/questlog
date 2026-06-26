@@ -173,15 +173,18 @@ oo::class create ::questlog::ui::SessionList {
                 ink   [::questlog::ui::theme::c ink]] \
             -resortdelay [::questlog::config::get resort_debounce_ms] \
             -motioncb {::questlog::ui::drag::motion %X %Y}
-        my reset_model
+        my reset_nodes
         my build
     }
 
-    # Reset the model: the engine's node store plus the session-domain indices
-    # into it. The node store, id allocation and payload accessors live in the
-    # TextTree base.
-    method reset_model {} {
-        my reset_nodes
+    # The session-domain indices are reverse-lookups into the engine's node
+    # store, so they must be dropped exactly when the store is wiped. Bulk
+    # store resets (init, and the buffer reset behind clear) do not fire the
+    # per-node on_before_delete hook, so extend the store-wipe primitive itself
+    # rather than each caller. The store, id allocation and payload accessors
+    # live in the TextTree base.
+    method reset_nodes {} {
+        next
         set FolderNode [dict create]
         set PathNode [dict create]
         set TagNode [dict create]
