@@ -42,6 +42,19 @@ check parse_bad_day   1 [catch {::questlog::filter::parse_since 2026-02-30}]
 check parse_bad_month 1 [catch {::questlog::filter::parse_since 2026-13-01}]
 check parse_bad_short 1 [catch {::questlog::filter::parse_since 2026-4-1}]
 
+# ---- parse_since: precise instant -> {absdt <epoch>} ----------------
+set dt_hm  [clock scan {2026-04-01 13:37}    -format "%Y-%m-%d %H:%M"]
+set dt_hms [clock scan {2026-04-01 13:37:30} -format "%Y-%m-%d %H:%M:%S"]
+check parse_dt_kind   absdt   [lindex [::questlog::filter::parse_since 2026-04-01T13:37] 0]
+check parse_dt_hm     $dt_hm  [lindex [::questlog::filter::parse_since 2026-04-01T13:37] 1]
+check parse_dt_hms    $dt_hms [lindex [::questlog::filter::parse_since 2026-04-01T13:37:30] 1]
+# A space separator works when the token is quoted (same instant as the T form).
+check parse_dt_space  $dt_hm  [lindex [::questlog::filter::parse_since {2026-04-01 13:37}] 1]
+check parse_bad_hour  1 [catch {::questlog::filter::parse_since 2026-04-01T25:00}]
+check parse_bad_min   1 [catch {::questlog::filter::parse_since 2026-04-01T13:60}]
+# A bare date stays day-granular (abs), not absdt - the common case is unchanged.
+check parse_dt_bare_date abs [lindex [::questlog::filter::parse_since 2026-04-01] 0]
+
 # ---- cutoff_for: "all" => no bound; relative => now - secs; abs => epoch-1
 check cutoff_all 0 [::questlog::filter::cutoff_for [dict create since all]]
 set now [clock seconds]
@@ -58,6 +71,11 @@ check ceiling_7d_within 1 [expr {abs(($now - 604800) - $u7) <= 2}]
 # An absolute until covers the whole named day: the last second before next midnight.
 check ceiling_abs [expr {[clock add $abs_epoch 1 day] - 1}] \
     [::questlog::filter::ceiling_for [dict create until 2026-04-01]]
+# A datetime cutoff/ceiling pins to the named second (cutoff epoch-1, ceiling exact).
+check cutoff_dt  [expr {$dt_hm - 1}] \
+    [::questlog::filter::cutoff_for [dict create since 2026-04-01T13:37]]
+check ceiling_dt $dt_hm \
+    [::questlog::filter::ceiling_for [dict create until 2026-04-01T13:37]]
 
 # ---- since_label: the one display-string home -----------------------
 check label_all  all          [::questlog::filter::since_label all]

@@ -140,8 +140,10 @@ proc ::questlog::cli::main::usage {} {
     puts stderr "  accepted, e.g. --keyword:user,assi <needle>. Omit the suffix to match anywhere."
     puts stderr ""
     puts stderr "bounds (global, applied to the whole result - not clauses):"
-    puts stderr "  --since <when>          Recency bound: a window (24h, 7d, 2w), a date (2026-04-01), or 'all'."
-    puts stderr "  --until <when>          Older bound: up to a window ago (7d), a date (2026-04-01), or 'all' (no bound)."
+    puts stderr "  --since <when>          Recency bound: a window (24h, 7d, 2w), a date (2026-04-01),"
+    puts stderr "                          a precise instant (2026-04-01T13:37, ...T13:37:30), or 'all'."
+    puts stderr "  --until <when>          Older bound: a window ago (7d), a date (covers the whole day),"
+    puts stderr "                          a precise instant (2026-04-01T13:37[:SS]), or 'all' (no bound)."
     puts stderr "  --under <dir>           Only sessions located under the directory."
     puts stderr "  --accrued-cost          Count only spend dated inside the --since/--until window,"
     puts stderr "                          by each message's timestamp. Needs a time bound; --until"
@@ -300,18 +302,18 @@ proc ::questlog::cli::main::parse_query {argv} {
     }
     if {$limit eq "all"} { set limit 0 }
 
-    # --since accepts a relative window (24h, 7d, 2w, ...) or an absolute date
-    # (2026-04-01); "" or "all" mean no bound. Validate now so a bad spec fails
-    # fast rather than at cutoff time.
+    # --since accepts a relative window (24h, 7d, 2w, ...), an absolute date
+    # (2026-04-01) or a precise instant (2026-04-01T13:37[:SS]); "" or "all" mean no
+    # bound. Validate now so a bad spec fails fast rather than at cutoff time.
     if {$since ne "" && $since ne "all"
         && [catch {::questlog::filter::parse_since $since}]} {
-        puts stderr "questlog: --since: invalid '$since' (want 24h/7d/2w, a date 2026-04-01, or 'all')"
+        puts stderr "questlog: --since: invalid '$since' (want 24h/7d/2w, 2026-04-01, 2026-04-01T13:37\[:SS\], or 'all')"
         ::questlog::cli::main::usage
     }
     # --until shares the since spec grammar; it is the upper edge of the window.
     if {$until ne "" && $until ne "all"
         && [catch {::questlog::filter::parse_since $until}]} {
-        puts stderr "questlog: --until: invalid '$until' (want 24h/7d/2w, a date 2026-04-01, or 'all')"
+        puts stderr "questlog: --until: invalid '$until' (want 24h/7d/2w, 2026-04-01, 2026-04-01T13:37\[:SS\], or 'all')"
         ::questlog::cli::main::usage
     }
     # --accrued-cost windows the spend, so it has no meaning without a window:
