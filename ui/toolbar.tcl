@@ -826,6 +826,12 @@ oo::class create ::questlog::ui::Toolbar {
             }
             set chip $cf.c$i
             ttk::frame $chip -style Crit_$type.TFrame -padding {4 1}
+            # The × packs first so it anchors at the chip's left edge: a
+            # sentence-long criterion grows its text rightward off-screen, but the
+            # delete button stays reachable in the viewport.
+            ttk::button $chip.x -text "×" -width 2 -style ChipX.TButton \
+                -command [list [self] remove_value $kind $v]
+            pack $chip.x -side left -padx {0 2}
             if {$kind eq "file"} {
                 lassign $v op path
                 my op_pill $chip.op $op [list [self] set_file_op $i]
@@ -837,9 +843,6 @@ oo::class create ::questlog::ui::Toolbar {
                     -background $white -foreground [::questlog::ui::theme::c ink] -font QLMono
             }
             pack $chip.t -side left
-            ttk::button $chip.x -text "×" -width 2 -style ChipX.TButton \
-                -command [list [self] remove_value $kind $v]
-            pack $chip.x -side left -padx {2 0}
             pack $chip -side left
             incr i
         }
