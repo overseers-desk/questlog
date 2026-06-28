@@ -64,15 +64,15 @@ curl -L https://github.com/SmartLayer/questlog/archive/refs/tags/v<VERSION>.tar.
   | sha256sum
 ```
 
-Update `formula/questlog.rb`:
+The formula lives in the shared tap repo, `SmartLayer/ot`, at `Formula/questlog.rb`. After releasing questlog here, bump that file in the `ot` repo:
 
-- `url` line: bump the version in the tarball URL.
+- `url` line: bump the version in the tarball URL (still questlog's own release tarball).
 - `sha256` line: paste the computed digest.
 
-Commit and push:
+Commit and push in the `ot` repo (this is a separate checkout, not this one):
 
 ```bash
-git commit formula/questlog.rb -m "Update Homebrew formula sha256 for v<VERSION>"
+git commit Formula/questlog.rb -m "Update questlog formula sha256 for v<VERSION>"
 git push
 ```
 
@@ -95,7 +95,7 @@ Watch the single-file images land with `gh run watch`. If publishing is done thr
 
 ## Verify
 
-- [ ] `brew tap SmartLayer/questlog https://github.com/SmartLayer/questlog && brew install questlog` succeeds on macOS.
+- [ ] `brew tap SmartLayer/ot https://github.com/SmartLayer/ot && brew install questlog` succeeds on macOS.
 - [ ] `questlog --version` prints the right version on macOS and Linux.
 - [ ] Debian package installs cleanly: `sudo apt install ./questlog_<VERSION>_all.deb`.
 - [ ] RPM installs cleanly: `sudo dnf install ./questlog-<VERSION>-1.noarch.rpm`.

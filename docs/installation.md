@@ -38,6 +38,6 @@ It needs the Tcl 9 runtime present on the host: `tcl9.0`, `tk9.0`, `tcllib`, and
 Install through Homebrew, which pulls `tcl-tk` (9.x) as a dependency:
 
 ```
-brew tap SmartLayer/questlog https://github.com/SmartLayer/questlog
+brew tap SmartLayer/ot https://github.com/SmartLayer/ot
 brew install questlog
 ```
