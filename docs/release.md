@@ -64,7 +64,7 @@ curl -L https://github.com/SmartLayer/questlog/archive/refs/tags/v<VERSION>.tar.
   | sha256sum
 ```
 
-The formula lives in the dedicated tap repo, `SmartLayer/homebrew-ot`, at `Formula/questlog.rb`. After releasing questlog here, bump that file in the `homebrew-ot` repo:
+The formula lives in the dedicated tap repo, `overseers-desk/homebrew-ot`, at `Formula/questlog.rb`. After releasing questlog here, bump that file in the `homebrew-ot` repo:
 
 - `url` line: bump the version in the tarball URL (still questlog's own release tarball).
 - `sha256` line: paste the computed digest.
@@ -95,7 +95,7 @@ Watch the single-file images land with `gh run watch`. If publishing is done thr
 
 ## Verify
 
-- [ ] `brew tap SmartLayer/ot && brew install questlog` succeeds on macOS.
+- [ ] `brew tap overseers-desk/ot && brew install questlog` succeeds on macOS.
 - [ ] `questlog --version` prints the right version on macOS and Linux.
 - [ ] Debian package installs cleanly: `sudo apt install ./questlog_<VERSION>_all.deb`.
 - [ ] RPM installs cleanly: `sudo dnf install ./questlog-<VERSION>-1.noarch.rpm`.
