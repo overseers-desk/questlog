@@ -60,7 +60,7 @@ How users download and run it is in [installation.md](installation.md); link tha
 GitHub generates the tarball from the tag. Fetch it and compute the sha256:
 
 ```bash
-curl -L https://github.com/SmartLayer/questlog/archive/refs/tags/v<VERSION>.tar.gz \
+curl -L https://github.com/overseers-desk/questlog/archive/refs/tags/v<VERSION>.tar.gz \
   | sha256sum
 ```
 

@@ -81,4 +81,4 @@ The corpus offers no precedent for a session-viewer launch crossing 150 comments
 
 ## Method note
 
-Collected via the `reddit.com` skill's CDP path against `old.reddit.com`. Twelve search invocations in succession completed without the intermittent fetch failure documented in SmartLayer/aesop#128; the issue's load hypothesis is not contradicted (the failure is intermittent, not deterministic) but a single twelve-search sweep is not a repro.
+Collected via the `reddit.com` skill's CDP path against `old.reddit.com`. Twelve search invocations in succession completed without the intermittent fetch failure documented in overseers-desk/aesop#128; the issue's load hypothesis is not contradicted (the failure is intermittent, not deterministic) but a single twelve-search sweep is not a repro.

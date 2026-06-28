@@ -1,6 +1,6 @@
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Upstream-Name: questlog
-Source: https://github.com/SmartLayer/questlog
+Source: https://github.com/overseers-desk/questlog
 
 Files: *
 Copyright: 2025 Weiwu Zhang

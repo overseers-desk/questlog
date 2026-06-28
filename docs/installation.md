@@ -2,7 +2,7 @@
 
 questlog runs on Linux and macOS. Pick one of the methods below, then see the Running section of the [README](../README.md) for the GUI and the command-line criteria.
 
-Released artifacts are on the [releases page](https://github.com/SmartLayer/questlog/releases); the version appears in each filename.
+Released artifacts are on the [releases page](https://github.com/overseers-desk/questlog/releases); the version appears in each filename.
 
 ## Linux
 

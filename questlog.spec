@@ -3,7 +3,7 @@ Version:        1.1.4
 Release:        1%{?dist}
 Summary:        GUI for finding, reading, and reopening past Claude Code sessions
 License:        MIT
-URL:            https://github.com/SmartLayer/questlog
+URL:            https://github.com/overseers-desk/questlog
 Source0:        %{url}/archive/refs/tags/v%{version}.tar.gz#/%{name}-%{version}.tar.gz
 BuildArch:      noarch
 

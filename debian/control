@@ -4,7 +4,7 @@ Priority: optional
 Maintainer: Weiwu Zhang <a@colourful.land>
 Build-Depends: debhelper-compat (= 13)
 Standards-Version: 4.6.2
-Homepage: https://github.com/SmartLayer/questlog
+Homepage: https://github.com/overseers-desk/questlog
 Rules-Requires-Root: no
 
 Package: questlog
