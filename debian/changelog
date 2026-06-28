@@ -1,3 +1,9 @@
+questlog (1.1.4) unstable; urgency=medium
+
+  * Search criteria: a sentence-long regex no longer carries its delete button off-screen; the × anchors at the chip's left edge so the criterion stays removable.
+
+ -- Weiwu Zhang <a@colourful.land>  Sun, 28 Jun 2026 00:00:00 +0000
+
 questlog (1.1.3) unstable; urgency=medium
 
   * Session viewer: renders tool_use calls, thinking blocks, images, and tool_result errors inline; the header shows the session's working directory and an abbreviated id, with font selectable from the ⋯ menu.

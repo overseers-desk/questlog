@@ -1,5 +1,5 @@
 Name:           questlog
-Version:        1.1.3
+Version:        1.1.4
 Release:        1%{?dist}
 Summary:        GUI for finding, reading, and reopening past Claude Code sessions
 License:        MIT
@@ -59,6 +59,9 @@ install -D -m 0644 assets/questlog-512.png \
 %{_datadir}/icons/hicolor/512x512/apps/questlog.png
 
 %changelog
+* Sun Jun 28 2026 Weiwu Zhang <a@colourful.land> - 1.1.4-1
+- Search criteria: a sentence-long regex no longer carries its delete button off-screen; the × anchors at the chip's left edge so the criterion stays removable
+
 * Tue Jun 02 2026 Weiwu Zhang <a@colourful.land> - 1.1.2-1
 - CLI: the --json search composes by one boolean algebra; --keyword and --regex each take an optional :regions suffix; --or widens to OR, --not negates the next clause; --scope removed; --case for case-sensitive keywords
 - CLI: --shortstat emits a totals summary (session and subagent counts, turns, tokens, total cost) over the same result set as --json
