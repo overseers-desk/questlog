@@ -24,7 +24,7 @@ namespace eval ::questlog::ui::live {
 # the on-disk file, so callers MATCH by uuid (stable across a move) and
 # use the path only to scan a freshly-started session into view.
 proc ::questlog::ui::live::running_uuids {} {
-    set dir [file join $::env(HOME) .claude sessions]
+    set dir [file join [file home] .claude sessions]
     if {![file isdirectory $dir]} { return [dict create] }
     set out [dict create]
     foreach f [glob -nocomplain -directory $dir -- *.json] {

@@ -75,8 +75,8 @@ To reopen a found session, give the user the resume command `cd <project_path> &
 
 # ~/.claude, or "" when HOME is unknown.
 proc ::questlog::claude::claude_dir {} {
-    if {![info exists ::env(HOME)] || $::env(HOME) eq ""} { return "" }
-    return [file join $::env(HOME) .claude]
+    if {[catch {file home} home] || $home eq ""} { return "" }
+    return [file join $home .claude]
 }
 
 proc ::questlog::claude::command_file {} {

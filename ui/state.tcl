@@ -14,7 +14,7 @@ proc ::questlog::ui::state::dir {} {
     if {[info exists ::env(XDG_STATE_HOME)] && $::env(XDG_STATE_HOME) ne ""} {
         set base $::env(XDG_STATE_HOME)
     } else {
-        set base [file join $::env(HOME) .local state]
+        set base [file join [file home] .local state]
     }
     return [file join $base questlog]
 }

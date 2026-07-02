@@ -167,7 +167,7 @@ proc ::questlog::ui::move_dialog::browse {} {
     variable Top
     variable EntryVar
     set start [string trim $EntryVar]
-    if {![file isdirectory $start]} { set start $::env(HOME) }
+    if {![file isdirectory $start]} { set start [file home] }
     set dir [tk_chooseDirectory -parent $Top -mustexist 1 \
                  -title "Choose destination directory" -initialdir $start]
     if {$dir eq ""} return

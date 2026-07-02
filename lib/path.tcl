@@ -36,7 +36,7 @@ if {[info commands ::questlog::path::_real_file] eq ""} {
 # Display-only: abbreviate a leading $HOME to ~. The model keeps absolute
 # paths so encode_cwd, xdg-open and the resume command stay literal.
 proc ::questlog::path::pretty_home {path} {
-    set home $::env(HOME)
+    set home [file home]
     if {$path eq $home || [string match "$home/*" $path]} {
         return "~[string range $path [string length $home] end]"
     }
@@ -45,7 +45,7 @@ proc ::questlog::path::pretty_home {path} {
 
 # Root of the on-disk Claude session store.
 proc ::questlog::path::projects_root {} {
-    return [file join $::env(HOME) .claude projects]
+    return [file join [file home] .claude projects]
 }
 
 # The directory questlog was launched from. Prefer the shell's logical
