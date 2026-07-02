@@ -144,6 +144,21 @@ proc ::questlog::ui::app::start {root {initial_criteria {}} {init_since ""} {ini
     ttk::frame .top
     pack .top -side top -fill both -expand 1
 
+    # Thread is the designed dependency (search fan-out, cost tpool); a host
+    # without it still runs, single-threaded: search on the coroutine path,
+    # the cost pass on the main thread, which can stutter the window during a
+    # big parse. This banner says so, with the remedy. QUESTLOG_THREADS=0
+    # acknowledges single-thread mode and silences it.
+    set tv [::questlog::search::env_threads]
+    if {![::questlog::search::thread_available] && ($tv eq "" || $tv != 0)} {
+        ttk::label .top.threadnotice -style Notice.TLabel -anchor w -text \
+            "Thread package missing: running single-threaded. Search is\
+            slower and the window may stutter during the cost pass. Install\
+            it (Debian/Ubuntu: tcl9.0-thread), or set QUESTLOG_THREADS=0 to\
+            hide this notice."
+        pack .top.threadnotice -side top -fill x
+    }
+
     set PW .top.pw
     ttk::panedwindow $PW -orient horizontal
     pack $PW -side top -fill both -expand 1
@@ -1052,9 +1067,8 @@ proc ::questlog::ui::app::init_cost_pool {} {
     variable CostWorkerScript
     variable Root
     set CostPool ""
-    # No Thread only happens under the QUESTLOG_SEARCH_THREADS=0 opt-out (the
-    # entry script exits otherwise); leave the pool empty and start_cost_one
-    # parses on the main thread.
+    # Without Thread there is no pool; start_cost_one parses on the main
+    # thread instead.
     if {![::questlog::search::thread_available]} return
     # The worker runs parse_file, which counts turns through
     # ::questlog::jsonl::is_user_turn, so jsonl.tcl is sourced ahead of cost.tcl.
@@ -1071,11 +1085,10 @@ proc ::questlog::ui::app::start_cost_one {path} {
     variable CostEpoch
     variable CostOutstanding
     if {$CostPool eq ""} {
-        # No worker pool (the QUESTLOG_SEARCH_THREADS=0 opt-out on a host
-        # without Thread): parse on the main thread, the same synchronous path
-        # the CLI uses (cli/cost.tcl), so per-session cost still shows. The
-        # parse does not yield, so the UI stalls for its duration; the cost of
-        # the opt-out.
+        # No worker pool (Thread package unavailable): parse on the main
+        # thread, the same synchronous path the CLI uses (cli/cost.tcl), so
+        # per-session cost still shows. The parse does not yield, so the UI
+        # stalls for its duration; the stutter the banner warns about.
         on_cost_worker_result $path $CostEpoch [::questlog::cost::parse_file $path]
         return
     }

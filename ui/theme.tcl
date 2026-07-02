@@ -274,6 +274,12 @@ proc ::questlog::ui::theme::build_chrome {} {
     ttk::style configure LVStrip.TFrame -background [c strip]
     ttk::style configure LV.TCheckbutton -background [c strip] -foreground [c ink]
     ttk::style map LV.TCheckbutton -background [list active [c strip]]
+    # ---- notice banner ------------------------------------------------------
+    # The top-of-window notice strip (e.g. running without the Thread package):
+    # the warm recap cream with the amber ink already used for mid-range cost,
+    # so it reads as advisory, not error.
+    ttk::style configure Notice.TLabel -background [c recap] \
+        -foreground [c cost_mid] -padding {10 4}
     # ---- rounded snippet-badge pills (shape only; Tk draws the label) ------
     set bh [font metrics QLBold -linespace]
     set bw [expr {[font measure QLBold "TOOL RESULT"] + 16}]

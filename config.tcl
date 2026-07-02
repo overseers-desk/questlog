@@ -59,7 +59,7 @@ namespace eval ::questlog::config {
     # Inter-chunk resume delay for the search coroutine path.
     dict set Config search_resume_ms      1
     # Threaded fan-out worker count: cores - reserve, clamped to [min, max];
-    # fallback when the core count cannot be detected. QUESTLOG_SEARCH_THREADS
+    # fallback when the core count cannot be detected. QUESTLOG_THREADS
     # overrides this at launch (0 forces the single-thread coroutine path).
     dict set Config search_threads_fallback 4
     dict set Config search_threads_reserve  2

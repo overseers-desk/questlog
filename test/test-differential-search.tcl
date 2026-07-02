@@ -11,7 +11,7 @@
 # shows up as a GUI-vs-truth and GUI-vs-CLI mismatch, not a silent pass.
 #
 # Pure Tcl, no Tk: each case runs the GUI engine through BOTH search paths - the
-# single-thread coroutine (QUESTLOG_SEARCH_THREADS=0) and the worker-thread
+# single-thread coroutine (QUESTLOG_THREADS=0) and the worker-thread
 # fan-out the app uses by default - so a scope filter dropped in either delivery
 # path is caught. Both run headless under one vwait. Fixture mtimes are relative
 # to now, so the since-bound cases never rot.
@@ -101,7 +101,7 @@ proc uuids {paths} {
 # the matched session paths the way on_search_file does, run to completion under
 # one vwait.
 proc gui_search {snapshot threads} {
-    set ::env(QUESTLOG_SEARCH_THREADS) $threads
+    set ::env(QUESTLOG_THREADS) $threads
     set ::g_done 0
     set ::g_hits [dict create]
     set scan   [::questlog::Scan new {} {}]

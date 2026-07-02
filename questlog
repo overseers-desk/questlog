@@ -122,25 +122,6 @@ if {$CLI_MODE} {
     exit 0
 }
 
-# The GUI needs the Thread package: search fans out across worker threads and
-# the cost pass runs in a tpool. A host with tcl9.0/tk9.0 but no Thread (on
-# Debian/Ubuntu it is a separate package, tcl9.0-thread, the same name the
-# .deb depends on) fails here with the remedy, before any window opens, rather
-# than deep in startup with a bare "can't find package Thread".
-# QUESTLOG_SEARCH_THREADS=0 is the deliberate opt-out: the search runs on its
-# single-thread coroutine path and the cost pass on the main thread.
-if {![::questlog::search::thread_available]} {
-    set v [expr {[info exists ::env(QUESTLOG_SEARCH_THREADS)]
-                 ? $::env(QUESTLOG_SEARCH_THREADS) : ""}]
-    if {!([string is integer -strict $v] && $v == 0)} {
-        puts stderr "questlog: the Tcl Thread package is not available\
-            (package require Thread failed)."
-        puts stderr "Install it (Debian/Ubuntu: sudo apt install tcl9.0-thread),\
-            or set QUESTLOG_SEARCH_THREADS=0 to run single-threaded without it."
-        exit 1
-    }
-}
-
 # GUI mode: source the ui/ layer. Tk (and with it ttk) enters the process here,
 # required by theme.tcl (sourced first) and the ui/ classes; the entry script
 # never requires Tk itself, so CLI mode above stays Tk-free.

@@ -5,17 +5,29 @@ package require json
 namespace eval ::questlog::search {}
 
 # Whether the Thread package loads on this host, checked once and cached.
-# Thread is a hard dependency of the GUI (search fan-out, cost worker pool):
-# the entry script refuses to start without it, naming the package to install,
-# unless QUESTLOG_SEARCH_THREADS=0 opts into the single-thread paths. Under
-# that opt-out the cost pass checks this to run on the main thread instead of
-# a tpool.
+# Thread is the designed dependency of the GUI (search fan-out, cost tpool),
+# but some hosts lack it (Ubuntu interim releases ship tclsh9.0 with no
+# tcl9.0-thread in the archive). The app then runs single-threaded: search on
+# the coroutine path, the cost pass on the main thread, and a banner says so
+# unless QUESTLOG_THREADS=0 acknowledges the mode.
 proc ::questlog::search::thread_available {} {
     variable ThreadAvailable
     if {![info exists ThreadAvailable]} {
         set ThreadAvailable [expr {![catch {package require Thread}]}]
     }
     return $ThreadAvailable
+}
+
+# The QUESTLOG_THREADS override, validated: a non-negative integer is the
+# search worker count (0 = the single-thread coroutine path, and it also
+# silences the missing-Thread banner); unset or malformed returns "". The one
+# home for reading the variable, shared by pick_thread_count and the banner.
+proc ::questlog::search::env_threads {} {
+    if {[info exists ::env(QUESTLOG_THREADS)]} {
+        set v $::env(QUESTLOG_THREADS)
+        if {[string is integer -strict $v] && $v >= 0} { return $v }
+    }
+    return ""
 }
 
 # Worker→main delivery shim. Async messages may arrive after the Search
@@ -215,7 +227,7 @@ set ::questlog::search::WorkerScript {
 }
 
 # ::questlog::Search - clause-tree search across session logs, threaded
-# fan-out by default; QUESTLOG_SEARCH_THREADS tunes the worker count, or 0
+# fan-out by default; QUESTLOG_THREADS tunes the worker count, or 0
 # selects the single-thread coroutine path.
 #
 # The criteria are a flat list of leaf clauses and a boolean tree over them. A
@@ -312,15 +324,15 @@ oo::class create ::questlog::Search {
         coroutine $co [namespace which my] run_search $my_epoch $snapshot
     }
 
-    # Worker count for a search. Threaded by default; QUESTLOG_SEARCH_THREADS
-    # overrides - a non-negative integer sets the count, 0 forces the
-    # single-thread coroutine path. An unset or malformed value falls back to
-    # default_thread_count.
+    # Worker count for a search. 0 when the Thread package is unavailable
+    # (the coroutine path is the only one that runs); otherwise threaded by
+    # default, with QUESTLOG_THREADS overriding - a non-negative integer sets
+    # the count, 0 forces the single-thread coroutine path. An unset or
+    # malformed value falls back to default_thread_count.
     method pick_thread_count {} {
-        if {[info exists ::env(QUESTLOG_SEARCH_THREADS)]} {
-            set v $::env(QUESTLOG_SEARCH_THREADS)
-            if {[string is integer -strict $v] && $v >= 0} { return $v }
-        }
+        if {![::questlog::search::thread_available]} { return 0 }
+        set v [::questlog::search::env_threads]
+        if {$v ne ""} { return $v }
         return [my default_thread_count]
     }
 
