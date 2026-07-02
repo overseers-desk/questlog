@@ -6,8 +6,9 @@ namespace eval ::questlog::search {}
 
 # Whether the Thread package loads on this host, checked once and cached.
 # Thread is the designed dependency of the GUI (search fan-out, cost tpool),
-# but some hosts lack it (Ubuntu interim releases ship tclsh9.0 with no
-# tcl9.0-thread in the archive). The app then runs single-threaded: search on
+# but some hosts lack it (a from-source Tcl 9 built without the Thread
+# extension; the Debian and Ubuntu packages ship it alongside tcl9.0, and the
+# self-contained image links it statically). The app then runs single-threaded: search on
 # the coroutine path, the cost pass on the main thread, and a banner says so
 # unless QUESTLOG_THREADS=0 acknowledges the mode.
 proc ::questlog::search::thread_available {} {

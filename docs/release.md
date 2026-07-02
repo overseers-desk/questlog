@@ -25,6 +25,14 @@ dpkg-buildpackage -us -uc -b
 # produces ../questlog_<VERSION>_all.deb
 ```
 
+The package hard-`Depends` on `tcl9.0`, `tk9.0`, and `tcl9.0-thread`, which
+first ship together in Debian 13 and Ubuntu 25.10, so the deb targets Debian
+13+ / Ubuntu 25.10+. `tcl9.0-thread` stays a hard dependency by design: on a
+host too old for it apt refuses the deb rather than installing a degraded
+build, and that user takes a self-contained single-file image instead. Because
+all three arrive in the same release, requiring Thread turns away no one that
+`tcl9.0` would not already turn away.
+
 ### RPM / Fedora
 
 ```bash
@@ -79,6 +87,8 @@ git push
 ## Publish the GitHub release
 
 Publishing the release fires the `release-images` workflow, which builds the per-platform single-file images and attaches them to this release. Upload the `.deb` and `.rpm` (built locally above) alongside them:
+
+The release page shows only a filename per asset, with no per-asset description field, so the notes carry a Downloads table mapping each asset to its platform and what it requires. Keep it even-handed across assets rather than dwelling on any one distro: name the deb's floor (Debian 13+ / Ubuntu 25.10+) in one cell, mark the `.rpm` as needing tcl9.0/tk9.0 present, and mark each single-file image as self-contained (nothing required). Lead with a line pointing anyone without a matching or new-enough package to a single-file image.
 
 ```bash
 gh release edit v<VERSION> \
