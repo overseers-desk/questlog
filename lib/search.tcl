@@ -4,6 +4,20 @@ package require json
 
 namespace eval ::questlog::search {}
 
+# Whether the Thread package loads on this host, checked once and cached.
+# Thread is a hard dependency of the GUI (search fan-out, cost worker pool):
+# the entry script refuses to start without it, naming the package to install,
+# unless QUESTLOG_SEARCH_THREADS=0 opts into the single-thread paths. Under
+# that opt-out the cost pass checks this to run on the main thread instead of
+# a tpool.
+proc ::questlog::search::thread_available {} {
+    variable ThreadAvailable
+    if {![info exists ThreadAvailable]} {
+        set ThreadAvailable [expr {![catch {package require Thread}]}]
+    }
+    return $ThreadAvailable
+}
+
 # Worker→main delivery shim. Async messages may arrive after the Search
 # object is destroyed; resolve the object command lazily and swallow.
 proc ::questlog::search::dispatch {obj_cmd args} {

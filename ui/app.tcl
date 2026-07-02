@@ -1051,7 +1051,11 @@ proc ::questlog::ui::app::init_cost_pool {} {
     variable CostPool
     variable CostWorkerScript
     variable Root
-    package require Thread
+    set CostPool ""
+    # No Thread only happens under the QUESTLOG_SEARCH_THREADS=0 opt-out (the
+    # entry script exits otherwise); leave the pool empty and start_cost_one
+    # parses on the main thread.
+    if {![::questlog::search::thread_available]} return
     # The worker runs parse_file, which counts turns through
     # ::questlog::jsonl::is_user_turn, so jsonl.tcl is sourced ahead of cost.tcl.
     set initcmd "source [list [file join $Root lib jsonl.tcl]]
@@ -1066,7 +1070,15 @@ proc ::questlog::ui::app::start_cost_one {path} {
     variable CostPool
     variable CostEpoch
     variable CostOutstanding
-    if {$CostPool eq ""} return
+    if {$CostPool eq ""} {
+        # No worker pool (the QUESTLOG_SEARCH_THREADS=0 opt-out on a host
+        # without Thread): parse on the main thread, the same synchronous path
+        # the CLI uses (cli/cost.tcl), so per-session cost still shows. The
+        # parse does not yield, so the UI stalls for its duration; the cost of
+        # the opt-out.
+        on_cost_worker_result $path $CostEpoch [::questlog::cost::parse_file $path]
+        return
+    }
     incr CostOutstanding
     update_spinner
     tpool::post -nowait $CostPool [list dispatch_main $path [thread::id] $CostEpoch]

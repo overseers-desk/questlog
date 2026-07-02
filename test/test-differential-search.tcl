@@ -147,7 +147,15 @@ proc run_case {name search since under truth} {
     set cli [cli_search $argv]
     check "$name / CLI == truth" $truth $cli
     # Both GUI delivery paths: the coroutine (0) and the worker-thread fan-out.
-    foreach threads {0 3} {
+    # Without Thread the fan-out cases would crash; skip them (a skip, not a
+    # silent rerun of the coroutine path, which would pass without testing
+    # anything) and keep the coroutine cases.
+    set variants {0 3}
+    if {![::questlog::search::thread_available]} {
+        puts "skip: $name / GUI threads=3 (Thread package unavailable)"
+        set variants {0}
+    }
+    foreach threads $variants {
         set gui [gui_search $snap $threads]
         check "$name / GUI threads=$threads == truth" $truth $gui
         check "$name / GUI threads=$threads == CLI"   $cli   $gui
