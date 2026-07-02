@@ -11,7 +11,7 @@
 #   QUESTLOG_WISH      Path to the wish used as the stub. Default: wish9.0 from
 #                      PATH, which is dynamically linked, so the image still
 #                      needs the Tcl 9 runtime on the host (tcl9.0, tk9.0,
-#                      tcllib, tcl-thread) and carries questlog's code only.
+#                      tcllib, tcl9.0-thread) and carries questlog's code only.
 #   QUESTLOG_RUNTIME   Path to a runtime tree (tcl_library/, tk_library/,
 #                      tcl_library/json/) to stage alongside the payload. Set
 #                      together with a from-source static wish, this produces a

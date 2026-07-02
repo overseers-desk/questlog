@@ -31,7 +31,7 @@ chmod +x questlog-<version>-linux-x86_64
 ./questlog-<version>-linux-x86_64
 ```
 
-It needs the Tcl 9 runtime present on the host: `tcl9.0`, `tk9.0`, `tcllib`, and `tcl-thread`, the same set the `.deb` declares, available from current distribution repositories. Use this when you want a single file to drop on a machine or a USB stick, or to run without root, on a host that already has or can add that runtime.
+It needs the Tcl 9 runtime present on the host: `tcl9.0`, `tk9.0`, `tcllib`, and `tcl9.0-thread` (Debian/Ubuntu names; `tcl-thread` on Ubuntu is the Tcl 8.6 build and does not satisfy it), the same set the `.deb` declares, available from current distribution repositories. Use this when you want a single file to drop on a machine or a USB stick, or to run without root, on a host that already has or can add that runtime.
 
 ## macOS
 
