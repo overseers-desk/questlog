@@ -1,5 +1,5 @@
 Name:           questlog
-Version:        1.1.4
+Version:        1.1.5
 Release:        1%{?dist}
 Summary:        GUI for finding, reading, and reopening past Claude Code sessions
 License:        MIT
@@ -59,6 +59,9 @@ install -D -m 0644 assets/questlog-512.png \
 %{_datadir}/icons/hicolor/512x512/apps/questlog.png
 
 %changelog
+* Thu Jul 02 2026 Weiwu Zhang <a@colourful.land> - 1.1.5-1
+- GUI: questlog runs on a host without the Tcl Thread package, searching on the single-threaded coroutine path and computing the cost pass on the main thread; a notice banner reports the mode, silenced by QUESTLOG_THREADS=0
+
 * Sun Jun 28 2026 Weiwu Zhang <a@colourful.land> - 1.1.4-1
 - Search criteria: a sentence-long regex no longer carries its delete button off-screen; the × anchors at the chip's left edge so the criterion stays removable
 
