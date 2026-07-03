@@ -15,8 +15,10 @@ proc check {name expected actual} {
     }
 }
 
-# encode_cwd: simple inverse of slashes-to-dashes.
-check encode_simple   "-home-weiwu-code-foo"        [::questlog::path::encode_cwd "/home/weiwu/code/foo"]
+# encode_cwd: simple inverse of slashes-to-dashes. A fictional home: the
+# input must not exist on the running machine, or file normalize inside
+# encode_cwd resolves any symlinked component and the encoding shifts.
+check encode_simple   "-home-alice-code-foo"        [::questlog::path::encode_cwd "/home/alice/code/foo"]
 
 # pretty_home: abbreviate $HOME, leave non-home paths alone.
 set ::env(HOME) /home/alice
