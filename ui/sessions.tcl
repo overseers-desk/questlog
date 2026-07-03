@@ -516,11 +516,13 @@ oo::class create ::questlog::ui::SessionList {
         return [::questlog::filter::row_matches $Snapshot $row]
     }
 
-    # 1 iff a session is shown under the current snapshot: a running session
-    # always surfaces; otherwise it must pass the list-view toggles. row may be
-    # "" (no cached row) -> treat as shown.
+    # 1 iff a session is shown under the current snapshot: the view toggles
+    # decide (row_visible), with the running set passed through so
+    # running_only can keep live rows - never as a bypass around
+    # bookmarked_only, whose label promises bookmarks and nothing else. row
+    # may be "" (no cached row yet) -> treat as shown until the scan catches
+    # up.
     method session_shown {path row} {
-        if {[dict exists $RunningSet [my sget $path uuid ""]]} { return 1 }
         if {$row eq ""} { return 1 }
         return [::questlog::sessionlist::row_visible $Snapshot $row $RunningSet]
     }

@@ -121,6 +121,18 @@ check "A rendered again"        [$SL sflag $Ap rendered] 1
 check "A still selected"        [$SL is_selected $Ap] 1
 check "B still rendered"        [$SL sflag $Bp rendered] 1
 
+# --- 5. A running, non-bookmarked session stays hidden under bookmarked_only:
+#        the label promises bookmarks and nothing else. Running-ness retains it
+#        in the model; it does not paint it.
+$SL apply_listview [dict create since all listview [dict create bookmarked_only 1]]
+update
+set Auuid [$SL sget $Ap uuid]
+$SL reconcile_running [dict create $Auuid $Ap]
+update
+check "running A still hidden under bookmarked_only" [$SL sflag $Ap rendered] 0
+check "running A retained in model" [$SL has_session $Ap] 1
+$SL reconcile_running [dict create]
+
 ::questlog::path::_real_file delete -force $SAND
 puts [expr {$fails ? "FAILED ($fails)" : "PASS"}]
 exit $fails
