@@ -309,27 +309,44 @@ proc ::questlog::match::scan_file {path clauses {tick ""} {yield_lines 0}} {
     set tree   [dict get $clauses tree]
     set nocase [dict get $clauses nocase]
 
-    # Per-line pre-filter literals: a record needs parsing only when its raw text
-    # carries a candidate substring for at least one leaf, or a regex leaf
-    # matches the raw line. A keyword leaf contributes its needle; a tool leaf
-    # its path/key, or its tool name when the key is empty (the name appears
-    # verbatim in the tool_use JSON); a regex leaf is run against the raw line.
-    set kw_needles  [list]   ;# keyword needles, lowercased when nocase
-    set lit_substrs [list]   ;# tool path/key/name, matched raw
-    set rx_pats     [list]
+    # Per-line pre-filter: a record is parsed only when its raw text could
+    # satisfy at least one leaf. The raw line is JSON-encoded, so only a
+    # needle the encoder never alters - printable ASCII minus `"` and `\` -
+    # can be soundly tested against it. A needle outside that class (a quote,
+    # a backslash, anything non-ASCII, which the writer may store as \uXXXX)
+    # and any regex pattern (whose anchors and classes would see the encoded
+    # text, not the content) instead make every line a candidate. Correctness
+    # over the fast path: gating on an untestable leaf produced silent false
+    # negatives, and a --not over one inverted them into false positives.
+    # A keyword leaf contributes its needle; a tool leaf its path/key, or its
+    # tool name when the key is empty (the name appears verbatim in the
+    # tool_use JSON).
+    set kw_needles  [list]   ;# raw-safe keyword needles, lowercased when nocase
+    set lit_substrs [list]   ;# raw-safe tool path/key/name, matched raw
+    set always_candidate 0   ;# 1 = a leaf exists that no raw gate can test
+    set raw_safe {^[\x20-\x21\x23-\x5B\x5D-\x7E]+$}
     foreach leaf $leaves {
         switch -- [dict get $leaf kind] {
             keyword {
                 set nd [dict get $leaf needle]
-                lappend kw_needles [expr {$nocase ? [string tolower $nd] : $nd}]
+                if {[regexp $raw_safe $nd]} {
+                    lappend kw_needles [expr {$nocase ? [string tolower $nd] : $nd}]
+                } else {
+                    set always_candidate 1
+                }
             }
-            regex { lappend rx_pats [dict get $leaf needle] }
+            regex { set always_candidate 1 }
             tool {
                 set val [dict get $leaf value]
                 if {[dict get $leaf sel] eq "file"} {
-                    lappend lit_substrs $val
+                    set lit $val
                 } else {
-                    lappend lit_substrs [expr {$val ne "" ? $val : [dict get $leaf spec]}]
+                    set lit [expr {$val ne "" ? $val : [dict get $leaf spec]}]
+                }
+                if {[regexp $raw_safe $lit]} {
+                    lappend lit_substrs $lit
+                } else {
+                    set always_candidate 1
                 }
             }
         }
@@ -370,16 +387,11 @@ proc ::questlog::match::scan_file {path clauses {tick ""} {yield_lines 0}} {
             incr users
             if {$users == 1 && [regexp {"content":"([^"]+)"} $line -> uc]} { set first_user $uc }
         }
-        set candidate 0
-        if {[llength $kw_needles] > 0} {
+        set candidate $always_candidate
+        if {!$candidate && [llength $kw_needles] > 0} {
             set hay [expr {$nocase ? [string tolower $line] : $line}]
             foreach n $kw_needles {
                 if {[string first $n $hay] >= 0} { set candidate 1; break }
-            }
-        }
-        if {!$candidate} {
-            foreach p $rx_pats {
-                if {[regexp -- $p $line]} { set candidate 1; break }
             }
         }
         if {!$candidate} {

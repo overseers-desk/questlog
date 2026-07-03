@@ -102,6 +102,8 @@ puts $fh {{"type":"user","cwd":"/tmp/p","timestamp":"2026-06-01T10:00:00Z","mess
 puts $fh {{"type":"assistant","message":{"content":[{"type":"text","text":"I will write tests for the auth flow"},{"type":"tool_use","name":"Read","input":{"file_path":"config.tcl"}}]}}}
 puts $fh {{"type":"user","message":{"content":[{"type":"tool_result","content":"permission denied while reading"}]}}}
 puts $fh {{"type":"assistant","message":{"content":[{"type":"text","text":"TODO handle the refresh path"},{"type":"tool_use","name":"Edit","input":{"file_path":"config.tcl","old_string":"x","new_string":"y"}}]}}}
+puts $fh {{"type":"assistant","message":{"content":[{"type":"text","text":"He said \"hello world\" to me and C:\\Users\\here stayed"}]}}}
+puts $fh {{"type":"assistant","message":{"content":[{"type":"text","text":"Anchored start of block"}]}}}
 close $fh
 
 # Does the session qualify for this query? (matches non-empty after scan_file)
@@ -127,6 +129,16 @@ check ex_tool_or         1 [q --tool:edit config.tcl --or --tool:read other.tcl]
 # Session-wide conjunction across records: auth (user, line 1) and TODO
 # (assistant, line 4) both in the same session, not the same turn.
 check ex_cross_record    1 [q --keyword:user auth --keyword:assistant TODO]
+
+# The raw line is JSON-encoded, so needles bearing a quote or backslash and
+# anchored regexes cannot be gated against it; they must still match (and a
+# --not over them must still exclude).
+check ex_quoted_needle   1 [q {said "hello}]
+check ex_quoted_nocase   1 [q {SAID "HELLO}]
+check ex_quoted_not      0 [q --keyword auth --not {said "hello}]
+check ex_backslash       1 [q {C:\Users}]
+check ex_regex_anchor    1 [q --regex {^Anchored}]
+check ex_regex_anchor_not 0 [q --keyword auth --not --regex {^Anchored}]
 
 file delete $fix
 
