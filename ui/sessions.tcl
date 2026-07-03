@@ -2041,6 +2041,7 @@ oo::class create ::questlog::ui::SessionList {
 
         $Text configure -state normal
         my anchor_save
+        set imported [dict create]
         if {!$CriteriaActive} {
             dict for {uuid path} $running {
                 if {[my has_session $path]} continue
@@ -2072,12 +2073,15 @@ oo::class create ::questlog::ui::SessionList {
                 my model_add_session $path $row
                 set shown [my session_shown $path $row]
                 my sflagset $path hidden [expr {!$shown}]
-                if {$shown && [my folder_expanded [dict get $row folder]]} {
-                    my render_session $path
-                }
+                # Drawing is the dirty pass's job below: rebuild is
+                # hidden-aware and creates the folder heading, which this
+                # import cannot assume exists (under running_only a folder
+                # whose every row is hidden has no heading in the buffer, and
+                # rendering into it dies on a bad text index).
+                if {$shown} { dict set imported [dict get $row folder] 1 }
             }
         }
-        set dirty [dict create]
+        set dirty $imported
         foreach path [my all_session_paths] {
             if {![my has_session $path]} continue
             set uuid [my sget $path uuid]

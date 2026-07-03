@@ -92,19 +92,25 @@ update
 check "A hidden (running_only on, not live)" [$SL sflag $Ap rendered] 0
 check "B hidden (running_only on, not live)" [$SL sflag $Bp rendered] 0
 
-# --- 3. The live poll reports C running while running_only is on. C is not in
-#        the model and must NOT be imported (the local-filter invariant). Before
-#        the fix the add-loop ran under running_only and pulled C in.
+# --- 3. The live poll reports C running while running_only is on. Membership
+#        is scope-or-running: C imports (running bypasses the min-turns floor
+#        here exactly as it does in plain browse) and paints, because
+#        running_only's job is to show live sessions - the toggle hides rows,
+#        it never blocks liveness from arriving. Only running sessions can
+#        enter this way: the import loop iterates the running set alone.
 $SL reconcile_running [dict create cccc $Cp]
 update
-check "C NOT imported under running_only" [$SL has_session $Cp] 0
+check "C imported under running_only" [$SL has_session $Cp] 1
+check "C rendered (it is running)"    [$SL sflag $Cp rendered] 1
 
-# --- 4. A loaded session that becomes running shows in place (no import needed).
+# --- 4. A loaded session that becomes running shows in place; a running-only
+#        import that stops running and is below the min-turns floor leaves the
+#        model with its liveness.
 $SL reconcile_running [dict create $Buuid $Bp]
 update
 check "B shown once it is running"  [$SL sflag $Bp rendered] 1
 check "A still hidden (not running)" [$SL sflag $Ap rendered] 0
-check "C still not imported"         [$SL has_session $Cp] 0
+check "C left the model when no longer running" [$SL has_session $Cp] 0
 
 ::questlog::path::_real_file delete -force $SAND
 puts [expr {$fails ? "FAILED ($fails)" : "PASS"}]
