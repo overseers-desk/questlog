@@ -4,6 +4,8 @@
 
 questlog is a Tcl/Tk app launched with `./questlog` (it runs under `tclsh9.0`). Verify visual or behavioural changes on a headless Xvfb display, never the user's real `DISPLAY=:0`: launching on :0 puts windows over the user's work where they may click or close them, and ImageMagick `import`'s X11 grab is unreliable under this machine's XWayland :0 (it returns an empty image and fails with "missing an image filename"). On a private Xvfb server `import` works.
 
+Xvfb must be installed for headless verification to work (`apt install xvfb`). Tk 9 needs the XKEYBOARD extension at display open; this machine's Xvnc/Xtightvnc omits it, so Tk fails on it with a bare "couldn't connect to display" even while plain X clients (xdpyinfo, xterm) connect fine, and Xorg.wrap's console-user policy blocks Xdummy.
+
 Run the Bash tool with its sandbox disabled for the capture (the sandbox blocks `import`'s X connection):
 
 ```
