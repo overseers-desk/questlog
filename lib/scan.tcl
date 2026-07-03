@@ -161,7 +161,10 @@ oo::class create ::questlog::Scan {
             if {[dict exists $Rows $path]} {
                 set existing_mtime [dict get $Rows $path mtime]
             }
-            set live_mtime [file mtime $path]
+            # The file can vanish between list_paths_for's glob and this stat
+            # (Claude Code prunes transcripts past cleanupPeriodDays; users
+            # delete sessions); a dead path is skipped, not fatal to the scan.
+            if {[catch {file mtime $path} live_mtime]} { incr count; continue }
             if {$existing_mtime ne $live_mtime} {
                 set row [my scan_one $path]
                 if {[dict size $row] > 0} {
@@ -232,7 +235,8 @@ oo::class create ::questlog::Scan {
             if {[llength $under] > 0 \
                 && ![::questlog::filter::folder_under_candidate [file tail $folder] $under]} continue
             foreach f [glob -nocomplain -directory $folder -- *.jsonl] {
-                set m [file mtime $f]
+                # Vanished between glob and stat (transcript pruning): skip.
+                if {[catch {file mtime $f} m]} continue
                 # A bookmarked (+x) file is kept regardless of either bound so it
                 # always enters Rows and can be surfaced as a pin.
                 if {$m <= $cutoff && ![file executable $f]} continue
@@ -245,7 +249,8 @@ oo::class create ::questlog::Scan {
                     set uuid [file rootname [file tail $f]]
                     set subdir [file join $folder $uuid subagents]
                     foreach sf [glob -nocomplain -directory $subdir -- agent-*.jsonl] {
-                        lappend pairs [list $sf [file mtime $sf]]
+                        if {[catch {file mtime $sf} sm]} continue
+                        lappend pairs [list $sf $sm]
                     }
                 }
             }
@@ -432,19 +437,25 @@ oo::class create ::questlog::Scan {
     # content from either consumer is the same row.
     method publish_row {row} {
         set path [dict get $row path]
-        # Search republishes this row from scan_file without cost fields. When
-        # the file is unchanged (same mtime as the cached row that carries a
-        # cost), carry the computed cost across, so the republish neither clobbers
-        # it nor re-triggers the cost pass for every matched session. A changed
-        # mtime means the cost is stale, so it is left to be recomputed.
-        if {![dict exists $row cost_usd] && [dict exists $Rows $path]} {
+        # Search republishes this row from scan_file, which computes neither
+        # the cost fields nor the identity fields scan_one reads from the tail
+        # (slug, ai_title, kind). On an unchanged file (same mtime as the
+        # cached row) an absent field means "not computed by this producer",
+        # never "cleared", so carry the cached value across: without the
+        # identity carry a search on session S erased its title from the
+        # browse list for the rest of the process (extend never rescans an
+        # unchanged file), and without the cost carry the republish re-triggered
+        # the cost pass for every matched session. A changed mtime means the
+        # cached values are stale, so they are left to be recomputed.
+        if {[dict exists $Rows $path]} {
             set old [dict get $Rows $path]
-            if {[dict exists $old cost_usd]
-                && [dict getdef $old mtime ""] eq [dict getdef $row mtime ""]} {
-                foreach k {cost_usd input_tokens output_tokens \
-                           cache_write_tokens cache_read_tokens model_breakdown \
-                           model turns duration_secs human_secs} {
-                    if {[dict exists $old $k]} { dict set row $k [dict get $old $k] }
+            if {[dict getdef $old mtime ""] eq [dict getdef $row mtime ""]} {
+                foreach k {slug ai_title kind cost_usd input_tokens \
+                           output_tokens cache_write_tokens cache_read_tokens \
+                           model_breakdown model turns duration_secs human_secs} {
+                    if {![dict exists $row $k] && [dict exists $old $k]} {
+                        dict set row $k [dict get $old $k]
+                    }
                 }
             }
         }
