@@ -184,7 +184,10 @@ proc ::questlog::search::trim_pairs {pairs keep} {
 proc ::questlog::search::tool_selector {selector} {
     set file_ops {read read  write write  edit edit  file either}
     set tool_names {bash Bash  grep Grep  glob Glob  read Read  write Write \
-        edit Edit  websearch WebSearch  webfetch WebFetch  task Task}
+        edit Edit  multiedit MultiEdit  notebookedit NotebookEdit \
+        websearch WebSearch  webfetch WebFetch  task Task  agent Agent \
+        taskcreate TaskCreate  taskupdate TaskUpdate  taskget TaskGet \
+        tasklist TaskList  todowrite TodoWrite  skill Skill}
     if {[dict exists $file_ops $selector]} {
         return [list file [dict get $file_ops $selector]]
     }

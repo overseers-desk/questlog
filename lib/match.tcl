@@ -71,6 +71,31 @@ proc ::questlog::match::snippet_window {s pat re_opts {lead -1} {trail -1}} {
         return [::questlog::match::clean_text $s]
     }
     lassign $m a b
+    return [::questlog::match::window_at $s $a $b $lead $trail]
+}
+
+# The keyword twin of snippet_window: the needle is a literal, located with
+# string first over the whitespace-collapsed haystack (case-folded when
+# nocase), never run as a regex - so a needle that happens to look like one
+# (a.c, C++) windows on its real occurrence instead of a pattern match or the
+# head-capped fallback.
+proc ::questlog::match::snippet_window_lit {s needle nocase {lead -1} {trail -1}} {
+    if {$lead  < 0} { set lead  [::questlog::match::cap snippet_lead] }
+    if {$trail < 0} { set trail [::questlog::match::cap snippet_trail] }
+    set s [string trim [regsub -all {[\s]+} $s " "]]
+    set needle [regsub -all {[\s]+} $needle " "]
+    set hay [expr {$nocase ? [string tolower $s] : $s}]
+    set n   [expr {$nocase ? [string tolower $needle] : $needle}]
+    set a [string first $n $hay]
+    if {$a < 0} { return [::questlog::match::clean_text $s] }
+    set b [expr {$a + [string length $n] - 1}]
+    return [::questlog::match::window_at $s $a $b $lead $trail]
+}
+
+# Shared window body: snippet_lead chars of context before span [a,b] and
+# snippet_trail after it, elision ellipses on the clipped sides. The whole
+# span stays inside the window so the display can re-find and embolden it.
+proc ::questlog::match::window_at {s a b lead trail} {
     set len [string length $s]
     set start [expr {$a - $lead}]
     set end   [expr {$b + $trail}]
@@ -231,14 +256,13 @@ proc ::questlog::match::leaf_record_hit {leaf rec nocase} {
             set needle  [dict get $leaf needle]
             set regions [dict get $leaf regions]
             set n [expr {$nocase ? [string tolower $needle] : $needle}]
-            set re_opts [expr {$nocase ? "-nocase" : ""}]
             foreach {btype content} [::questlog::jsonl::extract_blocks $rec] {
                 if {![::questlog::match::btype_in_regions $btype $regions]} continue
                 set hay [expr {$nocase ? [string tolower $content] : $content}]
                 if {[string first $n $hay] >= 0} {
                     set sat 1
                     lappend hits [list $btype \
-                        [::questlog::match::snippet_window $content $needle $re_opts]]
+                        [::questlog::match::snippet_window_lit $content $needle $nocase]]
                 }
             }
         }
@@ -262,11 +286,18 @@ proc ::questlog::match::leaf_record_hit {leaf rec nocase} {
                 if {$sel eq "file"} {
                     # The path is matched by suffix, so a bare filename finds it
                     # in any directory; `file` rides only on the file-touching
-                    # tools the op selects.
+                    # tools the op selects. The suffix must sit on a name
+                    # boundary - the whole path, or preceded by "/" or "." -
+                    # so main.tcl never matches domain.tcl mid-word, while a
+                    # dotted partial (spar-dispatcher-initcmd.tcl inside
+                    # spar-manager.spar-dispatcher-initcmd.tcl) and a needle
+                    # opening with "." (an extension search) still land.
                     if {[dict get $t name] ni [::questlog::match::op_toolset $spec]} continue
                     set tp [dict get $t path]
                     set off [expr {[string length $tp] - [string length $val]}]
-                    if {$off >= 0 && [string range $tp $off end] eq $val} {
+                    if {$off >= 0 && [string range $tp $off end] eq $val
+                        && ($off == 0 || [string index $tp $off-1] in {/ .}
+                            || [string index $val 0] eq ".")} {
                         set sat 1
                         lappend hits [list tool_use \
                             [::questlog::match::clean_text [dict get $t rendered]]]

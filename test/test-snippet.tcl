@@ -69,6 +69,23 @@ check "no-match fallback returns the text" $w "no match in here"
 set w [::questlog::match::snippet_window "a\n\n  NEEDLE\t\tb" NEEDLE -nocase]
 check "whitespace collapsed" $w "a NEEDLE b"
 
+# ---- snippet_window_lit: keyword needles are literals, never patterns ------
+# A needle that looks like a regex windows on its literal occurrence, not on
+# whatever the pattern would first match.
+set s "the abc corpus has one literal a.c occurrence"
+set w [::questlog::match::snippet_window_lit $s "a.c" 1]
+check "lit needle windows the literal" [string match "*a.c*" $w] 1
+# A needle that is an invalid regex still windows (no fallback to the head).
+set s "history of C++ compilers is long"
+set w [::questlog::match::snippet_window_lit $s "C++" 1]
+check "lit invalid-regex needle windows" [string match "*C++*" $w] 1
+# Whitespace runs in the needle collapse like the haystack's.
+set w [::questlog::match::snippet_window_lit "say foo  bar now" "foo\n bar" 1]
+check "lit whitespace-run needle" [string match "*foo bar*" $w] 1
+# Case folding under nocase.
+set w [::questlog::match::snippet_window_lit "found a needle here" NEEDLE 1]
+check "lit nocase" [string match "*needle*" $w] 1
+
 if {$failures > 0} {
     puts "\n$failures test(s) failed."
     exit 1
