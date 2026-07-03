@@ -142,6 +142,19 @@ check ex_regex_anchor_not 0 [q --keyword auth --not --regex {^Anchored}]
 
 file delete $fix
 
+# ---- scan_file row fields over an array-content (image-bearing) prompt -----
+set fix2 [file join [file dirname [info script]] _grammar_fixture2.jsonl]
+set fh [open $fix2 w]
+chan configure $fh -encoding utf-8 -translation lf
+puts $fh {{"type":"user","message":{"role":"user","content":[{"type":"text","text":"fix the \"blue\" widget"},{"type":"image","source":{}}]},"timestamp":"2026-06-01T10:00:00Z"}}
+puts $fh {{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"x","content":"irrelevant"}]}}}
+close $fh
+lassign [::questlog::match::scan_file $fix2 \
+    [dict get [::questlog::cli::main::parse_query {--keyword widget}] clauses]] row2 m2
+check arr_nturns  1 [dict get $row2 nturns]
+check arr_preview {fix the "blue" widget} [dict get $row2 first_user]
+file delete $fix2
+
 # ---- query error paths (exit through usage, so run the real launcher) ------
 proc cli_err {args} {
     set ef [file join [file dirname [info script]] _grammar_err.txt]

@@ -366,7 +366,14 @@ oo::class create ::questlog::Scan {
             # and take the first one's content as the first-prompt preview.
             if {[::questlog::jsonl::is_user_turn $line]} {
                 incr users
-                if {$users == 1 && [regexp {"content":"([^"]+)"} $line -> uc]} { set first $uc }
+                # First-prompt preview, the same two-form capture as scan_file:
+                # string content with escaped pairs kept whole, else the first
+                # text block of a block-array prompt.
+                if {$users == 1} {
+                    if {![regexp {"content":"((?:[^"\\]|\\.)*)"} $line -> first]} {
+                        regexp {"text":"((?:[^"\\]|\\.)*)"} $line -> first
+                    }
+                }
             }
             if {$users >= $cap && $cwd ne "" && $first_ts ne ""} break
         }

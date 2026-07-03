@@ -14,16 +14,19 @@ proc ::questlog::jsonl::parse_line {line} {
 }
 
 # 1 iff this raw line is a real user turn: a user record carrying a typed
-# prompt, not a harness-written echo. The message holds "role":"user" with a
-# string "content" (so a tool_result record, whose content is an array, is
-# excluded), and the content is not one of the harness echoes the user never
-# typed - a slash-command expansion, its captured stdout or caveat, or a
-# background-task notification. The one home for the turn predicate: the
-# scanner counts nturns with it and the cost pass counts turns with it, so the
-# min-turns floor and the displayed Turns count agree. A line-level regex, no
-# parse: it runs over every line of every session file.
+# prompt, not a harness-written echo. The message holds "role":"user" with
+# either a string "content" or a block array whose FIRST block is a prompt
+# block (text or image, the forms a typed prompt with a pasted image takes) -
+# a tool_result record is also role:user but its array opens with a
+# tool_result block, so it stays excluded. The string content must not be one
+# of the harness echoes the user never typed - a slash-command expansion, its
+# captured stdout or caveat, or a background-task notification. The one home
+# for the turn predicate: the scanner counts nturns with it and the cost pass
+# counts turns with it, so the min-turns floor and the displayed Turns count
+# agree. A line-level regex, no parse: it runs over every line of every
+# session file.
 proc ::questlog::jsonl::is_user_turn {line} {
-    return [expr {[regexp {"role":"user","content":"} $line] \
+    return [expr {[regexp {"role":"user","content":(?:"|\[\{"type":"(?:text|image)")} $line] \
         && ![regexp {"content":"<(?:command-name|local-command-stdout|local-command-caveat|task-notification)>} $line]}]
 }
 

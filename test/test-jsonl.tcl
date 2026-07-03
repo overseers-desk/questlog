@@ -231,6 +231,23 @@ check tbl_interleave \
     [::questlog::jsonl::segment_tables \
         "intro\n\n| H1 | H2 |\n| - | - |\n| a | b |\n\noutro"]
 
+# ---- is_user_turn: the turn-count predicate over raw lines -----------------
+# String content counts; a block-array prompt (text or image first) counts; a
+# tool_result record - also role:user, array content - does not; the harness
+# echoes the user never typed do not.
+check turn_string 1 [::questlog::jsonl::is_user_turn \
+    {{"type":"user","message":{"role":"user","content":"do the thing"},"timestamp":"t"}}]
+check turn_array_text 1 [::questlog::jsonl::is_user_turn \
+    {{"type":"user","message":{"role":"user","content":[{"type":"text","text":"see this"},{"type":"image","source":{}}]}}}]
+check turn_array_image 1 [::questlog::jsonl::is_user_turn \
+    {{"type":"user","message":{"role":"user","content":[{"type":"image","source":{}},{"type":"text","text":"caption"}]}}}]
+check turn_tool_result 0 [::questlog::jsonl::is_user_turn \
+    {{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"x","content":"ok"}]}}}]
+check turn_command_echo 0 [::questlog::jsonl::is_user_turn \
+    {{"type":"user","message":{"role":"user","content":"<command-name>/foo</command-name>"}}}]
+check turn_task_note 0 [::questlog::jsonl::is_user_turn \
+    {{"type":"user","message":{"role":"user","content":"<task-notification>done</task-notification>"}}}]
+
 if {$fails > 0} {
     puts "$fails failures"
     exit 1

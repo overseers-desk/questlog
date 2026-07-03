@@ -385,7 +385,14 @@ proc ::questlog::match::scan_file {path clauses {tick ""} {yield_lines 0}} {
         if {$first_ts eq "" && [regexp {"timestamp":"([^"]+)"} $line -> m]} { set first_ts $m }
         if {[::questlog::jsonl::is_user_turn $line]} {
             incr users
-            if {$users == 1 && [regexp {"content":"([^"]+)"} $line -> uc]} { set first_user $uc }
+            # First-prompt preview: string content captured with escaped pairs
+            # kept whole (clean_preview unescapes them); a block-array prompt
+            # carries its words in its first text block instead.
+            if {$users == 1} {
+                if {![regexp {"content":"((?:[^"\\]|\\.)*)"} $line -> first_user]} {
+                    regexp {"text":"((?:[^"\\]|\\.)*)"} $line -> first_user
+                }
+            }
         }
         set candidate $always_candidate
         if {!$candidate && [llength $kw_needles] > 0} {
