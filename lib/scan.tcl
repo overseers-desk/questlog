@@ -210,14 +210,14 @@ oo::class create ::questlog::Scan {
     # Depth-2 glob for the browse list: <folder>/<uuid>/subagents/ holds
     # internal subagent records (not user sessions) and is never a browse row;
     # the chevron surfaces them lazily on expand (subagents_for). The search
-    # corpus is the one consumer that needs them up front, so include_subagents
-    # appends each kept session's subagent files (issue #13, search case B/C).
+    # corpus needs them up front, so include_subagents appends each kept
+    # session's subagent files (issue #13, search case B/C) - GUI search and
+    # the CLI both pass it, so whatever the list can show, a search can find.
     # Pre-sorted by mtime DESC so consumers see rows in display order.
-    # cli_only drops sdk-cli (skill / Agent-SDK) sessions from the result, so the
-    # search corpus is the interactive sessions a person would browse, not the
-    # automation exhaust that dwarfs them (~70x the file count). This is the one
-    # switch that would let a future toggle re-admit sdk-cli to search: flip
-    # cli_only off (and include_subagents back on) to restore the full corpus.
+    # cli_only drops sdk-cli (skill / Agent-SDK) sessions from the result; no
+    # shipped consumer passes it - sdk sessions are browse rows and search
+    # rows alike - it is the switch a future automation-exhaust toggle would
+    # flip (the sdk file count dwarfs interactive ~70x).
     method list_paths_for {snapshot {include_subagents 0} {cli_only 0}} {
         set root [::questlog::path::projects_root]
         if {![file isdirectory $root]} { return [list] }

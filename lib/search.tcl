@@ -387,11 +387,11 @@ oo::class create ::questlog::Search {
         if {$my_epoch != $Epoch} return
 
         set clauses [::questlog::search::build_clauses $snapshot]
-        # Search only interactive (cli) sessions, no subagents: the automation
-        # exhaust (sdk-cli) is ~70x the file count and is not what a person
-        # searches for. A future toggle that re-admits sdk-cli would flip the
-        # two trailing flags back to `1 0` (include_subagents on, cli_only off).
-        set paths [$Scan list_paths_for $snapshot 0 1]
+        # The search corpus is the browse corpus plus each session's subagent
+        # transcripts: whatever the list can show, a search can find (sdk-cli
+        # automation runs included - they are browse rows too), and a phrase
+        # remembered from a subagent's work still finds its parent session.
+        set paths [$Scan list_paths_for $snapshot 1 0]
         set total [llength $paths]
         dict set Counts total $total
         set count 0
@@ -476,8 +476,8 @@ oo::class create ::questlog::Search {
         set MatchedSessions [dict create]
         set Counts [dict create done 0 total 0 matches 0]
 
-        # cli-only, no subagents (see the coroutine path's note above).
-        set paths   [$Scan list_paths_for $snapshot 0 1]
+        # The same browse-plus-subagents corpus as the coroutine path.
+        set paths   [$Scan list_paths_for $snapshot 1 0]
         set total   [llength $paths]
         dict set Counts total $total
 

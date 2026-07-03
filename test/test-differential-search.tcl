@@ -75,6 +75,37 @@ proc write_session {folder uuid cwd needle age_days} {
     return $path
 }
 
+# An sdk-cli session (opens with a queue-operation record): a browse row, so
+# search must find it too.
+proc write_sdk_session {folder uuid cwd needle age_days} {
+    global CORPUS
+    set dir [file join $CORPUS $folder]
+    ::questlog::path::_real_file mkdir $dir
+    set path [file join $dir $uuid.jsonl]
+    set fh [open $path w]
+    puts $fh "{\"type\":\"queue-operation\",\"operation\":\"enqueue\",\"timestamp\":\"2026-06-20T09:59:59.000Z\"}"
+    puts $fh "{\"type\":\"user\",\"cwd\":\"$cwd\",\"timestamp\":\"2026-06-20T10:00:00.000Z\",\"message\":{\"content\":\"sdk run mentions $needle here\"}}"
+    puts $fh "{\"type\":\"assistant\",\"timestamp\":\"2026-06-20T10:00:05.000Z\",\"message\":{\"content\":\"a reply\"}}"
+    puts $fh "{\"type\":\"user\",\"cwd\":\"$cwd\",\"timestamp\":\"2026-06-20T10:01:00.000Z\",\"message\":{\"content\":\"second\"}}"
+    close $fh
+    file mtime $path [expr {[clock seconds] - $age_days * 86400}]
+    return $path
+}
+
+# A subagent transcript under an existing session; its needle lives only there.
+proc write_subagent {folder parent_uuid agent_id needle age_days} {
+    global CORPUS
+    set dir [file join $CORPUS $folder $parent_uuid subagents]
+    ::questlog::path::_real_file mkdir $dir
+    set path [file join $dir $agent_id.jsonl]
+    set fh [open $path w]
+    puts $fh "{\"type\":\"user\",\"timestamp\":\"2026-06-20T10:00:30.000Z\",\"message\":{\"role\":\"user\",\"content\":\"child does $needle work\"}}"
+    puts $fh "{\"type\":\"assistant\",\"timestamp\":\"2026-06-20T10:00:35.000Z\",\"message\":{\"content\":\"done\"}}"
+    close $fh
+    file mtime $path [expr {[clock seconds] - $age_days * 86400}]
+    return $path
+}
+
 # Two project folders. PROJA is the in-scope project; PROJB stands in for the
 # other project whose sessions a `subtree PROJA` scope must exclude.
 set PROJA /home/test/code/proja
@@ -89,6 +120,10 @@ write_session -home-test-code-proja nnnn $PROJA plainword 2
 write_session -home-test-code-projb bbbb $PROJB shimmer 2
 # sC: in projb, hits "shimmer", but 40 days old (since control).
 write_session -home-test-code-projb cccc $PROJB shimmer 40
+# sS: an sdk-cli session in proja; its needle appears nowhere else.
+write_sdk_session -home-test-code-proja ssss $PROJA glassine 2
+# a subagent of sA; its needle appears nowhere else.
+write_subagent -home-test-code-proja aaaa agent-x1 fumarole 2
 
 # ---- engines --------------------------------------------------------
 
@@ -107,7 +142,13 @@ proc gui_search {snapshot threads} {
     set scan   [::questlog::Scan new {} {}]
     set search [::questlog::Search new $scan \
         [list apply {{matches} {
-            foreach m $matches { dict set ::g_hits [dict get $m path] 1 }
+            foreach m $matches {
+                # A subagent match belongs to its parent session, the way the
+                # list groups it (issue #13).
+                set p [expr {[dict getdef $m is_child 0] \
+                    ? [dict get $m parent_path] : [dict get $m path]}]
+                dict set ::g_hits $p 1
+            }
         }}] \
         noop \
         [list apply {{total matches} { set ::g_done 1 }}]]
@@ -173,6 +214,10 @@ run_case "A all/no-subtree"     shimmer all {}     {aaaa bbbb cccc}
 run_case "B all/subtree-proja"  shimmer all $PROJA {aaaa}
 run_case "C 7d/no-subtree"      shimmer 7d  {}     {aaaa bbbb}
 run_case "D 7d/subtree-projb"   shimmer 7d  $PROJB {bbbb}
+# E: the search corpus is the browse corpus - an sdk session is findable.
+run_case "E sdk-in-corpus"      glassine 7d {}      {ssss}
+# F: a needle only in a subagent transcript finds its parent session.
+run_case "F subagent-hit"       fumarole 7d {}      {aaaa}
 
 ::questlog::path::_real_file delete -force $TMP
 
