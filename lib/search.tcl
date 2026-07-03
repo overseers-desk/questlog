@@ -217,7 +217,14 @@ set ::questlog::search::WorkerScript {
     proc worker_run {main_tid obj_cmd epoch paths clauses} {
         set matches_in_slice 0
         foreach path $paths {
-            lassign [::questlog::match::scan_file $path $clauses] row matches
+            # One hostile file must not kill the slice: without the
+            # terminating on_worker_done the main thread would wait forever.
+            # Log, count as unmatched, keep scanning.
+            if {[catch {::questlog::match::scan_file $path $clauses} r]} {
+                puts stderr "questlog: search worker: $path: $r"
+                continue
+            }
+            lassign $r row matches
             if {$row eq ""} continue
             thread::send -async $main_tid \
                 [list ::questlog::search::dispatch $obj_cmd on_worker_file $epoch $row $matches]
@@ -323,7 +330,16 @@ oo::class create ::questlog::Search {
         }
         my cancel
         set clauses [::questlog::search::build_clauses $snapshot]
-        if {![::questlog::search::clauses_any $clauses]} return
+        if {![::questlog::search::clauses_any $clauses]} {
+            # An empty clause set completes instantly: fire the callbacks the
+            # way the empty-corpus path does, so a caller awaiting OnDone (the
+            # status line, the spinner) never waits on a search that will not
+            # run - a whitespace-only query used to hang the "Searching..."
+            # state forever here.
+            after 1 [list {*}$OnProgress 0 0 0]
+            after 1 [list {*}$OnDone 0 0]
+            return
+        }
         set my_epoch [incr Epoch]
         set Active 1
         set MatchedSessions [dict create]
@@ -386,7 +402,13 @@ oo::class create ::questlog::Search {
             if {$my_epoch != $Epoch} return
             # The shared per-file scanner; the tick yields mid-file so a cancel
             # (a fresh Enter or filter change) lands without finishing a big log.
-            lassign [::questlog::match::scan_file $path $clauses $tick $yl] row matches
+            # An error inside (one hostile file) is confined to that file: it
+            # logs, counts as unmatched, and the search still completes.
+            if {[catch {::questlog::match::scan_file $path $clauses $tick $yl} r]} {
+                puts stderr "questlog: search: $path: $r"
+                set r [list "" {}]
+            }
+            lassign $r row matches
             if {$my_epoch != $Epoch} return
             # row "" means the file could not be opened (a cancel mid-file is
             # caught by the epoch check above); count it and move on.
@@ -443,7 +465,12 @@ oo::class create ::questlog::Search {
         package require Thread
         my cancel
         set clauses [::questlog::search::build_clauses $snapshot]
-        if {![::questlog::search::clauses_any $clauses]} return
+        if {![::questlog::search::clauses_any $clauses]} {
+            # Same instant completion as the coroutine path's empty-clause exit.
+            after 1 [list {*}$OnProgress 0 0 0]
+            after 1 [list {*}$OnDone 0 0]
+            return
+        }
         set my_epoch [incr Epoch]
         set Active 1
         set MatchedSessions [dict create]

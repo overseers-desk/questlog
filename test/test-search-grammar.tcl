@@ -176,6 +176,7 @@ check err_ambig_rgn 1 [string match {*ambiguous region*}          [cli_err --key
 check err_or_edge   1 [string match {*--or needs a clause*}       [cli_err --or --keyword x]]
 check err_not_edge  1 [string match {*--not has no following*}    [cli_err --keyword x --not]]
 check err_until_bad 1 [string match {*--until: invalid*}          [cli_err --until 3x --keyword x]]
+check err_bad_regex 1 [string match {*invalid pattern*}           [cli_err --regex "foo("]]
 check err_accrued_no_bound 1 [string match {*--accrued-cost needs a time bound*} [cli_err --accrued-cost --keyword x]]
 check err_accrued_all      1 [string match {*--accrued-cost needs a time bound*} [cli_err --accrued-cost --since all --keyword x]]
 

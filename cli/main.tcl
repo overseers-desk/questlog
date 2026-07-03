@@ -238,6 +238,12 @@ proc ::questlog::cli::main::parse_query {argv} {
         }
         if {[regexp {^--(?:regex|rx|pattern)(?::(.*))?$} $arg -> rspec]} {
             set val [::questlog::cli::main::next_val argv i $arg]
+            # Validate now: the pattern's first execution is deep inside the
+            # scan, where a throw is a stack trace instead of a usage error.
+            if {[catch {regexp -- $val {}} rxerr]} {
+                puts stderr "questlog: $arg: invalid pattern '$val': $rxerr"
+                ::questlog::cli::main::usage
+            }
             ::questlog::cli::main::push_leaf leaves cur pending_neg \
                 [::questlog::match::rx_leaf $val [::questlog::cli::main::regions $rspec] $pending_neg]
             continue

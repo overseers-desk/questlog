@@ -34,7 +34,11 @@ namespace eval ::questlog::ui {}
 # the list empty. Shared by app.tcl (search start/cancel) and sessions.tcl
 # (CriteriaActive flag: browse versus result-index mode).
 proc ::questlog::ui::any_criteria {snapshot} {
-    if {[dict exists $snapshot search] && [dict get $snapshot search] ne ""} {
+    # A search counts only when it tokenises to at least one term: a
+    # whitespace-only or quotes-only box is no criterion, and treating it as
+    # one cleared the list into a search that never starts.
+    if {[dict exists $snapshot search] && [llength \
+            [::questlog::search::search_terms [dict get $snapshot search]]] > 0} {
         return 1
     }
     foreach k {file tool pattern} {
@@ -731,6 +735,9 @@ oo::class create ::questlog::ui::Toolbar {
     method commit_pattern_add {} {
         set v [string trim $AddText(pattern)]
         if {$v eq ""} { my cancel_edit pattern; return }
+        # An unparseable regex stays in the editor with a bell rather than
+        # becoming a chip whose first execution would abort every search.
+        if {[catch {regexp -- $v {}}]} { bell; return }
         set AddText(pattern) ""
         set AddState(pattern) collapsed
         my add_value pattern $v
