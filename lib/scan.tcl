@@ -495,10 +495,17 @@ oo::class create ::questlog::Scan {
     # row dicts, mtime DESC.
     method query {snapshot} {
         set out [list]
+        set dead [list]
         dict for {path row} $Rows {
+            # Rows is never pruned on deletion, so a memoised row can outlive
+            # its file (transcript pruning, a user delete); returning it would
+            # paint a ghost the next reconcile tick has to take back. Drop it
+            # from the result and from the memo.
+            if {![file exists $path]} { lappend dead $path; continue }
             if {![::questlog::filter::row_matches $snapshot $row]} continue
             lappend out $row
         }
+        foreach p $dead { dict unset Rows $p }
         return [lsort -decreasing -command ::questlog::scan::cmp_mtime $out]
     }
 

@@ -428,22 +428,20 @@ proc ::questlog::ui::app::on_filter {snapshot} {
     discard_search_buffer
     $SessionList apply_filter $snapshot
 
-    # Under running-only the reconciler builds the view straight from the
-    # live registry (it scans any running file it needs on demand), so the
-    # windowed replay/extend is skipped. Otherwise replay the memoised rows
-    # that match the new snapshot - Scan's coroutine skips memoised paths, so
-    # without this the list stays empty whenever the snapshot was previously
-    # seen (e.g. 24h to 7d) - then extend for newly-windowed files. With
-    # criteria active the list is built from matches, but the scan still runs
-    # so Search has a corpus and lookup_session resolves rows.
-    set running_only [dict getdef [dict getdef $snapshot listview {}] running_only 0]
-    if {!$running_only} {
-        foreach row [$Scan query $snapshot] {
-            $SessionList on_scan_row $row
-        }
-        set ScanActive 1
-        $Scan extend $snapshot
+    # Replay the memoised rows that match the new snapshot - Scan's coroutine
+    # skips memoised paths, so without this the list stays empty whenever the
+    # snapshot was previously seen (e.g. 24h to 7d) - then extend for
+    # newly-windowed files. Model membership is the scope's question alone;
+    # the list-view toggles only decide which in-model rows paint
+    # (session_shown), so a scope change under running-only repopulates like
+    # any other and untoggling shows the full corpus instantly. With criteria
+    # active the list is built from matches, but the scan still runs so
+    # Search has a corpus and lookup_session resolves rows.
+    foreach row [$Scan query $snapshot] {
+        $SessionList on_scan_row $row
     }
+    set ScanActive 1
+    $Scan extend $snapshot
 
     # Seed running markers now, in the same event-loop turn, so there is no
     # flash of the pre-reconcile state.

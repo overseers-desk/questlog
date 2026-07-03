@@ -529,11 +529,11 @@ oo::class create ::questlog::ui::SessionList {
 
     # ---- streaming inserts -------------------------------------------
 
-    # Browse-mode row from Scan. Skipped under running-only (the reconciler
-    # owns the display then) and when criteria are active (the result index
-    # is built from matches, not the scan stream).
+    # Browse-mode row from Scan. Skipped when criteria are active (the result
+    # index is built from matches, not the scan stream). The view toggles do
+    # not gate the stream: every in-scope row enters the model with its
+    # hidden flag from session_shown, so a toggle only chooses what paints.
     method on_scan_row {row} {
-        if {[::questlog::sessionlist::toggle $Snapshot running_only 0]} return
         if {$CriteriaActive} return
         if {![my row_matches_snapshot $row]} return   ;# scope = model membership
         set path [dict get $row path]
@@ -597,9 +597,15 @@ oo::class create ::questlog::ui::SessionList {
             set row [{*}$LookupSession $path]
             if {$row eq ""} { set row [dict create folder [dict get $first folder]] }
             my model_add_session $path $row [dict get $first lineoff]
+            # A streamed result obeys the view toggles from its first paint,
+            # the same three lines on_scan_row applies - not two seconds
+            # later when the running-reconcile tick recomputes visibility.
+            my sflagset $path hidden [expr {![my session_shown $path $row]}]
         }
-        # Search folders are expanded, so render the session if it is not yet.
-        if {[my folder_expanded [my sget $path folder]] \
+        # Search folders are expanded, so render the session if it is visible
+        # and not yet drawn.
+        if {![my sflag $path hidden] \
+            && [my folder_expanded [my sget $path folder]] \
             && ![my sflag $path rendered]} {
             my render_session $path
         }
@@ -1076,9 +1082,12 @@ oo::class create ::questlog::ui::SessionList {
             set row [{*}$LookupSession $parent]
             if {$row eq ""} { set row [dict create folder $folder] }
             my model_add_session $parent $row
+            # The same first-paint toggle discipline as render_session_matches.
+            my sflagset $parent hidden [expr {![my session_shown $parent $row]}]
         }
         my sset $parent has_subagents 1
-        if {[my folder_expanded [my sget $parent folder]] \
+        if {![my sflag $parent hidden] \
+            && [my folder_expanded [my sget $parent folder]] \
             && ![my sflag $parent rendered]} {
             my render_session $parent
         }
@@ -1428,17 +1437,21 @@ oo::class create ::questlog::ui::SessionList {
 
     method expand_folder {folder} {
         foreach path [my folder_visible_paths $folder] {
-            if {[my sflag $path hidden]} continue
             my render_session $path
         }
     }
 
-    # A folder's session paths in the on-screen (sorted) order - the order a
-    # Shift-range walks and that expand_folder renders. The one place the
-    # display order of a folder's sessions is defined.
+    # A folder's VISIBLE session paths in the on-screen (sorted) order - the
+    # order a Shift-range walks and that expand_folder renders. Hidden rows
+    # (view-toggled out) are not in it: a range selection or a batch action
+    # must never touch a session the user cannot see. The one place a
+    # folder's display order and visibility compose.
     method folder_visible_paths {folder} {
-        return [my sort_paths [my folder_session_paths $folder] \
-                              [my folder_session_src $folder]]
+        set shown [list]
+        foreach path [my folder_session_paths $folder] {
+            if {![my sflag $path hidden]} { lappend shown $path }
+        }
+        return [my sort_paths $shown [my folder_session_src $folder]]
     }
 
     # A folder's session paths, in the order they sit under the folder node.
@@ -2028,7 +2041,7 @@ oo::class create ::questlog::ui::SessionList {
 
         $Text configure -state normal
         my anchor_save
-        if {!$running_only && !$CriteriaActive} {
+        if {!$CriteriaActive} {
             dict for {uuid path} $running {
                 if {[my has_session $path]} continue
                 set row [{*}$LookupSession $path]
