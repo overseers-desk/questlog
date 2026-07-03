@@ -3,8 +3,10 @@
 # at or below the scoped directory, so out-of-scope sessions are never opened.
 # Because encode_cwd is lossy (every non-alphanumeric -> -), the folder-name test
 # can pull in a hyphenated sibling (.../proj-x looks like a child of .../proj);
-# row_subtree_match confirms each kept row from its real cwd. This pins both: the
-# enumeration restriction and the confirmation that corrects the over-inclusion.
+# row_subtree_match confirms each kept row. This pins the enumeration
+# restriction, the residence semantics (the row's project folder resolved on
+# disk decides; a moved session follows its new home), and the fallback chain
+# for unresolvable folders (recorded cwd, then encoded name).
 
 package require Tcl 9
 package require TclOO
@@ -62,13 +64,21 @@ check enum_keeps_proj      1 [expr {"-home-test-code-proj"     in $lp_folders}]
 check enum_keeps_child     1 [expr {"-home-test-code-proj-sub" in $lp_folders}]
 check enum_keeps_hyphen    1 [expr {"-home-test-code-proj-x"   in $lp_folders}]
 
-# ---- row_subtree_match confirms the real cwd: the hyphenated sibling drops ----
-set rp [$s scan_one /tmp/questlog-subtree-test/-home-test-code-proj/aaaa.jsonl]
-set rc [$s scan_one /tmp/questlog-subtree-test/-home-test-code-proj-sub/bbbb.jsonl]
-set rx [$s scan_one /tmp/questlog-subtree-test/-home-test-code-proj-x/cccc.jsonl]
-check confirm_exact          1 [::questlog::filter::row_subtree_match $rp $U]
-check confirm_child          1 [::questlog::filter::row_subtree_match $rc $U]
-check confirm_hyphen_sibling 0 [::questlog::filter::row_subtree_match $rx $U]
+# ---- row_subtree_match, fallback chain: /home/test/... does not exist on the
+# running machine, so the folders are unresolvable and the recorded cwd_hint
+# decides - the deleted-repo path. The hyphenated sibling still drops. ----
+set rp [$s stamp_subtree [$s scan_one /tmp/questlog-subtree-test/-home-test-code-proj/aaaa.jsonl]]
+set rc [$s stamp_subtree [$s scan_one /tmp/questlog-subtree-test/-home-test-code-proj-sub/bbbb.jsonl]]
+set rx [$s stamp_subtree [$s scan_one /tmp/questlog-subtree-test/-home-test-code-proj-x/cccc.jsonl]]
+check gone_stamp_empty       {} [dict get $rp folder_cwd]
+check gone_exact             1 [::questlog::filter::row_subtree_match $rp $U]
+check gone_child             1 [::questlog::filter::row_subtree_match $rc $U]
+check gone_hyphen_sibling    0 [::questlog::filter::row_subtree_match $rx $U]
+# cwd_hint also empty: the encoded folder name is the last evidence.
+set rblank [dict create folder -home-test-code-proj-sub cwd_hint "" folder_cwd ""]
+check gone_blank_by_name     1 [::questlog::filter::row_subtree_match $rblank $U]
+check gone_blank_other       0 [::questlog::filter::row_subtree_match \
+                                    [dict create folder -home-test-code-other cwd_hint ""] $U]
 
 # ---- canon_dir: the entry-point canonicaliser both the toolbar's folder
 # editor and the CLI's --subtree run a typed path through. Tcl 9 expands ~
@@ -86,6 +96,57 @@ check canon_bad_user   1  [catch {::questlog::path::canon_dir ~nosuchuser/x}]
 set UT [list [::questlog::path::canon_dir ~/../../home/test/code/proj]]
 check canon_feeds_confirm_exact 1 [::questlog::filter::row_subtree_match $rp $UT]
 check canon_feeds_confirm_child 1 [::questlog::filter::row_subtree_match $rc $UT]
+
+# ---- residence: real directories, so folders resolve and residence decides.
+# The move feature files a session into a project folder; the scope reads that
+# filing, not the cwd recorded in the transcript. ----
+set BASE /tmp/questlog-subtree-test-src
+::questlog::path::_real_file delete -force $BASE
+foreach d [list $BASE/proj $BASE/proj/sub $BASE/other $BASE/we\[i\]rd $BASE/weird] {
+    ::questlog::path::_real_file mkdir $d
+}
+set P $BASE/proj
+mkf [::questlog::path::encode_cwd $P]        $P        r001    ;# resident
+mkf [::questlog::path::encode_cwd $P/sub]    $P/sub    r002    ;# subdir resident
+mkf [::questlog::path::encode_cwd $P]        $BASE/other mv01  ;# moved INTO proj's folder
+mkf [::questlog::path::encode_cwd $BASE/other] $P/sub  mv02    ;# moved OUT to other's folder
+mkf [::questlog::path::encode_cwd $BASE/we\[i\]rd] $BASE/we\[i\]rd w001
+mkf [::questlog::path::encode_cwd $BASE/weird]     $BASE/weird     w002
+
+set s2 [::questlog::Scan new {} {}]
+set root /tmp/questlog-subtree-test
+set r_res  [$s2 stamp_subtree [$s2 scan_one $root/[::questlog::path::encode_cwd $P]/r001.jsonl]]
+set r_sub  [$s2 stamp_subtree [$s2 scan_one $root/[::questlog::path::encode_cwd $P/sub]/r002.jsonl]]
+set r_min  [$s2 stamp_subtree [$s2 scan_one $root/[::questlog::path::encode_cwd $P]/mv01.jsonl]]
+set r_mout [$s2 stamp_subtree [$s2 scan_one $root/[::questlog::path::encode_cwd $BASE/other]/mv02.jsonl]]
+set r_wb   [$s2 stamp_subtree [$s2 scan_one $root/[::questlog::path::encode_cwd $BASE/we\[i\]rd]/w001.jsonl]]
+set r_wp   [$s2 stamp_subtree [$s2 scan_one $root/[::questlog::path::encode_cwd $BASE/weird]/w002.jsonl]]
+
+check res_stamp             $P [dict get $r_res folder_cwd]
+check res_exact             1 [::questlog::filter::row_subtree_match $r_res [list $P]]
+check res_ancestor          1 [::questlog::filter::row_subtree_match $r_res [list $BASE]]
+check res_subdir            1 [::questlog::filter::row_subtree_match $r_sub [list $P]]
+# The moved-in session answers to its new home at every level of its tree,
+# and no longer to the directory recorded in its transcript.
+check moved_in_new_home     1 [::questlog::filter::row_subtree_match $r_min [list $P]]
+check moved_in_ancestor     1 [::questlog::filter::row_subtree_match $r_min [list $BASE]]
+check moved_in_not_old_cwd  0 [::questlog::filter::row_subtree_match $r_min [list $BASE/other]]
+# The moved-out session left proj's tree even though its transcript ran there.
+check moved_out_gone        0 [::questlog::filter::row_subtree_match $r_mout [list $P]]
+check moved_out_new_home    1 [::questlog::filter::row_subtree_match $r_mout [list $BASE/other]]
+# Glob metacharacters in a directory name are characters, not patterns: the
+# scope we\[i\]rd matches only that directory, never its glob-shadow weird.
+check metachar_self         1 [::questlog::filter::row_subtree_match $r_wb [list $BASE/we\[i\]rd]]
+check metachar_no_shadow    0 [::questlog::filter::row_subtree_match $r_wp [list $BASE/we\[i\]rd]]
+
+# ---- warm-Rows agreement: query over published rows returns exactly what a
+# fresh walk admits, so a warm GUI and a fresh scan answer the scope alike ----
+foreach f [glob -directory $root -- */*.jsonl] { $s2 scan_path $f }
+set got [lsort [lmap r [$s2 query [dict create since all subtree [list $P]]] \
+                    {file rootname [file tail [dict get $r path]]}]]
+check query_residence {mv01 r001 r002} $got
+$s2 destroy
+::questlog::path::_real_file delete -force $BASE
 
 # ---- no subtree scope: every folder is walked (show-all) ----
 set all_folders [lsort -unique [lmap p [$s list_paths_for [dict create since all]] \

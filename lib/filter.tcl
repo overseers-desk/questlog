@@ -159,17 +159,41 @@ proc ::questlog::filter::folder_subtree_candidate {fname subtree_list} {
     return 0
 }
 
-# 1 iff the row's cwd is at or below any folder in subtree_list. An exact-cwd hit
-# is matched by the row's encoded folder name; a subtree-root hit falls back to
-# the recorded cwd_hint string and checks it starts with the subtree dir.
+# 1 iff the row is in the subtree of any directory in subtree_list. Residence
+# decides: folder_cwd - the directory the row's project folder resolves to,
+# stamped by Scan's stamp_subtree, since the resolver and its cache live there -
+# is compared against each subtree dir. When residence is known it is
+# authoritative: a session moved into an out-of-scope project folder is out
+# even though its recorded cwd is in scope, and one moved into an in-scope
+# folder is in - the move feature files sessions, and filing is what the scope
+# reads. Fallbacks, each naming its fault:
+#   - folder_cwd "" or absent (the project directory no longer exists, or the
+#     encoded basename is ambiguous, so residence is unknowable): the recorded
+#     cwd_hint decides - this keeps sessions of a deleted repo findable by
+#     their old path.
+#   - cwd_hint also empty (a transcript that never recorded a cwd): the
+#     encoded folder name against the subtree dirs, the last honest evidence.
 proc ::questlog::filter::row_subtree_match {row subtree_list} {
-    set folder [dict get $row folder]
+    set folder_cwd [dict getdef $row folder_cwd ""]
+    if {$folder_cwd ne ""} {
+        return [in_subtree_of $folder_cwd $subtree_list]
+    }
     set cwd_hint [dict getdef $row cwd_hint ""]
+    if {$cwd_hint ne ""} {
+        return [in_subtree_of $cwd_hint $subtree_list]
+    }
+    return [folder_subtree_candidate [dict get $row folder] $subtree_list]
+}
+
+# 1 iff $path equals a directory in subtree_list or extends it past a "/".
+# Literal prefix compare, not string match: a glob metacharacter in a
+# directory name ([, ?, *) is a character here, never a pattern.
+proc ::questlog::filter::in_subtree_of {path subtree_list} {
     foreach u $subtree_list {
-        if {$folder eq [::questlog::path::encode_cwd $u]} { return 1 }
-        if {$cwd_hint ne ""} {
-            set u [string trimright $u /]
-            if {$cwd_hint eq $u || [string match "$u/*" $cwd_hint]} { return 1 }
+        set u [string trimright $u /]
+        if {$path eq $u
+            || [string equal -length [string length "$u/"] "$u/" $path]} {
+            return 1
         }
     }
     return 0

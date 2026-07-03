@@ -436,6 +436,7 @@ oo::class create ::questlog::Scan {
     # data as a free side-effect of its own pass). Last-write-wins; the
     # content from either consumer is the same row.
     method publish_row {row} {
+        set row [my stamp_subtree $row]
         set path [dict get $row path]
         # Search republishes this row from scan_file, which computes neither
         # the cost fields nor the identity fields scan_one reads from the tail
@@ -494,6 +495,24 @@ oo::class create ::questlog::Scan {
             lappend out $row
         }
         return [lsort -decreasing -command ::questlog::scan::cmp_mtime $out]
+    }
+
+    # Stamp a row with folder_cwd: the directory its project folder resolves
+    # to, normalized so a symlinked recorded spelling compares equal to a
+    # canon_dir-normalized subtree scope, or "" when the folder is
+    # unresolvable (its directory is gone, or the encoded basename is
+    # ambiguous). row_subtree_match reads the field as the residence
+    # authority; the stamping lives here because Scan owns the resolver and
+    # its cache, which keeps ::questlog::filter pure over its dicts. A ""
+    # stamp is not re-tried until the file is rescanned - resolve_folder
+    # itself never caches a failure, so a directory restored later heals on
+    # the next scan of the row.
+    method stamp_subtree {row} {
+        if {[dict exists $row folder_cwd]} { return $row }
+        set cwd [my resolve_folder [dict get $row folder]]
+        if {$cwd ne ""} { set cwd [file normalize $cwd] }
+        dict set row folder_cwd $cwd
+        return $row
     }
 
     # The single canonical folder-basename -> cwd resolver. Every label
@@ -556,7 +575,10 @@ oo::class create ::questlog::Scan {
     # session into Rows on demand. Returns the row, or {} if unreadable.
     method scan_path {path} {
         set row [my scan_one $path]
-        if {[dict size $row] > 0} { my publish_row $row }
+        if {[dict size $row] > 0} {
+            set row [my stamp_subtree $row]
+            my publish_row $row
+        }
         return $row
     }
 

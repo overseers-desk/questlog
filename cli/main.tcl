@@ -501,7 +501,10 @@ proc ::questlog::cli::main::run {argv} {
         lassign [::questlog::match::scan_file $path $clauses] row matches
         if {$row eq ""} continue
         
-        # Apply snapshot-level row filters (recency bound, bookmark pin, and subtree scope)
+        # Apply snapshot-level row filters (recency bound, bookmark pin, and
+        # subtree scope). Stamp residence first: scan_file rows carry no
+        # folder_cwd, and the subtree predicate reads it as the authority.
+        set row [$scan stamp_subtree $row]
         if {![::questlog::filter::row_matches $sel_snapshot $row]} {
             continue
         }

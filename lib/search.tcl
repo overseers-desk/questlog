@@ -294,8 +294,12 @@ oo::class create ::questlog::Search {
     # search corpus once skipped this, so a subtree-scoped search
     # returned sessions from other folders. Bookmarked, running, and the
     # bookmarked-only/running-only toggles are session-list view toggles, not
-    # search scope, so they are deliberately not applied here.
-    method row_in_scope {row} { return [::questlog::filter::row_matches $Snapshot $row] }
+    # search scope, so they are deliberately not applied here. The row arrives
+    # from scan_file without a residence stamp (workers never resolve folders),
+    # so stamp it here on the main thread before the predicate reads it.
+    method row_in_scope {row} {
+        return [::questlog::filter::row_matches $Snapshot [$Scan stamp_subtree $row]]
+    }
 
     method cancel {} {
         incr Epoch
