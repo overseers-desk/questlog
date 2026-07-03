@@ -253,12 +253,12 @@ proc ::questlog::ui::app::start {root {initial_criteria {}} {init_since ""} {ini
     if {$init_since ne ""} { $Toolbar set_window $init_since }
     if {$init_search ne ""} { $Toolbar set_search $init_search }
 
-    # No default `under`: the list opens across every project, and a scope is
+    # No default `subtree`: the list opens across every project, and a scope is
     # added only when the user asks for one. A launch-cwd default scoped the list
     # to wherever questlog happened to be started - often the home directory, a
     # parent of everything - which both assumed the user keeps code under home and
-    # silenced any scope they then added (under entries are OR'd, so a home entry
-    # kept the whole corpus in view until it was removed).
+    # silenced any scope they then added (subtree entries are OR'd, so a home
+    # entry kept the whole corpus in view until it was removed).
     $Toolbar publish
 
     bind . <Control-q> [namespace code quit]
@@ -381,7 +381,7 @@ proc ::questlog::ui::app::run_tick {} {
 # listview sub-key (the view toggles) is a view-only change and takes the fast
 # path; any difference here forces the full rebuild.
 proc ::questlog::ui::app::scope_equal {a b} {
-    foreach k {search search_case search_regions file tool pattern under since until min_turns} {
+    foreach k {search search_case search_regions file tool pattern subtree since until min_turns} {
         if {[dict getdef $a $k {}] ne [dict getdef $b $k {}]} { return 0 }
     }
     return 1

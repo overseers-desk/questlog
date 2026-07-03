@@ -33,8 +33,8 @@ if {[info commands ::questlog::path::_real_file] eq ""} {
     }
 }
 
-# Canonical absolute form of a user-typed directory path (the under scope's
-# entry points: the toolbar's folder editor and the CLI's --under). Tcl 9
+# Canonical absolute form of a user-typed directory path (the subtree scope's
+# entry points: the toolbar's folder editor and the CLI's --subtree). Tcl 9
 # expands ~ nowhere - file normalize treats a leading ~ as an ordinary
 # relative segment - so a typed ~/x would ride through every comparison as
 # a literal and the scope would silently match nothing. Expand the tilde

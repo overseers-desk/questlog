@@ -286,12 +286,12 @@ oo::class create ::questlog::Search {
     }
 
     # 1 iff a matched row passes the snapshot's row-level SCOPE - the full
-    # filter::row_matches predicate (under-folder scope plus the min-turns floor;
+    # filter::row_matches predicate (subtree scope plus the min-turns floor;
     # since/until are already pruned by list_paths_for, and row_matches re-checks
-    # them harmlessly with the bookmark pin). under is the scope filter
-    # list_paths_for cannot pre-prune: since/until are mtime bounds it already
-    # applies, but `under` needs the row's cwd_hint, read only once the file is
-    # scanned. The GUI search corpus once skipped this, so an under-scoped search
+    # them harmlessly with the bookmark pin). subtree is the scope filter
+    # list_paths_for cannot fully pre-prune: since/until are mtime bounds it
+    # already applies, but subtree membership is a per-row question. The GUI
+    # search corpus once skipped this, so a subtree-scoped search
     # returned sessions from other folders. Bookmarked, running, and the
     # bookmarked-only/running-only toggles are session-list view toggles, not
     # search scope, so they are deliberately not applied here.

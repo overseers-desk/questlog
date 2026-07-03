@@ -79,11 +79,11 @@ check bound_accrued_set     1 [bound accrued --accrued-cost --since 7d --keyword
 check bound_accrued_default 0 [bound accrued --keyword x]
 
 # selection_snapshot_for clears the until ceiling (so an accrued pass keeps a
-# session revived after it) while preserving the since floor and under-scope.
-set sel [::questlog::cli::main::selection_snapshot_for [dict create since 7d until 2d under /x]]
+# session revived after it) while preserving the since floor and subtree scope.
+set sel [::questlog::cli::main::selection_snapshot_for [dict create since 7d until 2d subtree /x]]
 check sel_clears_until "" [dict get $sel until]
 check sel_keeps_since 7d  [dict get $sel since]
-check sel_keeps_under /x  [dict get $sel under]
+check sel_keeps_subtree /x  [dict get $sel subtree]
 
 # ---- eval_tree: the truth table for (A AND B) OR C -------------------------
 # effsat is a dict leaf-id -> effective truth; leaves 0,1,2 are A,B,C.

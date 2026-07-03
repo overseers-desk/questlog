@@ -223,17 +223,17 @@ oo::class create ::questlog::Scan {
         if {![file isdirectory $root]} { return [list] }
         set cutoff [::questlog::filter::cutoff_for $snapshot]
         set ceiling [::questlog::filter::ceiling_for $snapshot]
-        # `under` is the scan's root, not a post-filter: when it is set, walk only
-        # the folders whose encoded name places them at or below an under
+        # `subtree` is the scan's root, not a post-filter: when it is set, walk
+        # only the folders whose encoded name places them at or below a subtree
         # directory, so sessions outside the scope are never enumerated or opened.
         # The name test can over-include a hyphenated sibling (encode_cwd is
-        # lossy); row_under_match confirms each kept row from its real cwd. Empty
-        # under walks every folder (the show-all path).
-        set under [dict getdef $snapshot under {}]
+        # lossy); row_subtree_match confirms each kept row. An empty subtree
+        # walks every folder (the show-all path).
+        set subtree [dict getdef $snapshot subtree {}]
         set pairs [list]
         foreach folder [glob -nocomplain -directory $root -type d -- *] {
-            if {[llength $under] > 0 \
-                && ![::questlog::filter::folder_under_candidate [file tail $folder] $under]} continue
+            if {[llength $subtree] > 0 \
+                && ![::questlog::filter::folder_subtree_candidate [file tail $folder] $subtree]} continue
             foreach f [glob -nocomplain -directory $folder -- *.jsonl] {
                 # Vanished between glob and stat (transcript pruning): skip.
                 if {[catch {file mtime $f} m]} continue
@@ -484,7 +484,7 @@ oo::class create ::questlog::Scan {
 
     # Filter rows by a snapshot. Used by the session list and Search to read
     # the current memoised view. The snapshot row-level predicate (the since
-    # cutoff, the until ceiling, the under-folder scope, the min-turns floor)
+    # cutoff, the until ceiling, the subtree scope, the min-turns floor)
     # lives in ::questlog::filter, shared with SessionList. Returns a list of
     # row dicts, mtime DESC.
     method query {snapshot} {

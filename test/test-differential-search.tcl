@@ -6,7 +6,7 @@
 # CLI engine (the real ./questlog --json subprocess) - over one fixture corpus
 # with known properties. Each case asserts BOTH engines return the exact
 # expected session set. They share lib/ but diverge in orchestration, so a
-# scope filter the GUI search forgets (the `under` row-scope, which lives in
+# scope filter the GUI search forgets (the `subtree` row-scope, which lives in
 # filter::row_matches and the CLI applies but the GUI search corpus does not)
 # shows up as a GUI-vs-truth and GUI-vs-CLI mismatch, not a silent pass.
 #
@@ -76,18 +76,18 @@ proc write_session {folder uuid cwd needle age_days} {
 }
 
 # Two project folders. PROJA is the in-scope project; PROJB stands in for the
-# other project whose sessions an `under PROJA` scope must exclude.
+# other project whose sessions a `subtree PROJA` scope must exclude.
 set PROJA /home/test/code/proja
 set PROJB /home/test/code/projb
 
 ::questlog::path::_real_file delete -force $TMP
-# sA: under proja, hits "shimmer", recent.
+# sA: in proja, hits "shimmer", recent.
 write_session -home-test-code-proja aaaa $PROJA shimmer 2
-# sN: under proja, but NO "shimmer" (content-filter control).
+# sN: in proja, but NO "shimmer" (content-filter control).
 write_session -home-test-code-proja nnnn $PROJA plainword 2
-# sB: under projb, hits "shimmer", recent.
+# sB: in projb, hits "shimmer", recent.
 write_session -home-test-code-projb bbbb $PROJB shimmer 2
-# sC: under projb, hits "shimmer", but 40 days old (since control).
+# sC: in projb, hits "shimmer", but 40 days old (since control).
 write_session -home-test-code-projb cccc $PROJB shimmer 40
 
 # ---- engines --------------------------------------------------------
@@ -137,12 +137,12 @@ proc cli_search {argv} {
 
 # One case: the same query through both engines, both asserted against truth,
 # and the two engines asserted equal to each other.
-proc run_case {name search since under truth} {
+proc run_case {name search since subtree truth} {
     set argv [list --search $search --since $since]
     set snap [dict create search $search search_case 0 search_regions any since $since]
-    if {$under ne ""} {
-        lappend argv --under $under
-        dict set snap under [list $under]
+    if {$subtree ne ""} {
+        lappend argv --subtree $subtree
+        dict set snap subtree [list $subtree]
     }
     set cli [cli_search $argv]
     check "$name / CLI == truth" $truth $cli
@@ -165,14 +165,14 @@ proc run_case {name search since under truth} {
 # ---- truth table ----------------------------------------------------
 #
 # A: no scope            -> every shimmer session (sN has no needle).
-# B: under proja         -> only sA; sB/sC are under projb. (THE under-in-search case)
+# B: subtree proja       -> only sA; sB/sC are in projb. (THE subtree-in-search case)
 # C: since 7d            -> sA, sB; sC is 40d old, pruned by the corpus bound.
-# D: since 7d + under projb -> only sB; sA is under proja, sC is too old.
+# D: since 7d + subtree projb -> only sB; sA is in proja, sC is too old.
 
-run_case "A all/no-under"       shimmer all {}     {aaaa bbbb cccc}
-run_case "B all/under-proja"    shimmer all $PROJA {aaaa}
-run_case "C 7d/no-under"        shimmer 7d  {}     {aaaa bbbb}
-run_case "D 7d/under-projb"     shimmer 7d  $PROJB {bbbb}
+run_case "A all/no-subtree"     shimmer all {}     {aaaa bbbb cccc}
+run_case "B all/subtree-proja"  shimmer all $PROJA {aaaa}
+run_case "C 7d/no-subtree"      shimmer 7d  {}     {aaaa bbbb}
+run_case "D 7d/subtree-projb"   shimmer 7d  $PROJB {bbbb}
 
 ::questlog::path::_real_file delete -force $TMP
 

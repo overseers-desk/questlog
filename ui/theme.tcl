@@ -63,9 +63,9 @@ namespace eval ::questlog::ui::theme {
         glyph_running   #3ec25b
         glyph_bookmark  #d6a30e
         chip_or         #808080
-        crit_under_bg   #ece2f5
-        crit_under_fg   #4a3677
-        crit_under_bd   #c6b3df
+        crit_subtree_bg   #ece2f5
+        crit_subtree_fg   #4a3677
+        crit_subtree_bd   #c6b3df
         crit_file_bg    #e5e5e5
         crit_file_fg    #5a5f66
         crit_file_bd    #ccd1d7
@@ -254,7 +254,7 @@ proc ::questlog::ui::theme::build_chrome {} {
     set pw [expr {[font measure TkDefaultFont "regex"] + 20}]
     # per criterion type: the white value chip and the tinted type pill share
     # the type's hairline tint.
-    foreach t {under file tool regex} {
+    foreach t {subtree file tool regex} {
         rrect_img qlChip_$t $w $ch $r [c chip_bg] [c crit_${t}_bd] 1
         ttk::style element create Chip_$t.bg image qlChip_$t \
             -border $B -padding 0 -sticky nsew

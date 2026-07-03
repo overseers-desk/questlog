@@ -48,7 +48,7 @@ A session is returned when its clauses hold somewhere in its log. Clauses combin
 - `--tool:read|write|edit|file <path>` finds a session that read, wrote, edited, or touched a file, matched by path suffix, so a bare filename finds it in any directory.
 - `--tool:<name> <key>` finds a session that used a tool (Bash, Grep, ...) whose invocation contains the key, and an empty key means any use.
 
-Bound the whole result with `--since <24h|7d|2w|2026-04-01|all>`, `--until <...>`, `--under <dir>` (sessions that ran in `<dir>` or anywhere in its subtree), or `--limit <N>`. Use the words from the user's own request (a topic, a filename, a tool name), and reach for `--regex` only when a literal keyword will not do. The full clause and bound inventory is in `questlog --help`.
+Bound the whole result with `--since <24h|7d|2w|2026-04-01|all>`, `--until <...>`, `--subtree <dir>` (sessions in the subtree of `<dir>`: the directory itself and everything below it), or `--limit <N>`. Use the words from the user's own request (a topic, a filename, a tool name), and reach for `--regex` only when a literal keyword will not do. The full clause and bound inventory is in `questlog --help`.
 
 The output is an array of project folders, each with its `sessions`, and each session its `subagents`. A folder carries `project_path` (the session's original directory); a session carries `uuid`, `path`, `title`, `first_ts`, `cost_usd`, `turns`, and the matched `matches` snippets. Slice it with `jq`; the `uuid` or `path` feeds the next step.
 

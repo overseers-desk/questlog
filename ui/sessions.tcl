@@ -2018,10 +2018,10 @@ oo::class create ::questlog::ui::SessionList {
     method reconcile_running {running} {
         set RunningSet $running
         set running_only [::questlog::sessionlist::toggle $Snapshot running_only 0]
-        # The under scope is hard, even for a running session: a live session in
+        # The subtree scope is hard, even for a running session: a live session in
         # another project must not surface under a folder scope. The recency bound
         # is the only thing a running session bypasses, not the folder scope.
-        set under [dict getdef $Snapshot under {}]
+        set subtree [dict getdef $Snapshot subtree {}]
         set before [my session_count]
 
         $Text configure -state normal
@@ -2052,8 +2052,8 @@ oo::class create ::questlog::ui::SessionList {
                 # still absent here and is added below, so a running session in
                 # scope surfaces in plain browse.
                 if {[my has_session $path]} continue
-                if {[llength $under] > 0 \
-                    && ![::questlog::filter::row_under_match $row $under]} continue
+                if {[llength $subtree] > 0 \
+                    && ![::questlog::filter::row_subtree_match $row $subtree]} continue
                 my model_add_session $path $row
                 set shown [my session_shown $path $row]
                 my sflagset $path hidden [expr {!$shown}]
@@ -2076,12 +2076,12 @@ oo::class create ::questlog::ui::SessionList {
             if {$CriteriaActive} {
                 set retained 1
             } else {
-                # Under is a hard scope; within it a running session bypasses the
+                # The subtree scope is hard; within it a running session bypasses the
                 # recency / min-turns bounds (it always surfaces), but a running
-                # session OUTSIDE the under scope does not.
-                set in_under [expr {[llength $under] == 0 || $row eq "" \
-                    || [::questlog::filter::row_under_match $row $under]}]
-                set retained [expr {$in_under \
+                # session OUTSIDE the subtree scope does not.
+                set in_subtree [expr {[llength $subtree] == 0 || $row eq "" \
+                    || [::questlog::filter::row_subtree_match $row $subtree]}]
+                set retained [expr {$in_subtree \
                     && (($row ne "" && [my row_matches_snapshot $row]) || $is_running)}]
             }
             if {!$retained} { my forget_session $path; continue }

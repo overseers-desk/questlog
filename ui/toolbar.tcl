@@ -10,13 +10,13 @@ package require Tk
 #   search_case      0 | 1   (Aa toggle next to the search field)
 #   search_regions   any | user,assistant | tool-use | tool-result (region-spec
 #                    for the search terms; see lib/search.tcl parse_regions)
-#   under            list of absolute paths  (OR within, AND across clauses)
+#   subtree          list of absolute paths  (OR within, AND across clauses)
 #   file             list of {op path} pairs (op: either | read | wrote)
 #   tool             list of {name key} pairs (key matches the invocation text;
 #                    empty key = any use of the tool)
 #   pattern          list of regex strings   (case-sensitive, always)
 #   min_turns        the minimum-turns scope floor (1 = include all). A scope
-#                    filter alongside since/under: a session below the floor leaves
+#                    filter alongside since/subtree: a session below the floor leaves
 #                    the corpus, not just the view - see lib/filter.tcl.
 #   listview         the session-list view toggles, grouped away from the search
 #                    and scope keys above so no reader mistakes one for a search:
@@ -27,7 +27,7 @@ package require Tk
 namespace eval ::questlog::ui {}
 
 # any_criteria snapshot - true iff the snapshot carries a content-matching
-# clause (search text, regex pattern, or a file/tool clause). The `under`
+# clause (search text, regex pattern, or a file/tool clause). The `subtree`
 # clause is a row-level scope, not a content match, so it does not count here;
 # treating it as a criterion flips sessions.tcl into result-index mode and
 # Search.start returns immediately because there is nothing to match, leaving
@@ -108,12 +108,12 @@ oo::class create ::questlog::ui::Toolbar {
         set MinTurnsVar [::questlog::config::get min_turns_default]
         set RunningOnlyVar    0
         set BookmarkedOnlyVar 0
-        set Clauses [dict create under {} file {} tool {} pattern {}]
+        set Clauses [dict create subtree {} file {} tool {} pattern {}]
         set Subscribers [list]
         set RowFrames [dict create]
         set TailShown [dict create]
-        array set AddText {under {} file {} tool {} pattern {}}
-        array set AddState {under collapsed file collapsed tool collapsed pattern collapsed}
+        array set AddText {subtree {} file {} tool {} pattern {}}
+        array set AddState {subtree collapsed file collapsed tool collapsed pattern collapsed}
         set AddOp either
         set EditFocusKind ""
         set DebounceAfter ""
@@ -564,7 +564,7 @@ oo::class create ::questlog::ui::Toolbar {
             search         $SearchVar \
             search_case    $SearchCaseVar \
             search_regions $SearchScopeVar \
-            under          [dict get $Clauses under] \
+            subtree        [dict get $Clauses subtree] \
             file           [dict get $Clauses file] \
             tool           [dict get $Clauses tool] \
             pattern        [dict get $Clauses pattern] \
@@ -630,7 +630,7 @@ oo::class create ::questlog::ui::Toolbar {
     }
 
     # Add a value to a clause, creating/revealing the row as needed. For file
-    # the value is an {op path} pair, for tool a {name key} pair, for under and
+    # the value is an {op path} pair, for tool a {name key} pair, for subtree and
     # pattern a plain string.
     method add_value {kind value} {
         set vals [dict get $Clauses $kind]
@@ -707,17 +707,17 @@ oo::class create ::questlog::ui::Toolbar {
     # ---- add-entry commit handlers (popup-free; inline in each row) ---------
 
     # The typed path is canonicalised (tilde-expanded, normalized) before it
-    # becomes a chip, so the snapshot's under list only ever carries the
+    # becomes a chip, so the snapshot's subtree list only ever carries the
     # absolute form the row predicates compare against. A path that cannot be
     # expanded (an unknown ~user) stays in the editor with a bell rather than
     # becoming a chip that silently matches nothing.
     method commit_folder_add {} {
-        set v [string trim $AddText(under)]
-        if {$v eq ""} { my cancel_edit under; return }
+        set v [string trim $AddText(subtree)]
+        if {$v eq ""} { my cancel_edit subtree; return }
         if {[catch {::questlog::path::canon_dir $v} v]} { bell; return }
-        set AddText(under) ""
-        set AddState(under) collapsed
-        my add_value under $v
+        set AddText(subtree) ""
+        set AddState(subtree) collapsed
+        my add_value subtree $v
     }
 
     method commit_file_add {} {
@@ -750,8 +750,8 @@ oo::class create ::questlog::ui::Toolbar {
     method browse_folder {} {
         set d [tk_chooseDirectory -initialdir $Cwd -mustexist 1]
         if {$d ne ""} {
-            set AddState(under) collapsed
-            my add_value under [::questlog::path::canon_dir $d]
+            set AddState(subtree) collapsed
+            my add_value subtree [::questlog::path::canon_dir $d]
         }
     }
 
@@ -767,17 +767,17 @@ oo::class create ::questlog::ui::Toolbar {
     # and file rows are persistent (always shown, with a ghost add entry when
     # empty); the tool and pattern tail rows show once revealed or non-empty.
     method rebuild_clause_rows {} {
-        foreach k {under file tool pattern} {
+        foreach k {subtree file tool pattern} {
             if {[dict exists $RowFrames $k]} {
                 destroy [dict get $RowFrames $k]
                 dict unset RowFrames $k
             }
         }
         # kind -> styling type; pattern draws in the regex tint.
-        set ctype {under under file file tool tool pattern regex}
-        foreach k {under file pattern tool} {
+        set ctype {subtree subtree file file tool tool pattern regex}
+        foreach k {subtree file pattern tool} {
             set vals [dict get $Clauses $k]
-            set persistent [expr {$k in {under file}}]
+            set persistent [expr {$k in {subtree file}}]
             set shown [expr {$persistent || [dict getdef $TailShown $k 0] \
                              || [llength $vals] > 0}]
             if {!$shown} continue
@@ -785,15 +785,18 @@ oo::class create ::questlog::ui::Toolbar {
             set row $Restrict.row_$k
             ttk::frame $row
             # The type tag is a rounded tinted pill: the qlPill_<t> image gives
-            # the shape and fill, the type name is drawn centred over it, and the
-            # label background matches the panel so the pill's corners blend.
+            # the shape and fill, the display word is drawn centred over it, and
+            # the label background matches the panel so the pill's corners blend.
+            # The display word is the user-facing English for the styling type,
+            # decoupled from the identifier: the subtree pill reads "under".
             label $row.label -image qlPill_$t -compound center \
-                -text $t -anchor center -borderwidth 0 \
+                -text [dict get {subtree under file file tool tool regex regex} $t] \
+                -anchor center -borderwidth 0 \
                 -background [ttk::style lookup . -background] \
                 -foreground [::questlog::ui::theme::c crit_${t}_fg]
             pack $row.label -side left -padx {0 6} -pady 1
             ttk::label $row.conn -text [dict get {
-                under "ran under" file "touched" tool "used" pattern "matches"
+                subtree "ran under" file "touched" tool "used" pattern "matches"
             } $k]
             pack $row.conn -side left -padx {0 6}
             ttk::frame $row.chips
@@ -815,7 +818,7 @@ oo::class create ::questlog::ui::Toolbar {
     # reads "Restrict to sessions that…  N active" (count omitted at zero).
     method refresh_heading {} {
         set n 0
-        foreach k {under file tool pattern} {
+        foreach k {subtree file tool pattern} {
             if {[llength [dict get $Clauses $k]] > 0} { incr n }
         }
         set txt "Restrict to sessions that…"
@@ -903,7 +906,7 @@ oo::class create ::questlog::ui::Toolbar {
             -textvariable [my varname AddText]($kind) \
             -font [expr {$mono ? "QLMono" : "TkTextFont"}]
         set commit [switch -- $kind {
-            under   { list [self] commit_folder_add }
+            subtree { list [self] commit_folder_add }
             file    { list [self] commit_file_add }
             pattern { list [self] commit_pattern_add }
             tool    { list [self] commit_tool_add }
@@ -914,7 +917,7 @@ oo::class create ::questlog::ui::Toolbar {
         # rest and its text never runs under it.
         switch -- $kind {
             file  { my add_icon $ae.field.icon "\U0001F4C2" [list [self] browse_file] }
-            under { my add_icon $ae.field.icon "\U0001F4C1" [list [self] browse_folder] }
+            subtree { my add_icon $ae.field.icon "\U0001F4C1" [list [self] browse_folder] }
         }
         pack $ae.field.e -side left -fill x -expand 1
         pack $ae.field -side left
@@ -960,11 +963,11 @@ oo::class create ::questlog::ui::Toolbar {
         }
     }
 
-    # under chips render ~-abbreviated; tool shows name (and key, if set);
+    # subtree chips render ~-abbreviated; tool shows name (and key, if set);
     # pattern renders the raw regex. file chips are handled in render_chips.
     method chip_display {kind value} {
         switch -- $kind {
-            under { return [::questlog::path::pretty_home $value] }
+            subtree { return [::questlog::path::pretty_home $value] }
             tool {
                 lassign $value name key
                 return [expr {$key eq "" ? $name : "$name: $key"}]

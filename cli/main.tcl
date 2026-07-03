@@ -144,8 +144,8 @@ proc ::questlog::cli::main::usage {} {
     puts stderr "                          a precise instant (2026-04-01T13:37, ...T13:37:30), or 'all'."
     puts stderr "  --until <when>          Older bound: a window ago (7d), a date (covers the whole day),"
     puts stderr "                          a precise instant (2026-04-01T13:37\[:SS\]), or 'all' (no bound)."
-    puts stderr "  --under <dir>           Only sessions that ran in <dir> or any directory below"
-    puts stderr "                          it (the whole subtree; ~ is expanded)."
+    puts stderr "  --subtree <dir>         Only sessions in the subtree of <dir>: the directory"
+    puts stderr "                          itself and everything below it (~ is expanded)."
     puts stderr "  --accrued-cost          Count only spend dated inside the --since/--until window,"
     puts stderr "                          by each message's timestamp. Needs a time bound; --until"
     puts stderr "                          alone scans the whole corpus."
@@ -208,7 +208,7 @@ proc ::questlog::cli::main::push_leaf {leavesVar curVar negVar leaf} {
 
 # parse_query argv - turn the clause and bound arguments into a query: the
 # matcher clauses (leaves + boolean tree + nocase) and the global bounds (limit,
-# limit_matches, under, since, until). The grammar is an OR (--or) of AND-groups
+# limit_matches, subtree, since, until). The grammar is an OR (--or) of AND-groups
 # (adjacency) of optionally-negated (--not) leaves; groups is the closed
 # AND-groups and cur the one being built, while bounds ride outside the tree. A
 # malformed query prints a message and exits through usage. Separated from run so
@@ -216,7 +216,7 @@ proc ::questlog::cli::main::push_leaf {leavesVar curVar negVar leaf} {
 proc ::questlog::cli::main::parse_query {argv} {
     set limit 0
     set limit_matches -1
-    set under ""
+    set subtree ""
     set since ""
     set until ""
     set accrued 0
@@ -274,13 +274,13 @@ proc ::questlog::cli::main::parse_query {argv} {
             --since         { set since [::questlog::cli::main::next_val argv i $arg] }
             --until         { set until [::questlog::cli::main::next_val argv i $arg] }
             --accrued-cost  { set accrued 1 }
-            --under         {
+            --subtree       {
                 # Canonicalise here (tilde-expanded, absolute) so the filter
                 # predicates compare against the form Claude records as a cwd;
                 # an inexpandible ~user fails loud instead of matching nothing.
                 set v [::questlog::cli::main::next_val argv i $arg]
-                if {[catch {::questlog::path::canon_dir $v} under]} {
-                    puts stderr "questlog: --under: $under"
+                if {[catch {::questlog::path::canon_dir $v} subtree]} {
+                    puts stderr "questlog: --subtree: $subtree"
                     ::questlog::cli::main::usage
                 }
             }
@@ -338,7 +338,7 @@ proc ::questlog::cli::main::parse_query {argv} {
     return [dict create \
         clauses [dict create leaves $leaves \
             tree [::questlog::match::tnode_or $groups] nocase $nocase] \
-        limit $limit limit_matches $limit_matches under $under since $since \
+        limit $limit limit_matches $limit_matches subtree $subtree since $since \
         until $until accrued $accrued mode $mode]
 }
 
@@ -406,7 +406,7 @@ proc ::questlog::cli::main::resolve_session {arg} {
 
 # The snapshot used for file/row SELECTION in accrued mode: the original with the
 # until ceiling cleared, so a session revived after the ceiling (yet holding
-# pre-ceiling, in-window messages) is not pruned. The since floor and under-scope
+# pre-ceiling, in-window messages) is not pruned. The since floor and subtree scope
 # stay - a file with mtime <= floor holds no in-window message, so it is a safe,
 # tight prefilter. Pure, so a test can drive it.
 proc ::questlog::cli::main::selection_snapshot_for {snapshot} {
@@ -434,7 +434,7 @@ proc ::questlog::cli::main::run {argv} {
     set clauses       [dict get $q clauses]
     set limit         [dict get $q limit]
     set limit_matches [dict get $q limit_matches]
-    set under         [dict get $q under]
+    set subtree       [dict get $q subtree]
     set since         [dict get $q since]
     set until         [dict get $q until]
     set accrued       [dict get $q accrued]
@@ -449,11 +449,11 @@ proc ::questlog::cli::main::run {argv} {
         set sub_limit $limit_matches
     }
 
-    # 2. The row-level scope snapshot: since, until, under. These ride outside
+    # 2. The row-level scope snapshot: since, until, subtree. These ride outside
     # the boolean algebra as global filters. The CLI has no session-list view, so
     # it carries none of the list-view toggles; row_matches applies scope only.
     set snapshot [dict create \
-        under [expr {$under eq "" ? {} : [list $under]}] \
+        subtree [expr {$subtree eq "" ? {} : [list $subtree]}] \
         since $since \
         until $until]
 
@@ -501,7 +501,7 @@ proc ::questlog::cli::main::run {argv} {
         lassign [::questlog::match::scan_file $path $clauses] row matches
         if {$row eq ""} continue
         
-        # Apply snapshot-level row filters (recency bound, bookmark pin, and under-folder)
+        # Apply snapshot-level row filters (recency bound, bookmark pin, and subtree scope)
         if {![::questlog::filter::row_matches $sel_snapshot $row]} {
             continue
         }
