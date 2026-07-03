@@ -3,10 +3,22 @@ package require json
 
 namespace eval ::questlog::cli::main {}
 
-# Escape characters to output valid JSON strings.
+# Escape characters to output valid JSON strings: the short forms plus every
+# remaining C0 control as \u00XX, so transcript content carrying ANSI or other
+# control bytes cannot break the emitted document (jq refuses raw controls).
+# The map is built once, at source time.
+namespace eval ::questlog::cli::main {
+    variable JsonEscapeMap [list "\\" "\\\\" "\"" "\\\""]
+    variable _shorts [dict create "\b" "\\b" "\f" "\\f" "\n" "\\n" "\r" "\\r" "\t" "\\t"]
+    for {set _i 0} {$_i < 32} {incr _i} {
+        set _c [format %c $_i]
+        lappend JsonEscapeMap $_c [dict getdef $_shorts $_c [format "\\u%04x" $_i]]
+    }
+    unset -nocomplain _i _c _shorts
+}
 proc ::questlog::cli::main::escape_json {str} {
-    set map [list "\\" "\\\\" "\"" "\\\"" "\n" "\\n" "\r" "\\r" "\t" "\\t"]
-    return [string map $map $str]
+    variable JsonEscapeMap
+    return [string map $JsonEscapeMap $str]
 }
 
 # Helper to format match records into JSON array elements
@@ -106,53 +118,56 @@ proc ::questlog::cli::main::format_shortstat {stats limit} {
 }
 
 # Print command-line mode usage and exit.
-proc ::questlog::cli::main::usage {} {
-    puts stderr "usage: questlog \[--json|--shortstat\] \[bounds\] \[clauses\]"
-    puts stderr ""
-    puts stderr "A session is returned when its clauses hold. Each clause is one needle in an"
-    puts stderr "optional region-list; clauses combine by one algebra: adjacency is AND, --or is"
-    puts stderr "OR, --not negates the next clause. Precedence is NOT > AND > OR. There is no"
-    puts stderr "grouping - a query that needs A AND (B OR C) is rejected; reorder to DNF instead."
-    puts stderr ""
-    puts stderr "output (one is required; each runs headless, no GUI):"
-    puts stderr "  --json                  Emit the full result as JSON."
-    puts stderr "  --shortstat             Emit a totals summary instead: session and subagent"
-    puts stderr "                          counts, turns, tokens, and total cost over the result."
-    puts stderr ""
-    puts stderr "  Cost = the tokens recorded in each transcript priced at per-model API rates;"
-    puts stderr "  computed here, an API-equivalent figure, not a number the harness billed."
-    puts stderr "  By default a session's whole-transcript cost counts once it falls in the"
-    puts stderr "  window; --accrued-cost instead counts only the spend dated inside the window."
-    puts stderr ""
-    puts stderr "clauses:"
-    puts stderr "  --keyword\[:regions\] <needle>   Literal needle (aliases: --kw, --search). A bare"
-    puts stderr "                                argument is the same as --keyword."
-    puts stderr "  --regex\[:regions\] <needle>     Regex needle (aliases: --rx, --pattern)."
-    puts stderr "  --tool:read <file>            A file read (by path suffix)."
-    puts stderr "  --tool:write|edit|file <file> A file written / edited / touched."
-    puts stderr "  --tool:<name> <key>           A use of a tool (Bash, Grep, ...) whose invocation"
-    puts stderr "                                contains the key (empty key = any use)."
-    puts stderr "  --or                          OR between the clause before and the clause after."
-    puts stderr "  --not                         Negate the next clause."
-    puts stderr ""
-    puts stderr "regions (the :regions suffix on --keyword/--regex; comma-joins for OR):"
-    puts stderr "  user, assistant, tool-use, tool-result, any (default). Unambiguous prefixes are"
-    puts stderr "  accepted, e.g. --keyword:user,assi <needle>. Omit the suffix to match anywhere."
-    puts stderr ""
-    puts stderr "bounds (global, applied to the whole result - not clauses):"
-    puts stderr "  --since <when>          Recency bound: a window (24h, 7d, 2w), a date (2026-04-01),"
-    puts stderr "                          a precise instant (2026-04-01T13:37, ...T13:37:30), or 'all'."
-    puts stderr "  --until <when>          Older bound: a window ago (7d), a date (covers the whole day),"
-    puts stderr "                          a precise instant (2026-04-01T13:37\[:SS\]), or 'all' (no bound)."
-    puts stderr "  --subtree <dir>         Only sessions in the subtree of <dir>: the directory"
-    puts stderr "                          itself and everything below it (~ is expanded)."
-    puts stderr "  --accrued-cost          Count only spend dated inside the --since/--until window,"
-    puts stderr "                          by each message's timestamp. Needs a time bound; --until"
-    puts stderr "                          alone scans the whole corpus."
-    puts stderr "  --limit <N>             Cap returned sessions (unset or 0 = unlimited)."
-    puts stderr "  --limit-matches <N>     Cap snippets per session/subagent (0 = none)."
-    puts stderr "  --case                  Case-sensitive keyword matching (default: insensitive)."
-    exit 2
+# channel/code parameterised: an explicit --help is an answer (stdout,
+# exit 0); a parse error keeps the diagnostic contract (stderr, exit 2).
+proc ::questlog::cli::main::usage {{channel stderr} {code 2}} {
+    puts $channel "usage: questlog \[--json|--shortstat\] \[bounds\] \[clauses\]"
+    puts $channel ""
+    puts $channel "A session is returned when its clauses hold. Each clause is one needle in an"
+    puts $channel "optional region-list; clauses combine by one algebra: adjacency is AND, --or is"
+    puts $channel "OR, --not negates the next clause. Precedence is NOT > AND > OR. There is no"
+    puts $channel "grouping - a query that needs A AND (B OR C) is rejected; reorder to DNF instead."
+    puts $channel ""
+    puts $channel "output (one is required; each runs headless, no GUI):"
+    puts $channel "  --json                  Emit the full result as JSON."
+    puts $channel "  --shortstat             Emit a totals summary instead: session and subagent"
+    puts $channel "                          counts, turns, tokens, and total cost over the result."
+    puts $channel ""
+    puts $channel "  Cost = the tokens recorded in each transcript priced at per-model API rates;"
+    puts $channel "  computed here, an API-equivalent figure, not a number the harness billed."
+    puts $channel "  By default a session's whole-transcript cost counts once it falls in the"
+    puts $channel "  window; --accrued-cost instead counts only the spend dated inside the window."
+    puts $channel ""
+    puts $channel "clauses:"
+    puts $channel "  --keyword\[:regions\] <needle>   Literal needle (aliases: --kw, --search). A bare"
+    puts $channel "                                argument is the same as --keyword."
+    puts $channel "  --regex\[:regions\] <needle>     Regex needle (aliases: --rx, --pattern)."
+    puts $channel "  --tool:read <file>            A file read (by path suffix)."
+    puts $channel "  --tool:write|edit|file <file> A file written / edited / touched."
+    puts $channel "  --tool:<name> <key>           A use of a tool (Bash, Grep, ...) whose invocation"
+    puts $channel "                                contains the key (empty key = any use)."
+    puts $channel "  --or                          OR between the clause before and the clause after."
+    puts $channel "  --not                         Negate the next clause. The whole query still"
+    puts $channel "                                needs at least one positive clause."
+    puts $channel ""
+    puts $channel "regions (the :regions suffix on --keyword/--regex; comma-joins for OR):"
+    puts $channel "  user, assistant, tool-use, tool-result, any (default). Unambiguous prefixes are"
+    puts $channel "  accepted, e.g. --keyword:user,assi <needle>. Omit the suffix to match anywhere."
+    puts $channel ""
+    puts $channel "bounds (global, applied to the whole result - not clauses):"
+    puts $channel "  --since <when>          Recency bound: a window (24h, 7d, 2w), a date (2026-04-01),"
+    puts $channel "                          a precise instant (2026-04-01T13:37, ...T13:37:30), or 'all'."
+    puts $channel "  --until <when>          Older bound: a window ago (7d), a date (covers the whole day),"
+    puts $channel "                          a precise instant (2026-04-01T13:37\[:SS\]), or 'all' (no bound)."
+    puts $channel "  --subtree <dir>         Only sessions in the subtree of <dir>: the directory"
+    puts $channel "                          itself and everything below it (~ is expanded)."
+    puts $channel "  --accrued-cost          Count only spend dated inside the --since/--until window,"
+    puts $channel "                          by each message's timestamp. Needs a time bound; --until"
+    puts $channel "                          alone scans the whole corpus."
+    puts $channel "  --limit <N>             Cap returned sessions (unset or 0 = unlimited)."
+    puts $channel "  --limit-matches <N>     Cap snippets per session/subagent (0 = no snippets)."
+    puts $channel "  --case                  Case-sensitive keyword matching (default: insensitive)."
+    exit $code
 }
 
 # Helper to filter and limit matches to the requested cap
@@ -256,10 +271,17 @@ proc ::questlog::cli::main::parse_query {argv} {
                 [::questlog::match::tool_leaf $kind $spec $val $pending_neg]
             continue
         }
+        # A pending --not may only be followed by a clause; letting a bound or
+        # output flag through here would silently carry the negation across it
+        # to whatever leaf comes later.
+        if {$pending_neg && $arg ne "--not" && [string match -* $arg]} {
+            puts stderr "questlog: --not must be followed by a clause, not '$arg'"
+            ::questlog::cli::main::usage
+        }
         switch -glob -- $arg {
             --json - --cmd { set mode json }
             --shortstat { set mode shortstat }
-            --help - -h { ::questlog::cli::main::usage }
+            --help - -h { ::questlog::cli::main::usage stdout 0 }
             --or {
                 if {$pending_neg || [llength $cur] == 0} {
                     puts stderr "questlog: --or needs a clause on each side"
@@ -317,6 +339,27 @@ proc ::questlog::cli::main::parse_query {argv} {
         ::questlog::cli::main::usage
     }
     if {$limit eq "all"} { set limit 0 }
+    # Counts must be counts: a swallowed flag or a typo would otherwise ride
+    # through Tcl string comparison as "no cap" while claiming to be one.
+    if {![string is integer -strict $limit] || $limit < 0} {
+        puts stderr "questlog: --limit: not a count: '$limit' (want a non-negative integer or 'all')"
+        ::questlog::cli::main::usage
+    }
+    if {$limit_matches ne -1 && (![string is integer -strict $limit_matches] || $limit_matches < 0)} {
+        puts stderr "questlog: --limit-matches: not a count: '$limit_matches'"
+        ::questlog::cli::main::usage
+    }
+    # A tree with no positive leaf can only prove absence, and the result
+    # model shows evidence (snippets of positive hits), so reject it loudly
+    # rather than emit the silent empty set.
+    if {[llength $leaves] > 0} {
+        set any_pos 0
+        foreach l $leaves { if {![dict get $l neg]} { set any_pos 1; break } }
+        if {!$any_pos} {
+            puts stderr "questlog: a query needs at least one positive clause (--not only negates)"
+            ::questlog::cli::main::usage
+        }
+    }
 
     # --since accepts a relative window (24h, 7d, 2w, ...), an absolute date
     # (2026-04-01) or a precise instant (2026-04-01T13:37[:SS]); "" or "all" mean no
@@ -498,20 +541,30 @@ proc ::questlog::cli::main::run {argv} {
             set parent_path $path
         }
 
-        # If we reached the limit of sessions, we can stop sifting paths entirely!
-        if {$limit > 0 && [dict size $session_groups] >= $limit && ![dict exists $session_groups $parent_path]} {
-            break
+        # Quota full: skip paths that would open a NEW session group, but keep
+        # sifting - later (older-mtime) subagent files of sessions already in
+        # the result still contribute their snippets. In accrued mode the cap
+        # cannot be enforced here at all (whether a session has in-window
+        # spend is only known at emission), so it lands on the output loop.
+        if {$limit > 0 && !$accrued && [dict size $session_groups] >= $limit
+            && ![dict exists $session_groups $parent_path]} {
+            continue
         }
 
         # Match logic
         lassign [::questlog::match::scan_file $path $clauses] row matches
         if {$row eq ""} continue
         
-        # Apply snapshot-level row filters (recency bound, bookmark pin, and
-        # subtree scope). Stamp residence first: scan_file rows carry no
-        # folder_cwd, and the subtree predicate reads it as the authority.
+        # Apply snapshot-level row filters (recency bound and subtree scope).
+        # Stamp residence first: scan_file rows carry no folder_cwd, and the
+        # subtree predicate reads it as the authority. A subagent's corpus
+        # membership is its parent's (list_paths_for admits children with
+        # their parent), so its own mtime is not re-tested against the window;
+        # the subtree scope and floors still apply to it.
         set row [$scan stamp_subtree $row]
-        if {![::questlog::filter::row_matches $sel_snapshot $row]} {
+        set row_snapshot [expr {$is_child \
+            ? [dict replace $sel_snapshot since all until all] : $sel_snapshot}]
+        if {![::questlog::filter::row_matches $row_snapshot $row]} {
             continue
         }
 
@@ -524,7 +577,7 @@ proc ::questlog::cli::main::run {argv} {
         if {[dict exists $session_groups $parent_path]} {
             set entry [dict get $session_groups $parent_path]
         } else {
-            if {$limit > 0 && [dict size $session_groups] >= $limit} {
+            if {$limit > 0 && !$accrued && [dict size $session_groups] >= $limit} {
                 continue
             }
             set entry [dict create parent_row "" parent_matches {} subagent_matches {}]
@@ -555,6 +608,12 @@ proc ::questlog::cli::main::run {argv} {
             # Parent session itself didn't match filters but subagent did; scan parent row
             set parent_row [$scan scan_path $parent_path]
             if {$parent_row eq ""} continue
+        }
+        # A scan_file row carries no slug (the tail-title read is scan_one's);
+        # resolve it so the emitted title is the session's real name.
+        if {![dict exists $parent_row slug]} {
+            set fresh [$scan scan_path $parent_path]
+            if {$fresh ne "" && [dict size $fresh] > 0} { set parent_row $fresh }
         }
 
         set folder [dict get $parent_row folder]
@@ -615,11 +674,14 @@ proc ::questlog::cli::main::run {argv} {
         }
 
         # In accrued mode, drop a whole subtree that contributed nothing to the
-        # window (neither the parent nor any surviving subagent).
+        # window (neither the parent nor any surviving subagent), and enforce
+        # --limit on the sessions actually emitted - grouping could not know
+        # which subtrees would survive to be counted.
         if {$accrued && ![::questlog::cli::main::has_window_spend $cost_info] \
                 && [llength $subagents_list] == 0} {
             continue
         }
+        if {$accrued && $limit > 0 && $n_sessions >= $limit} continue
 
         # The subtree is kept: commit it to the --shortstat totals now.
         incr n_sessions
@@ -642,7 +704,8 @@ proc ::questlog::cli::main::run {argv} {
         set session_json [dict create \
             "uuid" $parent_uuid \
             "path" $parent_path \
-            "title" [dict getdef $parent_row slug "Unnamed Session"] \
+            "title" [expr {[dict getdef $parent_row slug ""] ne "" \
+                ? [dict get $parent_row slug] : "Unnamed Session"}] \
             "first_ts" [dict get $parent_row first_ts] \
             "cost_usd" $parent_cost \
             "turns" $parent_turns \

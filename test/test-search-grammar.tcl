@@ -177,6 +177,9 @@ check err_or_edge   1 [string match {*--or needs a clause*}       [cli_err --or 
 check err_not_edge  1 [string match {*--not has no following*}    [cli_err --keyword x --not]]
 check err_until_bad 1 [string match {*--until: invalid*}          [cli_err --until 3x --keyword x]]
 check err_bad_regex 1 [string match {*invalid pattern*}           [cli_err --regex "foo("]]
+check err_limit_nan 1 [string match {*--limit: not a count*}       [cli_err --limit abc --keyword x]]
+check err_not_flag  1 [string match {*--not must be followed*}     [cli_err --not --since 7d --keyword x]]
+check err_all_neg   1 [string match {*at least one positive*}      [cli_err --not --keyword x]]
 check err_accrued_no_bound 1 [string match {*--accrued-cost needs a time bound*} [cli_err --accrued-cost --keyword x]]
 check err_accrued_all      1 [string match {*--accrued-cost needs a time bound*} [cli_err --accrued-cost --since all --keyword x]]
 

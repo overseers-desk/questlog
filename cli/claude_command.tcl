@@ -70,7 +70,7 @@ Emits session and subagent counts, turns, token categories, and total cost over 
 
 ## Reopening and renaming
 
-To reopen a found session, give the user the resume command `cd <project_path> && claude --resume <uuid>`, where `project_path` is the folder field and `uuid` the session field from a `--json` hit; append `--fork-session` to branch instead of continue. `questlog rename <session.jsonl> [title]` sets a session's title, and an empty or omitted title reverts it to the auto title.
+To reopen a found session, give the user the resume command `cd <project_path> && claude --resume <uuid>`, where `project_path` is the folder object's `project_path` value (empty when the original directory no longer exists - then omit the cd) and `uuid` the session's from a `--json` hit; append `--fork-session` to branch instead of continue. `questlog rename <session.jsonl> [title]` sets a session's title, and an empty or omitted title reverts it to the auto title.
 }
 
 # ~/.claude, or "" when HOME is unknown.

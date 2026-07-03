@@ -78,6 +78,15 @@ check "format_json: human time figure passes through" \
 check "format_json: output is valid JSON" \
     [expr {![catch {::json::json2dict $out}]}] 1
 
+# escape_json: every C0 control is escaped, so ANSI-bearing transcript
+# content cannot break the emitted document.
+check "escape_json: ESC becomes \\u001b" \
+    [::questlog::cli::main::escape_json "a\x1bb"] "a\\u001bb"
+check "escape_json: backspace short form" \
+    [::questlog::cli::main::escape_json "a\bb"] "a\\bb"
+check "escape_json: quote and backslash" \
+    [::questlog::cli::main::escape_json {say "hi" c:\x}] {say \"hi\" c:\\x}
+
 if {$failures == 0} {
     puts "\nAll tests passed."
 } else {
