@@ -240,13 +240,15 @@ proc ::questlog::ui::app::start {root {initial_criteria {}} {init_since ""} {ini
     ::questlog::cost::load_rates $Root
     init_cost_pool
 
-    $Toolbar subscribe [namespace code on_filter]
     # The launcher normalised each criterion to a toolbar clause kind
     # (file/tool/pattern) with its value - a {op path} or {name key} pair for
-    # file and tool - so seed the toolbar directly.
+    # file and tool - so seed the toolbar directly, BEFORE subscribing: each
+    # add_value publishes, and a subscriber attached first would start one
+    # scan-and-search per seeded criterion instead of one for the launch.
     foreach c $initial_criteria {
         $Toolbar add_value [dict get $c type] [dict get $c value]
     }
+    $Toolbar subscribe [namespace code on_filter]
     # Launch pre-fills: --since pre-selects the time radio, --search pre-fills
     # the search field. Applied before the first publish so the opening search
     # runs with them already in place.

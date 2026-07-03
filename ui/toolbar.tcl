@@ -157,6 +157,14 @@ oo::class create ::questlog::ui::Toolbar {
         bind $Top.search.e <Return> [list [self] publish_now]
         if {$live} {
             bind $Top.search.e <KeyRelease> [list [self] on_search_change]
+            # A paste arrives without a KeyRelease: the clipboard shortcut is
+            # caught by the virtual event, a middle-click PRIMARY paste by the
+            # button release. Deferred to idle so the class binding has
+            # inserted the text before the debounce compares it.
+            bind $Top.search.e <<Paste>> \
+                [list after idle [list [self] on_search_change]]
+            bind $Top.search.e <ButtonRelease-2> \
+                [list after idle [list [self] on_search_change]]
         }
         # Scope picker: where the search terms must appear. A menubutton posts
         # its menu anchored to itself - no transient popup, so nothing nests.
@@ -546,7 +554,7 @@ oo::class create ::questlog::ui::Toolbar {
         } else {
             set spec $PopDate
         }
-        if {[catch {::questlog::filter::parse_since $spec}]} { return }
+        if {[catch {::questlog::filter::parse_since $spec}]} { bell; return }
         set CustomSpec $spec
         set WindowVar $spec
         my close_time_popover
@@ -647,12 +655,13 @@ oo::class create ::questlog::ui::Toolbar {
         my publish
     }
 
-    method remove_value {kind value} {
+    # Remove the value at $idx - the chip whose x was clicked. By index, not
+    # by value: an op edit can make two file chips value-equal, and a by-value
+    # search would then delete the first twin rather than the clicked one.
+    method remove_value_at {kind idx} {
         set vals [dict get $Clauses $kind]
-        set i [lsearch -exact $vals $value]
-        if {$i < 0} return
-        set vals [lreplace $vals $i $i]
-        dict set Clauses $kind $vals
+        if {$idx < 0 || $idx >= [llength $vals]} return
+        dict set Clauses $kind [lreplace $vals $idx $idx]
         my rebuild_clause_rows
         my refresh_add_rail
         my publish
@@ -727,6 +736,13 @@ oo::class create ::questlog::ui::Toolbar {
     method commit_file_add {} {
         set v [string trim $AddText(file)]
         if {$v eq ""} { my cancel_edit file; return }
+        # A ~-headed path expands the way the subtree editor's does (Tcl 9
+        # expands ~ nowhere, and the suffix matcher would compare it
+        # literally); a bare suffix (main.tcl) stays untouched - suffix
+        # matching is the feature.
+        if {[string index $v 0] eq "~"} {
+            if {[catch {::questlog::path::canon_dir $v} v]} { bell; return }
+        }
         set AddText(file) ""
         set AddState(file) collapsed
         my add_value file [list $AddOp $v]
@@ -851,7 +867,7 @@ oo::class create ::questlog::ui::Toolbar {
             # sentence-long criterion grows its text rightward off-screen, but the
             # delete button stays reachable in the viewport.
             ttk::button $chip.x -text "×" -width 2 -style ChipX.TButton \
-                -command [list [self] remove_value $kind $v]
+                -command [list [self] remove_value_at $kind $i]
             pack $chip.x -side left -padx {0 2}
             if {$kind eq "file"} {
                 lassign $v op path
