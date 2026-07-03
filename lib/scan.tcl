@@ -237,10 +237,8 @@ oo::class create ::questlog::Scan {
             foreach f [glob -nocomplain -directory $folder -- *.jsonl] {
                 # Vanished between glob and stat (transcript pruning): skip.
                 if {[catch {file mtime $f} m]} continue
-                # A bookmarked (+x) file is kept regardless of either bound so it
-                # always enters Rows and can be surfaced as a pin.
-                if {$m <= $cutoff && ![file executable $f]} continue
-                if {$ceiling ne "" && $m > $ceiling && ![file executable $f]} continue
+                if {$m <= $cutoff} continue
+                if {$ceiling ne "" && $m > $ceiling} continue
                 lappend pairs [list $f $m]
                 # A subagent belongs to its parent session, so it enters the
                 # search corpus whenever the parent is within the since bound,

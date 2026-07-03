@@ -200,9 +200,10 @@ proc ::questlog::filter::in_subtree_of {path subtree_list} {
 }
 
 # 1 iff a row is in a snapshot's row-level SCOPE: the since cutoff, the until
-# ceiling, the subtree scope, and the min-turns floor. A bookmark (+x) pins
-# the row past either recency bound, so a bookmarked row survives an mtime
-# outside the since cutoff or the until ceiling that a plain row would not. The
+# ceiling, the subtree scope, and the min-turns floor. A bookmark is a session
+# attribute the view toggles read (bookmarked_only), never a window exemption:
+# a since/until window means exactly what it says, bookmarked or not, so a
+# CLI cost audit over a window is exact. The
 # min-turns floor drops a session whose recorded nturns is below the threshold
 # (default 1 = no filter). Both row builders record nturns - scan_one (browse,
 # capped at turn_count_cap) and scan_file (search, the full count) - so the floor
@@ -210,10 +211,9 @@ proc ::questlog::filter::in_subtree_of {path subtree_list} {
 # threshold and passes. The session-list view toggles are applied separately, by
 # ::questlog::sessionlist::row_visible.
 proc ::questlog::filter::row_matches {snapshot row} {
-    set bk [dict getdef $row bookmarked 0]
-    if {[dict get $row mtime] <= [cutoff_for $snapshot] && !$bk} { return 0 }
+    if {[dict get $row mtime] <= [cutoff_for $snapshot]} { return 0 }
     set ceiling [ceiling_for $snapshot]
-    if {$ceiling ne "" && [dict get $row mtime] > $ceiling && !$bk} { return 0 }
+    if {$ceiling ne "" && [dict get $row mtime] > $ceiling} { return 0 }
     set subtree [dict getdef $snapshot subtree {}]
     if {[llength $subtree] > 0 && ![row_subtree_match $row $subtree]} { return 0 }
     set min_turns [dict getdef $snapshot min_turns 1]

@@ -298,7 +298,7 @@ oo::class create ::questlog::Search {
     # 1 iff a matched row passes the snapshot's row-level SCOPE - the full
     # filter::row_matches predicate (subtree scope plus the min-turns floor;
     # since/until are already pruned by list_paths_for, and row_matches re-checks
-    # them harmlessly with the bookmark pin). subtree is the scope filter
+    # them harmlessly). subtree is the scope filter
     # list_paths_for cannot fully pre-prune: since/until are mtime bounds it
     # already applies, but subtree membership is a per-row question. The GUI
     # search corpus once skipped this, so a subtree-scoped search

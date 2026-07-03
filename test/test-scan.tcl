@@ -170,11 +170,14 @@ check bbb_bookmarked_flag 1 [dict get $bbb_row bookmarked]
 
 set q7 [$s2 query [dict create since 7d]]
 set paths7 [lmap r $q7 {dict get $r path}]
-check query_bookmark_kept   1 [expr {$bbb in $paths7}]
+# A bookmark is a session attribute (the bookmarked_only toggle reads it),
+# never a window exemption: an out-of-window bookmarked session leaves the
+# window's result exactly like a plain one.
+check query_bookmark_obeys_window 0 [expr {$bbb in $paths7}]
 check query_old_plain_dropped 0 [expr {$ccc in $paths7}]
 
 set lp [$s2 list_paths_for [dict create since 7d]]
-check enum_bookmark_kept     1 [expr {$bbb in $lp}]
+check enum_bookmark_obeys_window 0 [expr {$bbb in $lp}]
 check enum_old_plain_dropped 0 [expr {$ccc in $lp}]
 
 # bookmarked_only is a view toggle, not a query filter: the scope query returns
