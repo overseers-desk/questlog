@@ -21,11 +21,11 @@ namespace eval ::questlog::debug {
     variable Enabled 0       ;# 1 once enable succeeds in opening the log
     variable Chan ""         ;# the open append channel, "" until init succeeds
     variable Warned 0        ;# 1 once an open failure has been reported, to warn once
-    # The log lives under /var/local/logs (note: plural), one file for the app.
+    # The log lives under /var/local/log (note: plural), one file for the app.
     # The directory is created on first use; a packaged install may need it made
     # once by hand with the right ownership.
-    variable Dir  /var/local/logs/questlog
-    variable Path /var/local/logs/questlog/questlog.log
+    variable Dir  /var/local/log/questlog
+    variable Path /var/local/log/questlog/questlog.log
 }
 
 # Turn logging on and open the channel. Called by the launcher when -debug 1 was
