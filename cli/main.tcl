@@ -143,8 +143,9 @@ proc ::questlog::cli::main::usage {} {
     puts stderr "  --since <when>          Recency bound: a window (24h, 7d, 2w), a date (2026-04-01),"
     puts stderr "                          a precise instant (2026-04-01T13:37, ...T13:37:30), or 'all'."
     puts stderr "  --until <when>          Older bound: a window ago (7d), a date (covers the whole day),"
-    puts stderr "                          a precise instant (2026-04-01T13:37[:SS]), or 'all' (no bound)."
-    puts stderr "  --under <dir>           Only sessions located under the directory."
+    puts stderr "                          a precise instant (2026-04-01T13:37\[:SS\]), or 'all' (no bound)."
+    puts stderr "  --under <dir>           Only sessions that ran in <dir> or any directory below"
+    puts stderr "                          it (the whole subtree; ~ is expanded)."
     puts stderr "  --accrued-cost          Count only spend dated inside the --since/--until window,"
     puts stderr "                          by each message's timestamp. Needs a time bound; --until"
     puts stderr "                          alone scans the whole corpus."
@@ -273,7 +274,16 @@ proc ::questlog::cli::main::parse_query {argv} {
             --since         { set since [::questlog::cli::main::next_val argv i $arg] }
             --until         { set until [::questlog::cli::main::next_val argv i $arg] }
             --accrued-cost  { set accrued 1 }
-            --under         { set under [::questlog::cli::main::next_val argv i $arg] }
+            --under         {
+                # Canonicalise here (tilde-expanded, absolute) so the filter
+                # predicates compare against the form Claude records as a cwd;
+                # an inexpandible ~user fails loud instead of matching nothing.
+                set v [::questlog::cli::main::next_val argv i $arg]
+                if {[catch {::questlog::path::canon_dir $v} under]} {
+                    puts stderr "questlog: --under: $under"
+                    ::questlog::cli::main::usage
+                }
+            }
             --case          { set nocase 0 }
             "(" - ")" - "--(" - "--)" - --and {
                 puts stderr "questlog: grouping is not supported - the flag algebra has no\

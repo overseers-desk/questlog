@@ -706,9 +706,15 @@ oo::class create ::questlog::ui::Toolbar {
 
     # ---- add-entry commit handlers (popup-free; inline in each row) ---------
 
+    # The typed path is canonicalised (tilde-expanded, normalized) before it
+    # becomes a chip, so the snapshot's under list only ever carries the
+    # absolute form the row predicates compare against. A path that cannot be
+    # expanded (an unknown ~user) stays in the editor with a bell rather than
+    # becoming a chip that silently matches nothing.
     method commit_folder_add {} {
         set v [string trim $AddText(under)]
         if {$v eq ""} { my cancel_edit under; return }
+        if {[catch {::questlog::path::canon_dir $v} v]} { bell; return }
         set AddText(under) ""
         set AddState(under) collapsed
         my add_value under $v
@@ -739,9 +745,14 @@ oo::class create ::questlog::ui::Toolbar {
         my add_value tool [list $name ""]
     }
 
+    # The picked path goes through the same canonicaliser as a typed one, so a
+    # dir reached both ways dedups to one chip.
     method browse_folder {} {
         set d [tk_chooseDirectory -initialdir $Cwd -mustexist 1]
-        if {$d ne ""} { set AddState(under) collapsed; my add_value under $d }
+        if {$d ne ""} {
+            set AddState(under) collapsed
+            my add_value under [::questlog::path::canon_dir $d]
+        }
     }
 
     method browse_file {} {

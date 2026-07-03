@@ -70,6 +70,23 @@ check confirm_exact          1 [::questlog::filter::row_under_match $rp $U]
 check confirm_child          1 [::questlog::filter::row_under_match $rc $U]
 check confirm_hyphen_sibling 0 [::questlog::filter::row_under_match $rx $U]
 
+# ---- canon_dir: the entry-point canonicaliser both the toolbar's folder
+# editor and the CLI's --under run a typed path through. Tcl 9 expands ~
+# nowhere, so without it a typed ~/x scope compares literally and matches
+# nothing (the bug this pins). ----
+set home [file home]
+check canon_tilde      $home/code/proj [::questlog::path::canon_dir ~/code/proj]
+check canon_bare_tilde $home           [::questlog::path::canon_dir ~]
+check canon_absolute   /home/test/code/proj [::questlog::path::canon_dir /home/test/code/proj]
+check canon_trailing   /home/test/code/proj [::questlog::path::canon_dir /home/test/code/proj/]
+check canon_empty      {} [::questlog::path::canon_dir {}]
+check canon_bad_user   1  [catch {::questlog::path::canon_dir ~nosuchuser/x}]
+# The canonicalised form is what the predicates see: a tilde scope, once
+# expanded, admits the exact dir and its subtree like any absolute scope.
+set UT [list [::questlog::path::canon_dir ~/../../home/test/code/proj]]
+check canon_feeds_confirm_exact 1 [::questlog::filter::row_under_match $rp $UT]
+check canon_feeds_confirm_child 1 [::questlog::filter::row_under_match $rc $UT]
+
 # ---- no under: every folder is walked (show-all) ----
 set all_folders [lsort -unique [lmap p [$s list_paths_for [dict create since all]] \
                                     {file tail [file dirname $p]}]]

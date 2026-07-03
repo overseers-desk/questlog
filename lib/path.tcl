@@ -3,7 +3,7 @@ package require Tcl 9
 namespace eval ::questlog::path {
     namespace export encode_cwd projects_root pretty_home display_label \
         list_all_projects ensure_project_folder candidate_cwds_for \
-        move_session set_bookmark clear_bookmark launch_cwd
+        move_session set_bookmark clear_bookmark launch_cwd canon_dir
 }
 
 # Architectural gate. Rename Tcl's `file` command and replace it with a
@@ -31,6 +31,21 @@ if {[info commands ::questlog::path::_real_file] eq ""} {
         }
         return [::questlog::path::_real_file $subcmd {*}$args]
     }
+}
+
+# Canonical absolute form of a user-typed directory path (the under scope's
+# entry points: the toolbar's folder editor and the CLI's --under). Tcl 9
+# expands ~ nowhere - file normalize treats a leading ~ as an ordinary
+# relative segment - so a typed ~/x would ride through every comparison as
+# a literal and the scope would silently match nothing. Expand the tilde
+# here and normalize, so the predicates in ::questlog::filter only ever see
+# the same absolute form Claude Code records as a session cwd. A ~user for
+# an unknown user throws (the caller turns that into its own loud failure);
+# existence is not required, since scoping to a since-deleted directory is
+# how sessions of a removed repo are found.
+proc ::questlog::path::canon_dir {dir} {
+    if {$dir eq ""} { return "" }
+    return [file normalize [file tildeexpand $dir]]
 }
 
 # Display-only: abbreviate a leading $HOME to ~. The model keeps absolute
