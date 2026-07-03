@@ -47,17 +47,20 @@ proc write_session {path prompts ts} {
     close $fh
 }
 
-# Twelve sessions, all within the last fortnight (well inside a 30d window).
-# mtime descends with i (i=1 newest); cost ASCENDS with i, so cost-descending
-# order is the exact reverse of the date-descending stream order - a resort is
-# observable, not a no-op.
+# Twelve sessions, mtimes 1..12 days ago - relative to now, so the fixture
+# cannot rot out of the 30d window as the calendar advances. mtime descends
+# with i (i=1 newest); cost ASCENDS with i, so cost-descending order is the
+# exact reverse of the date-descending stream order - a resort is observable,
+# not a no-op.
 set PATHS [list]
+set now [clock seconds]
 for {set i 1} {$i <= 12} {incr i} {
     set id [format s%02d $i]
     set p [file join $PROJDIR $id.jsonl]
-    set day [format %02d [expr {13 - $i}]]
-    write_session $p [list ${id}-a ${id}-b] "2026-06-${day}T10:00"
-    file mtime $p [clock scan "2026-06-${day} 10:00:00" -gmt 1]
+    set when [expr {$now - $i * 86400}]
+    write_session $p [list ${id}-a ${id}-b] \
+        [clock format $when -format "%Y-%m-%dT%H:%M" -gmt 1]
+    file mtime $p $when
     lappend PATHS $p
 }
 
