@@ -255,6 +255,19 @@ proc ::questlog::ui::app::start {root {initial_criteria {}} {init_since ""} {ini
     if {$init_since ne ""} { $Toolbar set_window $init_since }
     if {$init_search ne ""} { $Toolbar set_search $init_search }
 
+    bind . <Control-q> [namespace code quit]
+    bind . <Control-b> [namespace code toggle_sidebar]
+
+    maybe_show_onboarding
+
+    # Paint the assembled skeleton before any corpus work begins, so the window
+    # is on screen in a fraction of a second and the session rows stream into it.
+    # The first map is idle-priority work; left to compete with the scan's
+    # millisecond resume timer (and, on a host without the Thread package, the
+    # main-thread cost parse) it is starved until the whole pass drains, and the
+    # window then appears all at once, finished. This one pump maps it first.
+    update idletasks
+
     # No default `subtree`: the list opens across every project, and a scope is
     # added only when the user asks for one. A launch-cwd default scoped the list
     # to wherever questlog happened to be started - often the home directory, a
@@ -263,11 +276,11 @@ proc ::questlog::ui::app::start {root {initial_criteria {}} {init_since ""} {ini
     # entry kept the whole corpus in view until it was removed).
     $Toolbar publish
 
-    bind . <Control-q> [namespace code quit]
-    bind . <Control-b> [namespace code toggle_sidebar]
-
-    maybe_show_onboarding
-    run_tick
+    # The running-session poll's first tick reads the live set and scans each
+    # live session; without the Thread package its cost parse runs on the main
+    # thread. Defer it off the first-paint path so the mapped window is drawn and
+    # interactive before it runs; it then re-arms itself on its own cadence.
+    after idle [namespace code run_tick]
 }
 
 # First-launch welcome strip across the top of the window, shown until the
