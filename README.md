@@ -2,6 +2,8 @@
 
 A native Linux GUI for finding, reading, and reopening past Claude Code sessions stored under `~/.claude/projects/`. It replaces the shell aliases `cs-ls` and `cs-grep` with a session list grouped by project, a typed search that streams matches across all projects as snippets under each session, a docked viewer that segments long conversations into sections, and right-click actions that reopen a session in its original working directory.
 
+![The main window: sessions grouped by project with size and cost, the search and restrict filters, and the docked conversation viewer](assets/screenshot.png)
+
 ## Typical problems it solves
 
 The tool exists for the moments you go back to a session after it is finished, above all the returns you could not have prevented by writing notes at the time.
