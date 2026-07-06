@@ -1,6 +1,6 @@
 package require Tcl 9
 package require Tk
-package provide streamtree 1.0.0
+package provide streamtree 1.0.1
 
 namespace eval ::streamtree {}
 
@@ -38,15 +38,21 @@ namespace eval ::streamtree {}
 # loose in-row content that is not itself a node. A subclass drives the widget
 # only through these and never touches the text widget.
 #
-# Hooks the subclass overrides (Template Method):
+# Hooks the subclass overrides (Template Method). Every hook has a working
+# default, so a minimal subclass overrides nothing and gets a plain tree whose
+# row text is the payload's `label` (falling back to the node key); columns,
+# rich subjects and custom sorts come from overriding the content hooks:
 #   Content / layout
-#     column_spec               the metadata columns {id label sample align sortable}
+#     subject_label             the header label over the subject column ("")
+#     column_spec               the metadata columns {id label sample align sortable} ({})
 #     render_subject node max    the row's left side: {subject <str> tags <ranges> meta_run 0|1}
 #                                (ranges is a list of {tag off len}, subject-relative)
-#     cell_values node           ordered {col value} pairs the engine lays as cells
+#     cell_values node           ordered {col value} pairs the engine lays as cells ({})
 #     cell_tag node col          the tag names overlaid on that cell (empty for none)
 #     sort_key payload col       the sort value for a column, from a node's payload
-#     apply_column_tabs tabs     set the right tab stops on the subclass's row tags
+#     apply_column_tabs tabs     set the right tab stops; the default sets them
+#                                widget-wide, a host whose row tags carry their own
+#                                -tabs configures those tags instead
 #     relayout_content           re-fit every rendered row after a width change
 #   Row lifecycle (per node kind)
 #     start_gravity kind         the row's start-mark gravity (right keeps a heading
@@ -106,6 +112,8 @@ oo::class create ::streamtree::StreamTree {
     variable SortDir          ;# desc | asc
     variable ResortTimer      ;# after-id of the debounced resort, or "" when none is pending
     variable AtTop            ;# anchor state across a streaming insert
+    variable AtBottom         ;# tail-latch state across a streaming insert (-autofollow)
+    variable WasAtBottom      ;# last observed bottom state, edges fire <<AtBottom>>/<<LeftBottom>>
 
     # ---- generic node store ------------------------------------------
     #
@@ -202,6 +210,7 @@ oo::class create ::streamtree::StreamTree {
             headfont TkHeadingFont \
             colours [dict create strip #ececec muted #767676 ink #1d1d1d] \
             resortdelay 250 \
+            autofollow 0 \
             motioncb ""]
     }
     method configure {args} {
@@ -220,7 +229,35 @@ oo::class create ::streamtree::StreamTree {
     method colour {role} { return [dict get [my opt colours] $role] }
 
     # ---- body assembly -----------------------------------------------
-    #
+
+    # The whole construction ritual in one call, for a host without bespoke
+    # assembly needs: seed the engine state, build the body and header into
+    # `parent` (a frame the host owns and packs), and lay out the columns. A
+    # subclass constructor calls `my configure ...` first when it overrides the
+    # look, then `my setup $parent`. The initial sort is the subject key when
+    # the subclass defines one, else the first sortable metadata column.
+    method setup {parent} {
+        set Top $parent
+        my reset_nodes
+        set NextId 0
+        set SortKey [my subject_sort_id]
+        if {$SortKey eq ""} {
+            foreach col [my column_spec] {
+                lassign $col id label sample align sortable
+                if {$sortable} { set SortKey $id; break }
+            }
+        }
+        set SortDir [expr {$SortKey ne "" ? [my default_sort_dir $SortKey] : "desc"}]
+        set RelayoutPending 0
+        set ResortTimer ""
+        set LayoutW -1
+        my build_body
+        my compute_col_widths
+        my build_header
+        update idletasks
+        my relayout
+    }
+
     # The body grid: the sortable column header in row 0 (same column as the
     # text below it, so its labels share the text's width and the right-pinned
     # metadata columns line up), the list text and its scrollbar in row 1 (the
@@ -271,9 +308,24 @@ oo::class create ::streamtree::StreamTree {
         }
     }
 
-    # Text widget yview update: forward to the scrollbar.
+    # Text widget yview update: forward to the scrollbar, and edge-detect the
+    # tail so a host can mirror the tail -f contract: <<AtBottom>> fires on the
+    # host frame when the view reaches the last line, <<LeftBottom>> when the
+    # reader scrolls away from it.
     method on_yscroll {args} {
         $Top.body.sb set {*}$args
+        set now [expr {[lindex $args 1] >= 0.999}]
+        if {![info exists WasAtBottom]} { set WasAtBottom $now; return }
+        if {$now != $WasAtBottom} {
+            set WasAtBottom $now
+            event generate $Top [expr {$now ? "<<AtBottom>>" : "<<LeftBottom>>"}]
+        }
+    }
+
+    # Jump to the tail and latch there, so with -autofollow on the view keeps
+    # following streamed appends until the reader scrolls away.
+    method follow {} {
+        $Text yview moveto 1
     }
 
     # ---- column geometry ---------------------------------------------
@@ -361,13 +413,20 @@ oo::class create ::streamtree::StreamTree {
         # Tk rejects a tab stop that is not positive or not greater than the one
         # before it. The real positions recompute on <Configure> once mapped.
         set ColTabs [::streamtree::sane_tabs $ColTabs]
-        # Subject runs up to just before the leftmost metadata column.
-        set first_rx [lindex $rights 0]
-        set SubjectMax [expr {$first_rx - [lindex $ColW 0] - $ColGap - 12}]
+        if {$n == 0} {
+            # No metadata columns: the subject and a root label may run to the
+            # full width.
+            set SubjectMax [expr {$cw - 12}]
+            set FolderLabelMax [expr {$cw - 16}]
+        } else {
+            # Subject runs up to just before the leftmost metadata column.
+            set first_rx [lindex $rights 0]
+            set SubjectMax [expr {$first_rx - [lindex $ColW 0] - $ColGap - 12}]
+            # A root label has no date cell, so it may run up to the first tab
+            # stop before its aggregates; cap it just short of that.
+            set FolderLabelMax [expr {$first_rx - 16}]
+        }
         if {$SubjectMax < 80} { set SubjectMax 80 }
-        # A root label has no date cell, so it may run up to the first tab stop
-        # before its aggregates; cap it just short of that.
-        set FolderLabelMax [expr {$first_rx - 16}]
         if {$FolderLabelMax < 60} { set FolderLabelMax 60 }
         my apply_column_tabs $ColTabs
         if {[winfo exists $Top.body.hdr]} { $Top.body.hdr configure -tabs $ColTabs }
@@ -524,6 +583,11 @@ oo::class create ::streamtree::StreamTree {
     method on_header_click {x} {
         set cx [expr {$x - 8}]
         set cols [my column_spec]
+        if {![llength $cols]} {
+            set sid [my subject_sort_id]
+            if {$sid ne ""} { my set_sort $sid }
+            return
+        }
         for {set i 0} {$i < [llength $cols]} {incr i} {
             lassign [lindex $cols $i] id label sample align sortable
             set rx [lindex $ColRightX $i]
@@ -565,7 +629,7 @@ oo::class create ::streamtree::StreamTree {
         set h $Top.body.hdr
         $h configure -state normal
         $h delete 1.0 end
-        set line "Session"
+        set line [my subject_label]
         set act_off -1
         set act_len 0
         set subj_id [my subject_sort_id]
@@ -650,19 +714,26 @@ oo::class create ::streamtree::StreamTree {
 
     # ---- view-anchoring around streaming inserts ----------------------
     #
-    # A streaming insert must not shift what the reader is looking at. Two cases:
-    # if the reader is at the very top (the default while browsing or watching
-    # results arrive), keep them pinned to the absolute top so the newest content
-    # and the heading stay in view; if they have scrolled into the list, pin the
-    # character that was at the top so an insert above it scrolls to compensate
-    # and their line does not move.
+    # A streaming insert must not shift what the reader is looking at. Three
+    # cases: with -autofollow on and the reader at the tail, keep them latched to
+    # the tail so streamed appends keep scrolling into view (the tail -f / chat
+    # contract, released the moment they scroll away); if the reader is at the
+    # very top (the default while browsing or watching results arrive), keep them
+    # pinned to the absolute top so the newest content and the heading stay in
+    # view; if they have scrolled into the list, pin the character that was at
+    # the top so an insert above it scrolls to compensate and their line does not
+    # move.
     method anchor_save {} {
-        set AtTop [expr {[lindex [$Text yview] 0] <= 0.0001}]
+        lassign [$Text yview] first last
+        set AtTop    [expr {$first <= 0.0001}]
+        set AtBottom [expr {$last >= 0.999}]
         $Text mark set AnchorTop @0,0
         $Text mark gravity AnchorTop left
     }
     method anchor_restore {} {
-        if {[info exists AtTop] && $AtTop} {
+        if {[my opt autofollow] && [info exists AtBottom] && $AtBottom} {
+            $Text yview moveto 1
+        } elseif {[info exists AtTop] && $AtTop} {
             $Text yview moveto 0
         } else {
             catch {$Text yview AnchorTop}
@@ -826,6 +897,25 @@ oo::class create ::streamtree::StreamTree {
     method on_node_created {id} {}
     method on_row_rendered {id} {}
     method on_before_delete {id} {}
+
+    # Content hooks, all with working defaults so a minimal subclass renders
+    # something sensible before overriding anything: no metadata columns, the
+    # row text from the payload's `label` (falling back to the node's key), no
+    # cell content, tabs applied widget-wide, and a relayout that re-renders
+    # every drawn row in place. A host with columns overrides column_spec,
+    # cell_values and render_subject; a host whose row tags carry their own
+    # -tabs overrides apply_column_tabs to configure those tags instead.
+    method subject_label {} { return "" }
+    method column_spec {} { return [list] }
+    method render_subject {node max} {
+        return [dict create subject [my node_pget $node label [my node_field $node key]] \
+            tags [list] meta_run 0]
+    }
+    method cell_values {node} { return [list] }
+    method cell_tag {node col} { return "" }
+    method sort_key {payload col} { return "" }
+    method apply_column_tabs {tabs} { $Text configure -tabs $tabs }
+    method relayout_content {} { foreach id [my all_rendered_nodes] { my item $id } }
 
     # Lay a node's row at its parent's append point and register its marks. The
     # one home for the right-gravity-temp-mark insert and the ancestor-end

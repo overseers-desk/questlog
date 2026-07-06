@@ -403,6 +403,9 @@ oo::class create ::questlog::ui::SessionList {
     # and whether the header sorts. The single home is session_columns.
     method column_spec {} { return [::questlog::ui::session_columns] }
 
+    # The header label over the subject column (engine hook).
+    method subject_label {} { return "Session" }
+
     # Pin the engine's freshly-computed tab stops onto the three session-domain
     # row tags, so folder headings, session headers and child rows all align
     # their metadata under the header (engine hook, called from layout_columns).
