@@ -17,6 +17,7 @@ override_dh_auto_install:
 	cp cli/*.tcl $(SHARE)/cli/
 	cp data/*.csv $(SHARE)/data/
 	cp config.tcl $(SHARE)/
+	cp streamtree-*.tm $(SHARE)/
 	cp assets/questlog.svg $(SHARE)/assets/
 	install -D -m 0755 questlog $(PKGDIR)/usr/bin/questlog
 	sed -i 's|^set ROOT .*|set ROOT /usr/share/questlog|' $(PKGDIR)/usr/bin/questlog

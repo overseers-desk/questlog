@@ -34,6 +34,7 @@ cp ui/*.tcl  %{buildroot}%{_datadir}/%{name}/ui/
 cp cli/*.tcl %{buildroot}%{_datadir}/%{name}/cli/
 cp data/*.csv %{buildroot}%{_datadir}/%{name}/data/
 cp config.tcl %{buildroot}%{_datadir}/%{name}/
+cp streamtree-*.tm %{buildroot}%{_datadir}/%{name}/
 cp assets/questlog.svg %{buildroot}%{_datadir}/%{name}/assets/
 install -D -m 0755 questlog %{buildroot}%{_bindir}/questlog
 sed -i 's|^set ROOT .*|set ROOT %{_datadir}/%{name}|' %{buildroot}%{_bindir}/questlog
