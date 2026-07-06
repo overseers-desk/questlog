@@ -80,6 +80,23 @@ The engine takes its host-specific look and services as options, set through `co
 
 Set the `STREAMTREE_AUDIT` environment variable and every primitive checks the per-node mark contract after it runs: each node's `[start,end]` region is well-formed and the roots are ordered and disjoint down the buffer. The first violation latches `::STREAMTREE_AUDIT_TRIPPED` and writes an `INVARIANT @ <primitive>` line to stderr naming the operation that broke the contract. Production leaves the variable unset and pays nothing. `test/run-audit.sh` runs the whole test suite with the gate on; `test/test-soak.tcl` interleaves the four concurrent drivers under it.
 
+## Performance
+
+Measured July 2026 with `test/bench-streamtree.tcl` (medians of 3, min-max in parentheses) on an AMD Ryzen 7 5800X under Xvfb software rendering, Tcl/Tk 9.0.1. The numbers are for the base engine (one text string per row, no columns, no per-row bindings); a subclass with metadata columns and wired rows pays more per row. Reproduce with `DISPLAY=:99 wish9.0 test/bench-streamtree.tcl`.
+
+| scenario | N | median (min-max) | per row | notes |
+|---|---|---|---|---|
+| bulk load, flat | 10,000 | 606 ms (554-613) | 60.6 µs | single flush for the whole batch |
+| bulk load, flat | 50,000 | 3,909 ms (3,870-4,491) | 78.2 µs | single flush for the whole batch |
+| bulk load, treed | 10,000 | 546 ms (539-573) | 54.6 µs | 100 expanded folders |
+| streaming | 10k + 1,000 | 1,914 inserts/s | p95 780 µs | idle flush per insert; reader's line held |
+| full rebuild | 10,000 | 1,210 ms (1,194-1,286) | 121 µs | the debounced resort's cost |
+| memory, marginal row | 10k→50k | | 4.36 kB/row | includes the retained payload dict, per-row tag, two marks |
+
+For calibration, ttk::treeview on the same machine bulk-loads 10k display-text-only rows in 28 ms (2.8 µs/row, a native C widget's floor), streams 1,846 inserts/s into a 10k flat list (its scroll shifts on every insert, and that repaint is in its number where streamtree's number carries the anchor work that prevents the shift), and holds 0.53 kB/row. The workloads differ in what a row retains: streamtree keeps the payload dict, which doubles as the host's data model.
+
+The engine renders every visible row into the text widget (no virtualization); collapsed subtrees stay unrendered, which is the intended posture for large trees. Practical ceiling: tens of thousands of rendered rows load in seconds and stream comfortably; memory is the binding constraint at roughly 4.4 kB per rendered row.
+
 ## Limits
 
 To a screen reader the widget presents as one text area, not a tree of rows and columns; assistive-technology structure (row navigation, expansion state) is not exposed. Cell editing, checkbox columns, and type-ahead are not built in; a host can assemble them from embedded windows, row tags, and key bindings.
