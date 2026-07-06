@@ -77,6 +77,11 @@ oo::class create ::questlog::ui::Viewer {
     variable ToolList         ;# listbox of per-call rows inside the band
     variable ToolLines        ;# jsonl line of each call, parallel to the ToolList rows
     variable ToolCountText    ;# "N tool calls" string, shared by the head count and band tab
+    variable QuoteBtn         ;# head-strip "N quotes" count, packed on demand
+    variable QuoteList        ;# listbox of per-quote rows inside the band
+    variable QuoteIdx         ;# text index of each quote box, parallel to QuoteList rows
+    variable QuoteCountText   ;# "N quotes" string, shared by the head count and band tab
+    variable CurTs            ;# ISO stamp of the record being rendered, read for a quote row
     variable Roles            ;# dict: jsonl line -> uppercased role, for row colour
     # Docked index band above the transcript: one collapsible pane whose content
     # switches between the match index and the tool-call timeline. It replaces the
@@ -87,6 +92,7 @@ oo::class create ::questlog::ui::Viewer {
     variable BandCount        ;# band-header count label
     variable TabMatches       ;# band-header "Matches" tab label
     variable TabTools         ;# band-header "Tools" tab label
+    variable TabQuotes        ;# band-header "Quotes" tab label
     variable OnToggle         ;# cb: () -> ask the app to fold/unfold the list pane
     variable OnMove           ;# cb: [list path] -> app move router (⋯ menu)
     variable OnBookmark       ;# cb: path -> app bookmark router (⋯ menu)
@@ -135,6 +141,9 @@ oo::class create ::questlog::ui::Viewer {
         set MatchCountText ""
         set ToolLines [list]
         set ToolCountText ""
+        set QuoteIdx [list]
+        set QuoteCountText ""
+        set CurTs ""
         set Roles [dict create]
         set BandTab "matches"
         set BandOpen 0
@@ -200,6 +209,7 @@ oo::class create ::questlog::ui::Viewer {
         my render
         my index_matches $query
         my index_tool_calls
+        my refresh_quote_control
         my add_endhint
         if {$scroll_to_line > 0} {
             my scroll_to_line $scroll_to_line
@@ -251,6 +261,14 @@ oo::class create ::questlog::ui::Viewer {
             -foreground [::questlog::ui::theme::c sessionhead] -cursor hand2
         set ToolBtn $Top.head.tools
         bind $ToolBtn <Button-1> [list [self] band_toggle tools]
+        # Quote index: a third head-strip count that opens the band on its Quotes
+        # tab. It carries the count of quoted passages (email drafts, quoted
+        # messages the assistant wrote out); glyph ▾ closed, ▴ open. Packed on
+        # demand by refresh_quote_control; absent when the session quoted nothing.
+        label $Top.head.quotes -text "" -background $strip \
+            -foreground [::questlog::ui::theme::c sessionhead] -cursor hand2
+        set QuoteBtn $Top.head.quotes
+        bind $QuoteBtn <Button-1> [list [self] band_toggle quotes]
         # Overflow menu at the right of the head strip: a plain "⋯" label
         # affordance (matching the strip's flat look) holding the reading-font
         # picker, and in Stage 2 the session action set. Packed first on the
@@ -345,8 +363,15 @@ oo::class create ::questlog::ui::Viewer {
         label $TabTools -text "Tools" -background $strip -cursor hand2 \
             -foreground [::questlog::ui::theme::c muted] -font QLMonoBold
         bind $TabTools <Button-1> [list [self] set_tab tools]
+        set TabQuotes $Band.hdr.tabs.quotes
+        label $TabQuotes -text "Quotes" -background $strip -cursor hand2 \
+            -foreground [::questlog::ui::theme::c muted] -font QLMonoBold
+        bind $TabQuotes <Button-1> [list [self] set_tab quotes]
+        # update_band_tabs re-packs whichever tabs have rows in canonical order;
+        # this initial pack only fixes their left-to-right sequence.
         pack $TabMatches -side left
         pack $TabTools   -side left -padx {10 0}
+        pack $TabQuotes  -side left -padx {10 0}
         set BandCount $Band.hdr.count
         label $BandCount -text "" -background $strip \
             -foreground [::questlog::ui::theme::c sessionhead]
@@ -375,6 +400,17 @@ oo::class create ::questlog::ui::Viewer {
         ttk::scrollbar $Band.toolsb -orient vertical \
             -command [list $ToolList yview]
         bind $ToolList <<ListboxSelect>> [list [self] tool_list_select]
+        # Quote index listbox: rows "time · first quoted line", each jumping the
+        # reading view to that quote box. A quote is invisible to $Text search
+        # (its text lives in an embedded child widget), so this is the only way
+        # to reach one that Ctrl-F cannot.
+        set QuoteList $Band.quotelist
+        listbox $QuoteList -height 1 -width 44 -activestyle none \
+            -borderwidth 0 -highlightthickness 0 \
+            -yscrollcommand [list $Band.quotesb set]
+        ttk::scrollbar $Band.quotesb -orient vertical \
+            -command [list $QuoteList yview]
+        bind $QuoteList <<ListboxSelect>> [list [self] quote_list_select]
         grid $Band.hdr -row 0 -column 0 -columnspan 2 -sticky ew
         grid columnconfigure $Band 0 -weight 1
         grid rowconfigure    $Band 1 -weight 1
@@ -647,6 +683,10 @@ oo::class create ::questlog::ui::Viewer {
         $Text delete 1.0 end
         set Roles [dict create]
         set Tables [dict create]
+        # Quotes are captured during render (insert_quote_box), so a wholesale
+        # re-render clears them here; a streamed turn appends without re-render.
+        $QuoteList delete 0 end
+        set QuoteIdx [list]
         set RenderTs 0
         set RenderInSection 0
         foreach rec $Records {
@@ -715,6 +755,7 @@ oo::class create ::questlog::ui::Viewer {
         set start_idx [$Text index "end-1l linestart"]
         dict set LineMap $lineno $start_idx
         dict set Bodies $lineno $body
+        set CurTs $ts_iso        ;# a quote box in this record reads its time from here
         set label [::questlog::jsonl::record_role_label $rec]
         dict set Roles $lineno $label
         # Label -> tag: lowercased with spaces to underscores (TOOL RESULT ->
@@ -909,6 +950,7 @@ oo::class create ::questlog::ui::Viewer {
             my append_new
             my index_matches $Query
             my index_tool_calls
+            my refresh_quote_control
             my add_endhint
             my set_prompt_enabled 1
             if {$status} {
@@ -1143,6 +1185,14 @@ oo::class create ::questlog::ui::Viewer {
         $bt configure -state disabled
         pack $bt -side left -fill both -expand 1 -padx {8 0}
         bind $bt <Map> [list [self] fit_box $qid]
+        # Index this quote for the Quotes band tab before embedding it: the empty
+        # last line is where the window lands, and its index is the jump target.
+        # ponytail: a bare index (not a Tk mark), the same assumption LineMap
+        # makes - the transcript only appends at end or wholesale-reloads, never
+        # splices mid-way; move both to marks together if that ever changes.
+        lappend QuoteIdx [$Text index "end-1l linestart"]
+        $QuoteList insert end "[my tool_time $CurTs] · [my quote_preview $dequoted]"
+        $QuoteList itemconfigure end -foreground [::questlog::ui::theme::c assistant]
         $Text window create end -window $f -align top
         $Text insert end "\n"
         dict set Drafts $qid [dict create frame $f body $bt full $dequoted \
@@ -1556,17 +1606,20 @@ oo::class create ::questlog::ui::Viewer {
     # the chosen list into the content cell and remove the other, so only the
     # active list's height drives the band. Re-derives the tab styling and the
     # head-strip glyphs.
+    # ponytail: three parallel per-tab var sets (list/scrollbar/tab/count); a
+    # fourth tab is the trigger to replace them with a tab-descriptor list
+    # driving set_tab/update_band_tabs/update_band_glyphs.
     method set_tab {tab} {
         set BandTab $tab
-        if {$tab eq "matches"} {
-            grid remove $ToolList $Band.toolsb
-            grid $MatchList    -row 1 -column 0 -sticky nsew
-            grid $Band.matchsb -row 1 -column 1 -sticky ns
-        } else {
-            grid remove $MatchList $Band.matchsb
-            grid $ToolList    -row 1 -column 0 -sticky nsew
-            grid $Band.toolsb -row 1 -column 1 -sticky ns
+        grid remove $MatchList $Band.matchsb $ToolList $Band.toolsb \
+            $QuoteList $Band.quotesb
+        switch -- $tab {
+            matches { set lb $MatchList; set sb $Band.matchsb }
+            tools   { set lb $ToolList;  set sb $Band.toolsb }
+            quotes  { set lb $QuoteList; set sb $Band.quotesb }
         }
+        grid $lb -row 1 -column 0 -sticky nsew
+        grid $sb -row 1 -column 1 -sticky ns
         my update_band_tabs
         my update_band_glyphs
     }
@@ -1603,19 +1656,26 @@ oo::class create ::questlog::ui::Viewer {
     # present ones in canonical Matches-then-Tools order, so a tab that was
     # hidden for the prior session never re-packs after its sibling.
     method update_band_tabs {} {
-        pack forget $TabMatches $TabTools
-        set hasm [expr {[llength $FindMatches] > 0}]
-        set hast [expr {[llength $ToolLines] > 0}]
-        if {$hasm} { pack $TabMatches -side left }
-        if {$hast} { pack $TabTools -side left -padx [expr {$hasm ? "10 0" : "0"}] }
-        set active     [::questlog::ui::theme::c sessionhead]
-        set inactive   [::questlog::ui::theme::c faint]
-        $TabMatches configure \
-            -foreground [expr {$BandTab eq "matches" ? $active : $inactive}]
-        $TabTools configure \
-            -foreground [expr {$BandTab eq "tools" ? $active : $inactive}]
-        $BandCount configure -text \
-            [expr {$BandTab eq "matches" ? $MatchCountText : $ToolCountText}]
+        pack forget $TabMatches $TabTools $TabQuotes
+        set active   [::questlog::ui::theme::c sessionhead]
+        set inactive [::questlog::ui::theme::c faint]
+        set first 1
+        foreach {tab lab has} [list \
+                matches $TabMatches [llength $FindMatches] \
+                tools   $TabTools   [llength $ToolLines] \
+                quotes  $TabQuotes  [llength $QuoteIdx]] {
+            if {$has == 0} continue
+            pack $lab -side left -padx [expr {$first ? "0" : "10 0"}]
+            set first 0
+            $lab configure \
+                -foreground [expr {$BandTab eq $tab ? $active : $inactive}]
+        }
+        $BandCount configure -text [switch -- $BandTab {
+            matches { set MatchCountText }
+            tools   { set ToolCountText }
+            quotes  { set QuoteCountText }
+            default { lindex "" }
+        }]
     }
 
     # Keep the ▾/▴ glyph on both head-strip counts: ▴ on the count whose tab is
@@ -1624,11 +1684,15 @@ oo::class create ::questlog::ui::Viewer {
     method update_band_glyphs {} {
         set mglyph [expr {$BandOpen && $BandTab eq "matches" ? "▴" : "▾"}]
         set tglyph [expr {$BandOpen && $BandTab eq "tools" ? "▴" : "▾"}]
+        set qglyph [expr {$BandOpen && $BandTab eq "quotes" ? "▴" : "▾"}]
         if {$MatchCountText ne ""} {
             $MatchBtn configure -text "$mglyph $MatchCountText"
         }
         if {$ToolCountText ne ""} {
             $ToolBtn configure -text "$tglyph $ToolCountText"
+        }
+        if {$QuoteCountText ne ""} {
+            $QuoteBtn configure -text "$qglyph $QuoteCountText"
         }
     }
 
@@ -1714,5 +1778,49 @@ oo::class create ::questlog::ui::Viewer {
         set sel [$ToolList curselection]
         if {$sel eq ""} return
         my scroll_to_line [lindex $ToolLines [lindex $sel 0]]
+    }
+
+    # ---- quote index (jump to an assistant's quoted passage) --------------
+
+    # A one-line label for a quote row: the first non-empty de-quoted line,
+    # whitespace-collapsed and clipped, so a draft's opening reads in the list.
+    method quote_preview {dequoted} {
+        foreach ln [split $dequoted "\n"] {
+            set ln [regsub -all {\s+} [string trim $ln] " "]
+            if {$ln ne ""} {
+                return [expr {[string length $ln] > 60 \
+                    ? "[string range $ln 0 59]…" : $ln}]
+            }
+        }
+        return "(quote)"
+    }
+
+    # Size the listbox and expose the head-strip count from the quotes collected
+    # during render. Opt-in like the tool audit: it never opens the band, only
+    # makes the Quotes tab and count available. With no quotes both stay hidden.
+    method refresh_quote_control {} {
+        set n [llength $QuoteIdx]
+        if {$n == 0} {
+            pack forget $QuoteBtn
+            set QuoteCountText ""
+            if {$BandOpen && $BandTab eq "quotes"} { my band_hide }
+            my update_band_tabs
+            return
+        }
+        $QuoteList configure -height [expr {min($n, 8)}]
+        $QuoteList selection clear 0 end
+        set QuoteCountText "$n [expr {$n == 1 ? {quote} : {quotes}}]"
+        pack forget $PathLabel
+        pack $QuoteBtn -side right -padx 6
+        pack $PathLabel -side left -padx 6 -pady 1 -fill x -expand 1
+        my update_band_tabs
+        my update_band_glyphs
+    }
+
+    # Jump the reading view to the clicked quote's box.
+    method quote_list_select {} {
+        set sel [$QuoteList curselection]
+        if {$sel eq ""} return
+        $Text see [lindex $QuoteIdx [lindex $sel 0]]
     }
 }
