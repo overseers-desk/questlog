@@ -1,16 +1,24 @@
-# TextTree
+# streamtree
 
-A tree drawn into a single Tk `text` widget: abstract nodes nested to any depth, each rendered as one row, with a right-pinned metadata strip whose sortable, resizable columns line up across every row. It is the engine behind the questlog session list (`ui/sessions.tcl`), but it carries no questlog code and runs on its own. `examples/texttree-demo.tcl` drives it under bare `wish` with a toy file tree.
+A tree drawn into a single Tk `text` widget: abstract nodes nested to any depth, each rendered as one row, with a right-pinned metadata strip whose sortable, resizable columns line up across every row. It is the engine behind the questlog session list (`ui/sessions.tcl`), but it carries no questlog code and runs on its own. `examples/streamtree-demo.tcl` drives it under bare `wish` with a toy file tree.
 
-The engine lives in `ui/texttree.tcl`. The file is self-contained: it requires only Tcl and Tk and creates its own namespace, so a host sources that one file, subclasses `::questlog::ui::TextTree`, supplies content through the hooks, and drives the widget through the primitives.
+The engine is a Tcl module, the `streamtree-<version>.tm` file at the repository root. It requires only Tcl 9 and Tk. A host adds the file's directory to the module path, requires the package, and subclasses the widget class:
+
+```tcl
+::tcl::tm::path add $dir
+package require streamtree
+oo::class create MyList { superclass ::streamtree::StreamTree }
+```
+
+The subclass supplies content through the hooks and drives the widget through the primitives.
 
 ## Why a text widget, not ttk::treeview
 
-`ttk::treeview` cannot draw multi-line rows, embed per-row widgets (the session list's match snippets and badge pills), anchor the viewport against a streaming insert, or roll child aggregates up into a parent heading. TextTree renders into a `text` widget to get all of that, and reuses treeview's *vocabulary* so the API reads as familiar.
+`ttk::treeview` cannot draw multi-line rows, embed per-row widgets (the session list's match snippets and badge pills), anchor the viewport against a streaming insert, or roll child aggregates up into a parent heading. StreamTree renders into a `text` widget to get all of that, and reuses treeview's *vocabulary* so the API reads as familiar.
 
 ## Vocabulary mapped to ttk::treeview
 
-| TextTree | ttk::treeview | Notes |
+| StreamTree | ttk::treeview | Notes |
 |---|---|---|
 | `insert parent kind key payload` | `insert parent end -id ...` | returns a node id; renders now if the parent is open |
 | `delete id` | `delete id` | removes the node and its subtree from view and store |
@@ -55,4 +63,4 @@ The engine takes its host-specific look and services as options, set through `co
 
 ## The audit gate
 
-Set the `TEXTTREE_AUDIT` environment variable and every primitive checks the per-node mark contract after it runs: each node's `[start,end]` region is well-formed and the roots are ordered and disjoint down the buffer. The first violation latches `::TEXTTREE_AUDIT_TRIPPED` and writes an `INVARIANT @ <primitive>` line to stderr naming the operation that broke the contract. Production leaves the variable unset and pays nothing. `test/run-audit.sh` runs the whole test suite with the gate on; `test/test-soak.tcl` interleaves the four concurrent drivers under it.
+Set the `STREAMTREE_AUDIT` environment variable and every primitive checks the per-node mark contract after it runs: each node's `[start,end]` region is well-formed and the roots are ordered and disjoint down the buffer. The first violation latches `::STREAMTREE_AUDIT_TRIPPED` and writes an `INVARIANT @ <primitive>` line to stderr naming the operation that broke the contract. Production leaves the variable unset and pays nothing. `test/run-audit.sh` runs the whole test suite with the gate on; `test/test-soak.tcl` interleaves the four concurrent drivers under it.

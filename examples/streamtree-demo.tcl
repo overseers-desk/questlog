@@ -1,10 +1,10 @@
 #!/usr/bin/env wish9.0
-# A standalone demo of the TextTree widget: a tree drawn in one Tk text widget,
-# with a right-pinned sortable, resizable metadata strip. It sources only the
-# engine (ui/texttree.tcl is self-contained) and a host supplies content and
-# look through the hooks and options - no questlog app code is involved.
+# A standalone demo of the StreamTree widget: a tree drawn in one Tk text widget,
+# with a right-pinned sortable, resizable metadata strip. It loads only the
+# streamtree module and a host supplies content and look through the hooks and
+# options - no questlog app code is involved.
 #
-# Run it with bare wish:   wish9.0 examples/texttree-demo.tcl
+# Run it with bare wish:   wish9.0 examples/streamtree-demo.tcl
 #
 # Try: click a column heading to sort (click again to flip); drag a column
 # boundary (the cursor turns to a resize arrow) to widen a column; click a
@@ -14,7 +14,8 @@ package require Tcl 9
 package require Tk
 
 set HERE [file dirname [file normalize [info script]]]
-source [file join [file dirname $HERE] ui/texttree.tcl]
+::tcl::tm::path add [file dirname $HERE]
+package require streamtree
 
 font create DemoList {*}[font actual TkTextFont]
 font create DemoBold {*}[font actual TkTextFont] -weight bold
@@ -22,7 +23,7 @@ font create DemoBold {*}[font actual TkTextFont] -weight bold
 # A two-level tree: languages (folders) over files (rows). Each file carries a
 # size and a line count laid in the right-pinned columns.
 oo::class create DemoList {
-    superclass ::questlog::ui::TextTree
+    superclass ::streamtree::StreamTree
     variable Top Text Nodes Roots NextId ColTabs ColRightX ColW ColWMeasured \
         ColWOverride ColMinW ColGap SubjectMax FolderLabelMax LayoutW \
         RelayoutPending SortKey SortDir ResortTimer AtTop Opts \
@@ -37,7 +38,7 @@ oo::class create DemoList {
             -colours [dict create strip #e8eef2 muted #5a6b78 ink #102a43]
         ttk::frame $Top.bar
         pack $Top.bar -side top -fill x
-        ttk::label $Top.bar.t -text "TextTree demo - sortable, resizable columns"
+        ttk::label $Top.bar.t -text "StreamTree demo - sortable, resizable columns"
         pack $Top.bar.t -side left -padx 6 -pady 4
         my build_body
         my configure_tags
@@ -130,11 +131,11 @@ oo::class create DemoList {
 pack [ttk::frame .f] -fill both -expand 1
 .f configure -width 760 -height 520
 set d [DemoList new .f]
-$d add_folder Tcl    {texttree.tcl 41 1140  sessions.tcl 92 2470  drag.tcl 4 110}
+$d add_folder Tcl    {streamtree.tm 41 1140  sessions.tcl 92 2470  drag.tcl 4 110}
 $d add_folder Python {parser.py 18 520  model.py 33 980  cli.py 7 240}
 $d add_folder Rust   {lib.rs 12 360  main.rs 5 150}
 # The folders streamed in live in arrival order; one rebuild seats them under
 # the active sort (Size, descending) so the initial view matches the heading.
 $d rebuild
 update
-wm title . "TextTree demo"
+wm title . "StreamTree demo"
