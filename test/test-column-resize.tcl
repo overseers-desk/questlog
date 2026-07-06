@@ -1,5 +1,5 @@
 #!/usr/bin/env wish9.0
-# Draggable metadata-column resize on the TextTree engine: a width set through
+# Draggable metadata-column resize on the StreamTree engine: a width set through
 # the `column` API (the same path the header drag drives) round-trips and
 # re-pins the tab stops, the minimum-width clamp holds, and a header click away
 # from a boundary still sorts.
@@ -8,14 +8,16 @@ package require Tcl 9
 package require Tk
 
 set ROOT [file dirname [file dirname [file normalize [info script]]]]
-foreach f {config.tcl ui/theme.tcl ui/drag.tcl ui/texttree.tcl} {
+::tcl::tm::path add $ROOT
+package require streamtree
+foreach f {config.tcl ui/theme.tcl ui/drag.tcl} {
     source [file join $ROOT $f]
 }
 ::questlog::ui::theme::init
 
-# A minimal concrete TextTree with three right-pinned, sortable metadata columns.
+# A minimal concrete StreamTree with three right-pinned, sortable metadata columns.
 oo::class create Demo {
-    superclass ::questlog::ui::TextTree
+    superclass ::streamtree::StreamTree
     variable Top Text Nodes Roots NextId ColTabs ColRightX ColW ColWMeasured \
         ColWOverride ColMinW ColGap SubjectMax FolderLabelMax LayoutW \
         RelayoutPending SortKey SortDir ResortTimer AtTop ResizeCol ResizeX0 ResizeW0

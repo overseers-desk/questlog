@@ -14,9 +14,11 @@ package require Tk
 
 set SAND [file join [pwd] _folderdetach_sandbox]
 set ROOT [file dirname [file dirname [file normalize [info script]]]]
+::tcl::tm::path add $ROOT
+package require streamtree
 foreach f {config.tcl lib/cost.tcl ui/theme.tcl lib/path.tcl lib/filter.tcl lib/sessionlist.tcl lib/jsonl.tcl \
            lib/match.tcl ui/terminal.tcl ui/live.tcl lib/scan.tcl lib/search.tcl \
-           ui/drag.tcl ui/toolbar.tcl ui/texttree.tcl ui/sessions.tcl} {
+           ui/drag.tcl ui/toolbar.tcl ui/sessions.tcl} {
     source [file join $ROOT $f]
 }
 ::questlog::ui::theme::init

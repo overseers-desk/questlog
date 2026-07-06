@@ -39,7 +39,7 @@ proc ::questlog::ui::session_columns {} {
 
 # ::questlog::ui::SessionList - the left pane: one read-only text widget that is
 # both the session browser and the search-result index in a single list. It is
-# a TextTree (the generic tree-in-a-text-widget engine) specialised for the
+# a StreamTree (the generic tree-in-a-text-widget engine) specialised for the
 # session domain: folders are the roots, sessions are their children, and a
 # session's subagents are its grandchildren. SessionList supplies the content
 # and ordering through the engine's hooks (column_spec, render_subject,
@@ -72,8 +72,8 @@ proc ::questlog::ui::session_columns {} {
 # between a header and its append point.
 
 oo::class create ::questlog::ui::SessionList {
-    superclass ::questlog::ui::TextTree
-    # Shared with the TextTree engine (same per-object variables): the widget
+    superclass ::streamtree::StreamTree
+    # Shared with the StreamTree engine (same per-object variables): the widget
     # refs, the node store, the column geometry and the sort state.
     variable Top
     variable Text
@@ -164,7 +164,7 @@ oo::class create ::questlog::ui::SessionList {
         # Bind the engine to this app's look and host services: the list and
         # heading fonts, the theme colours its header strip uses, the streamed-
         # resort debounce from config, and the drag-to-move motion handler. These
-        # are the only app-specific values the otherwise self-contained TextTree
+        # are the only app-specific values the otherwise self-contained StreamTree
         # engine needs; it carries no reference to them itself.
         my configure -listfont QLList -headfont QLBold \
             -colours [dict create \
@@ -182,7 +182,7 @@ oo::class create ::questlog::ui::SessionList {
     # store resets (init, and the buffer reset behind clear) do not fire the
     # per-node on_before_delete hook, so extend the store-wipe primitive itself
     # rather than each caller. The store, id allocation and payload accessors
-    # live in the TextTree base.
+    # live in the StreamTree base.
     method reset_nodes {} {
         next
         set FolderNode [dict create]
@@ -229,7 +229,7 @@ oo::class create ::questlog::ui::SessionList {
 
     # ---- engine lifecycle hooks --------------------------------------
     #
-    # The TextTree primitives own the marks; these hooks carry the session
+    # The StreamTree primitives own the marks; these hooks carry the session
     # domain's per-kind behaviour. start_gravity and row_tags fix a row's mark
     # gravity and style tag by kind; on_row_rendered wires a freshly-laid row's
     # bindings (and, as later phases land, its nested content and selection);

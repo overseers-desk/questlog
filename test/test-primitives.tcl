@@ -1,5 +1,5 @@
 #!/usr/bin/env wish9.0
-# Drive the TextTree structural primitives directly on a minimal subclass, with
+# Drive the StreamTree structural primitives directly on a minimal subclass, with
 # the audit gate on, asserting after each that the mark contract holds and that
 # the buffer returns to its empty baseline (no leaked marks or tags) once every
 # node is gone. This exercises the engine's mark ownership in isolation, before
@@ -9,17 +9,19 @@ package require Tcl 9
 package require Tk
 
 set ROOT [file dirname [file dirname [file normalize [info script]]]]
-foreach f {config.tcl ui/theme.tcl ui/drag.tcl ui/texttree.tcl} {
+::tcl::tm::path add $ROOT
+package require streamtree
+foreach f {config.tcl ui/theme.tcl ui/drag.tcl} {
     source [file join $ROOT $f]
 }
 ::questlog::ui::theme::init
-set ::env(TEXTTREE_AUDIT) 1
+set ::env(STREAMTREE_AUDIT) 1
 
-# A minimal concrete TextTree: three node kinds nested folder>session>subagent,
+# A minimal concrete StreamTree: three node kinds nested folder>session>subagent,
 # one metadata column, the per-kind start gravity and style tags the session
 # list uses, and a trivial subject.
 oo::class create Demo {
-    superclass ::questlog::ui::TextTree
+    superclass ::streamtree::StreamTree
     variable Top Text Nodes Roots NextId ColTabs ColRightX ColW ColGap \
         SubjectMax FolderLabelMax LayoutW RelayoutPending SortKey SortDir \
         ResortTimer AtTop
@@ -58,7 +60,7 @@ proc check {name expected actual} {
         incr ::fails
     } else { puts "ok:   $name" }
 }
-proc tripped {} { return [expr {[info exists ::TEXTTREE_AUDIT_TRIPPED] ? 1 : 0}] }
+proc tripped {} { return [expr {[info exists ::STREAMTREE_AUDIT_TRIPPED] ? 1 : 0}] }
 # Count the position marks the engine owns (named <node>_s / <node>_e), so a
 # leak (a row removed but its marks left live) is visible as a non-zero residue.
 proc live_marks {w} {

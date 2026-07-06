@@ -1,5 +1,5 @@
 #!/usr/bin/env wish9.0
-# Soak the TextTree mark contract under the four concurrent drivers that, before
+# Soak the StreamTree mark contract under the four concurrent drivers that, before
 # the engine owned its marks, could desync one against another: the streaming
 # scan (on_scan_row), the running poll (reconcile_running), the async cost flush
 # (refresh_cost), and a width change (relayout). With the audit gate on, every
@@ -10,12 +10,14 @@
 package require Tcl 9
 package require Tk
 
-set ::env(TEXTTREE_AUDIT) 1
+set ::env(STREAMTREE_AUDIT) 1
 set SAND [file join [pwd] _soak_sandbox]
 set ROOT [file dirname [file dirname [file normalize [info script]]]]
+::tcl::tm::path add $ROOT
+package require streamtree
 foreach f {config.tcl lib/cost.tcl ui/theme.tcl lib/path.tcl lib/filter.tcl lib/sessionlist.tcl lib/jsonl.tcl \
            lib/match.tcl ui/terminal.tcl ui/live.tcl lib/scan.tcl lib/search.tcl \
-           ui/drag.tcl ui/toolbar.tcl ui/texttree.tcl ui/sessions.tcl} {
+           ui/drag.tcl ui/toolbar.tcl ui/sessions.tcl} {
     source [file join $ROOT $f]
 }
 ::questlog::ui::theme::init
@@ -66,7 +68,7 @@ proc check {name got want} {
         puts "FAIL - $name"; puts "       got:  $got"; puts "       want: $want"; incr ::fails
     }
 }
-proc tripped {} { return [expr {[info exists ::TEXTTREE_AUDIT_TRIPPED] ? 1 : 0}] }
+proc tripped {} { return [expr {[info exists ::STREAMTREE_AUDIT_TRIPPED] ? 1 : 0}] }
 proc live_marks {} {
     set n 0
     foreach m [.s.body.t mark names] {

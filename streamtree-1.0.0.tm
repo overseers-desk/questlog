@@ -1,14 +1,12 @@
 package require Tcl 9
 package require Tk
+package provide streamtree 1.0.0
 
-# The engine creates its own namespace so the file is self-contained: it can be
-# sourced on its own (a standalone host, the demo) without the rest of the app
-# having created ::questlog::ui first.
-namespace eval ::questlog::ui {}
+namespace eval ::streamtree {}
 
-# ::questlog::ui::TextTree - the generic "tree drawn in one text widget" engine.
+# ::streamtree::StreamTree - the generic "tree drawn in one text widget" engine.
 #
-# A TextTree owns a tree of abstract NODES rendered into a single read-only
+# A StreamTree owns a tree of abstract NODES rendered into a single read-only
 # text widget, with a right-pinned, sortable metadata strip whose columns line
 # up across every row. Each node is a folder/row/child carrying the position
 # marks and tag that locate it in the widget, plus an opaque domain payload.
@@ -66,7 +64,7 @@ namespace eval ::questlog::ui {}
 # which Tk requires. Guards the degenerate column geometry a too-narrow width
 # (a build-time placeholder, or high DPI) can produce. Shared by the metadata
 # strip here and the viewer's table columns (ui/viewer.tcl).
-proc ::questlog::ui::sane_tabs {tabs} {
+proc ::streamtree::sane_tabs {tabs} {
     set out [list]
     set prev 0
     foreach {x align} $tabs {
@@ -77,7 +75,7 @@ proc ::questlog::ui::sane_tabs {tabs} {
     return $out
 }
 
-oo::class create ::questlog::ui::TextTree {
+oo::class create ::streamtree::StreamTree {
     variable Top
     variable Text
     # The generic node store. Nodes maps a node id to its dict
@@ -150,12 +148,12 @@ oo::class create ::questlog::ui::TextTree {
     # [start,end] region is well-formed (end >= start) and the roots are ordered
     # and disjoint down the buffer. A violation means a mark desynced - the class
     # of fault behind merged headings and rows that escape their folder. Gated on
-    # the TEXTTREE_AUDIT env var so production pays nothing; when on, it logs the
+    # the STREAMTREE_AUDIT env var so production pays nothing; when on, it logs the
     # first violation with the call chain and latches off, naming the primitive
     # that broke the contract. Every primitive calls this at its tail.
     method check_invariant {where} {
-        if {![info exists ::env(TEXTTREE_AUDIT)]} return
-        if {[info exists ::TEXTTREE_AUDIT_TRIPPED]} return
+        if {![info exists ::env(STREAMTREE_AUDIT)]} return
+        if {[info exists ::STREAMTREE_AUDIT_TRIPPED]} return
         set probs [list]
         set prev_end ""
         set prev_key ""
@@ -182,7 +180,7 @@ oo::class create ::questlog::ui::TextTree {
             set prev_key [my node_field $fid key]
         }
         if {[llength $probs]} {
-            set ::TEXTTREE_AUDIT_TRIPPED 1
+            set ::STREAMTREE_AUDIT_TRIPPED 1
             puts stderr "INVARIANT @ $where : [join $probs {; }] | TailMark=[$Text index TailMark] end=[$Text index end]"
             for {set l [info level]} {$l > 0} {incr l -1} {
                 puts stderr "   <- [string range [info level $l] 0 70]"
@@ -362,7 +360,7 @@ oo::class create ::questlog::ui::TextTree {
         # right-to-left arithmetic can leave the leftmost stops non-positive, and
         # Tk rejects a tab stop that is not positive or not greater than the one
         # before it. The real positions recompute on <Configure> once mapped.
-        set ColTabs [::questlog::ui::sane_tabs $ColTabs]
+        set ColTabs [::streamtree::sane_tabs $ColTabs]
         # Subject runs up to just before the leftmost metadata column.
         set first_rx [lindex $rights 0]
         set SubjectMax [expr {$first_rx - [lindex $ColW 0] - $ColGap - 12}]
