@@ -1,6 +1,8 @@
 # questlog
 
-A native GUI for finding, reading, and reopening past Claude Code sessions stored under `~/.claude/projects/`, on Linux and macOS. It offers a session list grouped by project, a typed search that streams matches across all projects as snippets under each session, a docked viewer that segments long conversations into sections, and right-click actions that reopen a session in its original working directory.
+In a role-playing game, the quest log is the screen you open when you cannot remember what you were doing: every quest listed with its objective, its cost, and a way to pick it back up. questlog is that screen for your Claude Code sessions.
+
+A native GUI for finding, reading, and resuming past Claude Code sessions stored under `~/.claude/projects/`, on Linux and macOS. It offers a session list grouped by project, a typed search that streams matches across all projects as snippets under each session, a docked viewer that segments long conversations into sections, and right-click actions that resume a session in its original working directory.
 
 questlog reads `~/.claude/projects` on this machine; nothing leaves it.
 
