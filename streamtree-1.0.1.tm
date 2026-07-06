@@ -968,6 +968,30 @@ oo::class create ::streamtree::StreamTree {
         my on_row_rendered $id
     }
 
+    # Un-render every node at once, for the two whole-buffer paths (rebuild,
+    # reset). Order matters for speed: marks are unset BEFORE the text delete,
+    # while they are still spread across the buffer. Deleting the text first
+    # collapses every mark into one pile at 1.0, and each subsequent unset then
+    # walks that pile: quadratic, seconds at 10k rows. Batched single calls
+    # spare the per-mark command dispatch as well.
+    method mass_unrender {} {
+        set marks [list]
+        set tags [list]
+        foreach id [my all_node_ids] {
+            set s [my node_field $id start]
+            if {$s ne ""} { lappend marks $s [my node_field $id end] }
+            set g [my node_field $id tag]
+            if {$g ne ""} { lappend tags $g }
+            my node_set $id start ""
+            my node_set $id end ""
+            my node_set $id tag ""
+            my node_set $id rendered 0
+        }
+        if {[llength $marks]} { catch {$Text mark unset {*}$marks} }
+        $Text delete 1.0 end
+        if {[llength $tags]} { catch {$Text tag delete {*}$tags} }
+    }
+
     # Reset a node's render state (drop its marks and tag, clear rendered) without
     # touching the buffer: the shared tail of detach/collapse, which delete the
     # text in bulk and then clear the per-node bookkeeping.
@@ -1186,11 +1210,10 @@ oo::class create ::streamtree::StreamTree {
         foreach id [my all_node_ids] {
             my node_set $id children [my sort_siblings [my node_field $id children]]
         }
-        $Text delete 1.0 end
-        # Drop every node's render marks and tag (their text just went), so the
-        # re-render starts from a clean buffer with no stale marks left to be
-        # dragged into an overlap. The durable node store itself survives.
-        foreach id [my all_node_ids] { my drop_render_marks $id }
+        # Un-render everything (marks, text, tags) so the re-render starts from
+        # a clean buffer with no stale marks left to be dragged into an overlap.
+        # The durable node store itself survives.
+        my mass_unrender
         $Text mark set TailMark "end-1c"
         $Text mark gravity TailMark right
         foreach rid $Roots {
@@ -1206,8 +1229,7 @@ oo::class create ::streamtree::StreamTree {
     method reset {} {
         set st [$Text cget -state]
         $Text configure -state normal
-        $Text delete 1.0 end
-        foreach id [my all_node_ids] { my drop_render_marks $id }
+        my mass_unrender
         $Text mark set TailMark "end-1c"
         $Text mark gravity TailMark right
         my reset_nodes
