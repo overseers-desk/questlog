@@ -1,6 +1,8 @@
 # questlog
 
-A native Linux GUI for finding, reading, and reopening past Claude Code sessions stored under `~/.claude/projects/`. It replaces the shell aliases `cs-ls` and `cs-grep` with a session list grouped by project, a typed search that streams matches across all projects as snippets under each session, a docked viewer that segments long conversations into sections, and right-click actions that reopen a session in its original working directory.
+A native GUI for finding, reading, and reopening past Claude Code sessions stored under `~/.claude/projects/`, on Linux and macOS. It offers a session list grouped by project, a typed search that streams matches across all projects as snippets under each session, a docked viewer that segments long conversations into sections, and right-click actions that reopen a session in its original working directory.
+
+questlog reads `~/.claude/projects` on this machine; nothing leaves it.
 
 ![The main window: sessions grouped by project with size and cost, the search and restrict filters, and the docked conversation viewer](assets/screenshot.png)
 
@@ -18,7 +20,7 @@ The tool exists for the moments you go back to a session after it is finished, a
 
 ## Scope
 
-A single-user desktop tool that reads the local JSONL Claude Code already writes, and nothing more. It runs natively on Linux, with no Electron and no embedded web view, which is the gap the official Desktop app leaves on Linux. It reads files on the local machine only, and Claude Code sessions only, not other agents.
+A single-user desktop tool that reads the local JSONL Claude Code already writes, and nothing more. It runs natively on Linux and macOS, with no Electron and no embedded web view, which on Linux is the gap the official Desktop app leaves. It reads files on the local machine only, and Claude Code sessions only, not other agents.
 
 Deliberately out of scope, because separate tools already serve them: exposing session history to the running agent over MCP, orchestrating parallel sessions, and unifying history across devices or across the CLI, Desktop, and web clients. questlog is a way back into a finished session, not an orchestrator.
 
@@ -44,7 +46,21 @@ Right-clicking a session offers "Open in viewer", "Copy resume command", "Copy s
 
 ## Installing
 
-See [docs/installation.md](docs/installation.md) for the Debian, Fedora, Homebrew, and single-file options.
+Packages are on the [releases page](https://github.com/overseers-desk/questlog/releases).
+
+```
+sudo apt install ./questlog_<version>_all.deb        # Debian / Ubuntu
+sudo dnf install ./questlog-<version>-1.noarch.rpm   # Fedora / RHEL
+```
+
+On macOS, through Homebrew:
+
+```
+brew tap overseers-desk/od
+brew install questlog
+```
+
+A single-file executable is also on the releases page; [docs/installation.md](docs/installation.md) covers it and the Tcl 9 runtime it expects.
 
 ## Running
 
@@ -61,3 +77,7 @@ See [docs/installation.md](docs/installation.md) for the Debian, Fedora, Homebre
 `./questlog` opens the main window immediately and streams rows in. The default seven-day window populates in under a second; switching to "all" extends incrementally with the tree growing as files are scanned. Scan progress is reported in the bottom status bar.
 
 A leading criterion token on the command line pre-seeds the GUI with a criteria chain: arguments pair as `<type> <value>`, where type is `tool:read`, `tool:write`, `tool:edit`, `tool:file`, `tool:<name>`, or `pattern`. The type tokens and the flags accept an optional leading `-` or `--`, so `tool:file`, `-tool:file`, and `--tool:file` are the same (the last matches the spelling the command-line mode uses). The `tool:` file selectors match the recorded file path by suffix (the GUI shows write and edit together as `wrote`); `tool:<name>` matches a session that used that tool, with the value found in its invocation; `pattern` matches content. The GUI then behaves normally, including the time-window control, so widen the window from the default 7 d when hunting an older edit. Like any GUI invocation, this needs an X display. The older `-regex PATTERN` flag still prefills one pattern criterion. An argument the seed grammar does not recognise is reported as a usage error, rather than dropped.
+
+## License
+
+[MIT](LICENSE).
