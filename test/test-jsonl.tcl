@@ -248,6 +248,26 @@ check turn_command_echo 0 [::questlog::jsonl::is_user_turn \
 check turn_task_note 0 [::questlog::jsonl::is_user_turn \
     {{"type":"user","message":{"role":"user","content":"<task-notification>done</task-notification>"}}}]
 
+# ---- record_role_label: the speaker heading for viewer and export ----------
+# A typed prompt (string or block-array) is USER; a tool_result record - also
+# role:user - is TOOL RESULT, not USER; assistant is ASSISTANT; anything else
+# is SYSTEM. Takes a parsed record, so route each line through parse_line.
+check label_string "USER" [::questlog::jsonl::record_role_label \
+    [::questlog::jsonl::parse_line \
+    {{"type":"user","message":{"role":"user","content":"do the thing"}}}]]
+check label_array_text "USER" [::questlog::jsonl::record_role_label \
+    [::questlog::jsonl::parse_line \
+    {{"type":"user","message":{"role":"user","content":[{"type":"text","text":"see this"}]}}}]]
+check label_tool_result "TOOL RESULT" [::questlog::jsonl::record_role_label \
+    [::questlog::jsonl::parse_line \
+    {{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"x","content":"ok"}]}}}]]
+check label_assistant "ASSISTANT" [::questlog::jsonl::record_role_label \
+    [::questlog::jsonl::parse_line \
+    {{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"hi"}]}}}]]
+check label_system "SYSTEM" [::questlog::jsonl::record_role_label \
+    [::questlog::jsonl::parse_line \
+    {{"type":"system","content":"Conversation compacted"}}]]
+
 if {$fails > 0} {
     puts "$fails failures"
     exit 1

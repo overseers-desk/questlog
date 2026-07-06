@@ -407,6 +407,7 @@ oo::class create ::questlog::ui::Viewer {
         $Text tag configure lbl-user      -foreground [::questlog::ui::theme::c user]      -font QLMonoBold -lmargin1 10 -lmargin2 10 -spacing1 6
         $Text tag configure lbl-assistant -foreground [::questlog::ui::theme::c assistant] -font QLMonoBold -lmargin1 10 -lmargin2 10 -spacing1 6
         $Text tag configure lbl-system    -foreground [::questlog::ui::theme::c tool]      -font QLMonoBold -lmargin1 10 -lmargin2 10 -spacing1 6
+        $Text tag configure lbl-tool_result -foreground [::questlog::ui::theme::c tool_result] -font QLMonoBold -lmargin1 10 -lmargin2 10 -spacing1 6
         # Body prose follows QLBody, the proportional reading font switched at
         # runtime; fenced code keeps QLMono so it stays aligned regardless of
         # the reading font. Without an explicit -font the text widget would
@@ -714,12 +715,11 @@ oo::class create ::questlog::ui::Viewer {
         set start_idx [$Text index "end-1l linestart"]
         dict set LineMap $lineno $start_idx
         dict set Bodies $lineno $body
-        dict set Roles $lineno [string toupper $t]
-        set ltag "lbl-$t"
-        if {$t ne "user" && $t ne "assistant" && $t ne "system"} {
-            set ltag lbl-system
-        }
-        $Text insert end "[string toupper $t]  " $ltag
+        set label [::questlog::jsonl::record_role_label $rec]
+        dict set Roles $lineno $label
+        # Label -> tag: lowercased with spaces to underscores (TOOL RESULT ->
+        # lbl-tool_result). The four lbl-* tags are configured in build.
+        $Text insert end "$label  " "lbl-[string map {{ } _} [string tolower $label]]"
         my insert_body $t $body
 
         if {$ts_epoch > 0} { set last_ts $ts_epoch }
@@ -1543,9 +1543,10 @@ oo::class create ::questlog::ui::Viewer {
     # Row foreground by role, echoing the rendered transcript's role colours.
     method role_color {ty} {
         switch -- $ty {
-            USER      { return [::questlog::ui::theme::c user] }
-            ASSISTANT { return [::questlog::ui::theme::c assistant] }
-            default   { return [::questlog::ui::theme::c tool] }
+            USER          { return [::questlog::ui::theme::c user] }
+            ASSISTANT     { return [::questlog::ui::theme::c assistant] }
+            "TOOL RESULT" { return [::questlog::ui::theme::c tool_result] }
+            default       { return [::questlog::ui::theme::c tool] }
         }
     }
 

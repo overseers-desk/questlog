@@ -4,7 +4,8 @@ package require json
 namespace eval ::questlog::jsonl {
     namespace export extract_text extract_blocks record_tool_uses \
         is_compact_boundary record_timestamp parse_iso fmt_gap first_cwd \
-        segment_blockquotes segment_tables parse_inline is_user_turn
+        segment_blockquotes segment_tables parse_inline is_user_turn \
+        record_role_label
 }
 
 # Parse one JSONL line into a Tcl dict. Returns "" on parse failure.
@@ -28,6 +29,38 @@ proc ::questlog::jsonl::parse_line {line} {
 proc ::questlog::jsonl::is_user_turn {line} {
     return [expr {[regexp {"role":"user","content":(?:"|\[\{"type":"(?:text|image)")} $line] \
         && ![regexp {"content":"<(?:command-name|local-command-stdout|local-command-caveat|task-notification)>} $line]}]
+}
+
+# The speaker label a record shows in the reading view and the markdown
+# export: USER / ASSISTANT / TOOL RESULT / SYSTEM. A type:user record whose
+# content opens with a tool_result block is a tool result, not a typed prompt
+# (the Anthropic API rides tool_result blocks in a user-role message), so it
+# reads TOOL RESULT. The one home for the label, so the viewer and the export
+# never disagree; the parsed-record twin of is_user_turn's tool_result
+# carve-out.
+# ponytail: the other harness echoes is_user_turn also excludes (<command-name>,
+# <local-command-stdout>, caveats, <task-notification>) still read USER; add one
+# string-prefix branch here if that is ever wanted - one fix serves both surfaces.
+proc ::questlog::jsonl::record_role_label {rec} {
+    switch -- [dict getdef $rec type ""] {
+        user      { return [expr {[is_tool_result_record $rec] ? "TOOL RESULT" : "USER"}] }
+        assistant { return "ASSISTANT" }
+        default   { return "SYSTEM" }
+    }
+}
+
+# 1 iff a parsed record is a tool_result carrier: type:user with block-array
+# content whose first block type is tool_result. The parsed-dict counterpart of
+# the regex in is_user_turn; reuses is_string_content to tell an array from a
+# plain string, the same discrimination extract_blocks makes.
+proc ::questlog::jsonl::is_tool_result_record {rec} {
+    if {[dict getdef $rec type ""] ne "user"} { return 0 }
+    if {![dict exists $rec message]}          { return 0 }
+    set msg [dict get $rec message]
+    if {![dict exists $msg content]}          { return 0 }
+    set c [dict get $msg content]
+    if {[is_string_content $c]}               { return 0 }
+    return [expr {[dict getdef [lindex $c 0] type ""] eq "tool_result"}]
 }
 
 # Extract the canonical text body of a record. Mirrors the jq pipeline

@@ -1,7 +1,9 @@
 package require Tcl 9
 
 # Markdown export of a session transcript. The text-only mirror of what the
-# viewer's `render` shows: USER / ASSISTANT / SYSTEM turns in document order,
+# viewer's `render` shows: USER / ASSISTANT / TOOL RESULT / SYSTEM turns in
+# document order (the label comes from ::questlog::jsonl::record_role_label, the
+# same helper the viewer uses, so a tool result never reads USER on either side),
 # broken into the same segments by the same two cues. The export mirrors the
 # viewer body verbatim: ::questlog::jsonl::extract_text renders tool_use as
 # `Tool(args)`, thinking as `[thinking] ...`, and image blocks as `[image]`
@@ -74,7 +76,7 @@ proc ::questlog::markdown::export_session {path {anchors 0}} {
             }
         }
 
-        lappend out [list turn [role_label [dict getdef $rec type ""]] $body $lineno]
+        lappend out [list turn [::questlog::jsonl::record_role_label $rec] $body $lineno]
         if {$ts_epoch > 0} { set last_ts $ts_epoch }
     }
     close $fh
@@ -97,15 +99,4 @@ proc ::questlog::markdown::export_session {path {anchors 0}} {
         }
     }
     return [join $blocks "\n\n"]
-}
-
-# Map a record type to its export role heading. Conversation types only;
-# anything else has already been filtered out by an empty extract_text, but a
-# defensive default keeps an unexpected type labelled rather than blank.
-proc ::questlog::markdown::role_label {type} {
-    switch -- $type {
-        user      { return USER }
-        assistant { return ASSISTANT }
-        default   { return SYSTEM }
-    }
 }
