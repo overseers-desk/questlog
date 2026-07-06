@@ -29,23 +29,16 @@ oo::class create DemoList {
         RelayoutPending SortKey SortDir ResortTimer AtTop Opts \
         ResizeCol ResizeX0 ResizeW0 FolderId
     constructor {parent} {
-        set Top $parent
-        my reset_nodes
-        set NextId 0; set SortKey size; set SortDir desc
-        set RelayoutPending 0; set ResortTimer ""; set LayoutW -1
         set FolderId [dict create]
         my configure -listfont DemoList -headfont DemoBold \
             -colours [dict create strip #e8eef2 muted #5a6b78 ink #102a43]
-        ttk::frame $Top.bar
-        pack $Top.bar -side top -fill x
-        ttk::label $Top.bar.t -text "StreamTree demo - sortable, resizable columns"
-        pack $Top.bar.t -side left -padx 6 -pady 4
-        my build_body
+        ttk::frame $parent.bar
+        pack $parent.bar -side top -fill x
+        ttk::label $parent.bar.t -text "StreamTree demo - sortable, resizable columns"
+        pack $parent.bar.t -side left -padx 6 -pady 4
+        my setup $parent
         my configure_tags
-        my compute_col_widths
-        my build_header
-        update idletasks
-        my relayout
+        my set_sort size
     }
 
     # ---- engine hooks ----
@@ -80,11 +73,7 @@ oo::class create DemoList {
         }
         return 0
     }
-    method apply_column_tabs {tabs} {
-        $Text tag configure folderhead -tabs $tabs
-        $Text tag configure filerow    -tabs $tabs
-    }
-    method relayout_content {} { foreach id [my all_rendered_nodes] { my item $id } }
+    method subject_label {} { return "File" }
     method sort_siblings {ids} {
         if {[llength $ids] == 0} { return $ids }
         set keyed [lmap id $ids { list $id [my sort_key [my node_payload $id] $SortKey] }]
@@ -126,6 +115,25 @@ oo::class create DemoList {
         }
         my item $fid
     }
+
+    # One streamed arrival: a synthetic file lands in a random folder, bracketed
+    # by the anchors so the reader's line never moves, then the debounced resort
+    # seats it under the active sort. This is the widget's core contract on
+    # display: leave streaming on, scroll anywhere, and read undisturbed.
+    variable StreamN
+    method stream_one {} {
+        if {![info exists StreamN]} { set StreamN 0 }
+        set folder [lindex [dict keys $FolderId] \
+            [expr {int(rand() * [dict size $FolderId])}]]
+        set name "arrival[incr StreamN].tcl"
+        my anchor_save
+        my insert [dict get $FolderId $folder] file "$folder/$name" \
+            [dict create label $name size [expr {1 + int(rand()*99)}] \
+                 lines [expr {10 + int(rand()*2000)}]]
+        my item [dict get $FolderId $folder]
+        my anchor_restore
+        my schedule_resort
+    }
 }
 
 pack [ttk::frame .f] -fill both -expand 1
@@ -137,5 +145,28 @@ $d add_folder Rust   {lib.rs 12 360  main.rs 5 150}
 # The folders streamed in live in arrival order; one rebuild seats them under
 # the active sort (Size, descending) so the initial view matches the heading.
 $d rebuild
+
+# The streaming showcase: rows pour in while the reading position holds; with
+# "Follow tail" on, the view latches to the bottom instead (the tail -f
+# contract) until scrolled away.
+set ::streaming 0
+set ::following 0
+proc stream_tick {} {
+    if {!$::streaming} return
+    $::d stream_one
+    after 400 stream_tick
+}
+proc follow_toggle {} {
+    $::d configure -autofollow $::following
+    if {$::following} { $::d follow }
+}
+ttk::checkbutton .f.bar.stream -text "Stream rows" -variable ::streaming \
+    -command stream_tick
+ttk::checkbutton .f.bar.follow -text "Follow tail" -variable ::following \
+    -command follow_toggle
+ttk::label .f.bar.at -text ""
+pack .f.bar.at .f.bar.follow .f.bar.stream -side right -padx 6
+bind .f <<AtBottom>>   {.f.bar.at configure -text "at tail"}
+bind .f <<LeftBottom>> {.f.bar.at configure -text ""}
 update
 wm title . "StreamTree demo"
