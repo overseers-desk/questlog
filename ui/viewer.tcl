@@ -1029,7 +1029,7 @@ oo::class create ::questlog::ui::Viewer {
             }
             set x [expr {$x + [lindex $cw $j] + $gut}]
         }
-        return [::questlog::ui::sane_tabs $stops]
+        return [::streamtree::sane_tabs $stops]
     }
 
     # The rendered pixel width of one cell, summing each inline run in the font
