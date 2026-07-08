@@ -128,17 +128,21 @@ proc ::questlog::cost::fmt_dur {secs} {
     return [format "%02d:%02d" $m $s]
 }
 
-# A model id (claude-opus-4-8, claude-haiku-4-5-20251001) to a short
-# "Family Ver" label (Opus 4.8, Haiku 4.5) for the session list's Model cell.
-# The family is the opus/sonnet/haiku token; the version is the two numeric
-# groups right after it joined by a dot. Any trailing date suffix is dropped.
-# Blank for an empty or unrecognised id, so the cell reads as "no figure".
+# A model id (claude-opus-4-8, claude-sonnet-5, claude-haiku-4-5-20251001) to a
+# short "Family Ver" label (Opus 4.8, Sonnet 5, Haiku 4.5) for the session
+# list's Model cell. The family is the opus/sonnet/haiku/fable token; the
+# version is the one or two numeric groups right after it, joined by a dot - a
+# lone group prints bare (Sonnet 5), so the Claude 5 family whose id carries a
+# single version number reads as a model rather than a blank cell. A trailing
+# date suffix is stripped first so it is never mistaken for a version. Blank for
+# an empty or unrecognised id, so the cell reads as "no figure".
 proc ::questlog::cost::fmt_model {id} {
-    if {![regexp {(opus|sonnet|haiku)-(\d+)-(\d+)} $id -> fam maj min]} {
+    regsub -- {-\d{6,}$} $id "" id
+    if {![regexp {(opus|sonnet|haiku|fable)-(\d+)(?:-(\d+))?$} $id -> fam maj min]} {
         return ""
     }
     set fam [string totitle $fam]
-    return "$fam $maj.$min"
+    return [expr {$min eq "" ? "$fam $maj" : "$fam $maj.$min"}]
 }
 
 # ISO-8601 UTC timestamp (e.g. 2026-04-25T10:00:00.000Z) to epoch seconds.
