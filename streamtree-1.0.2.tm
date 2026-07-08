@@ -1,6 +1,6 @@
 package require Tcl 9
 package require Tk
-package provide streamtree 1.0.1
+package provide streamtree 1.0.2
 
 namespace eval ::streamtree {}
 
@@ -61,6 +61,8 @@ namespace eval ::streamtree {}
 #     on_node_created id         register the node's domain indices before it renders
 #     on_row_rendered id         wire a laid row (bindings, nested content, selection)
 #     on_before_delete id        drop the node's domain indices before it leaves the store
+#     populate id                realize a lazy node's children at the top of expand,
+#                                before the engine draws them
 #   Rebuild
 #     sort_siblings ids          reorder a sibling set for display, keeping every node
 #     render_skip id             leave a node out of the view while keeping it in the store
@@ -891,12 +893,16 @@ oo::class create ::streamtree::StreamTree {
     # nested row to its parent's append point). row_tags are the static style
     # tags every row of a kind carries. on_row_rendered runs after a row is laid
     # (bindings, nested content, selection). on_before_delete runs before a node
-    # leaves the store (drop domain indices and aggregates).
+    # leaves the store (drop domain indices and aggregates). populate runs at the
+    # top of expand, so a lazy host can enumerate and attach the node's children
+    # right before the engine draws them; a fully materialized tree leaves it
+    # as the no-op default.
     method start_gravity {kind} { return right }
     method row_tags {kind} { return [list] }
     method on_node_created {id} {}
     method on_row_rendered {id} {}
     method on_before_delete {id} {}
+    method populate {id} {}
 
     # Content hooks, all with working defaults so a minimal subclass renders
     # something sensible before overriding anything: no metadata columns, the
@@ -1123,13 +1129,21 @@ oo::class create ::streamtree::StreamTree {
         my check_invariant item
     }
 
-    # expand: open a node and draw its not-hidden children.
+    # expand: open a node and draw its not-hidden children. populate runs first,
+    # so a lazy host realizes the children this expand is about to draw. On a
+    # node that is not itself rendered, expand records the flag alone; the
+    # children draw when the node's own row does, or on the next rebuild. That
+    # makes opening one level everywhere a one-liner over any id set, e.g.
+    #   $t batch { lmap id [$t roots] { $t expand $id } }
     method expand {id} {
         set st [$Text cget -state]
         $Text configure -state normal
+        my populate $id
         my node_set $id expanded 1
-        foreach c [my node_field $id children] {
-            if {![my node_field $c hidden]} { my render_row $c }
+        if {[my node_field $id rendered]} {
+            foreach c [my node_field $id children] {
+                if {![my node_field $c hidden]} { my render_row $c }
+            }
         }
         $Text configure -state $st
         my check_invariant expand

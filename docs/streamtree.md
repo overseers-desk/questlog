@@ -36,6 +36,12 @@ $t insert "" row a [dict create label "first row"]
 
 Every primitive owns its text-mark mutation and ends in `check_invariant`; a host never touches the underlying text widget.
 
+`expand` calls the `populate` hook first, so it is safe on a lazily-built tree, and it degrades to recording the open flag on a node whose own row is not drawn. Opening one level everywhere is therefore a one-liner from outside, `batch` anchoring the reader's scroll position once for the whole sweep:
+
+```tcl
+$t batch { lmap id [$t roots] { $t expand $id } }
+```
+
 ### Content door
 
 Match snippets and badge windows are loose row content, not nodes. They go through a small door that appends inside a node's region and carries that node's end mark forward, along with every ancestor end coincident with it:
@@ -59,7 +65,7 @@ Every hook has a working default: the base class renders each node's payload `la
 
 Content / layout: `subject_label` (header over the subject column), `column_spec`, `render_subject`, `cell_values`, `cell_tag`, `sort_key`, `apply_column_tabs` (default sets the tab stops widget-wide; override to configure row tags that carry their own `-tabs`), `relayout_content`.
 
-Row lifecycle (per node kind): `start_gravity`, `row_tags`, `on_node_created` (register domain indices before the row renders), `on_row_rendered` (wire bindings, nested content, selection), `on_before_delete` (drop domain indices).
+Row lifecycle (per node kind): `start_gravity`, `row_tags`, `on_node_created` (register domain indices before the row renders), `on_row_rendered` (wire bindings, nested content, selection), `on_before_delete` (drop domain indices), `populate` (called at the top of `expand`; a lazy host enumerates and attaches the node's children here, a materialized tree keeps the no-op default).
 
 Rebuild: `sort_siblings` (reorder a sibling set for display, keeping every node), `render_skip` (leave a node out of the view while keeping it in the store), `rebuild_restore` (re-pin the viewport to a captured top node).
 
