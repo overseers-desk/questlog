@@ -819,11 +819,16 @@ oo::class create ::questlog::ui::SessionList {
         if {![my has_session $path]} return
         if {![my sget $path has_subagents]} return
         set sid [my sid $path]
-        set exp [expr {![my node_field $sid expanded]}]
-        my node_set $sid expanded $exp
         $Text configure -state normal
         my anchor_save
-        if {$exp} { my expand_subagents $path } else { my collapse_subagents $path }
+        if {[my node_field $sid expanded]} {
+            my node_set $sid expanded 0
+            my collapse_subagents $path
+        } else {
+            # The engine primitive: populate realizes the children, then the
+            # engine lays them at the session's append point.
+            my expand $sid
+        }
         if {[my node_field $sid rendered]} { my redraw_header $path }
         my anchor_restore
         $Text configure -state disabled
@@ -851,12 +856,18 @@ oo::class create ::questlog::ui::SessionList {
         my node_set $sid children [linsert [my node_field $sid children] end $cid]
     }
 
-    method expand_subagents {path} {
-        if {[llength [my node_field [my sid $path] children]] == 0} {
-            my ensure_children_enumerated $path
-            foreach cp [my sget $path all_child_paths] { my attach_child $path $cp }
-        }
-        my render_children $path
+    # Engine hook: realize a session's subagent children at the top of expand.
+    # With no attached set yet (browse, or a search case-A session whose
+    # subagents did not match), enumerate and attach them all; in search the
+    # matched children are already attached as their matches arrived
+    # (add_subagent_matches), so they render as they stand.
+    method populate {id} {
+        if {[my node_field $id kind] ne "session"} return
+        if {[llength [my node_field $id children]]} return
+        set path [my node_field $id key]
+        if {![my sget $path has_subagents]} return
+        my ensure_children_enumerated $path
+        foreach cp [my sget $path all_child_paths] { my attach_child $path $cp }
     }
 
     method collapse_subagents {path} {
