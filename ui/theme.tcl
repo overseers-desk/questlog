@@ -274,6 +274,13 @@ proc ::questlog::ui::theme::build_chrome {} {
     ttk::style configure LVStrip.TFrame -background [c strip]
     ttk::style configure LV.TCheckbutton -background [c strip] -foreground [c ink]
     ttk::style map LV.TCheckbutton -background [list active [c strip]]
+    # The expand-all button shares the strip surface: flat on the band, the
+    # muted heading ink brightening to full ink under the pointer.
+    ttk::style configure LV.TButton -background [c strip] -foreground [c muted] \
+        -borderwidth 0 -padding {6 0} -shiftrelief 0
+    ttk::style map LV.TButton \
+        -background [list active [c strip] pressed [c strip]] \
+        -foreground [list active [c ink] pressed [c ink]]
     # ---- notice banner ------------------------------------------------------
     # The top-of-window notice strip (e.g. running without the Thread package):
     # the warm recap cream with the amber ink already used for mid-range cost,

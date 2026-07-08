@@ -286,6 +286,12 @@ oo::class create ::questlog::ui::SessionList {
         # band.
         ttk::frame $Top.lvt -style LVStrip.TFrame -padding {8 4}
         pack $Top.lvt -side top -fill x
+        # The expand-all button sits flush left in the strip, before the view
+        # toggles the Toolbar packs on the right. It carries no filter state,
+        # so it lives with the list it acts on rather than with the Toolbar.
+        ttk::button $Top.lvt.expandall -text "expand all" -style LV.TButton \
+            -takefocus 0 -command [list [self] expand_all_folders]
+        pack $Top.lvt.expandall -side left
 
         # The engine assembles the body (header text, list text, scrollbar, the
         # <Configure> relayout hook, the selection suppression and TailMark);
@@ -1453,6 +1459,24 @@ oo::class create ::questlog::ui::SessionList {
         foreach path [my folder_visible_paths $folder] {
             my render_session $path
         }
+    }
+
+    # The expand-all button: open every folder one level, in one batch so the
+    # reader's scroll position anchors once for the whole sweep. Folders render
+    # through expand_folder, which sorts at expand time; the engine's store
+    # order can lag the display order while streamed results await the
+    # debounced resort.
+    method expand_all_folders {} {
+        my batch {
+            foreach fid [my roots] {
+                if {[my node_field $fid expanded]} continue
+                set folder [my node_field $fid key]
+                my node_set $fid expanded 1
+                my expand_folder $folder
+                my redraw_folder_heading $folder
+            }
+        }
+        my check_invariant expand_all_folders
     }
 
     # A folder's VISIBLE session paths in the on-screen (sorted) order - the
