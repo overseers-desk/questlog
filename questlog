@@ -24,6 +24,8 @@ if {[lindex $argv 0] in {rename show install-claude-command} \
 # after the theme is initialised. Every flag accepts a single or double dash:
 # the switch matches the dash-stripped name, and the default arm re-appends the
 # original token so criterion tokens and file paths pass through untouched.
+# The search flag answers to the whole alias set the command-line grammar
+# accepts (--keyword, --kw), so one spelling seeds the box and searches headless.
 set VIEWER_FONT ""
 set INIT_SINCE ""
 set INIT_SEARCH ""
@@ -36,7 +38,7 @@ if {!$CLI_MODE} {
         switch -- [regsub {^--?} $tok {}] {
             font    { set VIEWER_FONT [lindex $argv [incr i]] }
             since   { set INIT_SINCE [lindex $argv [incr i]] }
-            search  { set INIT_SEARCH [lindex $argv [incr i]] }
+            search - keyword - kw { set INIT_SEARCH [lindex $argv [incr i]] }
             debug   { set DEBUG_ENABLED [lindex $argv [incr i]] }
             default { lappend kept $tok }
         }
@@ -150,6 +152,9 @@ set initial_criteria [list]
 proc questlog_seed_usage {} {
     puts stderr "usage: questlog \[-]\[type] <value> \[\[-]\[type] <value> ...\]"
     puts stderr "  type: tool:read | tool:write | tool:edit | tool:file | tool:<name> | pattern"
+    puts stderr "  flags: --search|--keyword <text>, --since <when>, --font <spec>, --debug <n>"
+    puts stderr "  A headless search needs an output flag: questlog --json --keyword <needle>."
+    puts stderr "  Run 'questlog --help' for the command-line grammar."
     exit 2
 }
 # Strip an optional leading - or -- off a criterion-type token.
