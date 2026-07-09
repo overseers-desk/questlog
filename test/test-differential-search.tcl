@@ -179,7 +179,7 @@ proc cli_search {argv} {
 # One case: the same query through both engines, both asserted against truth,
 # and the two engines asserted equal to each other.
 proc run_case {name search since subtree truth} {
-    set argv [list --search $search --since $since]
+    set argv [list --keyword $search --since $since]
     set snap [dict create search $search search_case 0 search_regions any since $since]
     if {$subtree ne ""} {
         lappend argv --subtree $subtree

@@ -317,9 +317,13 @@ oo::class create ::questlog::ui::Toolbar {
         lappend Subscribers $cb
     }
 
-    # Pre-fill the search field (a launch --search). The value is the raw query
-    # string the search bar would hold; the one startup publish runs it.
+    # Pre-fill the search field from a launch --keyword. The value is the raw
+    # query string the search bar would hold; the one startup publish runs it.
     method set_search {text} { set SearchVar $text; set LastQueryText $text }
+
+    # Press the Aa toggle from a launch --case. The checkbutton's own command
+    # publishes; a launch value rides the one startup publish instead.
+    method set_case {on} { set SearchCaseVar $on }
 
     # Pre-select the time row from a launch --since. A preset picks its radio;
     # any other spec the engine accepts (a relative window, an absolute date)

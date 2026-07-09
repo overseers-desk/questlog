@@ -50,7 +50,7 @@ namespace eval ::questlog::ui::app {
     variable PrevSnapshot     ;# the last published snapshot, to detect a view-toggle-only change
 }
 
-proc ::questlog::ui::app::start {root {initial_criteria {}} {init_since ""} {init_search ""}} {
+proc ::questlog::ui::app::start {root {seed {}}} {
     variable Scan
     variable Search
     variable Toolbar
@@ -240,20 +240,21 @@ proc ::questlog::ui::app::start {root {initial_criteria {}} {init_since ""} {ini
     ::questlog::cost::load_rates $Root
     init_cost_pool
 
-    # The launcher normalised each criterion to a toolbar clause kind
-    # (file/tool/pattern) with its value - a {op path} or {name key} pair for
-    # file and tool - so seed the toolbar directly, BEFORE subscribing: each
-    # add_value publishes, and a subscriber attached first would start one
+    # The launcher normalised the command line's query into toolbar clause kinds
+    # (file/tool/pattern/subtree) with their values - a {op path} or {name key}
+    # pair for file and tool - so seed the toolbar directly, BEFORE subscribing:
+    # each add_value publishes, and a subscriber attached first would start one
     # scan-and-search per seeded criterion instead of one for the launch.
-    foreach c $initial_criteria {
-        $Toolbar add_value [dict get $c type] [dict get $c value]
+    foreach c [dict getdef $seed criteria {}] {
+        $Toolbar add_value [lindex $c 0] [lindex $c 1]
     }
     $Toolbar subscribe [namespace code on_filter]
-    # Launch pre-fills: --since pre-selects the time radio, --search pre-fills
-    # the search field. Applied before the first publish so the opening search
-    # runs with them already in place.
-    if {$init_since ne ""} { $Toolbar set_window $init_since }
-    if {$init_search ne ""} { $Toolbar set_search $init_search }
+    # The rest of the query: --since pre-selects the time radio, --keyword fills
+    # the search field, --case sets the Aa toggle. Applied before the first
+    # publish so the opening search runs with them already in place.
+    if {[dict getdef $seed since ""] ne ""} { $Toolbar set_window [dict get $seed since] }
+    if {[dict getdef $seed search ""] ne ""} { $Toolbar set_search [dict get $seed search] }
+    if {[dict getdef $seed case 0]} { $Toolbar set_case 1 }
 
     bind . <Control-q> [namespace code quit]
     bind . <Control-b> [namespace code toggle_sidebar]

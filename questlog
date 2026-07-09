@@ -1,66 +1,35 @@
 #!/usr/bin/env tclsh9.0
 # questlog - entry script.
+#
+# One command line, two answers. cli/args.tcl parses argv into a neutral query;
+# `--json` or `--shortstat` prints that query's result and exits, and without
+# either the same query seeds the GUI's toolbar and the window opens on it. The
+# interpreter is tclsh, so Tk is absent until a GUI file requires it: an output
+# flag, `--help`, and the `rename`/`show` subcommands all answer without a
+# display, while the GUI branch pulls Tk in through the ui/ layer.
 
 package require Tcl 9
 
 set QUESTLOG_VERSION 1.1.5
-if {[lindex $argv 0] in {--version -v}} {
+if {[lindex $argv 0] eq "--version"} {
     puts "questlog $QUESTLOG_VERSION"
     exit 0
 }
 
-# Detect CLI mode before any library is sourced. The interpreter is tclsh, so
-# Tk is absent until a GUI file requires it: CLI mode never loads Tk and runs
-# without a display, while GUI mode pulls Tk in through the GUI layer below.
-set CLI_MODE 0
-if {[lindex $argv 0] in {rename show install-claude-command} \
-    || "--json" in $argv || "--cmd" in $argv || "--shortstat" in $argv \
-    || "--help" in $argv || "-h" in $argv} {
-    set CLI_MODE 1
-}
-
-# --font <family|spec> sets the session viewer's reading font. Pulled out of
-# argv before the criteria parse so it composes with a criteria chain; applied
-# after the theme is initialised. Every flag accepts a single or double dash:
-# the switch matches the dash-stripped name, and the default arm re-appends the
-# original token so criterion tokens and file paths pass through untouched.
-# The search flag answers to the whole alias set the command-line grammar
-# accepts (--keyword, --kw), so one spelling seeds the box and searches headless.
-set VIEWER_FONT ""
-set INIT_SINCE ""
-set INIT_SEARCH ""
-set DEBUG_ENABLED 0
-if {!$CLI_MODE} {
-    set kept [list]
-    for {set i 0} {$i < [llength $argv]} {incr i} {
-        set tok [lindex $argv $i]
-        if {![string match -* $tok]} { lappend kept $tok; continue }
-        switch -- [regsub {^--?} $tok {}] {
-            font    { set VIEWER_FONT [lindex $argv [incr i]] }
-            since   { set INIT_SINCE [lindex $argv [incr i]] }
-            search - keyword - kw { set INIT_SEARCH [lindex $argv [incr i]] }
-            debug   { set DEBUG_ENABLED [lindex $argv [incr i]] }
-            default { lappend kept $tok }
-        }
-    }
-    set argv $kept
-}
-
 set ROOT [file dirname [file normalize [info script]]]
 
-# Command-line mode prints to stdout and must never raise a window. Tk enters
-# the process only through the ui/ layer (every ui/ file requires it), and the
-# CLI path below sources none of it. Harden that seam: in CLI mode, refuse to
-# source any ui/ file, so a GUI source mistakenly wired onto a CLI path fails
-# loudly here instead of pulling Tk in and popping a dialog. Installed before
-# path.tcl wraps `file`; the check is a plain string match so it stays
-# independent of that wrapper. GUI mode leaves `source` untouched.
-if {$CLI_MODE} {
-    set QL_UI_DIR [file join $ROOT ui]
+# A headless run prints to stdout and raises no window. Tk enters the process
+# only through the ui/ layer (every ui/ file requires it), and no headless path
+# sources one. Harden that seam: refuse to source any ui/ file, so a GUI source
+# mistakenly wired onto a headless path fails loudly here instead of pulling Tk
+# in and popping a dialog. The check is a plain string match, independent of the
+# `file` wrapper lib/path.tcl installs. The GUI branch never calls this.
+proc questlog_forbid_ui {} {
+    set ::QL_UI_DIR [file join $::ROOT ui]
     rename source _ql_real_source
     proc source {args} {
         if {[string match $::QL_UI_DIR/* [lindex $args end]]} {
-            return -code error "questlog: command-line mode will not load the\
+            return -code error "questlog: a headless run will not load the\
                 GUI ([lindex $args end])"
         }
         return [uplevel 1 [linsert $args 0 _ql_real_source]]
@@ -82,11 +51,6 @@ if {[lindex $argv 0] eq "install-claude-command"} {
 
 source [file join $ROOT config.tcl]
 source [file join $ROOT lib debug.tcl]
-# Carry the parsed -debug value into config so every module reads the gate the
-# one way, then bring the diagnostic log up before any module that logs is
-# sourced. A failed open inside enable leaves logging off and the run unchanged.
-dict set ::questlog::config::Config debug_enabled $DEBUG_ENABLED
-if {$DEBUG_ENABLED ne "0" && $DEBUG_ENABLED ne ""} { ::questlog::debug::enable }
 source [file join $ROOT lib path.tcl]
 source [file join $ROOT lib filter.tcl]
 source [file join $ROOT lib sessionlist.tcl]
@@ -97,36 +61,55 @@ source [file join $ROOT lib cost.tcl]
 source [file join $ROOT lib search.tcl]
 source [file join $ROOT lib rename.tcl]
 # Headless transcript emitter (the reading view's text mirror). It is Tk-free,
-# so it loads in both modes and the GUI's copy/export-markdown actions and the
-# CLI `show` subcommand share the one renderer.
+# so it loads for both answers and the GUI's copy/export-markdown actions and
+# the `show` subcommand share the one renderer.
 source [file join $ROOT lib markdown.tcl]
-# In CLI mode, execute directly, bypassing the UI completely. `rename` and
-# `show` are standalone file ops (neither needs matcher caps or a cost pass), so
-# they dispatch before the search engine's setup.
-if {$CLI_MODE} {
+
+# `rename` and `show` are standalone file ops - neither is a query, so neither
+# needs the grammar, the matcher caps, or a cost pass.
+if {[lindex $argv 0] in {rename show}} {
+    questlog_forbid_ui
     source [file join $ROOT cli main.tcl]
-    if {[lindex $argv 0] eq "rename"} {
-        ::questlog::cli::main::rename [lrange $argv 1 end]
-        exit 0
-    }
-    if {[lindex $argv 0] eq "show"} {
-        ::questlog::cli::main::show [lrange $argv 1 end]
-        exit 0
-    }
-    source [file join $ROOT cli cost.tcl]
-    ::questlog::match::set_caps [dict create \
-        content_cap     [::questlog::config::get content_cap] \
-        snippet_lead    [::questlog::config::get snippet_lead] \
-        snippet_trail   [::questlog::config::get snippet_trail] \
-        tool_param_cap  [::questlog::config::get tool_param_cap] \
-        tool_render_cap [::questlog::config::get tool_render_cap]]
-    ::questlog::cli::main::run $argv
+    ::questlog::cli::main::[lindex $argv 0] [lrange $argv 1 end]
     exit 0
 }
 
-# GUI mode: source the ui/ layer. Tk (and with it ttk) enters the process here,
-# required by theme.tcl (sourced first) and the ui/ classes; the entry script
-# never requires Tk itself, so CLI mode above stays Tk-free.
+# The query. Parsing needs lib/search.tcl's region and tool-selector vocabulary
+# and lib/filter.tcl's time-spec grammar, so it runs once those are in hand, and
+# before either answer is prepared.
+source [file join $ROOT cli args.tcl]
+set Query [::questlog::cli::args::parse $argv]
+
+# Bring the diagnostic log up before any module logs. A failed open inside
+# enable leaves logging off and the run unchanged.
+set QL_DEBUG [dict get $Query debug]
+dict set ::questlog::config::Config debug_enabled $QL_DEBUG
+if {$QL_DEBUG ne "0" && $QL_DEBUG ne ""} { ::questlog::debug::enable }
+
+# The match procs read the display caps from config; inject them once for this
+# interp (each worker gets its own copy via worker_prelude).
+::questlog::match::set_caps [dict create \
+    content_cap     [::questlog::config::get content_cap] \
+    snippet_lead    [::questlog::config::get snippet_lead] \
+    snippet_trail   [::questlog::config::get snippet_trail] \
+    tool_param_cap  [::questlog::config::get tool_param_cap] \
+    tool_render_cap [::questlog::config::get tool_render_cap]]
+
+if {[dict get $Query mode] ne "gui"} {
+    questlog_forbid_ui
+    source [file join $ROOT cli main.tcl]
+    source [file join $ROOT cli cost.tcl]
+    ::questlog::cli::main::run $Query
+    exit 0
+}
+
+# The GUI answers the same query through the toolbar, so a clause it cannot hold
+# is refused here, by name, before a window opens.
+set QL_OBJECTION [::questlog::cli::args::gui_objection $Query]
+if {$QL_OBJECTION ne ""} { ::questlog::cli::args::fail $QL_OBJECTION }
+
+# Tk (and with it ttk) enters the process here, required by theme.tcl (sourced
+# first) and the ui/ classes; the entry script never requires Tk itself.
 source [file join $ROOT ui  theme.tcl]
 source [file join $ROOT ui  terminal.tcl]
 source [file join $ROOT ui  live.tcl]
@@ -141,72 +124,40 @@ source [file join $ROOT ui  viewer.tcl]
 source [file join $ROOT ui  move_dialog.tcl]
 source [file join $ROOT ui  app.tcl]
 
-# A leading criterion token launches the GUI pre-seeded with that criteria
-# chain, in <type> <value> pairs: the file/tool family is tool:<selector>
-# (tool:read|write|edit|file <path>, or tool:<name> <key>), and a regex is
-# pattern <re>. Each type token accepts an optional leading - or -- (so the GUI
-# answers to the same --tool:file spelling the CLI uses), stripped before the
-# match. Outside the chain, the -regex flag prefills a pattern criterion. Any
-# argument the seed grammar does not recognise is an error, not a silent drop.
-set initial_criteria [list]
-proc questlog_seed_usage {} {
-    puts stderr "usage: questlog \[-]\[type] <value> \[\[-]\[type] <value> ...\]"
-    puts stderr "  type: tool:read | tool:write | tool:edit | tool:file | tool:<name> | pattern"
-    puts stderr "  flags: --search|--keyword <text>, --since <when>, --font <spec>, --debug <n>"
-    puts stderr "  A headless search needs an output flag: questlog --json --keyword <needle>."
-    puts stderr "  Run 'questlog --help' for the command-line grammar."
-    exit 2
-}
-# Strip an optional leading - or -- off a criterion-type token.
-proc questlog_seed_type {tok} { return [regsub {^--?} $tok {}] }
-
-set first [questlog_seed_type [lindex $argv 0]]
-if {[llength $argv] > 0 && ([string match tool:* $first] || $first in {pattern regex})} {
-    if {[llength $argv] % 2 != 0} { questlog_seed_usage }
-    foreach {type value} $argv {
-        set type [questlog_seed_type $type]
-        if {$value eq ""} { questlog_seed_usage }
-        if {[string match tool:* $type]} {
-            set selector [string range $type [string length "tool:"] end]
-            lassign [::questlog::search::tool_selector $selector] kind spec
-            if {$kind eq "file"} {
-                # The GUI op pill speaks either/read/wrote (wrote = created-or-
-                # edited), so the finer write/edit selectors collapse onto wrote.
-                set spec [dict getdef {write wrote  edit wrote} $spec $spec]
+# Turn the query into the toolbar's own vocabulary: keywords are the search
+# field's text (its grammar splits on space and quotes a phrase), a regex is a
+# pattern criterion, and a tool clause is a file or tool criterion. The op pill
+# reads either/read/wrote, so the finer write and edit selectors collapse onto
+# wrote. gui_objection has already refused everything with no widget, so each
+# clause below has somewhere to land.
+proc questlog_seed {q} {
+    set criteria [list]
+    set terms [list]
+    foreach c [concat {*}[dict get $q groups]] {
+        set val [dict get $c value]
+        switch -- [dict get $c kind] {
+            keyword {
+                lappend terms [expr {[regexp {\s} $val] ? "\"$val\"" : $val}]
             }
-            lappend initial_criteria [dict create type $kind value [list $spec $value]]
-        } elseif {$type in {pattern regex}} {
-            lappend initial_criteria [dict create type pattern value $value]
-        } else {
-            questlog_seed_usage
+            regex { lappend criteria [list pattern $val] }
+            tool {
+                set spec [dict get $c selspec]
+                if {[dict get $c selkind] eq "file"} {
+                    set spec [dict getdef {write wrote  edit wrote} $spec $spec]
+                }
+                lappend criteria [list [dict get $c selkind] [list $spec $val]]
+            }
         }
     }
-} else {
-    # No leading criterion: the only accepted form here is -regex <pattern>. A
-    # bare launch leaves argv empty and the GUI opens unseeded; anything else
-    # left over is an unrecognised argument and fails loud rather than vanishing.
-    for {set i 0} {$i < [llength $argv]} {incr i} {
-        set a [lindex $argv $i]
-        if {$a eq "-regex" || $a eq "--regex"} {
-            incr i
-            lappend initial_criteria \
-                [dict create type pattern value [lindex $argv $i]]
-        } else {
-            questlog_seed_usage
-        }
+    if {[dict get $q subtree] ne ""} {
+        lappend criteria [list subtree [dict get $q subtree]]
     }
+    return [dict create criteria $criteria search [join $terms " "] \
+        since [dict get $q since] case [expr {![dict get $q nocase]}]]
 }
-
-# The match procs read the display caps from config; inject them once for the
-# main interp (each worker gets its own copy via worker_prelude).
-::questlog::match::set_caps [dict create \
-    content_cap     [::questlog::config::get content_cap] \
-    snippet_lead    [::questlog::config::get snippet_lead] \
-    snippet_trail   [::questlog::config::get snippet_trail] \
-    tool_param_cap  [::questlog::config::get tool_param_cap] \
-    tool_render_cap [::questlog::config::get tool_render_cap]]
 
 ::questlog::ui::theme::init
-if {$VIEWER_FONT ne ""} { ::questlog::ui::theme::set_body_family $VIEWER_FONT }
-::questlog::ui::app::start $ROOT $initial_criteria $INIT_SINCE $INIT_SEARCH
-
+if {[dict get $Query font] ne ""} {
+    ::questlog::ui::theme::set_body_family [dict get $Query font]
+}
+::questlog::ui::app::start $ROOT [questlog_seed $Query]

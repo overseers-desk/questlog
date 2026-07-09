@@ -67,18 +67,20 @@ A single-file executable is also on the releases page; [docs/installation.md](do
 ## Running
 
 ```
-./questlog                                        # launch the GUI
-./questlog tool:edit lib/scan.tcl                 # launch pre-seeded with a file (edited) criterion
-./questlog tool:edit foo.tcl pattern "bar"        # several criteria, AND-joined
-./questlog -regex "pattern"                       # prefill a single pattern criterion
-./questlog --search "california michael"          # prefill the search bar (plain words, not regex)
-./questlog --since 30d                             # open on a time window other than the 7d default
-./questlog --since 2026-04-01                      # ... or on everything since a calendar date
+./questlog                                            # launch the GUI
+./questlog --keyword "california michael"             # ... opened on a search
+./questlog --tool:edit lib/scan.tcl --since 30d       # ... on a file edited in the last 30 days
+./questlog --json --keyword "stripe webhook"          # answer on stdout instead, as JSON
+./questlog --shortstat --since 2026-04-01             # ... or as a totals summary
 ```
 
-`./questlog` opens the main window immediately and streams rows in. The default seven-day window populates in under a second; switching to "all" extends incrementally with the tree growing as files are scanned. Scan progress is reported in the bottom status bar.
+There is one command line. Write a query with it and `questlog` opens the GUI on that query; add `--json` or `--shortstat` and the same query is answered on stdout, headless, with no display needed. `questlog --help` prints the grammar.
 
-A leading criterion token on the command line pre-seeds the GUI with a criteria chain: arguments pair as `<type> <value>`, where type is `tool:read`, `tool:write`, `tool:edit`, `tool:file`, `tool:<name>`, or `pattern`. The type tokens and the flags accept an optional leading `-` or `--`, so `tool:file`, `-tool:file`, and `--tool:file` are the same (the last matches the spelling the command-line mode uses). The `tool:` file selectors match the recorded file path by suffix (the GUI shows write and edit together as `wrote`); `tool:<name>` matches a session that used that tool, with the value found in its invocation; `pattern` matches content. The GUI then behaves normally, including the time-window control, so widen the window from the default 7 d when hunting an older edit. Like any GUI invocation, this needs an X display. The older `-regex PATTERN` flag still prefills one pattern criterion. An argument the seed grammar does not recognise is reported as a usage error, rather than dropped.
+A query is clauses and bounds. A clause is `--keyword <needle>`, `--regex <re>`, or a tool clause: `--tool:read|write|edit|file <path>` matches a file the session touched (by path suffix), and `--tool:<name> <key>` a use of a named tool whose invocation contains the key. Clauses AND by adjacency; `--or` widens, `--not` negates, and a `:regions` suffix (`--keyword:user,assistant`) confines a needle to part of the transcript. Bounds apply to the whole result: `--since`, `--until`, `--subtree`, `--limit`, `--case`.
+
+A few clauses have no control in the window: `--or`, `--not`, `--until`, `--limit`, `--limit-matches`, `--accrued-cost`, a `:regions` suffix, and a keyword holding a double quote all ask for `--json` or `--shortstat`, and say so rather than being dropped.
+
+`./questlog` opens the main window immediately and streams rows in. The default seven-day window populates in under a second; switching to "all" extends incrementally with the tree growing as files are scanned. Scan progress is reported in the bottom status bar.
 
 ## License
 

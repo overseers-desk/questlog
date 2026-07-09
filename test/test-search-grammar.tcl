@@ -1,19 +1,23 @@
 #!/usr/bin/env tclsh9.0
-# Tests for the --json clause grammar: region parsing (lib/search.tcl
-# parse_regions), the argv parser (cli/main.tcl parse_query) and its boolean
-# tree, the tree evaluator (lib/match.tcl eval_tree), and the issue's worked
-# examples end to end through scan_file on a fixture. The query error paths are
-# checked against the real launcher, since they exit through usage.
+# Tests for the clause grammar: region parsing (lib/search.tcl parse_regions),
+# the argv parser (cli/args.tcl parse) and the boolean tree its clauses fold
+# into (cli/main.tcl fold), the tree evaluator (lib/match.tcl eval_tree), and the
+# issue's worked examples end to end through scan_file on a fixture. The query
+# error paths are checked against the real launcher, since they exit through
+# usage.
 package require Tcl 9
 set ROOT [file dirname [file dirname [file normalize [info script]]]]
-# Only what parse_query and scan_file need: not lib/path.tcl (it renames `file`
+# Only what the parser and scan_file need: not lib/path.tcl (it renames `file`
 # to guard deletes, which would block this test's fixture cleanup), nor the
-# Scan/cost layer (run's concern, not the grammar's).
+# Scan/cost layer (run's concern, not the grammar's). cli/args.tcl calls
+# path::canon_dir for --subtree only, which no case here exercises.
+
 source [file join $ROOT config.tcl]
 source [file join $ROOT lib filter.tcl]
 source [file join $ROOT lib jsonl.tcl]
 source [file join $ROOT lib match.tcl]
 source [file join $ROOT lib search.tcl]
+source [file join $ROOT cli args.tcl]
 source [file join $ROOT cli main.tcl]
 ::questlog::match::set_caps [dict create \
     content_cap     [::questlog::config::get content_cap] \
@@ -50,8 +54,10 @@ check region_ambig_tool 1 [throws {::questlog::search::parse_regions tool}]
 check region_ambig_a    1 [throws {::questlog::search::parse_regions a}]
 check region_unknown    1 [throws {::questlog::search::parse_regions nope}]
 
-# ---- parse_query: the boolean tree -----------------------------------------
-proc tree {args} { return [dict get [::questlog::cli::main::parse_query $args] clauses] }
+# ---- the parsed clauses, folded into the boolean tree ----------------------
+proc tree {args} {
+    return [::questlog::cli::main::fold [::questlog::cli::args::parse $args]]
+}
 
 # Adjacency ANDs, --or splits OR-groups: A B --or C is (A AND B) OR C.
 check tree_precedence \
@@ -61,15 +67,14 @@ check tree_precedence \
 # --not negates the next leaf only (neg flag on the leaf).
 check tree_not_flag {0 1} [lmap l [dict get [tree --keyword A --not --keyword B] leaves] { dict get $l neg }]
 
-# A region suffix rides on the leaf; --case clears nocase; a bare word is keyword.
+# A region suffix rides on the leaf; --case clears nocase.
 check tree_regions {tool_result} [dict get [lindex [dict get [tree --keyword:tool-result x] leaves] 0] regions]
 check tree_case    0 [dict get [tree --case --keyword x] nocase]
-check tree_bare_kw keyword [dict get [lindex [dict get [tree bareword] leaves] 0] kind]
 check tree_tool    {kind tool sel file spec read value c.tcl neg 0} \
     [lindex [dict get [tree --tool:read c.tcl] leaves] 0]
 
-# ---- parse_query: the global bounds ride beside the clause tree ------------
-proc bound {key args} { return [dict get [::questlog::cli::main::parse_query $args] $key] }
+# ---- the global bounds ride beside the clause tree -------------------------
+proc bound {key args} { return [dict get [::questlog::cli::args::parse $args] $key] }
 check bound_since   7d         [bound since --since 7d --keyword x]
 check bound_until   2026-04-01 [bound until --until 2026-04-01 --keyword x]
 check bound_until_default "" [bound until --keyword x]
@@ -108,7 +113,7 @@ close $fh
 
 # Does the session qualify for this query? (matches non-empty after scan_file)
 proc q {args} {
-    set clauses [dict get [::questlog::cli::main::parse_query $args] clauses]
+    set clauses [::questlog::cli::main::fold [::questlog::cli::args::parse $args]]
     lassign [::questlog::match::scan_file $::fix $clauses] row m
     return [expr {[llength $m] > 0}]
 }
@@ -141,10 +146,10 @@ check ex_cross_record    1 [q --keyword:user auth --keyword:assistant TODO]
 # The raw line is JSON-encoded, so needles bearing a quote or backslash and
 # anchored regexes cannot be gated against it; they must still match (and a
 # --not over them must still exclude).
-check ex_quoted_needle   1 [q {said "hello}]
-check ex_quoted_nocase   1 [q {SAID "HELLO}]
-check ex_quoted_not      0 [q --keyword auth --not {said "hello}]
-check ex_backslash       1 [q {C:\Users}]
+check ex_quoted_needle   1 [q --keyword {said "hello}]
+check ex_quoted_nocase   1 [q --keyword {SAID "HELLO}]
+check ex_quoted_not      0 [q --keyword auth --not --keyword {said "hello}]
+check ex_backslash       1 [q --keyword {C:\Users}]
 check ex_regex_anchor    1 [q --regex {^Anchored}]
 check ex_regex_anchor_not 0 [q --keyword auth --not --regex {^Anchored}]
 
@@ -158,7 +163,7 @@ puts $fh {{"type":"user","message":{"role":"user","content":[{"type":"text","tex
 puts $fh {{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"x","content":"irrelevant"}]}}}
 close $fh
 lassign [::questlog::match::scan_file $fix2 \
-    [dict get [::questlog::cli::main::parse_query {--keyword widget}] clauses]] row2 m2
+    [::questlog::cli::main::fold [::questlog::cli::args::parse {--keyword widget}]]] row2 m2
 check arr_nturns  1 [dict get $row2 nturns]
 check arr_preview {fix the "blue" widget} [dict get $row2 first_user]
 file delete $fix2
@@ -182,6 +187,37 @@ check err_not_flag  1 [string match {*--not must be followed*}     [cli_err --no
 check err_all_neg   1 [string match {*at least one positive*}      [cli_err --not --keyword x]]
 check err_accrued_no_bound 1 [string match {*--accrued-cost needs a time bound*} [cli_err --accrued-cost --keyword x]]
 check err_accrued_all      1 [string match {*--accrued-cost needs a time bound*} [cli_err --accrued-cost --since all --keyword x]]
+check err_not_not   1 [string match {*--not --not is not allowed*}  [cli_err --not --not --keyword x]]
+check err_two_since 1 [string match {*--since given twice*}         [cli_err --since 7d --since 8d --keyword x]]
+check err_two_modes 1 [string match {*choose one output*}           [cli_err --shortstat --keyword x]]
+check err_font_headless 1 [string match {*--font is a GUI option*}  [cli_err --font Sans --keyword x]]
+
+# Every needle is written to a flag - there is no positional form - and each
+# flag has one spelling, so a plausible near-miss is an error, not a synonym.
+check err_bare_arg  1 [string match {*unexpected argument 'bareword'*} [cli_err bareword]]
+foreach nearmiss {--kw --search --rx --pattern --cmd -h -v} {
+    check err_nearmiss$nearmiss 1 [string match "*unknown option: $nearmiss*" [cli_err $nearmiss x]]
+}
+
+# ---- the GUI answers the same query, and refuses what it cannot hold --------
+# Without an output flag the query seeds the window, so a clause with no widget
+# behind it is named rather than dropped. Run without --json (and without a
+# display: the parse rejects before Tk is ever sourced).
+proc gui_err {args} {
+    set ef [file join [file dirname [info script]] _grammar_err.txt]
+    catch {exec [file join $::ROOT questlog] {*}$args 2>$ef}
+    set h [open $ef r]; set t [read $h]; close $h
+    file delete $ef
+    return $t
+}
+check gui_err_or      1 [string match {*--or needs --json or --shortstat*}    [gui_err --keyword a --or --keyword b]]
+check gui_err_not     1 [string match {*--not needs --json or --shortstat*}   [gui_err --not --keyword a --keyword b]]
+check gui_err_regions 1 [string match {*:regions suffix needs --json*}        [gui_err --keyword:user a]]
+check gui_err_until   1 [string match {*--until needs --json or --shortstat*} [gui_err --until 7d --keyword a]]
+check gui_err_limit   1 [string match {*--limit needs --json or --shortstat*} [gui_err --limit 5 --keyword a]]
+check gui_err_lmatch  1 [string match {*--limit-matches needs --json*}        [gui_err --limit-matches 0 --keyword a]]
+check gui_err_accrued 1 [string match {*--accrued-cost needs --json*}         [gui_err --accrued-cost --since 7d --keyword a]]
+check gui_err_quote   1 [string match {*double quote needs --json*}           [gui_err --keyword {say "hi}]]
 
 if {$fails > 0} {
     puts "$fails failures"

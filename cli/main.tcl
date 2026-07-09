@@ -117,58 +117,6 @@ proc ::questlog::cli::main::format_shortstat {stats limit} {
     return [join $lines "\n"]
 }
 
-# Print command-line mode usage and exit.
-# channel/code parameterised: an explicit --help is an answer (stdout,
-# exit 0); a parse error keeps the diagnostic contract (stderr, exit 2).
-proc ::questlog::cli::main::usage {{channel stderr} {code 2}} {
-    puts $channel "usage: questlog \[--json|--shortstat\] \[bounds\] \[clauses\]"
-    puts $channel ""
-    puts $channel "A session is returned when its clauses hold. Each clause is one needle in an"
-    puts $channel "optional region-list; clauses combine by one algebra: adjacency is AND, --or is"
-    puts $channel "OR, --not negates the next clause. Precedence is NOT > AND > OR. There is no"
-    puts $channel "grouping - a query that needs A AND (B OR C) is rejected; reorder to DNF instead."
-    puts $channel ""
-    puts $channel "output (one is required; each runs headless, no GUI):"
-    puts $channel "  --json                  Emit the full result as JSON."
-    puts $channel "  --shortstat             Emit a totals summary instead: session and subagent"
-    puts $channel "                          counts, turns, tokens, and total cost over the result."
-    puts $channel ""
-    puts $channel "  Cost = the tokens recorded in each transcript priced at per-model API rates;"
-    puts $channel "  computed here, an API-equivalent figure, not a number the harness billed."
-    puts $channel "  By default a session's whole-transcript cost counts once it falls in the"
-    puts $channel "  window; --accrued-cost instead counts only the spend dated inside the window."
-    puts $channel ""
-    puts $channel "clauses:"
-    puts $channel "  --keyword\[:regions\] <needle>   Literal needle (aliases: --kw, --search). A bare"
-    puts $channel "                                argument is the same as --keyword."
-    puts $channel "  --regex\[:regions\] <needle>     Regex needle (aliases: --rx, --pattern)."
-    puts $channel "  --tool:read <file>            A file read (by path suffix)."
-    puts $channel "  --tool:write|edit|file <file> A file written / edited / touched."
-    puts $channel "  --tool:<name> <key>           A use of a tool (Bash, Grep, ...) whose invocation"
-    puts $channel "                                contains the key (empty key = any use)."
-    puts $channel "  --or                          OR between the clause before and the clause after."
-    puts $channel "  --not                         Negate the next clause. The whole query still"
-    puts $channel "                                needs at least one positive clause."
-    puts $channel ""
-    puts $channel "regions (the :regions suffix on --keyword/--regex; comma-joins for OR):"
-    puts $channel "  user, assistant, tool-use, tool-result, any (default). Unambiguous prefixes are"
-    puts $channel "  accepted, e.g. --keyword:user,assi <needle>. Omit the suffix to match anywhere."
-    puts $channel ""
-    puts $channel "bounds (global, applied to the whole result - not clauses):"
-    puts $channel "  --since <when>          Recency bound: a window (24h, 7d, 2w), a date (2026-04-01),"
-    puts $channel "                          a precise instant (2026-04-01T13:37, ...T13:37:30), or 'all'."
-    puts $channel "  --until <when>          Older bound: a window ago (7d), a date (covers the whole day),"
-    puts $channel "                          a precise instant (2026-04-01T13:37\[:SS\]), or 'all' (no bound)."
-    puts $channel "  --subtree <dir>         Only sessions in the subtree of <dir>: the directory"
-    puts $channel "                          itself and everything below it (~ is expanded)."
-    puts $channel "  --accrued-cost          Count only spend dated inside the --since/--until window,"
-    puts $channel "                          by each message's timestamp. Needs a time bound; --until"
-    puts $channel "                          alone scans the whole corpus."
-    puts $channel "  --limit <N>             Cap returned sessions (unset or 0 = unlimited)."
-    puts $channel "  --limit-matches <N>     Cap snippets per session/subagent (0 = no snippets)."
-    puts $channel "  --case                  Case-sensitive keyword matching (default: insensitive)."
-    exit $code
-}
 
 # Helper to filter and limit matches to the requested cap
 proc ::questlog::cli::main::limit_matches {matches limit_cap {sub_path ""}} {
@@ -187,208 +135,31 @@ proc ::questlog::cli::main::limit_matches {matches limit_cap {sub_path ""}} {
     return $out
 }
 
-# Parse a CLI :regions suffix, exiting cleanly on a bad spec rather than dumping
-# a stack trace. An empty suffix (no colon, or a bare "--keyword:") is the
-# unrestricted default.
-proc ::questlog::cli::main::regions {spec} {
-    if {[catch {::questlog::search::parse_regions $spec} out]} {
-        puts stderr "questlog: $out"
-        exit 2
-    }
-    return $out
-}
-
-# The value following a clause flag; a missing one is an error rather than a
-# silent empty needle (which would match every session).
-proc ::questlog::cli::main::next_val {argvVar iVar flag} {
-    upvar 1 $argvVar argv $iVar i
-    incr i
-    if {$i >= [llength $argv]} {
-        puts stderr "questlog: $flag needs a value"
-        ::questlog::cli::main::usage
-    }
-    return [lindex $argv $i]
-}
-
-# Append a leaf to the flat leaf list and the current AND-group, then clear the
-# pending --not. The leaf already carries its negation, so the reset only guards
-# the next clause.
-proc ::questlog::cli::main::push_leaf {leavesVar curVar negVar leaf} {
-    upvar 1 $leavesVar leaves $curVar cur $negVar pending_neg
-    set id [llength $leaves]
-    lappend leaves $leaf
-    lappend cur [::questlog::match::tnode_leaf $id]
-    set pending_neg 0
-}
-
-# parse_query argv - turn the clause and bound arguments into a query: the
-# matcher clauses (leaves + boolean tree + nocase) and the global bounds (limit,
-# limit_matches, subtree, since, until). The grammar is an OR (--or) of AND-groups
-# (adjacency) of optionally-negated (--not) leaves; groups is the closed
-# AND-groups and cur the one being built, while bounds ride outside the tree. A
-# malformed query prints a message and exits through usage. Separated from run so
-# the grammar is a unit a test can drive from argv to tree.
-proc ::questlog::cli::main::parse_query {argv} {
-    set limit 0
-    set limit_matches -1
-    set subtree ""
-    set since ""
-    set until ""
-    set accrued 0
-    set nocase 1
-    set mode json
+# fold q - the neutral query dict's clause groups as the matcher's
+# {leaves tree nocase} form: each group's clauses AND together, the groups OR.
+# The grammar itself lives in cli/args.tcl; this is the one place its vocabulary
+# meets the matcher's leaves.
+proc ::questlog::cli::main::fold {q} {
     set leaves [list]
-    set groups [list]
-    set cur [list]
-    set pending_neg 0
-
-    for {set i 0} {$i < [llength $argv]} {incr i} {
-        set arg [lindex $argv $i]
-        # Keyword and regex clauses carry an optional :regions suffix.
-        if {[regexp {^--(?:keyword|kw|search)(?::(.*))?$} $arg -> rspec]} {
-            set val [::questlog::cli::main::next_val argv i $arg]
-            ::questlog::cli::main::push_leaf leaves cur pending_neg \
-                [::questlog::match::kw_leaf $val [::questlog::cli::main::regions $rspec] $pending_neg]
-            continue
+    set ornodes [list]
+    foreach group [dict get $q groups] {
+        set andnodes [list]
+        foreach c $group {
+            set neg [dict get $c neg]
+            set val [dict get $c value]
+            switch -- [dict get $c kind] {
+                keyword { set leaf [::questlog::match::kw_leaf $val [dict get $c regions] $neg] }
+                regex   { set leaf [::questlog::match::rx_leaf $val [dict get $c regions] $neg] }
+                tool    { set leaf [::questlog::match::tool_leaf [dict get $c selkind] \
+                                        [dict get $c selspec] $val $neg] }
+            }
+            lappend andnodes [::questlog::match::tnode_leaf [llength $leaves]]
+            lappend leaves $leaf
         }
-        if {[regexp {^--(?:regex|rx|pattern)(?::(.*))?$} $arg -> rspec]} {
-            set val [::questlog::cli::main::next_val argv i $arg]
-            # Validate now: the pattern's first execution is deep inside the
-            # scan, where a throw is a stack trace instead of a usage error.
-            if {[catch {regexp -- $val {}} rxerr]} {
-                puts stderr "questlog: $arg: invalid pattern '$val': $rxerr"
-                ::questlog::cli::main::usage
-            }
-            ::questlog::cli::main::push_leaf leaves cur pending_neg \
-                [::questlog::match::rx_leaf $val [::questlog::cli::main::regions $rspec] $pending_neg]
-            continue
-        }
-        if {[string match --tool:* $arg]} {
-            set selector [string range $arg [string length "--tool:"] end]
-            set val [::questlog::cli::main::next_val argv i $arg]
-            lassign [::questlog::search::tool_selector $selector] kind spec
-            ::questlog::cli::main::push_leaf leaves cur pending_neg \
-                [::questlog::match::tool_leaf $kind $spec $val $pending_neg]
-            continue
-        }
-        # A pending --not may only be followed by a clause; letting a bound or
-        # output flag through here would silently carry the negation across it
-        # to whatever leaf comes later.
-        if {$pending_neg && $arg ne "--not" && [string match -* $arg]} {
-            puts stderr "questlog: --not must be followed by a clause, not '$arg'"
-            ::questlog::cli::main::usage
-        }
-        switch -glob -- $arg {
-            --json - --cmd { set mode json }
-            --shortstat { set mode shortstat }
-            --help - -h { ::questlog::cli::main::usage stdout 0 }
-            --or {
-                if {$pending_neg || [llength $cur] == 0} {
-                    puts stderr "questlog: --or needs a clause on each side"
-                    ::questlog::cli::main::usage
-                }
-                lappend groups [::questlog::match::tnode_and $cur]
-                set cur [list]
-            }
-            --not {
-                if {$pending_neg} {
-                    puts stderr "questlog: --not --not is not allowed"
-                    ::questlog::cli::main::usage
-                }
-                set pending_neg 1
-            }
-            --limit         { set limit [::questlog::cli::main::next_val argv i $arg] }
-            --limit-matches { set limit_matches [::questlog::cli::main::next_val argv i $arg] }
-            --since         { set since [::questlog::cli::main::next_val argv i $arg] }
-            --until         { set until [::questlog::cli::main::next_val argv i $arg] }
-            --accrued-cost  { set accrued 1 }
-            --subtree       {
-                # Canonicalise here (tilde-expanded, absolute) so the filter
-                # predicates compare against the form Claude records as a cwd;
-                # an inexpandible ~user fails loud instead of matching nothing.
-                set v [::questlog::cli::main::next_val argv i $arg]
-                if {[catch {::questlog::path::canon_dir $v} subtree]} {
-                    puts stderr "questlog: --subtree: $subtree"
-                    ::questlog::cli::main::usage
-                }
-            }
-            --case          { set nocase 0 }
-            "(" - ")" - "--(" - "--)" - --and {
-                puts stderr "questlog: grouping is not supported - the flag algebra has no\
-                    parentheses. Reorder to OR-of-ANDs, e.g. 'A B --or A C' for 'A AND (B OR C)'."
-                exit 2
-            }
-            -* {
-                puts stderr "Unknown option: $arg"
-                ::questlog::cli::main::usage
-            }
-            default {
-                ::questlog::cli::main::push_leaf leaves cur pending_neg \
-                    [::questlog::match::kw_leaf $arg {} $pending_neg]
-            }
-        }
+        lappend ornodes [::questlog::match::tnode_and $andnodes]
     }
-    if {$pending_neg} {
-        puts stderr "questlog: --not has no following clause"
-        ::questlog::cli::main::usage
-    }
-    if {[llength $cur] > 0} {
-        lappend groups [::questlog::match::tnode_and $cur]
-    } elseif {[llength $groups] > 0} {
-        puts stderr "questlog: --or needs a clause on each side"
-        ::questlog::cli::main::usage
-    }
-    if {$limit eq "all"} { set limit 0 }
-    # Counts must be counts: a swallowed flag or a typo would otherwise ride
-    # through Tcl string comparison as "no cap" while claiming to be one.
-    if {![string is integer -strict $limit] || $limit < 0} {
-        puts stderr "questlog: --limit: not a count: '$limit' (want a non-negative integer or 'all')"
-        ::questlog::cli::main::usage
-    }
-    if {$limit_matches ne -1 && (![string is integer -strict $limit_matches] || $limit_matches < 0)} {
-        puts stderr "questlog: --limit-matches: not a count: '$limit_matches'"
-        ::questlog::cli::main::usage
-    }
-    # A tree with no positive leaf can only prove absence, and the result
-    # model shows evidence (snippets of positive hits), so reject it loudly
-    # rather than emit the silent empty set.
-    if {[llength $leaves] > 0} {
-        set any_pos 0
-        foreach l $leaves { if {![dict get $l neg]} { set any_pos 1; break } }
-        if {!$any_pos} {
-            puts stderr "questlog: a query needs at least one positive clause (--not only negates)"
-            ::questlog::cli::main::usage
-        }
-    }
-
-    # --since accepts a relative window (24h, 7d, 2w, ...), an absolute date
-    # (2026-04-01) or a precise instant (2026-04-01T13:37[:SS]); "" or "all" mean no
-    # bound. Validate now so a bad spec fails fast rather than at cutoff time.
-    if {$since ne "" && $since ne "all"
-        && [catch {::questlog::filter::parse_since $since}]} {
-        puts stderr "questlog: --since: invalid '$since' (want 24h/7d/2w, 2026-04-01, 2026-04-01T13:37\[:SS\], or 'all')"
-        ::questlog::cli::main::usage
-    }
-    # --until shares the since spec grammar; it is the upper edge of the window.
-    if {$until ne "" && $until ne "all"
-        && [catch {::questlog::filter::parse_since $until}]} {
-        puts stderr "questlog: --until: invalid '$until' (want 24h/7d/2w, 2026-04-01, 2026-04-01T13:37\[:SS\], or 'all')"
-        ::questlog::cli::main::usage
-    }
-    # --accrued-cost windows the spend, so it has no meaning without a window:
-    # require a real --since or --until ("" and "all" both parse to {none}).
-    if {$accrued
-        && [lindex [::questlog::filter::parse_since $since] 0] eq "none"
-        && [lindex [::questlog::filter::parse_since $until] 0] eq "none"} {
-        puts stderr "questlog: --accrued-cost needs a time bound (--since and/or --until)"
-        ::questlog::cli::main::usage
-    }
-
-    return [dict create \
-        clauses [dict create leaves $leaves \
-            tree [::questlog::match::tnode_or $groups] nocase $nocase] \
-        limit $limit limit_matches $limit_matches subtree $subtree since $since \
-        until $until accrued $accrued mode $mode]
+    return [dict create leaves $leaves \
+        tree [::questlog::match::tnode_or $ornodes] nocase [dict get $q nocase]]
 }
 
 # Apply a rename from the command line: `questlog rename <session.jsonl> [title]`.
@@ -471,16 +242,16 @@ proc ::questlog::cli::main::has_window_spend {cost_info} {
         || [dict getdef $cost_info turns 0] > 0}]
 }
 
-# Run the command-line search engine.
-proc ::questlog::cli::main::run {argv} {
+# Answer the query on stdout. q is the neutral dict cli/args.tcl parsed from the
+# command line; its clause groups become the matcher's boolean tree and its
+# bounds ride outside as global filters.
+proc ::questlog::cli::main::run {q} {
     variable ::ROOT
     if {![info exists ROOT]} {
         set ROOT [file dirname [file dirname [file normalize [info script]]]]
     }
 
-    # 1. Parse the query: clauses (the boolean tree of leaves) and global bounds.
-    set q [::questlog::cli::main::parse_query $argv]
-    set clauses       [dict get $q clauses]
+    set clauses       [::questlog::cli::main::fold $q]
     set limit         [dict get $q limit]
     set limit_matches [dict get $q limit_matches]
     set subtree       [dict get $q subtree]
