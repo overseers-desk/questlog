@@ -8,6 +8,8 @@
 package require Tcl 9
 
 set ROOT [file dirname [file dirname [file normalize [info script]]]]
+::tcl::tm::path add $ROOT
+package require leash
 if {[catch {package require Tk}]} {
     puts "SKIP - no Tk/display; rarity_round_robin lives in ui/viewer.tcl"
     exit 0

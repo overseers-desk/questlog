@@ -60,6 +60,7 @@ proc ::questlog::ui::highlight_terms {snapshot} {
 }
 
 oo::class create ::questlog::ui::Toolbar {
+    mixin leash
     variable Top
     variable Cwd
     variable Subscribers
@@ -88,7 +89,7 @@ oo::class create ::questlog::ui::Toolbar {
     variable AddState         ;# array kind -> collapsed|editing (add affordance's morph state)
     variable AddOp            ;# op for the next file value added (either|read|wrote)
     variable EditFocusKind    ;# kind whose editor should hold focus across a rebuild, or ""
-    variable DebounceAfter    ;# after-id of the pending live-search publish, or ""
+    variable DebounceAfter    ;# leash token of the pending live-search publish, or ""
     variable TypingUntil      ;# clock-ms deadline through which the user counts as typing
     variable LastQueryText    ;# search text the live trigger last acted on; gates out
                               ;# key releases that move the cursor or select but leave
@@ -162,9 +163,9 @@ oo::class create ::questlog::ui::Toolbar {
             # button release. Deferred to idle so the class binding has
             # inserted the text before the debounce compares it.
             bind $Top.search.e <<Paste>> \
-                [list after idle [list [self] on_search_change]]
+                [list [self] later idle [list [self] on_search_change]]
             bind $Top.search.e <ButtonRelease-2> \
-                [list after idle [list [self] on_search_change]]
+                [list [self] later idle [list [self] on_search_change]]
         }
         # Scope picker: where the search terms must appear. A menubutton posts
         # its menu anchored to itself - no transient popup, so nothing nests.
@@ -616,8 +617,8 @@ oo::class create ::questlog::ui::Toolbar {
         # The user counts as typing through the debounce window, so the browse
         # scan can defer while they type (see scan_while_typing).
         set TypingUntil [expr {[clock milliseconds] + $ms}]
-        if {$DebounceAfter ne ""} { after cancel $DebounceAfter }
-        set DebounceAfter [after $ms [list [self] debounce_fire]]
+        if {$DebounceAfter ne ""} { my forget $DebounceAfter }
+        set DebounceAfter [my later $ms [list [self] debounce_fire]]
     }
 
     method debounce_fire {} {
@@ -630,7 +631,7 @@ oo::class create ::questlog::ui::Toolbar {
     # Enter: cancel any pending debounce and publish now, so the search runs at
     # once and the trailing KeyRelease cannot fire a second, redundant search.
     method publish_now {} {
-        if {$DebounceAfter ne ""} { after cancel $DebounceAfter; set DebounceAfter "" }
+        if {$DebounceAfter ne ""} { my forget $DebounceAfter; set DebounceAfter "" }
         set TypingUntil 0
         set LastQueryText $SearchVar
         ::questlog::debug::log search "Return; dispatching search '$SearchVar'"
@@ -1014,13 +1015,6 @@ oo::class create ::questlog::ui::Toolbar {
                 pack $btn -side left -padx {0 4}
             }
         }
-    }
-
-    method destroy {} {
-        if {[info exists DebounceAfter] && $DebounceAfter ne ""} {
-            after cancel $DebounceAfter
-        }
-        next
     }
 
 }

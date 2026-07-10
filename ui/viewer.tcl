@@ -43,6 +43,7 @@ proc ::questlog::ui::rarity_round_robin {term_positions} {
 # Search-within: Ctrl-F focuses an entry; Return advances to the next match.
 
 oo::class create ::questlog::ui::Viewer {
+    mixin leash
     variable Top
     variable Empty            ;# centered empty-state frame, shown until first load
     variable Shown            ;# 0 until the first session replaces the empty state
@@ -114,7 +115,7 @@ oo::class create ::questlog::ui::Viewer {
     variable PromptStatus     ;# bar status label (running / error)
     variable OnRefresh        ;# cb: path -> app re-scans the row after a streamed turn lands
     variable Pipe             ;# the running claude -p pipe channel, "" when idle
-    variable Tick             ;# after-id of the jsonl tail tick while streaming
+    variable Tick             ;# leash token of the jsonl tail tick while streaming
     variable Running          ;# 1 while a streamed turn renders into the current view
     variable Detached         ;# 1 when the user navigated away mid-stream (drain only, do not render)
     variable RunPath          ;# the jsonl the running turn targets, for the row refresh
@@ -894,7 +895,7 @@ oo::class create ::questlog::ui::Viewer {
         chan event $Pipe readable [list [self] resume_drain]
         my set_prompt_enabled 0
         my prompt_status "running…"
-        set Tick [after 300 [list [self] resume_tick]]
+        set Tick [my later 300 [list [self] resume_tick]]
     }
 
     # Drain the pipe's merged output (kept for a failure message) and finish on
@@ -916,7 +917,7 @@ oo::class create ::questlog::ui::Viewer {
     method resume_tick {} {
         my append_new
         if {$Running && !$Detached} {
-            set Tick [after 300 [list [self] resume_tick]]
+            set Tick [my later 300 [list [self] resume_tick]]
         } else {
             set Tick ""
         }
@@ -929,7 +930,7 @@ oo::class create ::questlog::ui::Viewer {
     method resume_detach {} {
         if {!$Running || $Detached} return
         set Detached 1
-        if {$Tick ne ""} { after cancel $Tick; set Tick "" }
+        if {$Tick ne ""} { my forget $Tick; set Tick "" }
     }
 
     # The turn's process has closed its output. Reap it for the exit status, do
@@ -937,7 +938,7 @@ oo::class create ::questlog::ui::Viewer {
     # the streamed session's list row so its cost and activity catch up.
     method resume_finish {} {
         if {$Pipe eq ""} return
-        if {$Tick ne ""} { after cancel $Tick; set Tick "" }
+        if {$Tick ne ""} { my forget $Tick; set Tick "" }
         catch {chan event $Pipe readable {}}
         set status 0
         if {[catch {close $Pipe} err]} { set status 1; append ErrBuf $err "\n" }
@@ -1232,7 +1233,7 @@ oo::class create ::questlog::ui::Viewer {
         if {![dict exists $Drafts $qid]} return
         set d [dict get $Drafts $qid]
         set t [dict get $d hidetimer]
-        if {$t ne ""} { after cancel $t; dict set Drafts $qid hidetimer "" }
+        if {$t ne ""} { my forget $t; dict set Drafts $qid hidetimer "" }
         set cb [dict get $d copybtn]
         place $cb -relx 1.0 -x -2 -rely 0 -y 2 -anchor ne
         raise $cb
@@ -1248,7 +1249,7 @@ oo::class create ::questlog::ui::Viewer {
     # frame-to-button crossings do not dismiss the overlay.
     method overlay_leave {qid} {
         if {![dict exists $Drafts $qid]} return
-        set t [after idle [list [self] overlay_check $qid]]
+        set t [my later idle [list [self] overlay_check $qid]]
         dict set Drafts $qid hidetimer $t
     }
 
