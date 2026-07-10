@@ -33,7 +33,7 @@ $::questlog::cli::commandline::CL preamble {
 }
 
 $::questlog::cli::commandline::CL subcommand rename {<session.jsonl> [title]} \
-    {Set the session's custom title; an empty title reverts to the auto title.}
+    {Set the session's custom title; an empty or omitted title reverts to the auto title.}
 $::questlog::cli::commandline::CL subcommand show {<session.jsonl|uuid>} \
     {Print the session as a readable transcript.}
 $::questlog::cli::commandline::CL subcommand install-claude-command {} \

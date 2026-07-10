@@ -53,6 +53,8 @@ foreach d {lib cli} {
 # named in no headless file and stays out of scope.
 foreach f $lib_files {
     foreach pkg [regexp -all -inline -line {^\s*package require (\w+)} [slurp $f]] {
+        # -inline interleaves each whole match with its capture; the whole match
+        # is the line, the capture is the package name wanted here.
         if {[string match "package require*" $pkg]} continue
         lappend lib_files {*}[glob -nocomplain [file join $ROOT $pkg-*.tm]]
     }
