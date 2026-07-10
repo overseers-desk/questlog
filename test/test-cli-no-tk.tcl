@@ -46,6 +46,17 @@ set lib_files [list [file join $ROOT config.tcl]]
 foreach d {lib cli} {
     lappend lib_files {*}[lsort [glob -nocomplain [file join $ROOT $d *.tcl]]]
 }
+# A module one of those files requires is on the headless path with them, so it
+# answers to the same rule. The set is read from their `package require` lines
+# rather than listed here, so a module added to the path is checked without this
+# test being told about it. A module only the GUI requires (a Tk widget, say) is
+# named in no headless file and stays out of scope.
+foreach f $lib_files {
+    foreach pkg [regexp -all -inline -line {^\s*package require (\w+)} [slurp $f]] {
+        if {[string match "package require*" $pkg]} continue
+        lappend lib_files {*}[glob -nocomplain [file join $ROOT $pkg-*.tm]]
+    }
+}
 foreach f $lib_files {
     set rel [file join [file tail [file dirname $f]] [file tail $f]]
     set body [slurp $f]
