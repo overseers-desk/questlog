@@ -22,6 +22,7 @@ set ::env(HOME) $SAND
 
 set ROOT [file dirname [file dirname [file normalize [info script]]]]
 ::tcl::tm::path add $ROOT
+package require leash
 package require streamtree
 # SessionList::build reads ::questlog::ui::theme colours and the named fonts, and
 # the Scan/Search/SessionList filter path reads ::questlog::config; source both

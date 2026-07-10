@@ -8,6 +8,7 @@
 package require Tcl 9
 set ROOT [file dirname [file dirname [file normalize [info script]]]]
 ::tcl::tm::path add $ROOT
+package require leash
 # The grammar declares its own version, and only what the parser and scan_file
 # need is sourced: not lib/path.tcl (it renames `file` to guard deletes, which
 # would block this test's fixture cleanup), nor the Scan/cost layer (run's

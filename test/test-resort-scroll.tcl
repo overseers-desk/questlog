@@ -23,6 +23,7 @@ set FOLDER "-tmp-resortscroll-proj"
 
 set ROOT [file dirname [file dirname [file normalize [info script]]]]
 ::tcl::tm::path add $ROOT
+package require leash
 package require streamtree
 foreach f {config.tcl lib/cost.tcl ui/theme.tcl lib/path.tcl lib/filter.tcl lib/sessionlist.tcl lib/jsonl.tcl \
            lib/match.tcl ui/terminal.tcl ui/live.tcl lib/scan.tcl lib/search.tcl \

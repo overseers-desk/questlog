@@ -2,6 +2,8 @@
 package require Tcl 9
 package require TclOO
 set ROOT [file dirname [file dirname [file normalize [info script]]]]
+::tcl::tm::path add $ROOT
+package require leash
 source [file join $ROOT config.tcl]
 source [file join $ROOT lib path.tcl]
 source [file join $ROOT lib filter.tcl]

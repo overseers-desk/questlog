@@ -268,6 +268,7 @@ set ::questlog::search::WorkerScript {
 # carrying a stale epoch are dropped on arrival.
 
 oo::class create ::questlog::Search {
+    mixin leash
     variable Scan
     variable Epoch
     variable MatchedSessions   ;# dict path -> 1 (first-match-per-session)
@@ -336,16 +337,15 @@ oo::class create ::questlog::Search {
             # status line, the spinner) never waits on a search that will not
             # run - a whitespace-only query used to hang the "Searching..."
             # state forever here.
-            after 1 [list {*}$OnProgress 0 0 0]
-            after 1 [list {*}$OnDone 0 0]
+            my later 1 [list {*}$OnProgress 0 0 0]
+            my later 1 [list {*}$OnDone 0 0]
             return
         }
         set my_epoch [incr Epoch]
         set Active 1
         set MatchedSessions [dict create]
         set Counts [dict create done 0 total 0 matches 0]
-        set co ::questlog::search::coro_$my_epoch
-        coroutine $co [namespace which my] run_search $my_epoch $snapshot
+        my coro coro_$my_epoch [namespace which my] run_search $my_epoch $snapshot
     }
 
     # Worker count for a search. 0 when the Thread package is unavailable
@@ -382,7 +382,7 @@ oo::class create ::questlog::Search {
     method run_search {my_epoch snapshot} {
         # Yield once so callers establishing vwait before our callbacks
         # see them. Same pattern as Scan.run_scan.
-        after [::questlog::config::get search_resume_ms] [list ::questlog::resume_coro [info coroutine]]
+        my later [::questlog::config::get search_resume_ms] [list ::questlog::resume_coro [info coroutine]]
         yield
         if {$my_epoch != $Epoch} return
 
@@ -434,7 +434,7 @@ oo::class create ::questlog::Search {
             dict set Counts done $count
             if {$count % [::questlog::config::get search_progress_files] == 0} {
                 {*}$OnProgress $count $total [dict get $Counts matches]
-                after [::questlog::config::get search_resume_ms] [list ::questlog::resume_coro [info coroutine]]
+                my later [::questlog::config::get search_resume_ms] [list ::questlog::resume_coro [info coroutine]]
                 yield
                 if {$my_epoch != $Epoch} return
             }
@@ -454,7 +454,7 @@ oo::class create ::questlog::Search {
             return 0
         }
         if {$my_epoch != $Epoch} { return 1 }
-        after [::questlog::config::get search_resume_ms] [list ::questlog::resume_coro [info coroutine]]
+        my later [::questlog::config::get search_resume_ms] [list ::questlog::resume_coro [info coroutine]]
         yield
         set YieldClock [clock milliseconds]
         return [expr {$my_epoch != $Epoch}]
@@ -467,8 +467,8 @@ oo::class create ::questlog::Search {
         set clauses [::questlog::search::build_clauses $snapshot]
         if {![::questlog::search::clauses_any $clauses]} {
             # Same instant completion as the coroutine path's empty-clause exit.
-            after 1 [list {*}$OnProgress 0 0 0]
-            after 1 [list {*}$OnDone 0 0]
+            my later 1 [list {*}$OnProgress 0 0 0]
+            my later 1 [list {*}$OnDone 0 0]
             return
         }
         set my_epoch [incr Epoch]
@@ -482,8 +482,8 @@ oo::class create ::questlog::Search {
         dict set Counts total $total
 
         if {$total == 0} {
-            after 1 [list {*}$OnProgress 0 0 0]
-            after 1 [list {*}$OnDone 0 0]
+            my later 1 [list {*}$OnProgress 0 0 0]
+            my later 1 [list {*}$OnDone 0 0]
             set Active 0
             return
         }

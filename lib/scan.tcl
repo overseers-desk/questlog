@@ -64,14 +64,8 @@ proc ::questlog::resume_coro {co} {
     if {[llength [info commands $co]]} { $co }
 }
 
-# Re-enter a Scan's schedule_resume from a deferred-poll `after`, but only while
-# the object still exists - so a poll pending when the Scan is destroyed (app
-# quit mid-typing) no-ops instead of calling a dead method command.
-proc ::questlog::resume_or_poll {obj co} {
-    if {[llength [info commands $obj]]} { $obj schedule_resume $co }
-}
-
 oo::class create ::questlog::Scan {
+    mixin leash
     variable Rows         ;# dict: path -> row dict
     variable Folders      ;# dict: folder basename -> resolved display path
     variable Epoch        ;# generation counter; inc to cancel
@@ -137,8 +131,7 @@ oo::class create ::questlog::Scan {
         set Snapshot $snapshot
         set my_epoch [incr Epoch]
         set Active 1
-        set co ::questlog::scan::coro_$my_epoch
-        coroutine $co [namespace which my] run_scan $my_epoch
+        my coro coro_$my_epoch [namespace which my] run_scan $my_epoch
     }
 
     # Coroutine body. Public so [namespace which my] resolves it.
@@ -148,7 +141,7 @@ oo::class create ::questlog::Scan {
         # scans complete synchronously inside `coroutine` and the
         # caller's vwait blocks forever waiting for a write that
         # already happened.
-        after 1 [list ::questlog::resume_coro [info coroutine]]
+        my later 1 [list ::questlog::resume_coro [info coroutine]]
         yield
         if {$my_epoch != $Epoch} return
         set count 0
@@ -190,18 +183,20 @@ oo::class create ::questlog::Scan {
     # only the chunk boundary routes here. When scan_while_typing is off and the
     # injected predicate reports the user is mid-keystroke, defer by re-polling
     # this method - never resuming a stale coroutine - until typing stops; then
-    # resume on idle or after scan_resume_ms.
+    # resume on idle or after scan_resume_ms. Every arm is leashed, so a poll
+    # or resume pending when the Scan is destroyed dies with it.
     method schedule_resume {co} {
+        if {![llength [info commands $co]]} return
         if {[::questlog::config::get scan_while_typing] == 0
             && $IsTyping ne "" && [{*}$IsTyping]} {
-            after [::questlog::config::get typing_poll_ms] \
-                [list ::questlog::resume_or_poll [self] $co]
+            my later [::questlog::config::get typing_poll_ms] \
+                [list [self] schedule_resume $co]
             return
         }
         if {[::questlog::config::get scan_resume] eq "idle"} {
-            after idle [list ::questlog::resume_coro $co]
+            my later idle [list ::questlog::resume_coro $co]
         } else {
-            after [::questlog::config::get scan_resume_ms] \
+            my later [::questlog::config::get scan_resume_ms] \
                 [list ::questlog::resume_coro $co]
         }
     }
@@ -635,8 +630,4 @@ oo::class create ::questlog::Scan {
         if {$OnRow ne ""} { {*}$OnRow $row }
     }
 
-    method destroy {} {
-        my cancel
-        next
-    }
 }

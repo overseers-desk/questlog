@@ -7,6 +7,7 @@
 package require Tcl 9
 set ROOT [file dirname [file dirname [file normalize [info script]]]]
 ::tcl::tm::path add $ROOT
+package require leash
 set QUESTLOG_VERSION 0
 source [file join $ROOT config.tcl]
 source [file join $ROOT lib filter.tcl]

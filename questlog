@@ -57,6 +57,7 @@ source [file join $ROOT lib filter.tcl]
 source [file join $ROOT lib sessionlist.tcl]
 source [file join $ROOT lib jsonl.tcl]
 source [file join $ROOT lib match.tcl]
+package require leash
 source [file join $ROOT lib scan.tcl]
 source [file join $ROOT lib cost.tcl]
 source [file join $ROOT lib search.tcl]
