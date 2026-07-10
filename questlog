@@ -1,22 +1,18 @@
 #!/usr/bin/env tclsh9.0
 # questlog - entry script.
 #
-# One command line, two answers. cli/args.tcl parses argv into a neutral query;
-# `--json` or `--shortstat` prints that query's result and exits, and without
-# either the same query seeds the GUI's toolbar and the window opens on it. The
-# interpreter is tclsh, so Tk is absent until a GUI file requires it: an output
-# flag, `--help`, and the `rename`/`show` subcommands all answer without a
-# display, while the GUI branch pulls Tk in through the ui/ layer.
+# One command line, two answers. cli/args.tcl declares it and parses argv into a
+# neutral query; `--json` or `--shortstat` prints that query's result and exits,
+# and without either the same query seeds the GUI's toolbar and the window opens
+# on it. The interpreter is tclsh, so Tk is absent until a GUI file requires it:
+# an output flag, `--help`, and the subcommands all answer without a display,
+# while the GUI branch pulls Tk in through the ui/ layer.
 
 package require Tcl 9
 
 set QUESTLOG_VERSION 1.1.5
-if {[lindex $argv 0] eq "--version"} {
-    puts "questlog $QUESTLOG_VERSION"
-    exit 0
-}
-
 set ROOT [file dirname [file normalize [info script]]]
+::tcl::tm::path add $ROOT
 
 # A headless run prints to stdout and raises no window. Tk enters the process
 # only through the ui/ layer (every ui/ file requires it), and no headless path
@@ -36,14 +32,17 @@ proc questlog_forbid_ui {} {
     }
 }
 
-# Register questlog with Claude Code. This keeps ~/.claude/commands/questlog.md
-# current so a Claude Code session reaches for questlog when the user asks to
+# Registering questlog with Claude Code keeps ~/.claude/commands/questlog.md
+# current, so a Claude Code session reaches for questlog when the user asks to
 # search a past session. It is a system-level install, unrelated to the
-# ~/.claude/projects store that lib/path.tcl guards, so it runs here, before any
+# ~/.claude/projects store that lib/path.tcl guards, so it runs before any
 # library loads, using the native `file` command. The explicit subcommand writes
 # with feedback and exits; every other launch silently refreshes the copy.
 source [file join $ROOT cli claude_command.tcl]
-if {[lindex $argv 0] eq "install-claude-command"} {
+source [file join $ROOT cli args.tcl]
+
+set SUBCOMMAND [::questlog::cli::args::subcommand_of $argv]
+if {$SUBCOMMAND eq "install-claude-command"} {
     ::questlog::claude::install
     exit 0
 }
@@ -67,18 +66,17 @@ source [file join $ROOT lib markdown.tcl]
 
 # `rename` and `show` are standalone file ops - neither is a query, so neither
 # needs the grammar, the matcher caps, or a cost pass.
-if {[lindex $argv 0] in {rename show}} {
+if {$SUBCOMMAND ne ""} {
     questlog_forbid_ui
     source [file join $ROOT cli main.tcl]
-    ::questlog::cli::main::[lindex $argv 0] [lrange $argv 1 end]
+    ::questlog::cli::main::$SUBCOMMAND [lrange $argv 1 end]
     exit 0
 }
 
-# The query. Parsing needs lib/search.tcl's region and tool-selector vocabulary
-# and lib/filter.tcl's time-spec grammar, so it runs once those are in hand, and
-# before either answer is prepared.
-source [file join $ROOT cli args.tcl]
-set Query [::questlog::cli::args::parse $argv]
+# The query. Parsing calls into lib/search.tcl's region and tool-selector
+# vocabulary and lib/filter.tcl's time-spec grammar, so it runs once those are in
+# hand, and before either answer is prepared.
+set Query [::questlog::cli::args::run $argv]
 
 # Bring the diagnostic log up before any module logs. A failed open inside
 # enable leaves logging off and the run unchanged.
@@ -103,11 +101,6 @@ if {[dict get $Query mode] ne "gui"} {
     exit 0
 }
 
-# The GUI answers the same query through the toolbar, so a clause it cannot hold
-# is refused here, by name, before a window opens.
-set QL_OBJECTION [::questlog::cli::args::gui_objection $Query]
-if {$QL_OBJECTION ne ""} { ::questlog::cli::args::fail $QL_OBJECTION }
-
 # Tk (and with it ttk) enters the process here, required by theme.tcl (sourced
 # first) and the ui/ classes; the entry script never requires Tk itself.
 source [file join $ROOT ui  theme.tcl]
@@ -116,7 +109,6 @@ source [file join $ROOT ui  live.tcl]
 source [file join $ROOT ui  state.tcl]
 source [file join $ROOT ui  drag.tcl]
 source [file join $ROOT ui  toolbar.tcl]
-::tcl::tm::path add $ROOT
 package require streamtree
 source [file join $ROOT ui  session_actions.tcl]
 source [file join $ROOT ui  sessions.tcl]
@@ -128,8 +120,8 @@ source [file join $ROOT ui  app.tcl]
 # field's text (its grammar splits on space and quotes a phrase), a regex is a
 # pattern criterion, and a tool clause is a file or tool criterion. The op pill
 # reads either/read/wrote, so the finer write and edit selectors collapse onto
-# wrote. gui_objection has already refused everything with no widget, so each
-# clause below has somewhere to land.
+# wrote. The grammar has already refused every clause with no widget behind it,
+# so each clause below has somewhere to land.
 proc questlog_seed {q} {
     set criteria [list]
     set terms [list]

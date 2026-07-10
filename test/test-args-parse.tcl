@@ -1,13 +1,19 @@
 #!/usr/bin/env tclsh9.0
-# Tests for cli/args.tcl: the neutral query dict argv parses into, and the
-# GUI-mappability gate that decides whether a query can seed the window or needs
-# an output flag. Pure and Tk-free - the error paths that exit through usage are
-# covered from the real launcher in test-search-grammar.tcl; these drive the
-# procs directly, so only the accepted shapes are asserted here.
+# Tests for cli/args.tcl: the neutral query dict argv folds into, and the
+# clauses the grammar refuses before a window opens, because the window has no
+# control for them. Pure and Tk-free. The error paths that print and exit are
+# driven from the real launcher in test-search-grammar.tcl; these drive `parse`,
+# which throws instead, so the accepted shapes and the refusals both read here.
 package require Tcl 9
 set ROOT [file dirname [file dirname [file normalize [info script]]]]
+::tcl::tm::path add $ROOT
+set QUESTLOG_VERSION 0
 source [file join $ROOT config.tcl]
 source [file join $ROOT lib filter.tcl]
+# --subtree canonicalises its directory through lib/path.tcl, which wraps `file`
+# to guard deletes under the projects store. This test writes nothing, so the
+# guard costs it nothing.
+source [file join $ROOT lib path.tcl]
 source [file join $ROOT lib match.tcl]
 source [file join $ROOT lib search.tcl]
 source [file join $ROOT cli args.tcl]
@@ -24,10 +30,10 @@ proc check {name expected actual} {
     }
 }
 proc parse {args} { return [::questlog::cli::args::parse $args] }
-# 1 iff the window can show the whole query: the gate names its objection, and
-# no objection is the empty string.
-proc mappable {args} {
-    return [expr {[::questlog::cli::args::gui_objection [::questlog::cli::args::parse $args]] eq ""}]
+# The refusal a query meets, or "" when it is answered.
+proc refusal {args} {
+    if {[catch {::questlog::cli::args::parse $args} e]} { return $e }
+    return ""
 }
 
 # ---- mode: an output flag chooses the answer, absence opens the window ------
@@ -37,7 +43,7 @@ check mode_shortstat shortstat [dict get [parse --shortstat --keyword x] mode]
 
 # ---- groups: an OR-of-ANDs of clause dicts, in the order written ------------
 # A B --or C is (A AND B) OR C: two groups, the first holding two clauses.
-set g [dict get [parse --keyword A --keyword B --or --keyword C] groups]
+set g [dict get [parse --json --keyword A --keyword B --or --keyword C] groups]
 check groups_count   2 [llength $g]
 check group_one_size 2 [llength [lindex $g 0]]
 check group_two_size 1 [llength [lindex $g 1]]
@@ -45,11 +51,11 @@ check clause_keyword {kind keyword value A regions {} neg 0} [lindex $g 0 0]
 
 # --not rides on the clause that follows it, and on no other.
 check clause_neg {0 1} \
-    [lmap c [lindex [dict get [parse --keyword A --not --keyword B] groups] 0] { dict get $c neg }]
+    [lmap c [lindex [dict get [parse --json --keyword A --not --keyword B] groups] 0] { dict get $c neg }]
 
 # A :regions suffix rides on the clause; a tool clause carries its selector.
 check clause_regions {tool_result} \
-    [dict get [lindex [dict get [parse --keyword:tool-result x] groups] 0 0] regions]
+    [dict get [lindex [dict get [parse --json --keyword:tool-result x] groups] 0 0] regions]
 check clause_tool_file {kind tool selkind file selspec read value c.tcl neg 0} \
     [lindex [dict get [parse --tool:read c.tcl] groups] 0 0]
 check clause_tool_name Agent \
@@ -62,36 +68,54 @@ check bound_limit_default   0   [dict get [parse --keyword x] limit]
 check bound_lmatch_default  -1  [dict get [parse --keyword x] limit_matches]
 check bound_nocase_default  1   [dict get [parse --keyword x] nocase]
 check bound_case            0   [dict get [parse --case --keyword x] nocase]
-check bound_limit_all       0   [dict get [parse --limit all --keyword x] limit]
-check bound_accrued         1   [dict get [parse --accrued-cost --since 7d --keyword x] accrued]
+check bound_limit_all       0   [dict get [parse --json --limit all --keyword x] limit]
+check bound_accrued         1   [dict get [parse --json --accrued-cost --since 7d --keyword x] accrued]
 check bound_font            Sans [dict get [parse --font Sans --keyword x] font]
 
 # An empty query is legal: it opens the window on the whole corpus.
 check empty_groups {} [dict get [parse] groups]
 check empty_mode   gui [dict get [parse] mode]
 
-# ---- the GUI holds a query of clauses and bounds it has controls for -------
-check map_plain    1 [mappable --keyword x]
-check map_phrase   1 [mappable --keyword {two words}]
-check map_tool     1 [mappable --tool:edit lib/scan.tcl]
-check map_regex    1 [mappable --regex {^foo}]
-check map_since    1 [mappable --since 30d --keyword x]
-check map_case     1 [mappable --case --keyword x]
-check map_limit_0  1 [mappable --limit 0 --keyword x]
-check map_regions_any 1 [mappable --keyword:any x]
+# ---- the window holds a query of the clauses and bounds it has controls for -
+check gui_plain    "" [refusal --keyword x]
+check gui_phrase   "" [refusal --keyword {two words}]
+check gui_tool     "" [refusal --tool:edit lib/scan.tcl]
+check gui_regex    "" [refusal --regex {^foo}]
+check gui_since    "" [refusal --since 30d --keyword x]
+check gui_case     "" [refusal --case --keyword x]
+check gui_subtree  "" [refusal --subtree / --keyword x]
+# `any` restricts nothing, so it asks the window for nothing it lacks.
+check gui_regions_any "" [refusal --keyword:any x]
 
-# ... and refuses what has no control behind it.
-check map_or       0 [mappable --keyword a --or --keyword b]
-check map_not      0 [mappable --not --keyword a --keyword b]
-check map_regions  0 [mappable --keyword:user x]
-check map_until    0 [mappable --until 7d --keyword x]
-check map_limit    0 [mappable --limit 5 --keyword x]
+# ... and refuses what has no control behind it, naming the flag that would
+# have answered the query as asked.
+check gui_or      {--or needs --json or --shortstat (the GUI ANDs its criteria)} \
+    [refusal --keyword a --or --keyword b]
+check gui_not     {--not needs --json or --shortstat (the GUI has no negated criterion)} \
+    [refusal --not --keyword a --keyword b]
+check gui_regions {a :regions suffix needs --json or --shortstat (the GUI's scope covers the whole search)} \
+    [refusal --keyword:user x]
+check gui_until   {--until needs --json or --shortstat}   [refusal --until 7d --keyword x]
+check gui_limit   {--limit needs --json or --shortstat}   [refusal --limit 5 --keyword x]
 # 0 snippets is a request, not an absence, so it is refused like any other cap.
-check map_lmatch_0 0 [mappable --limit-matches 0 --keyword x]
-check map_accrued  0 [mappable --accrued-cost --since 7d --keyword x]
+check gui_lmatch  {--limit-matches needs --json or --shortstat} \
+    [refusal --limit-matches 0 --keyword x]
+check gui_accrued {--accrued-cost needs --json or --shortstat} \
+    [refusal --accrued-cost --since 7d --keyword x]
 # The search field quotes a phrase with ", so a needle holding one cannot be
 # written into it; the headless matcher takes the needle literally.
-check map_quote    0 [mappable --keyword {say "hi}]
+check gui_quote {a keyword holding a double quote needs --json or --shortstat (the search field quotes phrases with it)} \
+    [refusal --keyword {say "hi}]
+# The reading font is the window's, and a headless run has nothing to render.
+check headless_font {--font is not available with --json (the reading font is the GUI's)} \
+    [refusal --json --font Sans --keyword x]
+
+# ---- the query the fold builds must be readable end to end -----------------
+# Every declared option is read by the fold; one that were not would be
+# accepted, printed in the help, and inert.
+check no_inert_option "" [refusal --json --keyword a --regex b --tool:read c \
+    --or --not --keyword d --since 7d --until 1d --subtree / --accrued-cost \
+    --limit 3 --limit-matches 2 --case --debug 1]
 
 if {$fails > 0} {
     puts "$fails failures"

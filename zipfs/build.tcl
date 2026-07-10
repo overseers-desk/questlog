@@ -3,7 +3,7 @@
 #
 #   tclsh9.0 zipfs/build.tcl
 #
-# Stages the launcher, config.tcl, the streamtree module, lib/, ui/, cli/,
+# Stages the launcher, config.tcl, the Tcl modules, lib/, ui/, cli/,
 # data/, assets/ and zipfs/main.tcl into a temporary
 # directory, then stubs them onto a wish to make a single file. Two env vars
 # select what kind of image:
@@ -57,7 +57,7 @@ file mkdir $stage
 file copy $launcher                       [file join $stage questlog]
 file copy [file join $repo config.tcl]     [file join $stage config.tcl]
 file copy [file join $repo zipfs main.tcl] [file join $stage main.tcl]
-foreach f [glob -tails -directory $repo streamtree-*.tm] {
+foreach f [glob -tails -directory $repo *.tm] {
     file copy [file join $repo $f] [file join $stage $f]
 }
 foreach d {lib ui cli data assets} {

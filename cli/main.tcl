@@ -163,15 +163,18 @@ proc ::questlog::cli::main::fold {q} {
 }
 
 # Apply a rename from the command line: `questlog rename <session.jsonl> [title]`.
+# A subcommand handed the wrong arguments prints how it is written, from the
+# declaration in cli/args.tcl that the dispatcher reads, and exits 2.
+proc ::questlog::cli::main::misuse {name} {
+    foreach line [::questlog::cli::args::subcommand_usage $name] { puts stderr $line }
+    exit 2
+}
+
 # An empty or omitted title reverts the session to its auto title. The rename is
 # a path-only domain op (::questlog::rename, in lib/), so it runs headless with
 # no GUI and no display. Prints the effective title now in force.
 proc ::questlog::cli::main::rename {argv} {
-    if {[llength $argv] < 1 || [llength $argv] > 2} {
-        puts stderr "usage: questlog rename <session.jsonl> \[title]"
-        puts stderr "  Sets the session's custom title; an empty or omitted title reverts to the auto title."
-        exit 2
-    }
+    if {[llength $argv] < 1 || [llength $argv] > 2} { ::questlog::cli::main::misuse rename }
     set path [lindex $argv 0]
     if {![file isfile $path]} {
         puts stderr "questlog: no such session file: $path"
@@ -187,11 +190,7 @@ proc ::questlog::cli::main::rename {argv} {
 # for record-number anchors so each turn can be cited. Runs with no GUI and no
 # display. A session that cannot be read is a hard error.
 proc ::questlog::cli::main::show {argv} {
-    if {[llength $argv] != 1} {
-        puts stderr "usage: questlog show <session.jsonl|uuid>"
-        puts stderr "  Prints the session as a readable transcript, each turn anchored by its record number."
-        exit 2
-    }
+    if {[llength $argv] != 1} { ::questlog::cli::main::misuse show }
     set path [resolve_session [lindex $argv 0]]
     set md [::questlog::markdown::export_session $path 1]
     if {$md eq ""} {

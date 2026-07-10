@@ -7,10 +7,13 @@
 # usage.
 package require Tcl 9
 set ROOT [file dirname [file dirname [file normalize [info script]]]]
-# Only what the parser and scan_file need: not lib/path.tcl (it renames `file`
-# to guard deletes, which would block this test's fixture cleanup), nor the
-# Scan/cost layer (run's concern, not the grammar's). cli/args.tcl calls
-# path::canon_dir for --subtree only, which no case here exercises.
+::tcl::tm::path add $ROOT
+# The grammar declares its own version, and only what the parser and scan_file
+# need is sourced: not lib/path.tcl (it renames `file` to guard deletes, which
+# would block this test's fixture cleanup), nor the Scan/cost layer (run's
+# concern, not the grammar's). cli/args.tcl calls path::canon_dir for --subtree
+# only, which no case here exercises.
+set QUESTLOG_VERSION 0
 
 source [file join $ROOT config.tcl]
 source [file join $ROOT lib filter.tcl]
@@ -55,8 +58,10 @@ check region_ambig_a    1 [throws {::questlog::search::parse_regions a}]
 check region_unknown    1 [throws {::questlog::search::parse_regions nope}]
 
 # ---- the parsed clauses, folded into the boolean tree ----------------------
+# Every query here is a headless one: --or, --not and a :regions suffix ask for
+# an output flag, since the window has no control for them.
 proc tree {args} {
-    return [::questlog::cli::main::fold [::questlog::cli::args::parse $args]]
+    return [::questlog::cli::main::fold [::questlog::cli::args::parse [linsert $args 0 --json]]]
 }
 
 # Adjacency ANDs, --or splits OR-groups: A B --or C is (A AND B) OR C.
@@ -74,7 +79,9 @@ check tree_tool    {kind tool sel file spec read value c.tcl neg 0} \
     [lindex [dict get [tree --tool:read c.tcl] leaves] 0]
 
 # ---- the global bounds ride beside the clause tree -------------------------
-proc bound {key args} { return [dict get [::questlog::cli::args::parse $args] $key] }
+proc bound {key args} {
+    return [dict get [::questlog::cli::args::parse [linsert $args 0 --json]] $key]
+}
 check bound_since   7d         [bound since --since 7d --keyword x]
 check bound_until   2026-04-01 [bound until --until 2026-04-01 --keyword x]
 check bound_until_default "" [bound until --keyword x]
@@ -113,7 +120,7 @@ close $fh
 
 # Does the session qualify for this query? (matches non-empty after scan_file)
 proc q {args} {
-    set clauses [::questlog::cli::main::fold [::questlog::cli::args::parse $args]]
+    set clauses [::questlog::cli::main::fold [::questlog::cli::args::parse [linsert $args 0 --json]]]
     lassign [::questlog::match::scan_file $::fix $clauses] row m
     return [expr {[llength $m] > 0}]
 }
@@ -190,7 +197,7 @@ check err_accrued_all      1 [string match {*--accrued-cost needs a time bound*}
 check err_not_not   1 [string match {*--not --not is not allowed*}  [cli_err --not --not --keyword x]]
 check err_two_since 1 [string match {*--since given twice*}         [cli_err --since 7d --since 8d --keyword x]]
 check err_two_modes 1 [string match {*choose one output*}           [cli_err --shortstat --keyword x]]
-check err_font_headless 1 [string match {*--font is a GUI option*}  [cli_err --font Sans --keyword x]]
+check err_font_headless 1 [string match {*--font is not available with --json*} [cli_err --font Sans --keyword x]]
 
 # Every needle is written to a flag - there is no positional form - and each
 # flag has one spelling, so a plausible near-miss is an error, not a synonym.
