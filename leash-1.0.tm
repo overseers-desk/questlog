@@ -35,9 +35,11 @@ package provide leash 1.0
 #                                 returns the fully-qualified command
 #
 # A mixed-in class may keep its own destructor; leash chains to it. The
-# self-unregister of fired timers follows Dash-OS ::mixin::after (MIT,
-# github.com/Dash-OS/tcl-modules), as does the object-namespace placement
-# of coroutines from the same author's coro module.
+# self-unregister of fired timers follows the after mixin, and the
+# object-namespace placement of coroutines the coro module, both from
+# Dash-OS tcl-modules (MIT, github.com/Dash-OS/tcl-modules).
+#
+# Written against Tcl 9. MIT license, copyright (c) 2025 Weiwu Zhang.
 
 oo::class create leash {
     variable LeashPending   ;# dict: token -> {after-id script}
@@ -85,7 +87,9 @@ oo::class create leash {
         return $cmd
     }
 
-    # Unexported: the only script a leash timer ever holds. Unregisters
+    # The only script a leash timer ever holds. Not exported - TclOO
+    # leaves capitalised method names off the public interface - and
+    # reached through the instance namespace's `my` instead. Unregisters
     # before running, so LeashPending lists pending work only and a
     # re-arming (repeating) timer never grows it.
     method LeashFire {tok} {

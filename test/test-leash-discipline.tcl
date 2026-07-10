@@ -5,7 +5,7 @@
 # sanctioned verbs, and their arms die with the object (see leash-1.0.tm).
 # This test is the enforcement half of that rule: it scans every class-bearing
 # file under lib/ and ui/ and fails on a raw arm, so the crash class cannot
-# be reintroduced by a session that never read the module. [after cancel]
+# be reintroduced by an edit that never read the module. [after cancel]
 # and [after info] stay legal - they release, not arm.
 #
 # Vendored .tm modules are not scanned: they version independently and

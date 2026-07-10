@@ -549,6 +549,10 @@ oo::class create ::questlog::Search {
         }
     }
 
+    # Kept alongside the leash destructor because cancel releases the worker
+    # threads, a resource the leash does not manage. (Scan's destroy override
+    # is gone for the converse reason: its cancel only bumps the epoch, inert
+    # once the object is dying.)
     method destroy {} {
         my cancel
         next
