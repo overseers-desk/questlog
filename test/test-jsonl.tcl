@@ -156,10 +156,10 @@ check hits_tool_key_miss   0 [sat [tl Grep ZZZ] $r_grep]
 check hits_tool_redirect   1 [sat [tl Bash out.json] $r_bashredir]
 check hits_tool_wrong_name 0 [sat [tl Bash NEEDLE] $r_grep]
 
-# File paths match by suffix: a bare or partial filename matches the file in any
-# directory; a non-suffix fragment does not (ends-with, not contains).
+# File paths match from the right: a bare or partial filename matches the file in
+# any directory; a fragment that is not a tail does not (ends-with, not contains).
 set r_spar [::questlog::jsonl::parse_line {{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Edit","input":{"file_path":"/a/spar-manager.spar-dispatcher-initcmd.tcl","old_string":"x","new_string":"y"}}]}}}]
-check hits_suffix_basename  1 [sat [fl wrote b.tcl] $r_edit]
+check hits_tail_basename    1 [sat [fl wrote b.tcl] $r_edit]
 check hits_partial_basename 1 [sat [fl wrote spar-dispatcher-initcmd.tcl] $r_spar]
 check hits_not_substring    0 [sat [fl wrote spar-manager] $r_spar]
 

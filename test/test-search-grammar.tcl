@@ -131,10 +131,10 @@ check ex_tool_result_not 0 [q {--keyword:user} {permission denied}]
 check ex_tool_read       1 [q --tool:read config.tcl]
 check ex_tool_read_miss  0 [q --tool:read nonexist.tcl]
 check ex_tool_or         1 [q --tool:edit config.tcl --or --tool:read other.tcl]
-# Suffix hits sit on a name boundary: "fig.tcl" is a character suffix of
+# A path tail sits on a name boundary: "fig.tcl" is a character suffix of
 # config.tcl but not a filename; an extension needle may land mid-name.
-check ex_suffix_boundary 0 [q --tool:read fig.tcl]
-check ex_suffix_ext      1 [q --tool:read .tcl]
+check ex_tail_boundary 0 [q --tool:read fig.tcl]
+check ex_tail_ext      1 [q --tool:read .tcl]
 # Tool-name canonicalisation covers the newer built-ins.
 check tool_agent {kind tool sel tool spec Agent value {} neg 0} \
     [lindex [dict get [tree --tool:agent ""] leaves] 0]

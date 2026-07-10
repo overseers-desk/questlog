@@ -741,9 +741,9 @@ oo::class create ::questlog::ui::Toolbar {
         set v [string trim $AddText(file)]
         if {$v eq ""} { my cancel_edit file; return }
         # A ~-headed path expands the way the subtree editor's does (Tcl 9
-        # expands ~ nowhere, and the suffix matcher would compare it
-        # literally); a bare suffix (main.tcl) stays untouched - suffix
-        # matching is the feature.
+        # expands ~ nowhere, and the matcher would compare it literally); a
+        # bare path tail (main.tcl) stays untouched - matching from the right
+        # is the feature.
         if {[string index $v 0] eq "~"} {
             if {[catch {::questlog::path::canon_dir $v} v]} { bell; return }
         }

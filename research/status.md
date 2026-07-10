@@ -11,7 +11,7 @@ Snapshot June 2026.
 | P1 Context loss at compaction / session end | Partial | The viewer segments the transcript at `compact_boundary` records and 10-minute idle gaps, so a reader lands at the boundary and reads up to it | `ui/viewer.tcl`. Ceiling: `/compact` runs server-side and is not written back to the JSONL, so no local reader can recover compacted content |
 | P2 Finding a past session and reading it | Solved | Cross-session regex search, hit-leading streaming snippets, and the segmented viewer; subagent transcripts are searched as first-class targets and listed under their parent session | `lib/search.tcl`, `lib/scan.tcl`, `ui/sessions.tcl`, `ui/viewer.tcl` |
 | P3 Resuming and forking | Solved | Resume, fork, and resume-in-new-terminal-tab from the right-click menu, in the session's original cwd | `ui/terminal.tcl`, `ui/sessions.tcl:1475`. The resume cache-cost spike is Anthropic-side and out of reach |
-| P4 Finding which session touched a file | Solved | Tool-use path search over Read/Write/Edit records (bare filename matches any directory by suffix), with a git-status file picker | `lib/match.tcl`, `lib/jsonl.tcl`, `lib/search.tcl`; picker `ui/toolbar.tcl:479-563`. The git listbox seeds the Write and Edit dropdowns; the Read dropdown keeps its file chooser and manual entry without a git list, since git status reports changed files (a write/edit signal), not reads (issue #16) |
+| P4 Finding which session touched a file | Solved | Tool-use path search over Read/Write/Edit records (bare filename matches any directory, matched from the right), with a git-status file picker | `lib/match.tcl`, `lib/jsonl.tcl`, `lib/search.tcl`; picker `ui/toolbar.tcl:479-563`. The git listbox seeds the Write and Edit dropdowns; the Read dropdown keeps its file chooser and manual entry without a git list, since git status reports changed files (a write/edit signal), not reads (issue #16) |
 | P5 Seeing which of many sessions is live | Solved | A "running only" filter reads live Claude processes from the process table, validated against `/proc`, so it sees sessions from any terminal | `ui/live.tcl` |
 | P6 Organising: grouping, moving, naming | Solved | Group by project folder; move and drag-to-move between folders preserving the bookmark; in-place rename writing Claude's native title records | `lib/path.tcl`, `ui/move_dialog.tcl`, `ui/drag.tcl`; rename `ui/sessions.tcl:1494-1512`, `ui/title_writer.tcl` |
 | P7 Bookmarking | Solved | The bookmark is the file's `u+x` permission bit (no sidecar), so it survives a move and a copy | `lib/path.tcl` |
@@ -26,7 +26,7 @@ Snapshot June 2026.
 
 The features behind the coverage above, each with its code home and the pains it serves.
 
-- Tool-use path search (Read/Write/Edit, suffix match): `lib/jsonl.tcl`, `lib/match.tcl`, `lib/search.tcl`. Serves P4.
+- Tool-use path search (Read/Write/Edit, path tail matched from the right): `lib/jsonl.tcl`, `lib/match.tcl`, `lib/search.tcl`. Serves P4.
 - Git-status file picker (Write/Edit dropdowns): `ui/toolbar.tcl`. Serves P4.
 - Resume, fork, resume-in-new-terminal-tab: `ui/terminal.tcl`, `ui/sessions.tcl`. Serves P3.
 - Bookmark via the `u+x` bit: `lib/path.tcl`. Serves P7.

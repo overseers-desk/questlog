@@ -245,7 +245,7 @@ proc ::questlog::match::eval_tree {node effsat} {
 # this record, and hits is the list of {btype content} snippets it would
 # contribute. A keyword or regex leaf walks the record's content blocks filtered
 # by its region set (empty = anywhere); a tool leaf walks the record's tool_uses
-# - a file leaf by the op's tool set and a path suffix, a tool leaf by name with
+# - a file leaf by the op's tool set and a path tail, a tool leaf by name with
 # an empty or substring key. nocase governs keyword matching only; a regex
 # carries its own case (folding someone's pattern would be wrong).
 proc ::questlog::match::leaf_record_hit {leaf rec nocase} {
@@ -284,10 +284,10 @@ proc ::questlog::match::leaf_record_hit {leaf rec nocase} {
             set val  [dict get $leaf value]
             foreach t [::questlog::jsonl::record_tool_uses $rec] {
                 if {$sel eq "file"} {
-                    # The path is matched by suffix, so a bare filename finds it
-                    # in any directory; `file` rides only on the file-touching
-                    # tools the op selects. The suffix must sit on a name
-                    # boundary - the whole path, or preceded by "/" or "." -
+                    # The path is matched from the right, so a bare filename
+                    # finds it in any directory; `file` rides only on the
+                    # file-touching tools the op selects. The tail must sit on a
+                    # name boundary - the whole path, or preceded by "/" or "." -
                     # so main.tcl never matches domain.tcl mid-word, while a
                     # dotted partial (spar-dispatcher-initcmd.tcl inside
                     # spar-manager.spar-dispatcher-initcmd.tcl) and a needle

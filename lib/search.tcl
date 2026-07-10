@@ -179,7 +179,7 @@ proc ::questlog::search::trim_pairs {pairs keep} {
 # when the selector is a file op (read / write / edit / file), else {tool <name>}
 # with the tool name canonicalised - the known built-ins title-cased, an unknown
 # selector (an MCP tool, or an exact name) passing through verbatim. The caller
-# appends the user's value: a path suffix for file, a key for tool. One home for
+# appends the user's value: a path tail for file, a key for tool. One home for
 # the selector vocabulary the headless CLI and the GUI launcher both parse.
 proc ::questlog::search::tool_selector {selector} {
     set file_ops {read read  write write  edit edit  file either}

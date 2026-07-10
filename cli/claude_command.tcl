@@ -45,7 +45,7 @@ questlog --json --since 7d --keyword "stripe webhook" | jq '[.[].sessions[] | {u
 A session is returned when its clauses hold somewhere in its log. Clauses combine by one algebra: adjacency is AND, `--or` is OR, `--not` negates the next clause, with precedence NOT, then AND, then OR. There is no grouping, so write `A AND (B OR C)` as `A B --or A C`. The clause kinds:
 
 - `--keyword <text>` is a literal needle; `--regex <re>` is a pattern. Either takes an optional `:regions` suffix to confine the match, e.g. `--keyword:user`, `--regex:assistant,tool-use`, where a region is one of user, assistant, tool-use, tool-result, any.
-- `--tool:read|write|edit|file <path>` finds a session that read, wrote, edited, or touched a file, matched by path suffix, so a bare filename finds it in any directory.
+- `--tool:read|write|edit|file <path-tail>` finds a session that read, wrote, edited, or touched a file. The path-tail is matched from the right, so a bare filename finds it in any directory.
 - `--tool:<name> <key>` finds a session that used a tool (Bash, Grep, ...) whose invocation contains the key, and an empty key means any use.
 
 Bound the whole result with `--since <24h|7d|2w|2026-04-01|all>`, `--until <...>`, `--subtree <dir>` (sessions in the subtree of `<dir>`: the directory itself and everything below it), or `--limit <N>`. Use the words from the user's own request (a topic, a filename, a tool name), and reach for `--regex` only when a literal keyword will not do. The full clause and bound inventory is in `questlog --help`.

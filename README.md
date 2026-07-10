@@ -30,7 +30,7 @@ Deliberately out of scope, because separate tools already serve them: exposing s
 
 The window opens as a horizontal split: the **session list** with its toolbar on the left and the **reading view** on the right, a status bar along the bottom. The reading view is present from launch, showing a centred empty state until the first session or snippet is clicked.
 
-The **toolbar** holds a time window (24 h / 7 d / 30 d / all, or a custom relative span or calendar date), a search box with a case toggle and a scope (anywhere, the said text, tool calls, or tool output), and a small form of AND-joined criteria with a "this cwd only" filter that auto-detects whether the launch directory has a corresponding project folder. The persistent **folder** and **file** rows ask which folder a session ran under and which file it touched; each file carries an operation pill (read, wrote, or either), so one criterion answers "which session touched this file" without caring whether it was a Write or an Edit, matched by path suffix so a bare filename finds it in any directory. A short tail reveals the rarer **regex** (a raw content pattern) and **tool** (a session that used a given tool) rows on demand. A session is shown only when it satisfies every criterion somewhere in its log.
+The **toolbar** holds a time window (24 h / 7 d / 30 d / all, or a custom relative span or calendar date), a search box with a case toggle and a scope (anywhere, the said text, tool calls, or tool output), and a small form of AND-joined criteria with a "this cwd only" filter that auto-detects whether the launch directory has a corresponding project folder. The persistent **folder** and **file** rows ask which folder a session ran under and which file it touched; each file carries an operation pill (read, wrote, or either), so one criterion answers "which session touched this file" without caring whether it was a Write or an Edit, matched from the right so a bare filename finds it in any directory. A short add-rail reveals the rarer **regex** (a raw content pattern) and **tool** (a session that used a given tool) rows on demand. A session is shown only when it satisfies every criterion somewhere in its log.
 
 The **session list** is one widget doing two jobs. With no search active it browses your sessions grouped by project, each marked while it is running and when you have bookmarked it. Type a word or add a criterion and the same list narrows to the sessions that match, showing the matching evidence under each so you can tell which one you want before you open it. A click opens a session in the reading view.
 
@@ -69,16 +69,12 @@ A single-file executable is also on the releases page; [docs/installation.md](do
 ```
 ./questlog                                            # launch the GUI
 ./questlog --keyword "california michael"             # ... opened on a search
-./questlog --tool:edit lib/scan.tcl --since 30d       # ... on a file edited in the last 30 days
+./questlog --tool:edit scan.tcl --since 30d           # ... on a file edited in the last 30 days
 ./questlog --json --keyword "stripe webhook"          # answer on stdout instead, as JSON
 ./questlog --shortstat --since 2026-04-01             # ... or as a totals summary
 ```
 
 There is one command line. Write a query with it and `questlog` opens the GUI on that query; add `--json` or `--shortstat` and the same query is answered on stdout, headless, with no display needed. `questlog --help` prints the grammar.
-
-A query is clauses and bounds. A clause is `--keyword <needle>`, `--regex <re>`, or a tool clause: `--tool:read|write|edit|file <path>` matches a file the session touched (by path suffix), and `--tool:<name> <key>` a use of a named tool whose invocation contains the key. Clauses AND by adjacency; `--or` widens, `--not` negates, and a `:regions` suffix (`--keyword:user,assistant`) confines a needle to part of the transcript. Bounds apply to the whole result: `--since`, `--until`, `--subtree`, `--limit`, `--case`.
-
-A few clauses have no control in the window: `--or`, `--not`, `--until`, `--limit`, `--limit-matches`, `--accrued-cost`, a `:regions` suffix, and a keyword holding a double quote all ask for `--json` or `--shortstat`, and say so rather than being dropped.
 
 `./questlog` opens the main window immediately and streams rows in. The default seven-day window populates in under a second; switching to "all" extends incrementally with the tree growing as files are scanned. Scan progress is reported in the bottom status bar.
 
