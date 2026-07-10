@@ -52,9 +52,11 @@ proc grammar {} {
     $cl mode brief -section out
     $cl option --brief -section out -selects brief -help {{Print one line each.}}
     $cl option --from -section pick -repeat -suffix domain -arg address \
-        -help {{Mail from this address.}}
-    $cl option --before -section pick -arg date -help {{Mail older than this date.}}
-    $cl option --verbose -section out -help {{Say more while working.}}
+        -tag address -fold {lappend from $value} -help {{Mail from this address.}}
+    $cl option --before -section pick -arg date -fold {set before $value} \
+        -help {{Mail older than this date.}}
+    $cl option --verbose -section out -fold {set verbose 1} \
+        -help {{Say more while working.}}
     return $cl
 }
 
@@ -65,11 +67,11 @@ proc grammar {} {
 check no_help    {ocmdline: --x declared without -help} \
     [raises {[ocmdline new p] option --x -section s}]
 check no_section {ocmdline: --x has no -section} \
-    [raises {[ocmdline new p] option --x -help {{Do a thing.}}}]
+    [raises {[ocmdline new p] option --x -fold {set x 1} -help {{Do a thing.}}}]
 check bad_decl   {ocmdline: --x: unknown declaration -colour} \
     [raises {[ocmdline new p] option --x -section s -colour red -help {{Do a thing.}}}]
 check colon_needs_suffix {ocmdline: --tool: ends in a colon and so needs -suffix} \
-    [raises {[ocmdline new p] option --tool: -section s -help {{Use a tool.}}}]
+    [raises {[ocmdline new p] option --tool: -section s -fold {set t 1} -help {{Use a tool.}}}]
 check two_defaults {ocmdline: two default modes: a and b} \
     [raises {set c [ocmdline new p]
              $c mode a -default -section s -help {{A.}}
@@ -132,7 +134,7 @@ check reject_unprinted 0 [expr {[string first {use adjacency} [help_text $cl]] >
 
 # ---- a value the option refuses --------------------------------------------
 set cl [grammar]
-$cl option --count -section pick -arg n \
+$cl option --count -section pick -arg n -fold {set count $value} \
     -check {expr {[string is integer -strict $value] ? "" : "--count: not a number: '$value'"}} \
     -help {{How many to print.}}
 check err_check  {--count: not a number: 'lots'} [usage_error $cl {--count lots}]
@@ -142,15 +144,15 @@ check check_pass "" [usage_error $cl {--count 4}]
 # The refusal names the flag that would have made it legal, worked out from the
 # table, so it cannot outlive the flag it names.
 set cl [grammar]
-$cl option --wrap -section out -arg cols -modes {brief} -because {full output never wraps} \
-    -help {{Wrap at this column.}}
+$cl option --wrap -section out -arg cols -fold {set wrap $value} \
+    -modes {brief} -because {full output never wraps} -help {{Wrap at this column.}}
 check err_mode {--wrap needs --brief (full output never wraps)} [usage_error $cl {--wrap 72}]
 check mode_ok  "" [usage_error $cl {--brief --wrap 72}]
 
 # A restriction the value asks for, rather than the option's presence: the guard
 # reads the occurrence and names what it asks for.
 set cl [grammar]
-$cl option --sort -section out -arg key \
+$cl option --sort -section out -arg key -fold {set sort $value} \
     -guard {expr {$value eq "size" ? [dict create subject {sorting by size} \
         modes brief because {full output has no size column}] : {}}} \
     -help {{Sort by this key.}}
@@ -162,8 +164,8 @@ check guard_mode_ok "" [usage_error $cl {--brief --sort size}]
 # An option legal only in the flagless default mode names the flag that excludes
 # it, since there is no flag to point at instead.
 set cl [grammar]
-$cl option --pager -section out -modes {full} -because {one line needs no pager} \
-    -help {{Page the output.}}
+$cl option --pager -section out -fold {set pager 1} -modes {full} \
+    -because {one line needs no pager} -help {{Page the output.}}
 check err_default_only {--pager is not available with --brief (one line needs no pager)} \
     [usage_error $cl {--brief --pager}]
 
@@ -178,8 +180,8 @@ $cl mode brief -section s
 $cl mode wide -section s
 $cl option --brief -section s -selects brief -help {{Brief.}}
 $cl option --wide -section s -selects wide -help {{Wide.}}
-$cl option --one -section s -modes {brief} -help {{Only brief.}}
-$cl option --two -section s -modes {wide} -help {{Only wide.}}
+$cl option --one -section s -fold {set one 1} -modes {brief} -help {{Only brief.}}
+$cl option --two -section s -fold {set two 1} -modes {wide} -help {{Only wide.}}
 set h [help_text $cl]
 check restricted_by_brief 1 [expr {[string first {Only with --brief: --one.} $h] >= 0}]
 check restricted_by_wide  1 [expr {[string first {Only with --wide: --two.} $h] >= 0}]
@@ -187,10 +189,41 @@ check restricted_by_wide  1 [expr {[string first {Only with --wide: --two.} $h] 
 check restricted_agrees_one {--one needs --brief} [usage_error $cl {--one}]
 check restricted_agrees_two {--two needs --wide}  [usage_error $cl {--two}]
 
-# ---- two flags that each choose a mode --------------------------------------
+# ---- one flag per mode ------------------------------------------------------
+# Two flags choosing one mode would leave a refusal naming whichever was
+# declared first, so the second declaration is refused instead.
+check err_two_selectors {ocmdline: --terse and --brief both select brief} \
+    [raises {set c [grammar]
+             $c option --terse -section out -selects brief -help {{Also brief.}}}]
+
+# A mode an option names must have been declared, or a refusal would point at a
+# flag the help never prints.
+check err_undeclared_mode {ocmdline: --wide names an undeclared mode: roomy} \
+    [raises {set c [grammar]
+             $c option --wide -section out -fold {set wide 1} -modes {roomy} -help {{Roomy.}}
+             $c parse {}}]
+
+# ---- --help and --version answer from the table ----------------------------
+# Declaring either would print a line the parser never reaches, so neither can
+# be declared, nor shadowed by a rejected token.
+check err_reserved_option {ocmdline: --help is the module's own; it needs no declaration} \
+    [raises {[ocmdline new p] option --help -section s -fold {set h 1} -help {{Mine.}}}]
+check err_reserved_reject {ocmdline: --version is the module's own; it needs no declaration} \
+    [raises {[ocmdline new p] reject --version {no}}]
+
+# `asks` reads argv for the module's own answers without touching anything else,
+# for a caller that must hold back a side effect until it knows.
 set cl [grammar]
-$cl option --terse -section out -selects brief -help {{Another way to say brief.}}
-check err_two_modes "" [usage_error $cl {--brief --terse}]
+check asks_help    help    [$cl asks {--from a --help}]
+check asks_version version [$cl asks {--version}]
+check asks_neither ""      [$cl asks {--from a}]
+
+# An option is written with two dashes, so prose naming a single-dash word names
+# something the parser will not answer to.
+check err_prose_single_dash {ocmdline: help text names an undeclared option: -f} \
+    [raises {set c [grammar]
+             $c preamble {{Write -f to choose an address.}}
+             $c parse {}}]
 
 # ---- --help and --version are the module's, not the caller's ---------------
 set cl [grammar]
@@ -199,6 +232,32 @@ check help_throws  {OCMDLINE HELP} \
 check version_throws {OCMDLINE VERSION} \
     [catch {$cl parse {--version}} e opts; lrange [dict get $opts -errorcode] 0 1]
 check version_line {mailer 3.2} [$cl version_line]
+
+# An option that neither chooses a mode nor carries a fold would print in the
+# help and then mean nothing, so it cannot be declared.
+check err_inert {ocmdline: --idle does nothing: give it -selects or -fold} \
+    [raises {set c [grammar]; $c option --idle -section out -help {{Nothing.}}}]
+
+# Every string a reader can meet answers to the table: the reason a refusal
+# gives, and what a rejected token says for itself.
+check err_because_undeclared {ocmdline: help text names an undeclared option: --typeface} \
+    [raises {set c [grammar]
+             $c option --wrap -section out -fold {set w 1} -modes {brief} \
+                 -because {use --typeface} -help {{Wrap.}}
+             $c parse {}}]
+check err_reject_undeclared {ocmdline: help text names an undeclared option: --group} \
+    [raises {set c [grammar]
+             $c reject --and {use --group instead}
+             $c parse {}}]
+
+# A guard names its reason at refusal time, so that reason answers to the table
+# too, rather than sending a reader after a flag that does not exist.
+check err_guard_undeclared {ocmdline: a refusal names an undeclared option: --plain} \
+    [raises {set c [grammar]
+             $c option --sort -section out -arg key -fold {set s 1} \
+                 -guard {dict create subject {sorting} modes brief because {try --plain}} \
+                 -help {{Sort.}}
+             $c parse {--sort size}}]
 
 # ---- subcommands -----------------------------------------------------------
 set cl [grammar]

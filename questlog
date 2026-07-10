@@ -1,10 +1,10 @@
 #!/usr/bin/env tclsh9.0
 # questlog - entry script.
 #
-# One command line, two answers. cli/args.tcl declares it and parses argv into a
-# neutral query; `--json` or `--shortstat` prints that query's result and exits,
-# and without either the same query seeds the GUI's toolbar and the window opens
-# on it. The interpreter is tclsh, so Tk is absent until a GUI file requires it:
+# One command line, two answers. cli/commandline.tcl declares it and parses argv
+# into a neutral query; `--json` or `--shortstat` prints that query's result and
+# exits, and without either the same query seeds the GUI's toolbar and the window
+# opens on it. The interpreter is tclsh, so Tk is absent until a GUI file requires it:
 # an output flag, `--help`, and the subcommands all answer without a display,
 # while the GUI branch pulls Tk in through the ui/ layer.
 
@@ -39,14 +39,16 @@ proc questlog_forbid_ui {} {
 # library loads, using the native `file` command. The explicit subcommand writes
 # with feedback and exits; every other launch silently refreshes the copy.
 source [file join $ROOT cli claude_command.tcl]
-source [file join $ROOT cli args.tcl]
+source [file join $ROOT cli commandline.tcl]
 
-set SUBCOMMAND [::questlog::cli::args::subcommand_of $argv]
+set SUBCOMMAND [::questlog::cli::commandline::subcommand_of $argv]
 if {$SUBCOMMAND eq "install-claude-command"} {
     ::questlog::claude::install
     exit 0
 }
-::questlog::claude::refresh
+# Asking what questlog is, or which version it is, touches nothing: the refresh
+# writes a file under $HOME, so it waits until the command line asks for work.
+if {[::questlog::cli::commandline::asks $argv] eq ""} { ::questlog::claude::refresh }
 
 source [file join $ROOT config.tcl]
 source [file join $ROOT lib debug.tcl]
@@ -76,7 +78,7 @@ if {$SUBCOMMAND ne ""} {
 # The query. Parsing calls into lib/search.tcl's region and tool-selector
 # vocabulary and lib/filter.tcl's time-spec grammar, so it runs once those are in
 # hand, and before either answer is prepared.
-set Query [::questlog::cli::args::run $argv]
+set Query [::questlog::cli::commandline::run $argv]
 
 # Bring the diagnostic log up before any module logs. A failed open inside
 # enable leaves logging off and the run unchanged.

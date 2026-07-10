@@ -1,6 +1,6 @@
 #!/usr/bin/env tclsh9.0
 # Tests for the clause grammar: region parsing (lib/search.tcl parse_regions),
-# the argv parser (cli/args.tcl parse) and the boolean tree its clauses fold
+# the argv parser (cli/commandline.tcl parse) and the boolean tree its clauses fold
 # into (cli/main.tcl fold), the tree evaluator (lib/match.tcl eval_tree), and the
 # issue's worked examples end to end through scan_file on a fixture. The query
 # error paths are checked against the real launcher, since they exit through
@@ -11,7 +11,7 @@ set ROOT [file dirname [file dirname [file normalize [info script]]]]
 # The grammar declares its own version, and only what the parser and scan_file
 # need is sourced: not lib/path.tcl (it renames `file` to guard deletes, which
 # would block this test's fixture cleanup), nor the Scan/cost layer (run's
-# concern, not the grammar's). cli/args.tcl calls path::canon_dir for --subtree
+# concern, not the grammar's). cli/commandline.tcl calls path::canon_dir for --subtree
 # only, which no case here exercises.
 set QUESTLOG_VERSION 0
 
@@ -20,7 +20,7 @@ source [file join $ROOT lib filter.tcl]
 source [file join $ROOT lib jsonl.tcl]
 source [file join $ROOT lib match.tcl]
 source [file join $ROOT lib search.tcl]
-source [file join $ROOT cli args.tcl]
+source [file join $ROOT cli commandline.tcl]
 source [file join $ROOT cli main.tcl]
 ::questlog::match::set_caps [dict create \
     content_cap     [::questlog::config::get content_cap] \
@@ -61,7 +61,7 @@ check region_unknown    1 [throws {::questlog::search::parse_regions nope}]
 # Every query here is a headless one: --or, --not and a :regions suffix ask for
 # an output flag, since the window has no control for them.
 proc tree {args} {
-    return [::questlog::cli::main::fold [::questlog::cli::args::parse [linsert $args 0 --json]]]
+    return [::questlog::cli::main::fold [::questlog::cli::commandline::parse [linsert $args 0 --json]]]
 }
 
 # Adjacency ANDs, --or splits OR-groups: A B --or C is (A AND B) OR C.
@@ -80,7 +80,7 @@ check tree_tool    {kind tool sel file spec read value c.tcl neg 0} \
 
 # ---- the global bounds ride beside the clause tree -------------------------
 proc bound {key args} {
-    return [dict get [::questlog::cli::args::parse [linsert $args 0 --json]] $key]
+    return [dict get [::questlog::cli::commandline::parse [linsert $args 0 --json]] $key]
 }
 check bound_since   7d         [bound since --since 7d --keyword x]
 check bound_until   2026-04-01 [bound until --until 2026-04-01 --keyword x]
@@ -120,7 +120,7 @@ close $fh
 
 # Does the session qualify for this query? (matches non-empty after scan_file)
 proc q {args} {
-    set clauses [::questlog::cli::main::fold [::questlog::cli::args::parse [linsert $args 0 --json]]]
+    set clauses [::questlog::cli::main::fold [::questlog::cli::commandline::parse [linsert $args 0 --json]]]
     lassign [::questlog::match::scan_file $::fix $clauses] row m
     return [expr {[llength $m] > 0}]
 }
@@ -170,7 +170,7 @@ puts $fh {{"type":"user","message":{"role":"user","content":[{"type":"text","tex
 puts $fh {{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"x","content":"irrelevant"}]}}}
 close $fh
 lassign [::questlog::match::scan_file $fix2 \
-    [::questlog::cli::main::fold [::questlog::cli::args::parse {--keyword widget}]]] row2 m2
+    [::questlog::cli::main::fold [::questlog::cli::commandline::parse {--keyword widget}]]] row2 m2
 check arr_nturns  1 [dict get $row2 nturns]
 check arr_preview {fix the "blue" widget} [dict get $row2 first_user]
 file delete $fix2

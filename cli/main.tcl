@@ -137,8 +137,8 @@ proc ::questlog::cli::main::limit_matches {matches limit_cap {sub_path ""}} {
 
 # fold q - the neutral query dict's clause groups as the matcher's
 # {leaves tree nocase} form: each group's clauses AND together, the groups OR.
-# The grammar itself lives in cli/args.tcl; this is the one place its vocabulary
-# meets the matcher's leaves.
+# The grammar itself lives in cli/commandline.tcl; this is the one place its
+# vocabulary meets the matcher's leaves.
 proc ::questlog::cli::main::fold {q} {
     set leaves [list]
     set ornodes [list]
@@ -164,9 +164,9 @@ proc ::questlog::cli::main::fold {q} {
 
 # Apply a rename from the command line: `questlog rename <session.jsonl> [title]`.
 # A subcommand handed the wrong arguments prints how it is written, from the
-# declaration in cli/args.tcl that the dispatcher reads, and exits 2.
+# declaration in cli/commandline.tcl that the dispatcher reads, and exits 2.
 proc ::questlog::cli::main::misuse {name} {
-    foreach line [::questlog::cli::args::subcommand_usage $name] { puts stderr $line }
+    foreach line [::questlog::cli::commandline::subcommand_usage $name] { puts stderr $line }
     exit 2
 }
 
@@ -241,9 +241,9 @@ proc ::questlog::cli::main::has_window_spend {cost_info} {
         || [dict getdef $cost_info turns 0] > 0}]
 }
 
-# Answer the query on stdout. q is the neutral dict cli/args.tcl parsed from the
-# command line; its clause groups become the matcher's boolean tree and its
-# bounds ride outside as global filters.
+# Answer the query on stdout. q is the neutral dict cli/commandline.tcl parsed
+# from the command line; its clause groups become the matcher's boolean tree and
+# its bounds ride outside as global filters.
 proc ::questlog::cli::main::run {q} {
     variable ::ROOT
     if {![info exists ROOT]} {

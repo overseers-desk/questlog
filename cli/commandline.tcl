@@ -1,9 +1,13 @@
 package require Tcl 9
 package require ocmdline
 
-# questlog's command line, declared once. The ocmdline object below both parses
-# argv and prints `--help`, so the grammar has one statement and no second list
-# to fall out of step with it.
+# questlog's command line. The ocmdline object below is its one statement: the
+# same declaration answers argv and renders `--help`.
+#
+# It sits beside the headless answer rather than inside it, because both answers
+# read it: cli/main.tcl would carry its JSON emitters into every GUI launch, and
+# the launcher would put the grammar out of reach of a test that drives it
+# without opening a window.
 #
 # `parse` folds the ordered occurrences into a neutral query dict: the clause
 # groups of the boolean algebra, and the bounds that ride outside it. The dict
@@ -15,51 +19,51 @@ package require ocmdline
 # query opens the GUI on itself. Nothing here requires Tk, so `--help` and every
 # parse error answer without a display.
 
-namespace eval ::questlog::cli::args {
+namespace eval ::questlog::cli::commandline {
     variable CL [ocmdline new questlog $::QUESTLOG_VERSION]
 }
 
-$::questlog::cli::args::CL synopsis {[--json|--shortstat] [bounds] [clauses]}
+$::questlog::cli::commandline::CL synopsis {[--json|--shortstat] [bounds] [clauses]}
 
-$::questlog::cli::args::CL preamble {
+$::questlog::cli::commandline::CL preamble {
     {A session is returned when its clauses hold. Each clause is one needle in an}
     {optional region-list; clauses combine by one algebra: adjacency is AND, --or is}
     {OR, --not negates the next clause. Precedence is NOT > AND > OR. There is no}
     {grouping - a query that needs A AND (B OR C) is rejected; reorder to DNF instead.}
 }
 
-$::questlog::cli::args::CL subcommand rename {<session.jsonl> [title]} \
+$::questlog::cli::commandline::CL subcommand rename {<session.jsonl> [title]} \
     {Set the session's custom title; an empty title reverts to the auto title.}
-$::questlog::cli::args::CL subcommand show {<session.jsonl|uuid>} \
+$::questlog::cli::commandline::CL subcommand show {<session.jsonl|uuid>} \
     {Print the session as a readable transcript.}
-$::questlog::cli::args::CL subcommand install-claude-command {} \
+$::questlog::cli::commandline::CL subcommand install-claude-command {} \
     {Register questlog as a Claude Code command.}
 
 # Without an output flag the query opens the GUI on itself; --json and
 # --shortstat each answer it on stdout instead.
-$::questlog::cli::args::CL mode gui -default -section output \
+$::questlog::cli::commandline::CL mode gui -default -section output \
     -help {{Open the GUI on the query. Needs a display.}}
-$::questlog::cli::args::CL mode json
-$::questlog::cli::args::CL mode shortstat
+$::questlog::cli::commandline::CL mode json
+$::questlog::cli::commandline::CL mode shortstat
 
 # ---- output ----------------------------------------------------------------
 
-$::questlog::cli::args::CL section output {output:} -note {
+$::questlog::cli::commandline::CL section output {output:} -note {
     {}
     {  Cost = the tokens recorded in each transcript priced at per-model API rates;}
     {  computed here, an API-equivalent figure, not a number the harness billed.}
     {  By default a session's whole-transcript cost counts once it falls in the}
     {  window; --accrued-cost instead counts only the spend dated inside the window.}
 }
-$::questlog::cli::args::CL option --json -section output -selects json \
+$::questlog::cli::commandline::CL option --json -section output -selects json \
     -help {{Emit the full result as JSON, headless.}}
-$::questlog::cli::args::CL option --shortstat -section output -selects shortstat \
+$::questlog::cli::commandline::CL option --shortstat -section output -selects shortstat \
     -help {{Emit a totals summary instead, headless: session and subagent}
            {counts, turns, tokens, and total cost over the result.}}
 
 # ---- clauses ---------------------------------------------------------------
 
-$::questlog::cli::args::CL section clause {clauses:} -note {
+$::questlog::cli::commandline::CL section clause {clauses:} -note {
     {}
     {A tool selector is read, write, edit or file for a file the session touched,}
     {or the name of a tool (Bash, Grep, ...) it used, whose value is then a key its}
@@ -78,84 +82,98 @@ $::questlog::cli::args::CL section clause {clauses:} -note {
 # The GUI's search box splits its text on space and quotes a phrase with '"', and
 # its scope selector is one setting for the whole box, so a needle carrying a
 # quote and a per-clause region each have nowhere in the window to live.
-$::questlog::cli::args::CL option --keyword -section clause -repeat \
+$::questlog::cli::commandline::CL option --keyword -section clause -repeat -tag clause \
     -suffix regions -arg needle \
-    -check {::questlog::cli::args::check_regions $suffix} \
-    -guard {::questlog::cli::args::keyword_restriction $value $suffix} \
+    -check {::questlog::cli::commandline::check_regions $suffix} \
+    -guard {::questlog::cli::commandline::keyword_restriction $value $suffix} \
+    -fold {lappend cur [dict create kind keyword value $value \
+               regions [::questlog::search::parse_regions $suffix] neg $pending_neg]
+           set pending_neg 0} \
     -help {{A literal needle.}}
 
-$::questlog::cli::args::CL option --regex -section clause -repeat \
+$::questlog::cli::commandline::CL option --regex -section clause -repeat -tag clause \
     -suffix regions -arg needle \
-    -check {::questlog::cli::args::check_pattern $value $suffix} \
-    -guard {::questlog::cli::args::regions_restriction $suffix} \
+    -check {::questlog::cli::commandline::check_pattern $value $suffix} \
+    -guard {::questlog::cli::commandline::regions_restriction $suffix} \
+    -fold {lappend cur [dict create kind regex value $value \
+               regions [::questlog::search::parse_regions $suffix] neg $pending_neg]
+           set pending_neg 0} \
     -help {{A regex needle.}}
 
-$::questlog::cli::args::CL option --tool: -section clause -repeat \
+$::questlog::cli::commandline::CL option --tool: -section clause -repeat -tag clause \
     -suffix selector -arg value \
+    -fold {lassign [::questlog::search::tool_selector $suffix] selkind selspec
+           lappend cur [dict create kind tool selkind $selkind selspec $selspec \
+               value $value neg $pending_neg]
+           set pending_neg 0} \
     -help {{A file the session touched (by path-tail), or a tool it used.}}
 
-$::questlog::cli::args::CL option --or -section clause -repeat \
+$::questlog::cli::commandline::CL option --or -section clause -repeat \
     -modes {json shortstat} -because {the GUI ANDs its criteria} \
+    -fold {if {![llength $cur]} { $CL fail "--or needs a clause on each side" }
+           lappend groups $cur
+           set cur [list]} \
     -help {{OR between the clause before and the clause after.}}
 
-$::questlog::cli::args::CL option --not -section clause -repeat \
+$::questlog::cli::commandline::CL option --not -section clause -repeat \
     -modes {json shortstat} -because {the GUI has no negated criterion} \
+    -fold {set pending_neg 1} \
     -help {{Negate the next clause. The whole query still}
            {needs at least one positive clause.}}
 
 # ---- bounds ----------------------------------------------------------------
 
-$::questlog::cli::args::CL section bound {bounds (global, applied to the whole result - not clauses):}
+$::questlog::cli::commandline::CL section bound {bounds (global, applied to the whole result - not clauses):}
 
-$::questlog::cli::args::CL option --since -section bound -arg when \
-    -check {::questlog::cli::args::check_when --since $value} \
+$::questlog::cli::commandline::CL option --since -fold {set since $value} -section bound -arg when \
+    -check {::questlog::cli::commandline::check_when --since $value} \
     -help {{Recency bound: a window (24h, 7d, 2w), a date (2026-04-01),}
            {a precise instant (2026-04-01T13:37, ...T13:37:30), or 'all'.}}
 
-$::questlog::cli::args::CL option --until -section bound -arg when \
-    -check {::questlog::cli::args::check_when --until $value} \
+$::questlog::cli::commandline::CL option --until -fold {set until $value} -section bound -arg when \
+    -check {::questlog::cli::commandline::check_when --until $value} \
     -modes {json shortstat} \
     -help {{Older bound: a window ago (7d), a date (covers the whole day),}
            {a precise instant, or 'all' (no bound).}}
 
-$::questlog::cli::args::CL option --subtree -section bound -arg dir \
-    -check {::questlog::cli::args::check_subtree $value} \
+$::questlog::cli::commandline::CL option --subtree -fold {set subtree [::questlog::path::canon_dir $value]} -section bound -arg dir \
+    -check {::questlog::cli::commandline::check_subtree $value} \
     -help {{Only sessions in the subtree of <dir>: the directory}
            {itself and everything below it (~ is expanded).}}
 
-$::questlog::cli::args::CL option --accrued-cost -section bound \
+$::questlog::cli::commandline::CL option --accrued-cost -fold {set accrued 1} -section bound \
     -modes {json shortstat} \
     -help {{Count only spend dated inside the window, by each message's}
            {timestamp. Needs a time bound.}}
 
-$::questlog::cli::args::CL option --limit -section bound -arg N \
-    -check {::questlog::cli::args::check_count --limit $value 1} \
+$::questlog::cli::commandline::CL option --limit -fold {set limit [expr {$value eq "all" ? 0 : $value}]} -section bound -arg N \
+    -check {::questlog::cli::commandline::check_count --limit $value 1} \
     -modes {json shortstat} \
     -help {{Cap returned sessions (0, 'all', or unset = unlimited).}}
 
-$::questlog::cli::args::CL option --limit-matches -section bound -arg N \
-    -check {::questlog::cli::args::check_count --limit-matches $value 0} \
+$::questlog::cli::commandline::CL option --limit-matches -fold {set limit_matches $value} -section bound -arg N \
+    -check {::questlog::cli::commandline::check_count --limit-matches $value 0} \
     -modes {json shortstat} \
     -help {{Cap snippets per session/subagent (0 = no snippets).}}
 
-$::questlog::cli::args::CL option --case -section bound \
+$::questlog::cli::commandline::CL option --case -fold {set nocase 0} -section bound \
     -help {{Case-sensitive keyword matching (default: insensitive).}}
 
 # ---- display ---------------------------------------------------------------
 
-$::questlog::cli::args::CL section display {display:}
+$::questlog::cli::commandline::CL section display {display:}
 
-$::questlog::cli::args::CL option --font -section display -arg family \
+$::questlog::cli::commandline::CL option --font -fold {set font $value} -section display -arg family \
     -modes {gui} -because {the reading font is the GUI's} \
     -help {{The session viewer's reading font.}}
 
-$::questlog::cli::args::CL option --debug -section display -arg n \
+$::questlog::cli::commandline::CL option --debug -fold {set debug $value} -section display -arg n \
     -help {{Write the diagnostic log.}}
 
 # The flag algebra has no parentheses, so the tokens someone reaches for say why
 # rather than passing as unknown options.
 foreach tok {( ) --( --) --and} {
-    $::questlog::cli::args::CL reject $tok "grouping is not supported - the flag algebra has no\
+    $::questlog::cli::commandline::CL reject $tok "grouping is not supported - the flag algebra has no\
         parentheses. Reorder to OR-of-ANDs, e.g. 'A B --or A C' for 'A AND (B OR C)'."
 }
 
@@ -163,14 +181,14 @@ foreach tok {( ) --( --) --and} {
 
 # The region vocabulary lives in lib/search.tcl; a bad spec is a usage error
 # rather than a stack trace deep in the scan.
-proc ::questlog::cli::args::check_regions {suffix} {
+proc ::questlog::cli::commandline::check_regions {suffix} {
     if {[catch {::questlog::search::parse_regions $suffix} out]} { return $out }
     return ""
 }
 
 # A pattern's first execution is deep inside the scan, where a throw is a stack
 # trace instead of a usage error, so it is run against nothing here first.
-proc ::questlog::cli::args::check_pattern {value suffix} {
+proc ::questlog::cli::commandline::check_pattern {value suffix} {
     set why [check_regions $suffix]
     if {$why ne ""} { return $why }
     if {[catch {regexp -- $value {}} rxerr]} {
@@ -180,7 +198,7 @@ proc ::questlog::cli::args::check_pattern {value suffix} {
 }
 
 # --since and --until share one time-spec grammar; "" and 'all' mean no bound.
-proc ::questlog::cli::args::check_when {flag value} {
+proc ::questlog::cli::commandline::check_when {flag value} {
     if {$value eq "all"} { return "" }
     if {[catch {::questlog::filter::parse_since $value}]} {
         return "$flag: invalid '$value' (want 24h/7d/2w, 2026-04-01, 2026-04-01T13:37\[:SS\], or 'all')"
@@ -191,7 +209,7 @@ proc ::questlog::cli::args::check_when {flag value} {
 # Counts must be counts: a swallowed flag or a typo would otherwise ride through
 # Tcl string comparison as "no cap" while claiming to be one. --limit also spells
 # its no-cap as 'all'.
-proc ::questlog::cli::args::check_count {flag value allow_all} {
+proc ::questlog::cli::commandline::check_count {flag value allow_all} {
     if {$allow_all && $value eq "all"} { return "" }
     if {![string is integer -strict $value] || $value < 0} {
         set want [expr {$allow_all ? " or 'all'" : ""}]
@@ -203,20 +221,20 @@ proc ::questlog::cli::args::check_count {flag value allow_all} {
 # Canonicalise (tilde-expanded, absolute) so the filter predicates compare
 # against the form Claude records as a cwd; an inexpandible ~user fails loud
 # instead of matching nothing.
-proc ::questlog::cli::args::check_subtree {value} {
+proc ::questlog::cli::commandline::check_subtree {value} {
     if {[catch {::questlog::path::canon_dir $value} out]} { return "--subtree: $out" }
     return ""
 }
 
 # ---- what the window cannot hold -------------------------------------------
 
-proc ::questlog::cli::args::regions_restriction {suffix} {
+proc ::questlog::cli::commandline::regions_restriction {suffix} {
     if {$suffix eq "" || ![llength [::questlog::search::parse_regions $suffix]]} { return {} }
     return [dict create subject "a :regions suffix" modes {json shortstat} \
         because "the GUI's scope covers the whole search"]
 }
 
-proc ::questlog::cli::args::keyword_restriction {value suffix} {
+proc ::questlog::cli::commandline::keyword_restriction {value suffix} {
     set r [regions_restriction $suffix]
     if {[llength $r]} { return $r }
     if {[string first "\"" $value] >= 0} {
@@ -238,7 +256,7 @@ proc ::questlog::cli::args::keyword_restriction {value suffix} {
 # The grammar is an OR (--or) of AND-groups (adjacency) of optionally-negated
 # (--not) clauses; groups is the closed AND-groups and cur the one being built,
 # while bounds ride outside the tree. Throws as ocmdline does; `run` answers.
-proc ::questlog::cli::args::parse {argv} {
+proc ::questlog::cli::commandline::parse {argv} {
     variable CL
     set p [$CL parse $argv]
     set mode [dict get $p mode]
@@ -256,6 +274,9 @@ proc ::questlog::cli::args::parse {argv} {
     set cur [list]
     set pending_neg 0
 
+    # Each occurrence runs the fold its own declaration carries, so no option
+    # can be written into the grammar without a meaning, and none is reached by
+    # a name this loop has to know.
     foreach o [dict get $p occurrences] {
         set name [dict get $o name]
         set value [dict get $o value]
@@ -263,53 +284,12 @@ proc ::questlog::cli::args::parse {argv} {
         # A pending --not may only be followed by a clause; letting a bound or
         # output flag through here would silently carry the negation across it
         # to whatever clause comes later.
-        if {$pending_neg && $name ni {--keyword --regex --tool:}} {
+        if {$pending_neg && [$CL tag_of $name] ne "clause"} {
             if {$name eq "--not"} { $CL fail "--not --not is not allowed" }
             $CL fail "--not must be followed by a clause, not '$name'"
         }
-        switch -- $name {
-            --keyword {
-                lappend cur [dict create kind keyword value $value \
-                    regions [::questlog::search::parse_regions $suffix] neg $pending_neg]
-                set pending_neg 0
-            }
-            --regex {
-                lappend cur [dict create kind regex value $value \
-                    regions [::questlog::search::parse_regions $suffix] neg $pending_neg]
-                set pending_neg 0
-            }
-            --tool: {
-                lassign [::questlog::search::tool_selector $suffix] selkind selspec
-                lappend cur [dict create kind tool selkind $selkind selspec $selspec \
-                    value $value neg $pending_neg]
-                set pending_neg 0
-            }
-            --not { set pending_neg 1 }
-            --or {
-                if {![llength $cur]} { $CL fail "--or needs a clause on each side" }
-                lappend groups $cur
-                set cur [list]
-            }
-            --limit         { set limit [expr {$value eq "all" ? 0 : $value}] }
-            --limit-matches { set limit_matches $value }
-            --since         { set since $value }
-            --until         { set until $value }
-            --subtree       { set subtree [::questlog::path::canon_dir $value] }
-            --font          { set font $value }
-            --debug         { set debug $value }
-            --accrued-cost  { set accrued 1 }
-            --case          { set nocase 0 }
-            --json - --shortstat {
-                # Read already: an output flag chose the mode, which rides on
-                # the parse rather than on any one occurrence.
-            }
-            default {
-                # Declaring an option makes it parse and print; only this fold
-                # gives it meaning. An option that reaches here would be
-                # accepted, documented, and inert, so it stops the run instead.
-                error "questlog: $name is declared but the query does not read it"
-            }
-        }
+        set fold [$CL fold_of $name]
+        if {$fold ne ""} { eval $fold }
     }
     if {$pending_neg} { $CL fail "--not has no following clause" }
     if {[llength $cur]} {
@@ -345,10 +325,10 @@ proc ::questlog::cli::args::parse {argv} {
 
 # The query, or the conventional answer to a command line that does not carry
 # one: the help, the version, or the message and exit 2.
-proc ::questlog::cli::args::run {argv} {
+proc ::questlog::cli::commandline::run {argv} {
     variable CL
     try {
-        return [::questlog::cli::args::parse $argv]
+        return [::questlog::cli::commandline::parse $argv]
     } trap {OCMDLINE HELP} {} {
         $CL print stdout
         exit 0
@@ -361,13 +341,20 @@ proc ::questlog::cli::args::run {argv} {
 }
 
 # The subcommand argv asks for, or "" for the query grammar.
-proc ::questlog::cli::args::subcommand_of {argv} {
+proc ::questlog::cli::commandline::subcommand_of {argv} {
     variable CL
     return [$CL subcommand_of $argv]
 }
 
 # How a subcommand is written, for one that finds its own arguments wrong.
-proc ::questlog::cli::args::subcommand_usage {name} {
+proc ::questlog::cli::commandline::subcommand_usage {name} {
     variable CL
     return [$CL subcommand_usage $name]
+}
+
+# Which of the command line's own answers argv asks for - `help`, `version`, or
+# "" for neither.
+proc ::questlog::cli::commandline::asks {argv} {
+    variable CL
+    return [$CL asks $argv]
 }

@@ -1,5 +1,5 @@
 #!/usr/bin/env tclsh9.0
-# Tests for cli/args.tcl: the neutral query dict argv folds into, and the
+# Tests for cli/commandline.tcl: the neutral query dict argv folds into, and the
 # clauses the grammar refuses before a window opens, because the window has no
 # control for them. Pure and Tk-free. The error paths that print and exit are
 # driven from the real launcher in test-search-grammar.tcl; these drive `parse`,
@@ -16,7 +16,7 @@ source [file join $ROOT lib filter.tcl]
 source [file join $ROOT lib path.tcl]
 source [file join $ROOT lib match.tcl]
 source [file join $ROOT lib search.tcl]
-source [file join $ROOT cli args.tcl]
+source [file join $ROOT cli commandline.tcl]
 
 set fails 0
 proc check {name expected actual} {
@@ -29,10 +29,10 @@ proc check {name expected actual} {
         puts "ok:   $name"
     }
 }
-proc parse {args} { return [::questlog::cli::args::parse $args] }
+proc parse {args} { return [::questlog::cli::commandline::parse $args] }
 # The refusal a query meets, or "" when it is answered.
 proc refusal {args} {
-    if {[catch {::questlog::cli::args::parse $args} e]} { return $e }
+    if {[catch {::questlog::cli::commandline::parse $args} e]} { return $e }
     return ""
 }
 
