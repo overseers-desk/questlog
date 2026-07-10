@@ -62,6 +62,7 @@ proc ::questlog::ui::app::start {root {seed {}}} {
     variable ListFrame
     variable ViewFrame
     variable Running
+    variable RunTimer
     variable CurrentQuery
     variable SidebarCollapsed
     variable SidebarSash
@@ -281,7 +282,9 @@ proc ::questlog::ui::app::start {root {seed {}}} {
     # live session; without the Thread package its cost parse runs on the main
     # thread. Defer it off the first-paint path so the mapped window is drawn and
     # interactive before it runs; it then re-arms itself on its own cadence.
-    after idle [namespace code run_tick]
+    # Recorded in RunTimer like every re-arm, so a quit landing before the
+    # first tick has an id to cancel.
+    set RunTimer [after idle [namespace code run_tick]]
 }
 
 # First-launch welcome strip across the top of the window, shown until the
@@ -573,7 +576,9 @@ proc ::questlog::ui::app::update_spinner {} {
     variable SearchActive
     variable CostOutstanding
     set spin .top.statusbar.spin
-    if {![winfo exists $spin]} return
+    # The widget command doubles as the existence test: [winfo exists] would
+    # itself error once quit has destroyed the window, winfo included.
+    if {![llength [info commands $spin]]} return
     set busy [expr {$ScanActive || $SearchActive || $CostOutstanding > 0}]
     set shown [expr {[winfo manager $spin] ne ""}]
     # Act on transitions only: start/stop schedule recurring timers, so calling
@@ -1055,20 +1060,22 @@ proc ::questlog::ui::app::scan_is_typing {} {
 proc ::questlog::ui::app::quit {} {
     variable Search
     variable Scan
-    variable RunTimer
-    variable CostFlushTimer
-    variable SearchFlushTimer
-    if {[info exists RunTimer]} { after cancel $RunTimer }
-    if {[info exists CostFlushTimer] && $CostFlushTimer ne ""} {
-        after cancel $CostFlushTimer
-    }
-    if {[info exists SearchFlushTimer] && $SearchFlushTimer ne ""} {
-        after cancel $SearchFlushTimer
-    }
-    # Stop the cost pass before tearing down Scan: a worker result still in
-    # flight would otherwise reach on_cost_result -> $Scan update_cost after the
-    # object is gone. The epoch bump makes on_worker_result drop those results.
+    # Teardown runs in dependency order, because exit is not instant: Tcl
+    # finalization can service the event queue on the way out, so anything
+    # still armed would fire into whatever is already gone.
+    # 1. The window: whatever fires during widget teardown finds every
+    #    object it names still alive.
+    catch {destroy .}
+    # 2. Every pending after, wholesale: the named timers (RunTimer, the
+    #    flush timers), anything armed without a recorded id, and anything
+    #    the widget teardown just armed.
+    foreach id [after info] { after cancel $id }
+    # 3. Stop the cost pass before tearing down Scan: a worker result still
+    #    in flight would otherwise reach on_cost_result -> $Scan update_cost
+    #    after the object is gone. The epoch bump makes on_worker_result
+    #    drop those results.
     cancel_cost
+    # 4. Objects last; their leash destructors cancel their own arms.
     if {[info exists Search] && $Search ne ""} { catch {$Search destroy} }
     if {[info exists Scan]   && $Scan ne ""}   { catch {$Scan destroy} }
     exit 0
