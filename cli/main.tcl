@@ -146,15 +146,21 @@ proc ::questlog::cli::main::md_cost {usd} {
     return [format {$%.2f} $usd]
 }
 
-# The one-line identity/metadata line under a session or subagent heading: a
-# session's uuid (which `questlog show <uuid>` reopens) or a subagent's agent_id
-# (show has no entry point for one, so it identifies but does not reopen), the
-# first timestamp when present (subagents carry none), the turn count, and the
-# cost when priced.
-proc ::questlog::cli::main::md_meta {ident ts turns usd} {
+# The one-line identity/metadata line under a session or subagent heading,
+# carrying the same fields --json does: a session's uuid (which
+# `questlog show <uuid>` reopens) or a subagent's agent_id (show has no entry
+# point for one, so it identifies but does not reopen), the first timestamp when
+# present (subagents carry none), the turn count, the duration and human time
+# when timed (fmt_dur's MM:SS/H:MM:SS, the session list's own Duration format),
+# and the cost when priced.
+proc ::questlog::cli::main::md_meta {ident ts turns dur human usd} {
     set parts [list $ident]
     if {$ts ne ""} { lappend parts $ts }
     lappend parts "$turns turns"
+    set d [::questlog::cost::fmt_dur $dur]
+    if {$d ne ""} { lappend parts "duration $d" }
+    set h [::questlog::cost::fmt_dur $human]
+    if {$h ne ""} { lappend parts "human $h" }
     set c [md_cost $usd]
     if {$c ne ""} { lappend parts $c }
     return [join $parts " · "]
@@ -196,14 +202,16 @@ proc ::questlog::cli::main::format_markdown {folders_dict} {
         foreach sess [dict get $data sessions] {
             lappend out "" "## [dict get $sess title]"
             lappend out [md_meta [dict get $sess uuid] [dict get $sess first_ts] \
-                [dict get $sess turns] [dict get $sess cost_usd]]
+                [dict get $sess turns] [dict get $sess duration_secs] \
+                [dict get $sess human_secs] [dict get $sess cost_usd]]
             lappend out "`[dict get $sess path]`"
             set mm [format_md_matches [dict get $sess matches]]
             if {$mm ne ""} { lappend out "" $mm }
             foreach sub [dict get $sess subagents] {
                 lappend out "" "### subagent [dict get $sub agent_type]: [dict get $sub description]"
                 lappend out [md_meta [dict get $sub agent_id] "" \
-                    [dict get $sub turns] [dict get $sub cost_usd]]
+                    [dict get $sub turns] [dict get $sub duration_secs] \
+                    [dict get $sub human_secs] [dict get $sub cost_usd]]
                 set sm [format_md_matches [dict get $sub matches]]
                 if {$sm ne ""} { lappend out "" $sm }
             }

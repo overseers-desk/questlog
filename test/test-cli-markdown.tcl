@@ -8,6 +8,7 @@
 package require Tcl 9
 
 set ROOT [file dirname [file dirname [file normalize [info script]]]]
+source [file join $ROOT lib cost.tcl]
 source [file join $ROOT cli main.tcl]
 set failures 0
 proc check {name got want} {
@@ -43,8 +44,8 @@ check "markdown: the project path heads the folder" \
     [regexp -- {(?m)^# /home/user/proj$} $out] 1
 check "markdown: the session title is an h2" \
     [regexp -- {(?m)^## Real Work$} $out] 1
-check "markdown: the session identity line carries uuid, ts, turns and cost" \
-    [regexp -- {s1 · 2026-06-02T13:00:00.000Z · 5 turns · \$0.42} $out] 1
+check "markdown: the session identity line carries uuid, ts, turns, duration, human and cost" \
+    [regexp -- {s1 · 2026-06-02T13:00:00.000Z · 5 turns · duration 10:00 · human 02:00 · \$0.42} $out] 1
 check "markdown: the session path is a backticked line" \
     [regexp -- {`/p/s1.jsonl`} $out] 1
 check "markdown: a hit renders as an anchored snippet bullet" \
