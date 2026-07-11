@@ -327,7 +327,7 @@ proc ::questlog::ui::theme::build_chrome {} {
     ttk::style configure Notice.TLabel -background [c recap] \
         -foreground [c cost_mid] -padding {10 4}
     # ---- the list's cut banner ---------------------------------------------
-    # The strip above the list that names what an active lens contains and the
+    # The strip above the list that names what the active lenses contain and the
     # search never loaded (a session running right now, outside the window). It
     # takes the notice strip's cream and amber, because it says the same kind of
     # thing: the view is not the whole truth, and here is the remedy. The two

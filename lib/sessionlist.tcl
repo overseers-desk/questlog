@@ -93,8 +93,8 @@ proc ::questlog::sessionlist::lens_excluded {snapshot rows full_set} {
 # Which lenses are narrowing the list, in the order a caller words them: running,
 # bookmarked, model. Empty when none is, and the list shows every row it loaded.
 # Each lens latches on its own, so any combination is reachable and the list then
-# shows the rows that pass all of them (row_visible ANDs the clauses): both
-# segments on means running AND bookmarked, one set of rows, not two.
+# shows the rows that pass all of them (row_visible ANDs the clauses): running and
+# bookmarked both on means running AND bookmarked, one set of rows, not two.
 proc ::questlog::sessionlist::active_lenses {snapshot} {
     set out [list]
     if {[toggle $snapshot running_only 0]}    { lappend out running }
@@ -120,7 +120,7 @@ proc ::questlog::sessionlist::member_lenses {snapshot} {
 # The membership the active lenses jointly claim, out of the sets the caller
 # gathered for member_lenses (a list of uuid-keyed dicts, in that order).
 #
-# With both segments on, a row must be running AND bookmarked to show, so the
+# With both lenses on, a row must be running AND bookmarked to show, so the
 # membership is the INTERSECTION: a session that is running but not bookmarked is
 # not a member of what the list is showing, and counting it would tell the reader
 # the search cut a member it never held. One set is its own membership; no set at

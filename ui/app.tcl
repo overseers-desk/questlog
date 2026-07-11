@@ -389,9 +389,9 @@ proc ::questlog::ui::app::run_tick {} {
     variable RunTimer
     set Running [::questlog::ui::live::running_uuids]
     $SessionList reconcile_running $Running
-    # The same tick refreshes the active lens's membership, so a session that
-    # starts running outside the search's window is counted (and named) within one
-    # poll of starting, rather than staying silently absent.
+    # The same tick refreshes the membership the active lenses claim, so a session
+    # that starts running outside the search's window is counted (and named) within
+    # one poll of starting, rather than staying silently absent.
     refresh_lens_members
     # Heartbeat backstop: if a done-signal is ever missed, the next tick settles
     # the spinner once the liveness flags have all cleared.
@@ -399,7 +399,7 @@ proc ::questlog::ui::app::run_tick {} {
     set RunTimer [after [::questlog::config::get running_poll_ms] [namespace code run_tick]]
 }
 
-# ---- what the active lens holds, beyond what the search loaded ----------
+# ---- what the active lenses hold, beyond what the search loaded ----------
 
 # The membership the active lenses claim, gathered outside the search and handed
 # to the list, which counts it against the rows it did load and says the cut (see

@@ -111,7 +111,7 @@ oo::class create ::questlog::ui::SessionList {
     variable CriteriaActive
     variable RunningSet       ;# dict uuid -> 1, replaced wholesale each tick
     variable PrevRunning      ;# the prior tick's running set, to redraw only the rows that flipped
-    variable LensMembers      ;# dict uuid -> {path ?cwd?}: the active lens's whole membership
+    variable LensMembers      ;# dict uuid -> {path ?cwd?}: what the active lenses jointly claim
     variable LensNote         ;# the strip's lens clause, "" when no lens or no membership
     variable CutMembers       ;# the members with no loaded row, as {path ?cwd? resolved} dicts
     variable CutReason        ;# the criterion that cut them: subtree|search|since|min_turns|""
