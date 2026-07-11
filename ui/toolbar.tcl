@@ -243,9 +243,15 @@ oo::class create ::questlog::ui::Toolbar {
         # values are paths and patterns: a chip holding one can be wider than the
         # bar, and the end that runs out of view is the far one. A delete anchored
         # where the text starts stays reachable on every chip.
+        # -gaps is where a host scales the bar, and the chips take their padding
+        # from it too (their style names none), so the criteria bar's spacing
+        # tracks the font like the rest of the chrome instead of holding the
+        # module's raw pixels under text that has doubled. theme::crit_gaps says
+        # what the numbers are.
         $Bar configure -heading "Restrict to sessions that…" \
             -raillabel "Add filter" -changecb [list [self] on_criteria] \
             -delside left \
+            -gaps [::questlog::ui::theme::crit_gaps] \
             -styles {heading  FacetHeading.TLabel
                      toggle   FacetToggle.TButton
                      conn     FacetConn.TLabel

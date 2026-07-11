@@ -361,3 +361,25 @@ proc ::questlog::ui::theme::build_chrome {} {
     rrect_img qlBadge_names $nbw $bh $br [c name_bg] [c name] 1 0.30
     dict set BadgePill names qlBadge_names
 }
+
+# The criteria bar's spacing, scaled from the text.
+#
+# facetbar keeps every gap it leaves in -gaps, in pixels, and pads a chip whose
+# style names no -padding from those same gaps (facetbar-1.0.tm). Crit_<t>.TFrame
+# names none, so this one dict carries both the bar's gaps and its chip padding,
+# and is the whole of what decides how much air the criteria bar has.
+#
+# The numbers are the module's own defaults, which fit the 19px line TkDefaultFont
+# reports on a 96dpi screen. Scaling them by the line the font actually reports
+# holds those proportions as the text grows: at 200% the line is 37px and the gaps
+# roughly double with it, rather than the bar keeping a 4px gap under doubled text.
+# The same font-metric sizing the rest of the chrome takes (build_chrome above).
+proc ::questlog::ui::theme::crit_gaps {} {
+    set ref 19   ;# the line height the defaults below are drawn for
+    set lh [font metrics TkDefaultFont -linespace]
+    set gaps [dict create chip 4 column 6 row 1 line 2 group 12 rail 4]
+    dict for {role px} $gaps {
+        dict set gaps $role [expr {max(1, round($px * $lh / double($ref)))}]
+    }
+    return $gaps
+}
