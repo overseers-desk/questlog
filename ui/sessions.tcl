@@ -807,7 +807,7 @@ oo::class create ::questlog::ui::SessionList {
         # screenful.
         set wr [my emit_window $m -align center -pady 1 -padx 3 \
             -create [list [self] make_badge $bt $fgrole \
-                [string toupper [string map {_ { }} $bt]] $path $lineoff]]
+                [string toupper [string map {_ { }} $bt]] $path $lineoff $ntag]]
         set wstart [lindex $wr 0]
         # The window segment must carry the snippet tag too, or its untagged
         # -wrap (the widget default `word`) lets the row wrap to a second line.
@@ -820,9 +820,12 @@ oo::class create ::questlog::ui::SessionList {
         $Text tag bind $ntag <ButtonRelease-1> \
             [list [self] on_snippet_release [my pctsafe $path] $lineoff]
         # A snippet row is an extension of its session, so right-clicking it
-        # raises the same session menu as the header.
+        # raises the session menu - but on a specific match, so it goes through
+        # the hit-aware handler: the numeric lineoff rides the script bare, the
+        # snippet text is resolved at event time from the reveal registry
+        # ($ntag's entry) rather than spliced (issue #41's %-corruption).
         $Text tag bind $ntag <<ContextMenu>> \
-            [list [self] on_session_right [my pctsafe $path] %X %Y]
+            [list [self] on_hit_right [my pctsafe $path] $lineoff $ntag %X %Y]
         # Hovering reveals the whole snippet line (bt leads it) on the bottom
         # strip; the row itself only shows what fits before the metadata columns.
         my peek_wire $ntag $bt $content
@@ -848,7 +851,7 @@ oo::class create ::questlog::ui::SessionList {
         set m [my append_open $sid]
         my emit $m "▏" [list snippet snippetbar $ntag]
         set wr [my emit_window $m -align center -pady 1 -padx 3 \
-            -create [list [self] make_badge names name $label $path $lineoff]]
+            -create [list [self] make_badge names name $label $path $lineoff $ntag]]
         set wstart [lindex $wr 0]
         $Text tag add snippet $wstart "$wstart +1c"
         $Text tag add $ntag   $wstart "$wstart +1c"
@@ -863,8 +866,10 @@ oo::class create ::questlog::ui::SessionList {
         my emit $m "\n" [list snippet $ntag]
         $Text tag bind $ntag <ButtonRelease-1> \
             [list [self] on_snippet_release [my pctsafe $path] $lineoff]
+        # A name breadcrumb is a hit too: the hit-aware right-click carries the
+        # matched line and resolves the worn title from $ntag's reveal entry.
         $Text tag bind $ntag <<ContextMenu>> \
-            [list [self] on_session_right [my pctsafe $path] %X %Y]
+            [list [self] on_hit_right [my pctsafe $path] $lineoff $ntag %X %Y]
         # The reveal leads with the breadcrumb's own badge word ("name" /
         # "former name") and carries the whole worn title.
         my peek_wire $ntag [string tolower $label] $content
@@ -876,8 +881,9 @@ oo::class create ::questlog::ui::SessionList {
     # $text is its centred label: render_snippet derives both from the block type,
     # render_name_snippet passes the breadcrumb's own. Embedded windows do not
     # inherit the row's tag bindings, so click and context-menu are forwarded to
-    # the same handlers.
-    method make_badge {pilltype fgrole text path lineoff} {
+    # the same handlers; $ntag is the row's reveal tag, carried into the
+    # hit-aware right-click so the menu can resolve this match's snippet text.
+    method make_badge {pilltype fgrole text path lineoff ntag} {
         set b $Text.badge[incr NextId]
         label $b -image [::questlog::ui::theme::badge_pill $pilltype] -compound center \
             -text $text \
@@ -887,7 +893,7 @@ oo::class create ::questlog::ui::SessionList {
         bind $b <ButtonRelease-1> \
             [list [self] on_snippet_release [my pctsafe $path] $lineoff]
         bind $b <<ContextMenu>> \
-            [list [self] on_session_right [my pctsafe $path] %X %Y]
+            [list [self] on_hit_right [my pctsafe $path] $lineoff $ntag %X %Y]
         return $b
     }
 
@@ -1098,8 +1104,11 @@ oo::class create ::questlog::ui::SessionList {
         my tag_hits_in_range [lindex $cr 0] [lindex $cr 1] $content
         $Text tag bind $ntag <ButtonRelease-1> \
             [list [self] on_child_open_at [my pctsafe $cp] $lineoff]
+        # A subagent's matched line is a hit: the right-click carries its numeric
+        # lineoff bare and $ntag, so the child menu can open at the match and copy
+        # the snippet (text resolved from $ntag's reveal entry, never spliced).
         $Text tag bind $ntag <<ContextMenu>> \
-            [list [self] on_child_right [my pctsafe $cp] %X %Y]
+            [list [self] on_child_right [my pctsafe $cp] %X %Y $ntag $lineoff]
         # Same reveal as a parent snippet, one level deeper: the whole matched
         # line on the strip, led by its block type.
         my peek_wire $ntag $btype $content
@@ -1140,12 +1149,30 @@ oo::class create ::questlog::ui::SessionList {
     # The reduced menu for a subagent child row: a subagent is not a resumable
     # session (it has no session id of its own and no project cwd of its own), so
     # the resume / move / rename / bookmark verbs do not apply; only open, copy
-    # path, copy last output, and reveal remain.
+    # path, copy last output, and reveal remain. The widget is built empty and
+    # refilled per-open by populate_child_menu, so the header and a matched line
+    # can differ (the line gains the two hit entries).
     method build_child_menu {} {
         set CMenu $Top.ccmenu
         menu $CMenu -tearoff 0
+        set ChildMenuPath ""
+    }
+
+    # Refill the child menu for this open. A right-click on a matched line passes
+    # a hit {lineoff snippet}; a right-click on the header passes "". The two hit
+    # entries mirror the parent snippet's: open the subagent transcript at the
+    # match, and copy the matched snippet the model stored.
+    method populate_child_menu {hit} {
+        $CMenu delete 0 end
         $CMenu add command -label "Open in viewer" \
             -command [list [self] child_menu_open]
+        if {$hit ne ""} {
+            $CMenu add command -label "Open at this match" \
+                -command [list [self] on_child_open_at $ChildMenuPath \
+                    [dict get $hit lineoff]]
+            $CMenu add command -label "Copy this snippet" \
+                -command [list [self] clipboard_set [dict get $hit snippet]]
+        }
         $CMenu add separator
         $CMenu add command -label "Copy session path" \
             -command [list [self] child_menu_copy_path]
@@ -1154,11 +1181,22 @@ oo::class create ::questlog::ui::SessionList {
         $CMenu add separator
         $CMenu add command -label "Reveal folder" \
             -command [list [self] child_menu_reveal]
-        set ChildMenuPath ""
     }
 
-    method on_child_right {cp X Y} {
+    # A hitless open (from the subagent header) leaves $tag empty; a matched line
+    # passes its reveal tag and numeric lineoff, and the snippet text is resolved
+    # from the registry at event time - never carried in the bind script.
+    method on_child_right {cp X Y {tag ""} {lineoff ""}} {
         set ChildMenuPath $cp
+        set hit ""
+        if {$tag ne ""} {
+            set snippet ""
+            if {[dict exists $PeekByTag $tag]} {
+                set snippet [lindex [dict get $PeekByTag $tag] 1]
+            }
+            set hit [dict create lineoff $lineoff snippet $snippet]
+        }
+        my populate_child_menu $hit
         tk_popup $CMenu $X $Y
     }
     method child_menu_open {} { my on_child_release $ChildMenuPath }
@@ -2128,13 +2166,17 @@ oo::class create ::questlog::ui::SessionList {
 
     # ---- right-click menu --------------------------------------------
 
-    method on_session_right {path X Y} {
+    # A right-click carrying a search hit ($hit is {lineoff snippet}) gains the
+    # two match-specific entries and always acts on the one hit's session, so it
+    # skips the multi-selection menu even when several rows are highlighted. A
+    # header/row right-click passes no hit and behaves as before.
+    method on_session_right {path X Y {hit ""}} {
         # A right-click on a row outside the current selection retargets the
         # selection to it (the menu then acts on what is highlighted). A click
         # on a member of a multi-selection keeps the set and shows the multi
         # menu - the actions that apply to many sessions at once.
         if {![my is_selected $path]} { my selection_set $path }
-        if {[my selection_count] > 1} {
+        if {$hit eq "" && [my selection_count] > 1} {
             my popup_multi_menu $X $Y
             return
         }
@@ -2163,10 +2205,33 @@ oo::class create ::questlog::ui::SessionList {
                 is_bookmarked [file executable $path] \
                 has_cwd [expr {$cwd ne ""}] \
                 has_folder [expr {$folder ne ""}]]]
+        # A hit adds the two match-specific entries: "Open at this match" reuses
+        # the badge's left-click open (on_snippet_release), "Copy this snippet"
+        # rides the clipboard. The snippet text was already resolved from the
+        # registry into $hit; it travels inside the ctx dict, never a script.
+        if {$hit ne ""} {
+            dict set ctx hit $hit
+            dict set ctx on_open_at [list [self] on_snippet_release]
+        }
         set MenuIndices [::questlog::ui::session_actions::populate $Menu $ctx]
         ::questlog::ui::session_actions::apply_state \
             $Menu $MenuIndices [dict get $ctx state]
         tk_popup $Menu $X $Y
+    }
+
+    # The hit-aware right-click for a snippet row (parent snippet, name
+    # breadcrumb, or badge). The numeric lineoff and the machine-made reveal tag
+    # ride the bind script bare; the snippet's free text does not - it is
+    # resolved here from the same PeekByTag entry peek_wire stored (issue #41:
+    # free text in a bind script is %-corrupted). A missing entry (swept row)
+    # leaves the snippet empty but still opens the match.
+    method on_hit_right {path lineoff tag X Y} {
+        set snippet ""
+        if {[dict exists $PeekByTag $tag]} {
+            set snippet [lindex [dict get $PeekByTag $tag] 1]
+        }
+        my on_session_right $path $X $Y \
+            [dict create lineoff $lineoff snippet $snippet]
     }
 
     # The menu for a multi-selection: only the actions that apply to many

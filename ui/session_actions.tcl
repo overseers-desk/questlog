@@ -19,6 +19,13 @@
 #   on_bookmark command prefix; invoked {*}$cb path
 #   on_rename command prefix; invoked {*}$cb path
 #
+# ctx keys present only on a search-hit right-click (the list's snippet rows;
+# the viewer's "⋯" menu never sets them, so it shows neither hit entry):
+#   hit        dict {lineoff snippet}; its presence adds "Open at this match"
+#              and "Copy this snippet". The snippet is the model's full stored
+#              match text, resolved before it reaches here (never from a script).
+#   on_open_at command prefix; invoked {*}$cb path lineoff (opens at the match)
+#
 # ctx keys (mode=multi, a multi-selection): only the actions that apply to many
 # sessions at once.
 #   mode           "multi"
@@ -45,6 +52,14 @@ proc ::questlog::ui::session_actions::populate {menu ctx} {
     if {[dict exists $ctx on_open]} {
         $menu add command -label "Open in viewer" \
             -command [concat [dict get $ctx on_open] [list [tget $ctx path]]]
+        # A right-click on a search hit can open the session deep-linked to that
+        # match's line - the same open the badge's left-click performs. Present
+        # only when the pointer was on a hit; the viewer's menu never is.
+        if {[dict exists $ctx hit]} {
+            $menu add command -label "Open at this match" \
+                -command [concat [dict get $ctx on_open_at] \
+                    [list [tget $ctx path] [dict get $ctx hit lineoff]]]
+        }
         $menu add separator
     }
 
@@ -57,6 +72,12 @@ proc ::questlog::ui::session_actions::populate {menu ctx} {
         -command [list [namespace current]::act_copy_path $ctx]
     $menu add command -label "Copy last assistant output" \
         -command [list [namespace current]::act_copy_last_assistant $ctx]
+    # The matched snippet itself, present only on a hit right-click. The text is
+    # the model's full stored match, already resolved into the ctx.
+    if {[dict exists $ctx hit]} {
+        $menu add command -label "Copy this snippet" \
+            -command [list [namespace current]::act_copy_snippet $ctx]
+    }
     $menu add command -label "Copy session as Markdown" \
         -command [list [namespace current]::act_copy_markdown $ctx]
     $menu add command -label "Export to .md..." \
@@ -136,6 +157,11 @@ proc ::questlog::ui::session_actions::act_copy_path {ctx} {
 proc ::questlog::ui::session_actions::act_copy_last_assistant {ctx} {
     {*}[dict get $ctx clipboard] \
         [::questlog::jsonl::last_assistant_text [tget $ctx path]]
+}
+# The matched snippet the hit right-click carried: the model's full stored match
+# text, resolved from the reveal registry before it reached the ctx.
+proc ::questlog::ui::session_actions::act_copy_snippet {ctx} {
+    {*}[dict get $ctx clipboard] [dict get $ctx hit snippet]
 }
 # The whole session as Markdown on the clipboard: the text-only transcript
 # (USER/ASSISTANT/SYSTEM turns, segmented at compaction boundaries and idle gaps
