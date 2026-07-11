@@ -125,11 +125,14 @@ oo::class create ::questlog::ui::SessionList {
     variable StatusBase       ;# last text set by set_progress/set_done
     variable OnSubagents      ;# cb: parent path -> list of child row dicts
     variable OnSubagentCost   ;# cb: child path -> start the cost pass for it
+    variable OnStatusPeek     ;# cb: text -> reveal it on the app's bottom strip, or ""
+    variable OnStatusUnpeek   ;# cb: {} -> restore the strip's standing text, or ""
 
     constructor {parent resolve_cb lookup_cb on_open on_move_request \
                  on_drop_move on_bookmark_toggle on_bookmark_set on_rename \
                  on_scan_path cancel_cb \
-                 on_subagents on_subagent_cost} {
+                 on_subagents on_subagent_cost \
+                 {on_status_peek ""} {on_status_unpeek ""}} {
         set Top $parent
         set ResolveFolder $resolve_cb
         set LookupSession $lookup_cb
@@ -143,6 +146,8 @@ oo::class create ::questlog::ui::SessionList {
         set CancelCb $cancel_cb
         set OnSubagents $on_subagents
         set OnSubagentCost $on_subagent_cost
+        set OnStatusPeek $on_status_peek
+        set OnStatusUnpeek $on_status_unpeek
         set StatusVar "Idle"
         set StatusBase ""
         set TotalCost 0.0
@@ -188,6 +193,12 @@ oo::class create ::questlog::ui::SessionList {
         set FolderNode [dict create]
         set PathNode [dict create]
         set TagNode [dict create]
+        # A wholesale clear can delete the hovered snippet out from under a
+        # parked pointer (a streaming search's clear-and-fill); a peek must
+        # not outlive its row, and relying on Tk to synthesize the <Leave> is
+        # a bet this line does not take. Same invalidation family as the
+        # viewer's hover-copy cache.
+        if {$OnStatusUnpeek ne ""} { {*}$OnStatusUnpeek }
     }
 
     # ---- public payload accessors (white-box tests, and any caller that
@@ -802,8 +813,10 @@ oo::class create ::questlog::ui::SessionList {
         # raises the same session menu as the header.
         $Text tag bind $ntag <<ContextMenu>> \
             [list [self] on_session_right $path %X %Y]
-        $Text tag bind $ntag <Enter> [list $Text configure -cursor hand2]
-        $Text tag bind $ntag <Leave> [list $Text configure -cursor arrow]
+        # Hovering reveals the whole snippet line (bt leads it) on the bottom
+        # strip; the row itself only shows what fits before the metadata columns.
+        $Text tag bind $ntag <Enter> [list [self] peek_enter $bt $content]
+        $Text tag bind $ntag <Leave> [list [self] peek_leave]
         my append_close $sid $m
     }
 
@@ -843,8 +856,11 @@ oo::class create ::questlog::ui::SessionList {
             [list [self] on_snippet_release $path $lineoff]
         $Text tag bind $ntag <<ContextMenu>> \
             [list [self] on_session_right $path %X %Y]
-        $Text tag bind $ntag <Enter> [list $Text configure -cursor hand2]
-        $Text tag bind $ntag <Leave> [list $Text configure -cursor arrow]
+        # The reveal leads with the breadcrumb's own badge word ("name" /
+        # "former name") and carries the whole worn title.
+        $Text tag bind $ntag <Enter> \
+            [list [self] peek_enter [string tolower $label] $content]
+        $Text tag bind $ntag <Leave> [list [self] peek_leave]
         my append_close $sid $m
     }
 
@@ -1035,7 +1051,7 @@ oo::class create ::questlog::ui::SessionList {
         set c    [my node_payload $id]
         foreach h [dict get $c hits] {
             lassign $h btype content lineoff
-            my render_child_snippet $path $cp $content $lineoff
+            my render_child_snippet $path $cp $btype $content $lineoff
         }
         set lineoff 0
         if {[llength [dict get $c hits]] > 0} {
@@ -1044,8 +1060,11 @@ oo::class create ::questlog::ui::SessionList {
         my node_pset $id open_lineoff $lineoff
         $Text tag bind $ctag <ButtonRelease-1> [list [self] on_child_release $cp]
         $Text tag bind $ctag <<ContextMenu>> [list [self] on_child_right $cp %X %Y]
-        $Text tag bind $ctag <Enter> [list $Text configure -cursor hand2]
-        $Text tag bind $ctag <Leave> [list $Text configure -cursor arrow]
+        # The subagent header's description is truncated into the room before the
+        # metadata; hovering reveals it whole on the strip, led by the agent type.
+        $Text tag bind $ctag <Enter> \
+            [list [self] peek_enter [dict get $c agent_type] [dict get $c label]]
+        $Text tag bind $ctag <Leave> [list [self] peek_leave]
         # Cost rides the same second pass as a session's; trigger it once (when
         # the child has no cost yet), so a re-render after the result does not
         # re-queue it.
@@ -1056,7 +1075,7 @@ oo::class create ::questlog::ui::SessionList {
     # own transcript at the hit (issue #13 chose per-file open over a unified
     # parent+child view). Lighter than a parent snippet (no badge widget): a
     # deeper spine then the hit-leading content with the terms emboldened.
-    method render_child_snippet {path cp content lineoff} {
+    method render_child_snippet {path cp btype content lineoff} {
         set cid [my sid $cp]
         set ntag "c#[incr NextId]"
         # A matched line is loose content inside the subagent's region: the door
@@ -1070,8 +1089,10 @@ oo::class create ::questlog::ui::SessionList {
         my tag_hits_in_range [lindex $cr 0] [lindex $cr 1] $content
         $Text tag bind $ntag <ButtonRelease-1> [list [self] on_child_open_at $cp $lineoff]
         $Text tag bind $ntag <<ContextMenu>> [list [self] on_child_right $cp %X %Y]
-        $Text tag bind $ntag <Enter> [list $Text configure -cursor hand2]
-        $Text tag bind $ntag <Leave> [list $Text configure -cursor arrow]
+        # Same reveal as a parent snippet, one level deeper: the whole matched
+        # line on the strip, led by its block type.
+        $Text tag bind $ntag <Enter> [list [self] peek_enter $btype $content]
+        $Text tag bind $ntag <Leave> [list [self] peek_leave]
         my append_close $cid $m
     }
 
@@ -2012,6 +2033,27 @@ oo::class create ::questlog::ui::SessionList {
         $Text configure -cursor arrow
         # Keep the ⋯ bright if this row stays selected; otherwise re-fade it.
         my action_set_bright $path [my is_selected $path]
+    }
+
+    # Hovering a snippet (or a subagent header) both swaps the cursor to the hand
+    # and reveals the row's full text on the app's bottom strip. The rendered row
+    # is clipped at the list column's right edge (-wrap none); $text is the
+    # model's full stored snippet (itself a lead/trail window around the hit),
+    # captured when the row was wired, so the reader sees the trailing context
+    # past the edge without opening the session. $kind
+    # is the badge word (tool_use, name, an agent type) and leads the reveal when
+    # present, so the strip reads e.g. "tool_use · <full line>". <Leave> restores
+    # the strip's standing text. No-op reveal when the app wired no peek callback
+    # (a bare SessionList in a test), so the cursor swap always stands alone.
+    method peek_enter {kind text} {
+        $Text configure -cursor hand2
+        if {$OnStatusPeek eq ""} return
+        if {$kind ne ""} { set text "$kind · $text" }
+        {*}$OnStatusPeek $text
+    }
+    method peek_leave {} {
+        $Text configure -cursor arrow
+        if {$OnStatusUnpeek ne ""} { {*}$OnStatusUnpeek }
     }
 
     # Resolve a drag point to the folder under it: the engine maps the point to a
