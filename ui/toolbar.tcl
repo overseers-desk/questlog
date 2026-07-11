@@ -282,7 +282,8 @@ oo::class create ::questlog::ui::Toolbar {
             -menu $w.m -direction below
         menu $w.m -tearoff 0
         foreach {val label} {any "anywhere" user,assistant "user + asst" \
-                             tool-use "tool calls" tool-result "tool output"} {
+                             tool-use "tool calls" tool-result "tool output" \
+                             names "session names"} {
             $w.m add command -label $label \
                 -command [list [self] set_scope $val $label]
         }

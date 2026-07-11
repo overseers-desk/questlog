@@ -20,7 +20,7 @@ namespace eval ::questlog::match {
     variable Caps [dict create]
     namespace export clean_text snippet_window format_tool_use \
         format_tool_use_full clean_preview scan_file leaf_record_hit \
-        eval_tree btype_in_regions
+        leaf_name_hit eval_tree btype_in_regions
 }
 
 proc ::questlog::match::set_caps {capdict} {
@@ -320,6 +320,46 @@ proc ::questlog::match::leaf_record_hit {leaf rec nocase} {
     return [dict create sat $sat hits $hits]
 }
 
+# leaf_name_hit leaf names nocase - the evidence a session's name history gives
+# for one leaf clause. names is a dict of worn-name -> the line it first appeared
+# on. Only a keyword or regex leaf whose region set carries `names` looks here;
+# every other leaf returns no evidence, so scan_file can score each leaf against
+# the names blindly. Returns {sat hits}: sat is 1 iff the needle matches a name
+# the session has worn, and hits is the {lineno names content} snippets it would
+# contribute, windowed on the match the way a body hit is so the result can
+# re-find and embolden it. A name match is per-session, not per-record - the whole
+# title history is one haystack - so it is scored once, at end of file, and folded
+# into the same per-leaf satisfaction the body walk builds. nocase governs keyword
+# matching only; a regex carries its own case, exactly as leaf_record_hit does.
+proc ::questlog::match::leaf_name_hit {leaf names nocase} {
+    set kind [dict get $leaf kind]
+    if {$kind ni {keyword regex}}          { return [dict create sat 0 hits {}] }
+    if {"names" ni [dict get $leaf regions]} { return [dict create sat 0 hits {}] }
+    set hits [list]
+    set sat 0
+    set needle [dict get $leaf needle]
+    if {$kind eq "keyword"} {
+        set n [expr {$nocase ? [string tolower $needle] : $needle}]
+        dict for {name lineno} $names {
+            set hay [expr {$nocase ? [string tolower $name] : $name}]
+            if {[string first $n $hay] >= 0} {
+                set sat 1
+                lappend hits [list $lineno names \
+                    [::questlog::match::snippet_window_lit $name $needle $nocase]]
+            }
+        }
+    } else {
+        dict for {name lineno} $names {
+            if {[regexp -- $needle $name]} {
+                set sat 1
+                lappend hits [list $lineno names \
+                    [::questlog::match::snippet_window $name $needle ""]]
+            }
+        }
+    }
+    return [dict create sat $sat hits $hits]
+}
+
 # Scan one session file against a built clauses dict. Pure except for reading
 # $path. Returns {row matches}:
 #   row     the publish_row dict (path/mtime/size/folder/uuid/first_ts/
@@ -407,6 +447,7 @@ proc ::questlog::match::scan_file {path clauses {tick ""} {yield_lines 0}} {
     for {set lid 0} {$lid < $nleaves} {incr lid} { dict set leafsat $lid 0 }
     set buffer [list]
     set seen [dict create]
+    set names [dict create]
     if {[catch {open $path r} fh]} { return [list "" {}] }
     chan configure $fh -encoding utf-8 -profile replace
     while {[chan gets $fh line] >= 0} {
@@ -414,6 +455,17 @@ proc ::questlog::match::scan_file {path clauses {tick ""} {yield_lines 0}} {
         if {$line eq ""} continue
         if {$cwd_hint eq "" && [regexp {"cwd":"([^"]+)"} $line -> m]} { set cwd_hint $m }
         if {$first_ts eq "" && [regexp {"timestamp":"([^"]+)"} $line -> m]} { set first_ts $m }
+        # The session's worn names accumulate across the whole file (a rename
+        # appends, so the set is only complete at EOF), each kept with the line it
+        # first appeared on so a `names` hit can anchor. The string-first gate keeps
+        # the regex off the lines with no title field; customTitle is skipped - it
+        # feeds Claude Code's own picker, not the name the list shows.
+        if {[string first {"agentName":"} $line] >= 0
+                && [regexp {"agentName":"([^"]+)"} $line -> m]
+                && ![dict exists $names $m]} { dict set names $m $lineno }
+        if {[string first {"aiTitle":"} $line] >= 0
+                && [regexp {"aiTitle":"([^"]+)"} $line -> m]
+                && ![dict exists $names $m]} { dict set names $m $lineno }
         if {[::questlog::jsonl::is_user_turn $line]} {
             incr users
             # First-prompt preview: string content captured with escaped pairs
@@ -489,6 +541,30 @@ proc ::questlog::match::scan_file {path clauses {tick ""} {yield_lines 0}} {
         parent_path $parent_path \
         parent_uuid $parent_uuid \
         cwd_hint $cwd_hint]
+    # The name history is a per-session haystack: a leaf whose regions include
+    # `names` is satisfied when the needle matches any name the session has worn,
+    # scored once now that every worn name is collected. Its positive hits buffer
+    # beside the body hits so the result shows which name matched; a negated leaf
+    # marks satisfaction without buffering, the same carve-out the body walk makes.
+    for {set lid 0} {$lid < $nleaves} {incr lid} {
+        set leaf [lindex $leaves $lid]
+        set nr [::questlog::match::leaf_name_hit $leaf $names $nocase]
+        if {![dict get $nr sat]} continue
+        dict set leafsat $lid 1
+        if {[dict get $leaf neg]} continue
+        foreach hit [dict get $nr hits] {
+            lassign $hit hlineno hbtype hcontent
+            set key "$hlineno $hbtype $hcontent"
+            if {[dict exists $seen $key]} continue
+            dict set seen $key 1
+            lappend buffer [list $hlineno $hbtype $hcontent]
+        }
+    }
+    # Body hits buffer in line order; a name hit anchors on an early title line, so
+    # order the buffer by physical line before it becomes the match list. lsort is
+    # stable, so equal-line body hits keep their block order.
+    set buffer [lsort -integer -index 0 $buffer]
+
     # The session qualifies when the boolean tree holds over the per-leaf
     # satisfaction, each leaf's raw sat XORed with its neg. A satisfied tree with
     # no buffered snippet (a purely negative query, no positive leaf to show)

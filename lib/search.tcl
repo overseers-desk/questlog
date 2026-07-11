@@ -77,19 +77,20 @@ proc ::questlog::search::search_terms {s} {
     return $out
 }
 
-# parse_regions spec - the block-type set a region-spec selects. spec is a
+# parse_regions spec - the region set a region-spec selects. spec is a
 # comma-joined list of region tokens (user, assistant, tool-use, tool-result,
-# any); each token may be any unambiguous prefix, so `assi` resolves to
+# names, any); each token may be any unambiguous prefix, so `assi` resolves to
 # assistant. `any`, an empty spec, or any token resolving to `any` returns the
 # empty list, which the matcher reads as unrestricted (every block type,
 # including the system/compaction blocks the four named regions exclude). An
 # unknown token, or an ambiguous prefix (t, to, tool, tool-, a), throws and names
 # the candidates - never a silent default. The one home for the region
 # vocabulary the CLI colon-qualifier and the GUI scope selector both parse; the
-# hyphenated tokens map to the jsonl block types.
+# transcript tokens map to jsonl block types, while `names` is not a block type
+# but the session's name history, matched per-session in scan_file.
 proc ::questlog::search::parse_regions {spec} {
-    set canon {user assistant tool-use tool-result any}
-    set to_btype {user user  assistant assistant  tool-use tool_use  tool-result tool_result}
+    set canon {user assistant tool-use tool-result names any}
+    set to_btype {user user  assistant assistant  tool-use tool_use  tool-result tool_result  names names}
     set out [list]
     foreach tok [split [string trim $spec] ,] {
         set tok [string trim $tok]

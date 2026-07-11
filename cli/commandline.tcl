@@ -116,8 +116,10 @@ $::questlog::cli::commandline::CL section clause {clauses:} -note {
     {'an.tcl' finds none.}
     {}
     {A region-list confines a needle to part of the transcript: user, assistant,}
-    {tool-use, tool-result, any (the default). Unambiguous prefixes are accepted, and}
-    {a comma joins them for OR, e.g. --keyword:user,assi <needle>.}
+    {tool-use, tool-result, any (the default). names is not a transcript slice but}
+    {the session's name history - every title it has worn - so --keyword:names finds}
+    {a session by a name it once bore. Unambiguous prefixes are accepted, and a comma}
+    {joins them for OR, e.g. --keyword:user,assi <needle>.}
 }
 
 # The GUI's search box splits its text on space and quotes a phrase with '"', and
