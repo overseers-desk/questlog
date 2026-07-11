@@ -1,7 +1,16 @@
 package require Tcl 9
 package require Tk
+package require facetbar
 
 # ::questlog::ui::Toolbar - the top-of-window controls.
+#
+# The criteria block (the "Restrict" box) is a ::facetbar::FacetBar: the chip
+# strip, the connective, the inline add, the add rail, the collapse disclosure
+# and the active count are the module's, and questlog hands it six descriptors
+# saying what its criteria mean - the formatter that prints a value, the editor
+# that picks one, the op pill a file value carries. The bar's model (facet id ->
+# list of values) is where those six criteria live; `snapshot` reads it back into
+# the keys below, which are what every subscriber has always seen.
 #
 # Owns the filter state. Subscribers receive the full snapshot dict
 # whenever any control changes:
@@ -89,16 +98,11 @@ oo::class create ::questlog::ui::Toolbar {
     variable ModelVar         ;# the model lens: a row's model label, or "" for any
     variable ModelLabelVar    ;# the model menubutton's text
     variable ModelsProvider   ;# callback returning the models the loaded rows carry
-    variable Clauses          ;# dict kind -> list of values; file/tool are pairs
-    variable Restrict         ;# the padded content frame holding the restrict rows
-    variable RestrictHd       ;# the heading label above that frame (the legend)
-    variable AddRail          ;# the "add:" rail frame inside Restrict
-    variable RowFrames        ;# dict kind -> widget path (present only when row exists)
-    variable TailShown        ;# dict kind -> 1 for tail rows (tool/pattern) revealed
+    variable Bar              ;# the ::facetbar::FacetBar holding the six criteria
+    variable Restrict         ;# the bordered frame the bar is built into
+    variable Clamp            ;# the frame Restrict is placed in: see fit_now
     variable AddText          ;# array kind -> the add-entry's pending text
-    variable AddState         ;# array kind -> collapsed|editing (add affordance's morph state)
     variable AddOp            ;# op for the next file value added (either|read|wrote)
-    variable EditFocusKind    ;# kind whose editor should hold focus across a rebuild, or ""
     variable DebounceAfter    ;# leash token of the pending live-search publish, or ""
     variable TypingUntil      ;# clock-ms deadline through which the user counts as typing
     variable LastQueryText    ;# search text the live trigger last acted on; gates out
@@ -125,14 +129,9 @@ oo::class create ::questlog::ui::Toolbar {
         set ModelVar ""
         set ModelLabelVar $::questlog::ui::MODEL_ANY
         set ModelsProvider ""
-        set Clauses [dict create subtree {} file {} tool {} pattern {}]
         set Subscribers [list]
-        set RowFrames [dict create]
-        set TailShown [dict create]
         array set AddText {subtree {} file {} tool {} pattern {}}
-        array set AddState {subtree collapsed file collapsed tool collapsed pattern collapsed}
         set AddOp either
-        set EditFocusKind ""
         set DebounceAfter ""
         set TypingUntil 0
         set LastQueryText ""
@@ -143,11 +142,11 @@ oo::class create ::questlog::ui::Toolbar {
     method build {} {
         ttk::frame $Top
 
-        # The criterion controls (white value chip with a faint ×, the tinted
-        # type pill, the colored op pill on each file chip, the ghost add
-        # buttons) draw through the rounded image-element styles built once in
-        # theme::build_chrome: RGhost.TButton, Crit_<t>.TFrame, ChipX.TButton,
-        # the qlPill_<t> pill images, and the op_<op>_{bg,fg} palette colours.
+        # The criteria bar draws through the rounded image-element styles built
+        # once in theme::build_chrome and handed to the module by name: the white
+        # value chip Crit_<t>.TFrame, the tinted type pill Pill_<t>.TLabel, the
+        # faint × ChipX.TButton, the ghost add RGhost.TButton. The op pill on a
+        # file chip is questlog's own widget, in the op_<op>_{bg,fg} colours.
 
         # Search row: label, full-width entry, scope picker, Aa toggle.
         ttk::frame $Top.search
@@ -206,72 +205,59 @@ oo::class create ::questlog::ui::Toolbar {
         my build_model_menu $Top.view.model
         pack $Top.view.model -side left
 
-        # Restrict group: a lightly-bordered box whose first inner line is the
-        # heading (the legend sits inside, at the top, as in the design), then
-        # the time row, the persistent folder/file rows, any revealed tail rows,
-        # and the add rail.
-        ttk::frame $Top.restrict -relief solid -borderwidth 1 -padding {8 5}
-        pack $Top.restrict -side top -fill x -padx 6 -pady {2 2}
-        set Restrict $Top.restrict
-        set RestrictHd $Restrict.hd
-        ttk::label $RestrictHd -text "Restrict to sessions that…" -anchor w \
-            -foreground [::questlog::ui::theme::c muted]
-        pack $RestrictHd -side top -fill x -pady {0 4}
+        # Restrict group: the criteria bar, in a lightly-bordered box whose first
+        # inner line is the heading (the legend sits inside, at the top, as in the
+        # design). The box is the frame the module builds into; questlog owns the
+        # border and the padding, facetbar owns everything within.
+        #
+        # Clamp is the box's parent, and the box is placed in it, not packed:
+        # place passes no request up, so the width the box asks for stops here,
+        # which is where it has to stop. A chip area is itself place-managed and
+        # asks for the width of its widest chip, so a sentence-long path would
+        # otherwise push that request up through the pane and widen the window,
+        # when what it should do is wrap. -relwidth 1 hands the box the width the
+        # clamp was given, which is the pane's, and the bar wraps inside it.
+        #
+        # The height still has to reach the window, so the clamp carries it, and
+        # fit_now keeps it at whatever the box asks for. A placed child is always
+        # given the height it requests, so every change in that request arrives
+        # here as its <Configure> - which is the whole reason the box is placed
+        # rather than packed with propagation off: pack would clip a box that grew
+        # past the clamp and raise no <Configure> to say so, and the row that grew
+        # (or the add rail below it) would silently go missing.
+        set Clamp $Top.crit
+        ttk::frame $Clamp
+        pack $Clamp -side top -fill x -padx 6 -pady {2 2}
+        set Restrict $Clamp.bar
+        ttk::frame $Restrict -relief solid -borderwidth 1 -padding {8 5}
+        place $Restrict -x 0 -y 0 -relwidth 1
 
-        ttk::frame $Restrict.time
-        pack $Restrict.time -side top -fill x -pady {0 3}
-        ttk::label $Restrict.time.label -text "time" -width 18 -anchor w
-        pack $Restrict.time.label -side left -padx {0 4}
-        foreach w [::questlog::config::get since_presets] {
-            ttk::radiobutton $Restrict.time.r$w -text $w \
-                -variable [my varname WindowVar] -value $w \
-                -command [list [self] publish]
-            pack $Restrict.time.r$w -side left -padx 2
-        }
-        # The custom 5th member of the same single-select group: a relative
-        # window or an absolute date the presets cannot express. Its own
-        # sub-frame so committing or clearing re-renders only this, never the
-        # presets. No "ran in the last" prose: the time tag labels the row, so
-        # an absolute date has no preposition to break.
-        ttk::frame $Restrict.time.custom
-        pack $Restrict.time.custom -side left -padx {6 0}
-        my refresh_custom_member
-
-        # Minimum-turns scope floor: a spinbox over 1..turn_count_cap. 1 includes
-        # all; a higher floor drops shorter sessions from the corpus (it is scope,
-        # not a view toggle - see lib/filter.tcl). The same -width-18 label as the
-        # time row keeps the column aligned. set_min_turns clamps to the valid
-        # range and publishes, so a bad keystroke can never leave an out-of-range
-        # value; it is wired to the buttons (-command, <<Increment>>/<<Decrement>>)
-        # and to <Return>/<FocusOut> for typed edits.
-        ttk::frame $Restrict.minturns
-        pack $Restrict.minturns -side top -fill x -pady {0 3}
-        ttk::label $Restrict.minturns.label -text "min turns" -width 18 -anchor w
-        pack $Restrict.minturns.label -side left -padx {0 4}
-        set sb $Restrict.minturns.sb
-        ttk::spinbox $sb -from 1 -to [::questlog::config::get turn_count_cap] \
-            -width 3 -textvariable [my varname MinTurnsVar] \
-            -command [list [self] set_min_turns]
-        pack $sb -side left
-        bind $sb <<Increment>>  [list [self] set_min_turns]
-        bind $sb <<Decrement>>  [list [self] set_min_turns]
-        bind $sb <Return>       [list [self] set_min_turns]
-        bind $sb <FocusOut>     [list [self] set_min_turns]
-
-        set AddRail $Restrict.add
-        ttk::frame $AddRail
-        pack $AddRail -side top -fill x -pady {4 0}
-        ttk::label $AddRail.label -text "Add filter"
-        pack $AddRail.label -side left -padx {0 4}
-        foreach {k text} {pattern "+ regex" tool "+ tool"} {
-            ttk::button $AddRail.b$k -text $text -style RGhost.TButton \
-                -command [list [self] show_tail $k]
-            pack $AddRail.b$k -side left -padx {0 4}
-        }
-
-        # Render the persistent folder/file rows up front.
-        my rebuild_clause_rows
-        my refresh_add_rail
+        set Bar [::facetbar::FacetBar new]
+        $Bar configure -heading "Restrict to sessions that…" \
+            -raillabel "Add filter" -changecb [list [self] on_criteria] \
+            -styles {heading  FacetHeading.TLabel
+                     toggle   FacetToggle.TButton
+                     conn     FacetConn.TLabel
+                     or       FacetOr.TLabel
+                     chiptext FacetChipText.TLabel
+                     del      ChipX.TButton
+                     add      RGhost.TButton} \
+            -facets [my facets]
+        # The bar opens on the configured defaults, which are criteria like any
+        # other: a seven-day window and a two-turn floor do restrict the corpus,
+        # so the model holds them, the heading counts them, and a collapsed bar
+        # shows them. set_model, so the opening state raises no publish - and
+        # before setup, because an editor is a function of the model: drawn
+        # against an empty one it would first reset the very variables the
+        # defaults are being read out of.
+        $Bar set_model [list since     [my since_vals $WindowVar] \
+                             min_turns [my turns_vals $MinTurnsVar]]
+        $Bar setup $Restrict
+        # The box's height, whenever it changes: a chip added, a row revealed, the
+        # disclosure folded, a chip wrapping to a second line at a narrower pane.
+        # %h, from the event, and no path spliced into the script: bind runs its %
+        # substitutions over whatever it is handed.
+        bind $Restrict <Configure> [list [self] fit_now %h]
     }
 
     # The All / Running / Bookmarked segments: one variable over three values, so
@@ -341,19 +327,14 @@ oo::class create ::questlog::ui::Toolbar {
     # every other control here.
     method widen {criterion} {
         switch -- $criterion {
-            since   { set WindowVar all }
-            subtree {
-                dict set Clauses subtree {}
-                my rebuild_clause_rows
-            }
+            since   { my quiet_set {since {}} }
+            subtree { my quiet_set {subtree {}} }
             search {
                 set SearchVar ""
                 set LastQueryText ""
-                foreach k {file tool pattern} { dict set Clauses $k {} }
-                my rebuild_clause_rows
-                my refresh_add_rail
+                my quiet_set {file {} tool {} pattern {}}
             }
-            min_turns { set MinTurnsVar 1 }
+            min_turns { my quiet_set {min_turns {}} }
             default   { return }
         }
         my publish
@@ -380,17 +361,23 @@ oo::class create ::questlog::ui::Toolbar {
         my publish
     }
 
-    # Clamp MinTurnsVar to 1..turn_count_cap and publish. The spinbox lets a user
-    # type freely, so a non-integer or out-of-range value is coerced back to a
-    # sane one (a blank or garbage entry snaps to 1) before it ever reaches the
+    # Clamp MinTurnsVar to 1..turn_count_cap and report the floor. The spinbox lets
+    # a user type freely, so a non-integer or out-of-range value is coerced back to
+    # a sane one (a blank or garbage entry snaps to 1) before it ever reaches the
     # snapshot; the visible value is rewritten too, so the field never shows the
-    # rejected text.
+    # rejected text. A floor of 1 excludes no session, so it is no criterion and
+    # the facet holds no value there. Reported, not set: report_values leaves the
+    # spinbox standing under the hand still on it. A floor that did not move is not
+    # reported at all, which keeps the <FocusOut> that a rebuild raises from
+    # publishing a change nobody made.
     method set_min_turns {} {
         set cap [::questlog::config::get turn_count_cap]
         if {![string is integer -strict $MinTurnsVar]} { set MinTurnsVar 1 }
         if {$MinTurnsVar < 1}    { set MinTurnsVar 1 }
         if {$MinTurnsVar > $cap} { set MinTurnsVar $cap }
-        my publish
+        set want [my turns_vals $MinTurnsVar]
+        if {$want eq [$Bar values min_turns]} return
+        $Bar report_values min_turns $want
     }
 
     # ---- public API --------------------------------------------------------
@@ -422,22 +409,21 @@ oo::class create ::questlog::ui::Toolbar {
             puts stderr "questlog: ignoring invalid --since '$opt'"
             return
         }
-        if {$opt in [::questlog::config::get since_presets]} {
-            set WindowVar $opt
-        } else {
-            set CustomSpec $opt
-            set WindowVar $opt
-            my refresh_custom_member
-        }
+        if {$opt ni [::questlog::config::get since_presets]} { set CustomSpec $opt }
+        my quiet_set [list since [my since_vals $opt]]
     }
 
-    # Re-render only the custom-member sub-frame of the (static) time row. With
-    # no custom spec the slot is empty; with one it is a radio in the same group,
+    # Re-render only the custom-member sub-frame of the time row's editor. With no
+    # custom spec the slot is empty; with one it is a radio in the same group,
     # labelled through the one display-string home, plus a clear button. The
     # radio's value-binding gives parked-to-restore for one click free. The
-    # opener and edit affordances that drive the popover are added with it.
+    # opener and edit affordances that drive the popover are added with it. The
+    # slot is gone while the bar is collapsed, and the editor rebuilds it whole on
+    # the next expand, so there is nothing to re-render then.
     method refresh_custom_member {} {
-        set cf $Restrict.time.custom
+        set ed [my since_area]
+        if {$ed eq ""} return
+        set cf $ed.custom
         foreach c [winfo children $cf] { destroy $c }
         if {$CustomSpec eq ""} {
             ttk::button $cf.open -style RGhost.TButton -text "+ custom…" \
@@ -447,7 +433,7 @@ oo::class create ::questlog::ui::Toolbar {
         }
         ttk::radiobutton $cf.r -text [::questlog::filter::since_label $CustomSpec] \
             -variable [my varname WindowVar] -value $CustomSpec \
-            -command [list [self] publish]
+            -command [list [self] set_since]
         pack $cf.r -side left
         ttk::button $cf.edit -text "✎" -width 2 -style ChipX.TButton \
             -command [list [self] open_time_popover]
@@ -459,13 +445,15 @@ oo::class create ::questlog::ui::Toolbar {
 
     # Drop the custom member back to the presets. If it was the active value,
     # reselect the default window so the row never sits with nothing chosen.
+    # set_values, not report_values: the row must be drawn again without the
+    # member this just took off it.
     method clear_custom {} {
-        if {$WindowVar eq $CustomSpec} {
-            set WindowVar [::questlog::config::get since_default]
+        set vals [$Bar values since]
+        if {[lindex $vals 0] eq $CustomSpec} {
+            set vals [my since_vals [::questlog::config::get since_default]]
         }
         set CustomSpec ""
-        my refresh_custom_member
-        my publish
+        $Bar set_values since $vals
     }
 
     # Open the custom-window popover (the move_dialog idiom: a transient toplevel
@@ -637,7 +625,8 @@ oo::class create ::questlog::ui::Toolbar {
 
     # Assemble the chosen spec, validate it through the one grammar home (so the
     # popover can never emit a spec the engine would reject), commit it as the
-    # custom member, and publish.
+    # custom member, and publish. set_values draws the time row again, this time
+    # with the custom member selected, and publishes the criterion in one step.
     method commit_time {} {
         if {$PopMode eq "relative"} {
             set unit [dict get {minutes m hours h days d weeks w} $PopUnit]
@@ -647,10 +636,8 @@ oo::class create ::questlog::ui::Toolbar {
         }
         if {[catch {::questlog::filter::parse_since $spec}]} { bell; return }
         set CustomSpec $spec
-        set WindowVar $spec
         my close_time_popover
-        my refresh_custom_member
-        my publish
+        $Bar set_values since [my since_vals $spec]
     }
 
     method close_time_popover {} {
@@ -661,17 +648,22 @@ oo::class create ::questlog::ui::Toolbar {
         set PopTop ""
     }
 
+    # The snapshot every subscriber reads. The six criteria come out of the bar's
+    # model, back into the keys they have always had: the two facets that hold no
+    # value at their floor (an "all" time bound, a one-turn floor) publish that
+    # floor, since lib/filter.tcl reads a value there and not an absence.
     method snapshot {} {
+        set m [$Bar model]
         return [dict create \
-            since          $WindowVar \
+            since          [my since_value] \
             search         $SearchVar \
             search_case    $SearchCaseVar \
             search_regions $SearchScopeVar \
-            subtree        [dict get $Clauses subtree] \
-            file           [dict get $Clauses file] \
-            tool           [dict get $Clauses tool] \
-            pattern        [dict get $Clauses pattern] \
-            min_turns      $MinTurnsVar \
+            subtree        [dict get $m subtree] \
+            file           [dict get $m file] \
+            tool           [dict get $m tool] \
+            pattern        [dict get $m pattern] \
+            min_turns      [my turns_value] \
             listview       [dict create \
                 running_only    [expr {$ViewVar eq "running"}] \
                 bookmarked_only [expr {$ViewVar eq "bookmarked"}] \
@@ -733,80 +725,212 @@ oo::class create ::questlog::ui::Toolbar {
         return [expr {[clock milliseconds] < $TypingUntil}]
     }
 
-    # Add a value to a clause, creating/revealing the row as needed. For file
-    # the value is an {op path} pair, for tool a {name key} pair, for subtree and
-    # pattern a plain string.
-    method add_value {kind value} {
-        set vals [dict get $Clauses $kind]
-        if {$value in $vals} return
-        lappend vals $value
-        dict set Clauses $kind $vals
-        if {$kind in {tool pattern}} { dict set TailShown $kind 1 }
-        my rebuild_clause_rows
-        my refresh_add_rail
-        my publish
+
+    # ---- the criteria, as facetbar sees them -------------------------------
+
+    # The six criteria as facetbar descriptors, in reading order. The module owns
+    # the chips, the connective, the inline add, the rail, the disclosure and the
+    # count; each descriptor hands back the business - what a value means
+    # (format), how one is picked (editor), and, on a file value, the read/wrote/
+    # either the criterion applies to (chipctl, the per-value control in a chip).
+    #
+    # time and min turns are `control` facets: one bounded choice each, edited by
+    # the radio group and the spinbox the design draws rather than typed in and
+    # chipped, hence `max 1`. They carry no connective, because the tag already
+    # labels the row and an absolute date ("since 1/04/2026") has no preposition
+    # that "ran in the last" would not break. Neither holds a value at its floor -
+    # "all" is no time bound, and a floor of one turn excludes no session - so at
+    # rest they raise no chip and count towards no criterion, which is what a
+    # heading reading "Restrict to sessions that… N active" promises.
+    #
+    # regex and tool are tails: they wait on the add rail until they are asked
+    # for, or until a launch seeds one with a value.
+    method facets {} {
+        return [list \
+            [list id since label "time" mode control max 1 \
+                 format [list [self] since_chip] \
+                 editor [list [self] since_editor] \
+                 tagstyle Pill_time.TLabel chipstyle Crit_time.TFrame] \
+            [list id min_turns label "min turns" mode control max 1 \
+                 editor [list [self] turns_editor] \
+                 tagstyle Pill_turns.TLabel chipstyle Crit_turns.TFrame] \
+            [list id subtree label "under" conn "ran under" \
+                 format [list [self] path_chip] \
+                 editor [list [self] chip_editor] \
+                 tagstyle Pill_subtree.TLabel chipstyle Crit_subtree.TFrame] \
+            [list id file label "file" conn "touched" \
+                 format [list [self] file_chip] \
+                 editor [list [self] chip_editor] \
+                 chipctl [list [self] file_op_pill] \
+                 tagstyle Pill_file.TLabel chipstyle Crit_file.TFrame] \
+            [list id pattern label "regex" conn "matches" tail 1 railtext "+ regex" \
+                 editor [list [self] chip_editor] \
+                 tagstyle Pill_regex.TLabel chipstyle Crit_regex.TFrame] \
+            [list id tool label "tool" conn "used" tail 1 railtext "+ tool" \
+                 format [list [self] tool_chip] \
+                 editor [list [self] chip_editor] \
+                 tagstyle Pill_tool.TLabel chipstyle Crit_tool.TFrame]]
     }
 
-    # Remove the value at $idx - the chip whose x was clicked. By index, not
-    # by value: an op edit can make two file chips value-equal, and a by-value
-    # search would then delete the first twin rather than the clicked one.
-    method remove_value_at {kind idx} {
-        set vals [dict get $Clauses $kind]
-        if {$idx < 0 || $idx >= [llength $vals]} return
-        dict set Clauses $kind [lreplace $vals $idx $idx]
-        my rebuild_clause_rows
-        my refresh_add_rail
-        my publish
+    # The bar's one door: a criterion changed, and the model is what it now is.
+    # The whole snapshot goes out, as it does for every other control here, so a
+    # subscriber never has to know which of the two halves of the toolbar moved.
+    method on_criteria {model} { my publish }
+
+    # Write facet values without waking the change callback: for the paths that
+    # publish once themselves (the launch seed, the list's widen escape), where a
+    # per-facet door would publish once per facet and start a search for each.
+    # set_model takes the whole model, so it is merged over what the bar holds.
+    method quiet_set {overrides} {
+        $Bar set_model [dict merge [$Bar model] $overrides]
     }
 
-    # Change the operation on the file value at index $idx (the op pill on a
-    # chip). Republishes since the matched tool set changes.
-    method set_file_op {idx op} {
-        set vals [dict get $Clauses file]
-        if {$idx < 0 || $idx >= [llength $vals]} return
-        set pair [lindex $vals $idx]
-        lset pair 0 $op
-        lset vals $idx $pair
-        dict set Clauses file $vals
-        my rebuild_clause_rows
-        my publish
+    # A time spec, and a turn floor, as their facets hold them: no value at the
+    # floor, since "all" bounds no time and a floor of one turn excludes no
+    # session, and a criterion that restricts nothing is no criterion.
+    method since_vals {spec} {
+        return [expr {$spec eq "all" ? {} : [list $spec]}]
     }
 
-    # The op for the next file value added. Bound to the add-area op pill's
-    # label, so no rebuild is needed to reflect the change.
-    method set_add_op {op} { set AddOp $op }
-
-    # Reveal a tail row (regex or tool) and open its editor for immediate typing.
-    method show_tail {kind} {
-        my begin_edit $kind
-        my refresh_add_rail
+    method turns_vals {n} {
+        return [expr {$n <= 1 ? {} : [list $n]}]
     }
 
-    # Morph a row's collapsed [+]/[+ or] button into the inline editor in place.
-    # A tail row is also marked shown. EditFocusKind records which editor holds
-    # focus across this rebuild and any later collateral one (a chip removed in
-    # another row, an op changed). The rebuild draws the editor; focus_add lands
-    # the caret.
-    method begin_edit {kind} {
-        set AddState($kind) editing
-        set EditFocusKind $kind
-        if {$kind in {tool pattern}} { dict set TailShown $kind 1 }
-        my rebuild_clause_rows
-        my focus_add $kind
+    # The two floors, read back for the snapshot: the keys lib/filter.tcl reads
+    # carry a value even where the facet holds none.
+    method since_value {} {
+        set v [lindex [$Bar values since] 0]
+        return [expr {$v eq "" ? "all" : $v}]
     }
 
-    # Collapse the editor back to its button, discarding any unconfirmed text.
-    # No publish, since nothing was added.
-    method cancel_edit {kind} {
-        set AddState($kind) collapsed
+    method turns_value {} {
+        set v [lindex [$Bar values min_turns] 0]
+        return [expr {$v eq "" ? 1 : $v}]
+    }
+
+    # Open a row's inline editor from outside the bar (a test, a driving script):
+    # the bar reveals a tail row and expands itself if it has to.
+    method begin_edit {kind} { $Bar begin_add $kind }
+
+    # The criteria box's height, passed on to the clamp that holds it: place gives
+    # a child the height it asks for, so this is that height, and the clamp is the
+    # one frame between the bar and the window that still carries it upward.
+    method fit_now {h} {
+        if {$h > 1} { $Clamp configure -height $h }
+    }
+
+    # ---- the time facet's editor -------------------------------------------
+
+    method since_chip {spec} { return [::questlog::filter::since_label $spec] }
+
+    # The time row's whole editor: the preset radios, then the custom member. It
+    # is a function of the facet's values, redrawn from them every time the row
+    # is - so a time bound deleted from its chip while the bar was collapsed comes
+    # back with "all" selected, and no radio is left showing a criterion that is
+    # no longer applied.
+    method since_editor {parent id values} {
+        set WindowVar [expr {[llength $values] ? [lindex $values 0] : "all"}]
+        foreach w [::questlog::config::get since_presets] {
+            ttk::radiobutton $parent.r$w -text $w \
+                -variable [my varname WindowVar] -value $w \
+                -command [list [self] set_since]
+            pack $parent.r$w -side left -padx 2
+        }
+        # The custom 5th member of the same single-select group: a relative window
+        # or an absolute date the presets cannot express. Its own sub-frame, so
+        # committing or clearing re-renders only this, never the presets.
+        ttk::frame $parent.custom
+        pack $parent.custom -side left -padx {6 0}
+        my refresh_custom_member
+    }
+
+    # The time editor's area, at the widget path the module documents, or "" while
+    # the bar is collapsed and there is no editor row to reach into.
+    method since_area {} {
+        set ed $Restrict.body.rows.ed_since
+        return [expr {[winfo exists $ed] ? $ed : ""}]
+    }
+
+    # A radio in the time group was chosen. report_values, not set_values: the bar
+    # must not rebuild the radio group under the click that just moved it.
+    method set_since {} {
+        set want [my since_vals $WindowVar]
+        if {$want eq [$Bar values since]} return
+        $Bar report_values since $want
+    }
+
+    # ---- the min-turns facet's editor ---------------------------------------
+
+    # The minimum-turns scope floor: a spinbox over 1..turn_count_cap. 1 includes
+    # all; a higher floor drops shorter sessions from the corpus (it is scope, not
+    # a view toggle - see lib/filter.tcl). set_min_turns clamps to the valid range
+    # and reports, so a bad keystroke can never leave an out-of-range value; it is
+    # wired to the buttons (-command, <<Increment>>/<<Decrement>>) and to
+    # <Return>/<FocusOut> for typed edits.
+    method turns_editor {parent id values} {
+        set MinTurnsVar [expr {[llength $values] ? [lindex $values 0] : 1}]
+        set sb $parent.sb
+        ttk::spinbox $sb -from 1 -to [::questlog::config::get turn_count_cap] \
+            -width 3 -textvariable [my varname MinTurnsVar] \
+            -command [list [self] set_min_turns]
+        pack $sb -side left
+        bind $sb <<Increment>>  [list [self] set_min_turns]
+        bind $sb <<Decrement>>  [list [self] set_min_turns]
+        bind $sb <Return>       [list [self] set_min_turns]
+        bind $sb <FocusOut>     [list [self] set_min_turns]
+    }
+
+    # ---- the chip facets' editor --------------------------------------------
+
+    # The inline add editor, built into the frame the bar hands over when a "+" is
+    # pressed. Row-appropriate: file gets the op pill and an open-file glyph,
+    # folder a directory glyph, tool the name picker, regex a bare mono field. The
+    # typed text lives in AddText($id), so a redraw elsewhere in the bar leaves it
+    # standing; Return commits through that row's own validator, Escape abandons.
+    # The editor takes the caret itself, as the module asks it to: only the editor
+    # knows which of the widgets it built is the one that takes typing.
+    method chip_editor {parent id values} {
+        if {$id eq "file"} {
+            my op_pill $parent.op $AddOp [list [self] set_add_op] [my varname AddOp]
+            pack $parent.op -side left -padx {0 3}
+        }
+        set mono [expr {$id eq "pattern"}]
+        ttk::frame $parent.field -style Field.TFrame -padding {6 2}
+        tk::entry $parent.field.e -width 22 -relief flat -borderwidth 0 \
+            -highlightthickness 0 \
+            -background [::questlog::ui::theme::c chip_bg] \
+            -foreground [::questlog::ui::theme::c ink] \
+            -textvariable [my varname AddText]($id) \
+            -font [expr {$mono ? "QLMono" : "TkTextFont"}]
+        set commit [switch -- $id {
+            subtree { list [self] commit_folder_add }
+            file    { list [self] commit_file_add }
+            pattern { list [self] commit_pattern_add }
+            tool    { list [self] commit_tool_add }
+        }]
+        bind $parent.field.e <Return> $commit
+        bind $parent.field.e <Escape> [list [self] cancel_add $id]
+        # The open glyph packs first against the right edge so the entry fills the
+        # rest and its text never runs under it.
+        switch -- $id {
+            file    { my add_icon $parent.field.icon "\U0001F4C2" [list [self] browse_file] }
+            subtree { my add_icon $parent.field.icon "\U0001F4C1" [list [self] browse_folder] }
+        }
+        pack $parent.field.e -side left -fill x -expand 1
+        pack $parent.field -side left
+        if {$id eq "tool"} {
+            my build_tool_menu $parent.pick
+            pack $parent.pick -side left -padx {3 0}
+        }
+        focus $parent.field.e
+    }
+
+    # Escape: the unconfirmed text goes with the editor it was typed into. The bar
+    # closes that editor, and puts a tail row revealed only to be typed into back
+    # on the rail.
+    method cancel_add {kind} {
         set AddText($kind) ""
-        if {$EditFocusKind eq $kind} { set EditFocusKind "" }
-        my rebuild_clause_rows
-    }
-
-    # Put the caret in a row's editor entry once the rebuild has drawn it.
-    method focus_add {kind} {
-        catch {focus [dict get $RowFrames $kind].chips.add.field.e}
+        $Bar cancel_add $kind
     }
 
     # ---- add-entry commit handlers (popup-free; inline in each row) ---------
@@ -815,19 +939,20 @@ oo::class create ::questlog::ui::Toolbar {
     # becomes a chip, so the snapshot's subtree list only ever carries the
     # absolute form the row predicates compare against. A path that cannot be
     # expanded (an unknown ~user) stays in the editor with a bell rather than
-    # becoming a chip that silently matches nothing.
+    # becoming a chip that silently matches nothing. The text is cleared before
+    # the value lands, because the bar leaves the editor open for the next value
+    # and redraws it from AddText as it does.
     method commit_folder_add {} {
         set v [string trim $AddText(subtree)]
-        if {$v eq ""} { my cancel_edit subtree; return }
+        if {$v eq ""} { my cancel_add subtree; return }
         if {[catch {::questlog::path::canon_dir $v} v]} { bell; return }
         set AddText(subtree) ""
-        set AddState(subtree) collapsed
-        my add_value subtree $v
+        $Bar add_value subtree $v
     }
 
     method commit_file_add {} {
         set v [string trim $AddText(file)]
-        if {$v eq ""} { my cancel_edit file; return }
+        if {$v eq ""} { my cancel_add file; return }
         # A ~-headed path expands the way the subtree editor's does (Tcl 9
         # expands ~ nowhere, and the matcher would compare it literally); a
         # bare path tail (main.tcl) stays untouched - matching from the right
@@ -836,212 +961,90 @@ oo::class create ::questlog::ui::Toolbar {
             if {[catch {::questlog::path::canon_dir $v} v]} { bell; return }
         }
         set AddText(file) ""
-        set AddState(file) collapsed
-        my add_value file [list $AddOp $v]
+        $Bar add_value file [list $AddOp $v]
     }
 
     method commit_pattern_add {} {
         set v [string trim $AddText(pattern)]
-        if {$v eq ""} { my cancel_edit pattern; return }
+        if {$v eq ""} { my cancel_add pattern; return }
         # An unparseable regex stays in the editor with a bell rather than
         # becoming a chip whose first execution would abort every search.
         if {[catch {regexp -- $v {}}]} { bell; return }
         set AddText(pattern) ""
-        set AddState(pattern) collapsed
-        my add_value pattern $v
+        $Bar add_value pattern $v
     }
 
     # name "" reads the typed tool name; the quick-pick menu passes the name in.
     method commit_tool_add {{name ""}} {
         if {$name eq ""} { set name [string trim $AddText(tool)] }
-        if {$name eq ""} { my cancel_edit tool; return }
+        if {$name eq ""} { my cancel_add tool; return }
         set AddText(tool) ""
-        set AddState(tool) collapsed
-        my add_value tool [list $name ""]
+        $Bar add_value tool [list $name ""]
     }
 
     # The picked path goes through the same canonicaliser as a typed one, so a
     # dir reached both ways dedups to one chip.
     method browse_folder {} {
         set d [tk_chooseDirectory -initialdir $Cwd -mustexist 1]
-        if {$d ne ""} {
-            set AddState(subtree) collapsed
-            my add_value subtree [::questlog::path::canon_dir $d]
-        }
+        if {$d ne ""} { $Bar add_value subtree [::questlog::path::canon_dir $d] }
     }
 
     method browse_file {} {
         set f [tk_getOpenFile -initialdir $Cwd]
-        if {$f ne ""} { set AddState(file) collapsed; my add_value file [list $AddOp $f] }
+        if {$f ne ""} { $Bar add_value file [list $AddOp $f] }
     }
 
-    # ---- row management ----------------------------------------------------
-
-    # Destroy every clause-row frame and reconstruct the present ones in
-    # canonical reading order between the time row and the add rail. The folder
-    # and file rows are persistent (always shown, with a ghost add entry when
-    # empty); the tool and pattern tail rows show once revealed or non-empty.
-    method rebuild_clause_rows {} {
-        foreach k {subtree file tool pattern} {
-            if {[dict exists $RowFrames $k]} {
-                destroy [dict get $RowFrames $k]
-                dict unset RowFrames $k
-            }
-        }
-        # kind -> styling type; pattern draws in the regex tint.
-        set ctype {subtree subtree file file tool tool pattern regex}
-        foreach k {subtree file pattern tool} {
-            set vals [dict get $Clauses $k]
-            set persistent [expr {$k in {subtree file}}]
-            set shown [expr {$persistent || [dict getdef $TailShown $k 0] \
-                             || [llength $vals] > 0}]
-            if {!$shown} continue
-            set t [dict get $ctype $k]
-            set row $Restrict.row_$k
-            ttk::frame $row
-            # The type tag is a rounded tinted pill: the qlPill_<t> image gives
-            # the shape and fill, the display word is drawn centred over it, and
-            # the label background matches the panel so the pill's corners blend.
-            # The display word is the user-facing English for the styling type,
-            # decoupled from the identifier: the subtree pill reads "under".
-            label $row.label -image qlPill_$t -compound center \
-                -text [dict get {subtree under file file tool tool regex regex} $t] \
-                -anchor center -borderwidth 0 \
-                -background [ttk::style lookup . -background] \
-                -foreground [::questlog::ui::theme::c crit_${t}_fg]
-            pack $row.label -side left -padx {0 6} -pady 1
-            ttk::label $row.conn -text [dict get {
-                subtree "ran under" file "touched" tool "used" pattern "matches"
-            } $k]
-            pack $row.conn -side left -padx {0 6}
-            ttk::frame $row.chips
-            pack $row.chips -side left -fill x -expand 1
-            my render_chips $k $t $row.chips
-            pack $row -side top -fill x -before $AddRail -pady 1
-            dict set RowFrames $k $row
-        }
-        my refresh_heading
-        # A rebuild destroys the focused editor entry; if a row is mid-edit,
-        # restore the caret so a collateral rebuild (a chip removed elsewhere, an
-        # op changed) does not silently drop focus while the user is typing.
-        if {$EditFocusKind ne "" && $AddState($EditFocusKind) eq "editing"} {
-            my focus_add $EditFocusKind
-        }
+    # Add a value to a criterion from outside the bar: the launch query's seed,
+    # normalised by the entry script into these same kinds. Deduped as a chip
+    # commit is, and quiet, so a seeded criterion neither opens an editor nor
+    # fires the change callback; the one publish here is what app.tcl expects.
+    method add_value {kind value} {
+        set vals [$Bar values $kind]
+        if {$value in $vals} return
+        my quiet_set [list $kind [linsert $vals end $value]]
+        my publish
     }
 
-    # Update the restrict heading with a count of active clauses, so the legend
-    # reads "Restrict to sessions that…  N active" (count omitted at zero).
-    method refresh_heading {} {
-        set n 0
-        foreach k {subtree file tool pattern} {
-            if {[llength [dict get $Clauses $k]] > 0} { incr n }
-        }
-        set txt "Restrict to sessions that…"
-        if {$n > 0} { append txt "   $n active" }
-        $RestrictHd configure -text $txt
+    # ---- what a criterion's value means -------------------------------------
+
+    # subtree chips render ~-abbreviated; a file chip shows its path, the op it
+    # applies to being the pill inside the chip; tool shows its name (and key, if
+    # set); a regex renders raw, and so needs no formatter at all.
+    method path_chip {value} { return [::questlog::path::pretty_home $value] }
+
+    method file_chip {value} {
+        lassign $value op path
+        return [::questlog::path::pretty_home $path]
     }
 
-    # Render a row's value chips into $cf, then the inline add affordance. A
-    # file chip carries an op pill; a tool chip shows its name (and key, if any).
-    method render_chips {kind type cf} {
-        set white [::questlog::ui::theme::c chip_bg]
-        set vals [dict get $Clauses $kind]
-        set i 0
-        foreach v $vals {
-            if {$i > 0} {
-                ttk::label $cf.or$i -text "or" \
-                    -foreground [::questlog::ui::theme::c chip_or]
-                pack $cf.or$i -side left -padx 4
-            }
-            set chip $cf.c$i
-            ttk::frame $chip -style Crit_$type.TFrame -padding {4 1}
-            # The × packs first so it anchors at the chip's left edge: a
-            # sentence-long criterion grows its text rightward off-screen, but the
-            # delete button stays reachable in the viewport.
-            ttk::button $chip.x -text "×" -width 2 -style ChipX.TButton \
-                -command [list [self] remove_value_at $kind $i]
-            pack $chip.x -side left -padx {0 2}
-            if {$kind eq "file"} {
-                lassign $v op path
-                my op_pill $chip.op $op [list [self] set_file_op $i]
-                pack $chip.op -side left -padx {0 4}
-                label $chip.t -text [::questlog::path::pretty_home $path] \
-                    -background $white -foreground [::questlog::ui::theme::c ink] -font QLMono
-            } else {
-                label $chip.t -text [my chip_display $kind $v] \
-                    -background $white -foreground [::questlog::ui::theme::c ink] -font QLMono
-            }
-            pack $chip.t -side left
-            pack $chip -side left
-            incr i
-        }
-        my render_add $kind $cf
+    method tool_chip {value} {
+        lassign $value name key
+        return [expr {$key eq "" ? $name : "$name: $key"}]
     }
 
-    # The inline add affordance for a row: collapsed to a single ghost button, or
-    # morphed in place into a row-appropriate editor. AddState($kind) decides
-    # which form to draw; the morph itself is just a rebuild_clause_rows.
-    method render_add {kind cf} {
-        if {$AddState($kind) eq "editing"} {
-            my render_editor $kind $cf
-        } else {
-            my render_add_button $kind $cf
-        }
+    # The per-value control in a file chip: the op the criterion applies to. The
+    # bar lays out whatever the callback leaves at $w, and reruns the formatter
+    # when the value is written back.
+    method file_op_pill {w id idx value} {
+        lassign $value op path
+        my op_pill $w $op [list [self] set_file_op $idx]
     }
 
-    # The collapsed affordance: "+" on an empty row, "+ or" once the row carries
-    # a value. It packs after the last chip, so "+ or" reads as "OR another".
-    method render_add_button {kind cf} {
-        set has [expr {[llength [dict get $Clauses $kind]] > 0}]
-        ttk::button $cf.add -style RGhost.TButton \
-            -text [expr {$has ? "+ or" : "+"}] \
-            -command [list [self] begin_edit $kind]
-        pack $cf.add -side left -padx {4 0}
+    # Change the operation on the file value at index $idx (the op pill on a
+    # chip). By index, not by value: an op edit can leave two file chips
+    # value-equal, and a by-value write would then rewrite the first twin rather
+    # than the chip the user pressed.
+    method set_file_op {idx op} {
+        set vals [$Bar values file]
+        if {$idx < 0 || $idx >= [llength $vals]} return
+        set pair [lindex $vals $idx]
+        lset pair 0 $op
+        $Bar set_value_at file $idx $pair
     }
 
-    # The expanded inline editor, built where the add button was. Row-appropriate:
-    # file gets an op pill and an open-file glyph, folder a directory glyph, tool
-    # the name picker, regex a bare mono field. The entry's text lives in
-    # AddText($kind) so it survives the rebuilds other edits trigger; Return
-    # commits, Escape cancels. The borderless entry plus the glyph sit inside a
-    # rounded Field.TFrame plate so the pair reads as one control.
-    method render_editor {kind cf} {
-        set ae $cf.add
-        ttk::frame $ae
-        if {$kind eq "file"} {
-            my op_pill $ae.op $AddOp [list [self] set_add_op] [my varname AddOp]
-            pack $ae.op -side left -padx {0 3}
-        }
-        set mono [expr {$kind eq "pattern"}]
-        ttk::frame $ae.field -style Field.TFrame -padding {6 2}
-        tk::entry $ae.field.e -width 22 -relief flat -borderwidth 0 \
-            -highlightthickness 0 \
-            -background [::questlog::ui::theme::c chip_bg] \
-            -foreground [::questlog::ui::theme::c ink] \
-            -textvariable [my varname AddText]($kind) \
-            -font [expr {$mono ? "QLMono" : "TkTextFont"}]
-        set commit [switch -- $kind {
-            subtree { list [self] commit_folder_add }
-            file    { list [self] commit_file_add }
-            pattern { list [self] commit_pattern_add }
-            tool    { list [self] commit_tool_add }
-        }]
-        bind $ae.field.e <Return> $commit
-        bind $ae.field.e <Escape> [list [self] cancel_edit $kind]
-        # The open glyph packs first against the right edge so the entry fills the
-        # rest and its text never runs under it.
-        switch -- $kind {
-            file  { my add_icon $ae.field.icon "\U0001F4C2" [list [self] browse_file] }
-            subtree { my add_icon $ae.field.icon "\U0001F4C1" [list [self] browse_folder] }
-        }
-        pack $ae.field.e -side left -fill x -expand 1
-        pack $ae.field -side left
-        if {$kind eq "tool"} {
-            my build_tool_menu $ae.pick
-            pack $ae.pick -side left -padx {3 0}
-        }
-        pack $ae -side left -padx {4 0}
-    }
+    # The op for the next file value added. Bound to the add-area op pill's
+    # label, so no redraw is needed to reflect the change.
+    method set_add_op {op} { set AddOp $op }
 
     # A small clickable open glyph at the right edge of an add field. Mouse-only
     # (no tab stop); it shares the field's fill so it reads as part of the field.
@@ -1077,31 +1080,4 @@ oo::class create ::questlog::ui::Toolbar {
                 -command [list [self] commit_tool_add $name]
         }
     }
-
-    # subtree chips render ~-abbreviated; tool shows name (and key, if set);
-    # pattern renders the raw regex. file chips are handled in render_chips.
-    method chip_display {kind value} {
-        switch -- $kind {
-            subtree { return [::questlog::path::pretty_home $value] }
-            tool {
-                lassign $value name key
-                return [expr {$key eq "" ? $name : "$name: $key"}]
-            }
-            default { return $value }
-        }
-    }
-
-    method refresh_add_rail {} {
-        foreach k {pattern tool} {
-            set btn $AddRail.b$k
-            set shown [expr {[dict getdef $TailShown $k 0] \
-                             || [llength [dict get $Clauses $k]] > 0}]
-            if {$shown} {
-                pack forget $btn
-            } else {
-                pack $btn -side left -padx {0 4}
-            }
-        }
-    }
-
 }
