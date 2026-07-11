@@ -65,8 +65,6 @@ oo::class create ::questlog::ui::Viewer {
     variable LineMap          ;# dict: jsonl line offset (1-based) -> text index
     variable Menu             ;# right-click context menu
     variable MenuTarget       ;# dict capturing the clicked target
-    variable NextQid          ;# monotonic id for embedded quote boxes
-    variable Drafts           ;# dict: qid -> box state
     variable NextTableId      ;# monotonic id for rendered markdown tables
     variable Tables           ;# dict: table id -> parsed payload, for tab re-fit
     variable Bodies           ;# dict: jsonl line -> raw body (for Copy message)
@@ -75,7 +73,8 @@ oo::class create ::questlog::ui::Viewer {
     variable ToolList         ;# listbox of per-call rows (alias of BandDesc tools list)
     variable ToolLines        ;# jsonl line of each call, parallel to the ToolList rows
     variable QuoteList        ;# listbox of per-quote rows (alias of BandDesc quotes list)
-    variable QuoteIdx         ;# text index of each quote box, parallel to QuoteList rows
+    variable QuoteIdx         ;# text index of each quote block, parallel to QuoteList rows
+    variable QuoteBodies      ;# raw de-quoted text of each quote, parallel to QuoteIdx (for copy)
     variable CurTs            ;# ISO stamp of the record being rendered, read for a quote row
     variable Roles            ;# dict: jsonl line -> uppercased role, for row colour
     # Docked index band above the transcript: one collapsible pane whose content
@@ -136,14 +135,13 @@ oo::class create ::questlog::ui::Viewer {
         set Sections [list]
         set LineMap [dict create]
         set MenuTarget [dict create]
-        set NextQid 0
-        set Drafts [dict create]
         set NextTableId 0
         set Tables [dict create]
         set Bodies [dict create]
         set MatchLabels [list]
         set ToolLines [list]
         set QuoteIdx [list]
+        set QuoteBodies [list]
         set CurTs ""
         set Roles [dict create]
         set BandTab "matches"
@@ -390,9 +388,10 @@ oo::class create ::questlog::ui::Viewer {
         # producer fills its rows: the match index "ROLE · …excerpt… · line N"
         # coloured by role; the tool timeline (the did-versus-claimed audit, issue
         # #15) "time · tool · path" in chronological order; the quote index "time ·
-        # first quoted line" -- a quote is invisible to $Text search (its text lives
-        # in an embedded child widget), so the index is the only way to reach one
-        # Ctrl-F cannot. A row click jumps the reading view to its target. The
+        # first quoted line" -- a quick jump list to an assistant's quoted
+        # passages (their text is plain tagged text now, found by $Text search
+        # like any prose, so this is a convenience index, not the only way in). A
+        # row click jumps the reading view to its target. The
         # widget paths keep the historical stems ($Band.matchlist/$Band.matchsb ...).
         foreach key [dict keys $BandDesc] {
             set stem [dict get $BandDesc $key stem]
@@ -408,7 +407,7 @@ oo::class create ::questlog::ui::Viewer {
             dict set BandDesc $key sb $sb
         }
         # Convenience aliases so methods that touch only one list (match_list_select,
-        # index_tool_calls, quote_list_select, render, insert_quote_box) need no
+        # index_tool_calls, quote_list_select, render, insert_quote_text) need no
         # descriptor lookup.
         set MatchList [dict get $BandDesc matches list]
         set ToolList  [dict get $BandDesc tools list]
@@ -452,6 +451,14 @@ oo::class create ::questlog::ui::Viewer {
         # render both in its TkFixedFont default.
         $Text tag configure body          -font QLBody -foreground [::questlog::ui::theme::c body] -lmargin1 10 -lmargin2 10 -spacing2 3 -spacing3 6
         $Text tag configure code          -font QLMono -foreground [::questlog::ui::theme::c body] -lmargin1 10 -lmargin2 10 -spacing2 3 -spacing3 6
+        # Assistant blockquotes are plain tagged text, not embedded widgets:
+        # `quote` is the inset block face (reading font, body ink, a deep left
+        # margin so the block reads set in from the prose). Configured before the
+        # i-* spans so inline emphasis inside a quote still wins on -font; its
+        # muted chrome tags (quotebar, qcopy) are configured just after them, so
+        # their ink wins over the block's body ink where they stack.
+        $Text tag configure quote -font QLBody \
+            -foreground [::questlog::ui::theme::c body] -lmargin1 24 -lmargin2 24
         # Inline-span tags carry only a -font; colour and margins keep coming
         # from the body tag, which stays on every prose run (tags stack, and
         # these later tags win on -font). i-code is kept separate from the
@@ -460,6 +467,19 @@ oo::class create ::questlog::ui::Viewer {
         $Text tag configure i-italic     -font QLBodyItalic
         $Text tag configure i-bolditalic -font QLBodyBoldItalic
         $Text tag configure i-code       -font QLMono
+        # The quote block's muted chrome: `quotebar` tints the per-line ▏ rule,
+        # `qcopy` the ⧉ copy glyph heading the block. Configured after `quote` so
+        # their muted ink outranks its body ink where they stack. qcopy also
+        # carries the hand cursor, but a cursor is a per-widget option, not
+        # per-tag, so flip $Text's cursor as the pointer crosses the glyph and
+        # restore the reading view's default (an I-beam) on the way out. A click
+        # on the glyph copies the quote (quote_copy_at resolves which one).
+        $Text tag configure quotebar -foreground [::questlog::ui::theme::c muted]
+        $Text tag configure qcopy    -foreground [::questlog::ui::theme::c muted]
+        set qcursor [$Text cget -cursor]
+        $Text tag bind qcopy <Enter> [list $Text configure -cursor hand2]
+        $Text tag bind qcopy <Leave> [list $Text configure -cursor $qcursor]
+        $Text tag bind qcopy <ButtonRelease-1> [list [self] quote_copy_at %x %y]
         # Markdown table header cells: bold, so the header reads apart from the
         # body without a drawn rule. Configured after the i-* tags so it wins on
         # -font when it stacks over body in a header cell.
@@ -476,8 +496,8 @@ oo::class create ::questlog::ui::Viewer {
             -lmargin1 $hintpad -lmargin2 $hintpad -rmargin $hintpad \
             -spacing1 [font metrics QLMono -linespace] -spacing3 6
 
-        # Right-click copy (issue #4) and width tracking for the embedded
-        # quote boxes that drafts render into.
+        # Right-click copy (issue #4); the <Configure> refit keeps rendered
+        # markdown tables' tab stops sized to the reading font.
         my build_menu
         bind $Text <<ContextMenu>> [list [self] on_right %x %y %X %Y]
         bind $Text <Configure>     [list [self] on_resize]
@@ -685,10 +705,11 @@ oo::class create ::questlog::ui::Viewer {
         $Text delete 1.0 end
         set Roles [dict create]
         set Tables [dict create]
-        # Quotes are captured during render (insert_quote_box), so a wholesale
+        # Quotes are captured during render (insert_quote_text), so a wholesale
         # re-render clears them here; a streamed turn appends without re-render.
         $QuoteList delete 0 end
         set QuoteIdx [list]
+        set QuoteBodies [list]
         set RenderTs 0
         set RenderInSection 0
         foreach rec $Records {
@@ -1109,7 +1130,7 @@ oo::class create ::questlog::ui::Viewer {
     # Insert one turn's body. Plain prose goes through insert_prose, which renders
     # inline `code`, *italic* and **bold** spans. A fenced body is split into
     # prose and code runs (fenced code kept verbatim in monospace); a prose run
-    # that is an assistant blockquote becomes embedded quote boxes.
+    # that is an assistant blockquote becomes an inset tagged block.
     method insert_body {t body} {
         set has_code  [regexp -line {^\s*```} $body]
         set has_quote [expr {$t eq "assistant" && [regexp -line {^>} $body]}]
@@ -1135,14 +1156,14 @@ oo::class create ::questlog::ui::Viewer {
     }
 
     # Render an assistant body that contains at least one blockquote run:
-    # normal text inline, each blockquote run as an embedded box.
+    # normal text inline, each blockquote run as an inset tagged block.
     method insert_segments {body} {
         set atstart 0
         foreach seg [::questlog::jsonl::segment_blockquotes $body] {
             lassign $seg kind text
             if {$kind eq "quote"} {
                 if {!$atstart} { $Text insert end "\n" body }
-                my insert_quote_box $text
+                my insert_quote_text $text
                 set atstart 1
             } else {
                 my insert_prose $text "\n"
@@ -1152,176 +1173,45 @@ oo::class create ::questlog::ui::Viewer {
         $Text insert end "\n" body
     }
 
-    # A de-quoted blockquote run embedded in the reading view. A thin left
-    # rule marks it as a quotation; the text follows the reading font. Copy,
-    # and a Collapse toggle for long runs, appear only while the pointer is
-    # over the quote (see make_overlay). Long runs show full height; Collapse
-    # trims to the preview limit.
-    method insert_quote_box {dequoted} {
-        set qid [incr NextQid]
-        set n [llength [split $dequoted "\n"]]
-        set limit [::questlog::config::get blockquote_preview_lines]
-        set f $Text.q$qid
-        # Outer container draws no box. The hover buttons are children of it,
-        # pinned to the arrow cursor so they do not inherit the reading text's
-        # I-beam.
-        tk::frame $f -borderwidth 0 -highlightthickness 0 -cursor arrow
-        # The quoted marker: a single muted vertical rule. A classic tk::frame
-        # (not ttk) is used because clam ignores -background on ttk frames.
-        tk::frame $f.rule -width 3 -background [::questlog::ui::theme::c muted]
-        pack $f.rule -side left -fill y
-        set bt $f.body
-        # No -font of its own: QLBody is the reading font, reconfigured live by
-        # the font chooser, so the quote tracks the body. -padx indents the
-        # text in from the rule.
-        text $bt -wrap word -borderwidth 0 -highlightthickness 0 \
-            -height $n -width 1 -cursor arrow -font QLBody
-        # Inline spans inside the quote. The box's default face is QLBody, so
-        # plain text needs no tag; these variant tags carry only a font and
-        # track the reading font just like the main pane's i-* tags.
-        $bt tag configure i-bold       -font QLBodyBold
-        $bt tag configure i-italic     -font QLBodyItalic
-        $bt tag configure i-bolditalic -font QLBodyBoldItalic
-        $bt tag configure i-code       -font QLMono
-        my insert_runs $bt $dequoted ""
-        $bt configure -state disabled
-        pack $bt -side left -fill both -expand 1 -padx {8 0}
-        bind $bt <Map> [list [self] fit_box $qid]
-        # Index this quote for the Quotes band tab before embedding it: the empty
-        # last line is where the window lands, and its index is the jump target.
+    # Render a de-quoted blockquote run as an inset block of tagged text. Each
+    # physical line gets a muted ▏ rule and the reading font (inline *emphasis*
+    # and `code` still style through insert_runs, base tag `quote`), and a ⧉
+    # copy glyph heads the block. Unlike the embedded text widget it replaced,
+    # this scrolls with the transcript (that widget's own Text-class wheel
+    # binding swallowed the wheel as the pointer crossed a quote) and its text
+    # is visible to $Text search.
+    method insert_quote_text {dequoted} {
+        # Index this quote for the Quotes band tab before inserting it: the
+        # block's first line -- where the ⧉ glyph lands -- is the jump target,
+        # and its bare index is exactly what a qcopy click resolves back to.
         # ponytail: a bare index (not a Tk mark), the same assumption LineMap
         # makes - the transcript only appends at end or wholesale-reloads, never
         # splices mid-way; move both to marks together if that ever changes.
         lappend QuoteIdx [$Text index "end-1l linestart"]
+        lappend QuoteBodies $dequoted
         $QuoteList insert end "[my tool_time $CurTs] · [my quote_preview $dequoted]"
         $QuoteList itemconfigure end -foreground [::questlog::ui::theme::c assistant]
-        $Text window create end -window $f -align top
-        $Text insert end "\n"
-        dict set Drafts $qid [dict create frame $f body $bt full $dequoted \
-            nlines $n limit $limit expanded 1 \
-            copybtn "" togglebtn "" hidetimer ""]
-        my make_overlay $qid
-        my fit_box $qid
-    }
-
-    # Build the hover affordances un-placed: Copy always, plus a Collapse
-    # toggle for long runs. Entering the quote or any child shows them;
-    # leaving hides them. Bound on every descendant so crossing onto a button
-    # still counts as inside.
-    method make_overlay {qid} {
-        set d [dict get $Drafts $qid]
-        set f [dict get $d frame]
-        set cb $f.copy
-        ttk::button $cb -text "Copy" -width 5 \
-            -command [list [self] clipboard_set [dict get $d full]]
-        dict set Drafts $qid copybtn $cb
-        set hover [list $f [dict get $d body] $cb]
-        if {[dict get $d nlines] > [dict get $d limit]} {
-            set tb $f.toggle
-            ttk::button $tb -text "Collapse" -width 8 \
-                -command [list [self] toggle_box $qid]
-            dict set Drafts $qid togglebtn $tb
-            lappend hover $tb
-        }
-        foreach w $hover {
-            bind $w <Enter> [list [self] overlay_show $qid]
-            bind $w <Leave> [list [self] overlay_leave $qid]
+        $Text insert end "⧉ " {qcopy quote}
+        foreach line [split $dequoted "\n"] {
+            $Text insert end "▏ " {quotebar quote}
+            my insert_runs $Text $line quote
+            $Text insert end "\n" quote
         }
     }
 
-    # Place Copy top-right and the toggle top-left, over the body text.
-    method overlay_show {qid} {
-        if {![dict exists $Drafts $qid]} return
-        set d [dict get $Drafts $qid]
-        set t [dict get $d hidetimer]
-        if {$t ne ""} { my forget $t; dict set Drafts $qid hidetimer "" }
-        set cb [dict get $d copybtn]
-        place $cb -relx 1.0 -x -2 -rely 0 -y 2 -anchor ne
-        raise $cb
-        set tb [dict get $d togglebtn]
-        if {$tb ne ""} {
-            place $tb -relx 0.0 -x 6 -rely 0 -y 2 -anchor nw
-            raise $tb
-        }
-    }
-
-    # Leaving any part of the quote schedules a hide. Deferring to idle lets
-    # the matching <Enter> on the button just crossed into cancel it first, so
-    # frame-to-button crossings do not dismiss the overlay.
-    method overlay_leave {qid} {
-        if {![dict exists $Drafts $qid]} return
-        set t [my later idle [list [self] overlay_check $qid]]
-        dict set Drafts $qid hidetimer $t
-    }
-
-    method overlay_check {qid} {
-        if {![dict exists $Drafts $qid]} return
-        dict set Drafts $qid hidetimer ""
-        set f [dict get $Drafts $qid frame]
-        if {![winfo exists $f]} return
-        set w [winfo containing [winfo pointerx .] [winfo pointery .]]
-        set inside 0
-        while {$w ne "" && $w ne "."} {
-            if {$w eq $f} { set inside 1; break }
-            set w [winfo parent $w]
-        }
-        if {!$inside} { my overlay_hide $qid }
-    }
-
-    method overlay_hide {qid} {
-        if {![dict exists $Drafts $qid]} return
-        set d [dict get $Drafts $qid]
-        catch {place forget [dict get $d copybtn]}
-        set tb [dict get $d togglebtn]
-        if {$tb ne ""} { catch {place forget $tb} }
-    }
-
-    # Size a box's inner text to the reading column width, and (when
-    # expanded) to its full wrapped height. Embedded windows do not stretch
-    # on their own, so this runs on creation and on every <Configure>.
-    method fit_box {qid} {
-        if {![dict exists $Drafts $qid]} return
-        set bt [dict get $Drafts $qid body]
-        if {![winfo exists $bt]} return
-        set px [winfo width $Text]
-        set fw [font measure [$bt cget -font] 0]
-        if {$fw <= 0} { set fw 7 }
-        if {$px <= 1} {
-            set cols [::questlog::config::get textbox_default_cols]
-        } else {
-            set cols [expr {max([::questlog::config::get textbox_min_cols], \
-                ($px - [::questlog::config::get textbox_margin_px]) / $fw)}]
-        }
-        $bt configure -width $cols
-        # An off-screen embedded text reports a 1px width, which would make
-        # count -displaylines wrap at one character. Only size the expanded
-        # height when the box is actually laid out; the <Map> binding redoes
-        # it when an off-screen box scrolls into view.
-        if {[dict get $Drafts $qid expanded] \
-                && [winfo ismapped $bt] && [winfo width $bt] > 1} {
-            update idletasks
-            set dl [$bt count -displaylines 1.0 "end"]
-            $bt configure -height [expr {max(1, $dl)}]
-        }
-    }
-
-    method toggle_box {qid} {
-        if {![dict exists $Drafts $qid]} return
-        set d [dict get $Drafts $qid]
-        set tb [dict get $d togglebtn]
-        if {[dict get $d expanded]} {
-            [dict get $d body] configure -height [dict get $d limit]
-            catch {$tb configure -text "Expand"}
-            dict set Drafts $qid expanded 0
-        } else {
-            dict set Drafts $qid expanded 1
-            catch {$tb configure -text "Collapse"}
-            my fit_box $qid
-        }
+    # Copy a quote's raw de-quoted text when its ⧉ glyph is clicked. A
+    # drag-select that merely releases over the glyph must not copy, so bail
+    # while a selection stands. The glyph sits on the quote's first line, whose
+    # start is exactly the index recorded in QuoteIdx, so the click's line start
+    # picks out which quote to copy.
+    method quote_copy_at {x y} {
+        if {[$Text tag ranges sel] ne ""} return
+        set i [lsearch -exact $QuoteIdx [$Text index "@$x,$y linestart"]]
+        if {$i < 0} return
+        my clipboard_set [lindex $QuoteBodies $i]
     }
 
     method on_resize {} {
-        dict for {qid d} $Drafts { my fit_box $qid }
         dict for {id  p} $Tables { my fit_table $id }
     }
 
@@ -1335,7 +1225,8 @@ oo::class create ::questlog::ui::Viewer {
     method clipboard_set {s} { clipboard clear; clipboard append $s }
 
     # Right-click a turn to copy its whole body. The explicit copy affordance
-    # for the viewer (issue #4); per-quote copy is the button inside each box.
+    # for the viewer (issue #4); per-quote copy is the ⧉ glyph heading each
+    # quote block.
     method on_right {x y X Y} {
         set line [my line_at [$Text index @$x,$y]]
         if {$line eq ""} return
@@ -1792,7 +1683,7 @@ oo::class create ::questlog::ui::Viewer {
     }
 
     # Expose the head-strip count from the quotes collected during render (their
-    # rows were filled by insert_quote_box). Opt-in like the tool audit (auto 0):
+    # rows were filled by insert_quote_text). Opt-in like the tool audit (auto 0):
     # it never opens the band, only makes the Quotes tab and count available; with
     # no quotes both stay hidden. refresh_band_control does the work.
     method refresh_quote_control {} {

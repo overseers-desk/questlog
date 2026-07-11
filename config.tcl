@@ -144,16 +144,8 @@ namespace eval ::questlog::config {
     # buried under their evidence: one representative line per subagent, with the
     # subagent's own label carrying the rest of the identification.
     dict set Config snippets_per_subagent 1
-    # A viewer blockquote longer than this gets a Collapse toggle.
-    dict set Config blockquote_preview_lines 6
     # Minutes of silence that mark a secondary idle-gap divider in the viewer.
     dict set Config viewer_idle_gap_min 10
-    # Viewer copy-box width fit: default columns when the pixel width is unknown,
-    # the pixel margin subtracted before dividing by the font width, and the
-    # column floor.
-    dict set Config textbox_default_cols 80
-    dict set Config textbox_margin_px    60
-    dict set Config textbox_min_cols     10
 
     # ---- drag-to-move ------------------------------------------------------
     # Pointer travel before a press becomes a drag; autoscroll tick interval
