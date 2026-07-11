@@ -239,8 +239,13 @@ oo::class create ::questlog::ui::Toolbar {
         place $Restrict -x 0 -y 0 -relwidth 1
 
         set Bar [::facetbar::FacetBar new]
+        # The delete sits at the chip's left, against the usual side, because these
+        # values are paths and patterns: a chip holding one can be wider than the
+        # bar, and the end that runs out of view is the far one. A delete anchored
+        # where the text starts stays reachable on every chip.
         $Bar configure -heading "Restrict to sessions that…" \
             -raillabel "Add filter" -changecb [list [self] on_criteria] \
+            -delside left \
             -styles {heading  FacetHeading.TLabel
                      toggle   FacetToggle.TButton
                      conn     FacetConn.TLabel

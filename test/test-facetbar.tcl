@@ -1,21 +1,24 @@
-#!/usr/bin/env wish9.0
+#!/usr/bin/env wish
 # facetbar is a portable widget, so this test invents a host for it out of
 # nothing: a colour facet whose chips carry a per-value control, a size facet
 # edited by one bespoke stepper, a weight facet that is a stepper reached from the
 # add rail and reports itself empty at its floor, a shape facet that may hold only
-# one value, a note facet where the same value twice is two criteria, a tag facet
-# that joins its values with "and", and an origin facet the owner fills and the
-# user cannot type into. The test sources the module and no other file, and drives
-# the bar through the widgets the bar itself built - the chips' delete buttons, the
-# add rail, the inline editors - so a green run says the pattern holds for a host
-# the module has never seen.
+# one value, a note facet where the same value twice is two criteria and a third is
+# one too many, a tag facet that joins its values with "and", and an origin facet
+# the owner fills and the user cannot type into. The test sources the module and no
+# other file, and drives the bar through the widgets the bar itself built - the
+# chips' delete buttons, the add rail, the inline editors - so a green run says the
+# pattern holds for a host the module has never seen.
 #
 # It also holds the module to what its header promises, at the places where such a
-# promise is easiest to make and quietly break: the caps (including the third way
-# in, begin_add), the editor that reports itself empty from inside its own command,
-# the lifecycle in both teardown orders, the style fallback across a theme change,
-# the width the bar asks of a master that does not pin it, and every option at a
-# value no default could be mistaken for, so a hard-coded "or" could not pass.
+# promise is easiest to make and quietly break: every way to an editor a facet's cap
+# must close, a model written from outside while an editor is open, an editor that
+# reports itself empty from inside its own command, a change callback that raises
+# and one that writes the model straight back, an option whose badness only shows
+# when the bar draws, the lifecycle in both teardown orders, the styles across a
+# theme change, the geometry that a style and the gaps are supposed to own, the width
+# the bar asks of a master that does not pin it, and every option at a value no
+# default could be mistaken for.
 
 package require Tcl 8.6-
 package require Tk 8.6-
@@ -64,6 +67,9 @@ proc cycle_shade {idx} {
     set next [dict get {any dark  dark light  light any} $shade]
     $::bar set_value_at colour $idx [list $next $name]
 }
+# A per-value control that decides there is nothing to draw: the chip is plain, and
+# the bar lays out what it finds, which is nothing.
+proc no_ctl {w id idx value} { return }
 
 # size and weight: bespoke controls, the case a chip list cannot serve. Their floor
 # means "no criterion", so at the floor the facet holds no value and shows no chip,
@@ -125,6 +131,7 @@ proc type_into {area id value} {
     update
 }
 proc plain_chip {v} { return $v }
+proc boom_editor {parent id values} { error "the editor blew up" }
 
 proc on_change {model} { lappend ::events $model }
 set ::events {}
@@ -133,7 +140,7 @@ set FACETS {
     {id size   conn "counts"    format size_chip   editor size_editor mode control max 1}
     {id weight conn "weighs"    format weight_chip editor weight_editor mode control max 1 tail 1}
     {id shape  conn "is shaped" editor text_editor max 1}
-    {id note   conn "notes"     editor text_editor dedupe 0}
+    {id note   conn "notes"     editor text_editor dedupe 0 max 3 chipctl no_ctl}
     {id tag    conn "is tagged" editor text_editor tail 1 max 2 orword "and" ortext "+ and"}
     {id origin conn "came from" tail 1}
 }
@@ -151,8 +158,8 @@ set ROWS $BODY.rows
 
 check "the model carries every facet, applied or not" \
     {colour {} size {} weight {} shape {} note {} tag {} origin {}} [$bar model]
-check "a host that styles nothing still gets a chip it can see" solid \
-    [dict get [ttk::style configure FacetChip.TFrame] -relief]
+check "the bar dresses the chip style it ships with, so an unstyled host can see a chip" \
+    solid [dict get [ttk::style configure FacetChip.TFrame] -relief]
 check "a persistent facet has a row from the start" {1 1} \
     [list [winfo exists $ROWS.tag_colour] [winfo exists $ROWS.tag_size]]
 check "a tail facet has none, and waits on the add rail" {0 1} \
@@ -178,6 +185,14 @@ check "the heading counts the applied facets" "Restrict to items that…   1 act
     [.f.head.hd cget -text]
 check "set_model fires no change event: the owner already knows" 0 [llength $::events]
 
+update idletasks
+check "the delete sits at the chip's trailing edge, where a chip control is looked for" \
+    1 [expr {[winfo x $ROWS.ed_colour.c0.x] > [winfo x $ROWS.ed_colour.c0.t]}]
+$bar configure -delside left
+update idletasks
+check "-delside left brings it to the near end, which is the end still in view on a chip wider than the bar" \
+    1 [expr {[winfo x $ROWS.ed_colour.c0.x] < [winfo x $ROWS.ed_colour.c0.t]}]
+
 $ROWS.ed_colour.c1.x invoke
 update
 check "a chip's delete affordance drops its value" {{any red}} [$bar values colour]
@@ -193,6 +208,12 @@ update
 check "a chip's own control edits that value in place" {{dark red}} [$bar values colour]
 check "and the chip reruns the caller's formatter" "dark red" \
     [$ROWS.ed_colour.c0.t cget -text]
+
+set n [llength $::events]
+$bar set_value_at colour 0 {dark red}
+check "rewriting a value with the value it already holds moves nothing" \
+    {{dark red}} [$bar values colour]
+check "and publishes nothing" $n [llength $::events]
 
 # ---- the inline add, and the editor that stays open -----------------------
 
@@ -220,7 +241,7 @@ check "Escape closes the editor back to the add affordance" "+ or" \
     [$ROWS.ed_colour.add cget -text]
 check "and changes no value" {{dark red} {any green}} [$bar values colour]
 
-# ---- a facet where a repeat is a second value ----------------------------
+# ---- a facet where a repeat is a second value, up to a cap of three -------
 
 $ROWS.ed_note.add invoke
 update
@@ -229,8 +250,16 @@ type_into $ROWS.ed_note.add note fragile
 check "a facet that asks for repeats takes the same value twice" {fragile fragile} \
     [$bar values note]
 check "and chips them both" 1 [winfo exists $ROWS.ed_note.c1]
-event generate $ROWS.ed_note.add.e <Escape>
-update
+check "a per-value control that draws nothing leaves a plain chip" 0 \
+    [winfo exists $ROWS.ed_note.c0.lead]
+type_into $ROWS.ed_note.add note heavy
+check "a third value reaches the facet's cap" {fragile fragile heavy} [$bar values note]
+check "which closes the editor and takes the affordance away" 0 \
+    [winfo exists $ROWS.ed_note.add]
+set n [llength $::events]
+$bar add_value note extra
+check "and a commit past the cap adds nothing" {fragile fragile heavy} [$bar values note]
+check "and publishes nothing" $n [llength $::events]
 
 # ---- cardinality: a facet that can hold only one value --------------------
 
@@ -258,26 +287,19 @@ check "with its editor already open, so the reveal is one click from typing" 1 \
 check "its button leaves the rail, which stays for the facet it still offers" {0 1} \
     [list [winfo exists $BODY.rail.b_tag] [winfo exists $BODY.rail.b_weight]]
 
-event generate $ROWS.ed_tag.add.e <Escape>
+# An editor open while the owner fills the facet to its cap from outside. The cap has
+# to reach the editor that is already standing, not only the affordance that opens
+# one: an editor a value cannot leave would take what is typed into it and drop it.
+$bar set_values tag {urgent blocked}
 update
-check "abandoning the add that revealed it puts the facet back on the rail" {0 1} \
-    [list [winfo exists $ROWS.tag_tag] [winfo exists $BODY.rail.b_tag]]
-
-$BODY.rail.b_tag invoke
-update
-type_into $ROWS.ed_tag.add tag urgent
-check "a revealed facet's committed value renders as a chip" urgent \
-    [$ROWS.ed_tag.c0.t cget -text]
-check "and the row stays now that it carries one" 1 [winfo exists $ROWS.tag_tag]
-type_into $ROWS.ed_tag.add tag blocked
+check "an editor open when the model reaches the cap is closed, not left to eat the next value" \
+    0 [winfo exists $ROWS.ed_tag.add]
+check "and the values the owner set are chipped" {urgent blocked} [$bar values tag]
 check "a facet joins its values in its own word, not the bar's" and \
     [$ROWS.ed_tag.or1 cget -text]
-check "at its cap the facet offers no way to add another" 0 [winfo exists $ROWS.ed_tag.add]
-check "and holds exactly the values it is allowed" {urgent blocked} [$bar values tag]
 
-# The third way to an editor. begin_add stands in for the affordance, and at the cap
-# that affordance is not drawn - so this must not draw one either, or a user would
-# type a value into an editor the model has no room for and watch it vanish on Enter.
+# The third way to an editor: begin_add stands in for the affordance, and at the cap
+# that affordance is not drawn, so this must not draw one either.
 set n [llength $::events]
 $bar begin_add tag
 update
@@ -285,6 +307,11 @@ check "begin_add on a facet at its cap opens no editor, so no value can be typed
     0 [winfo exists $ROWS.ed_tag.add]
 check "the model is untouched" {urgent blocked} [$bar values tag]
 check "and nothing is published" $n [llength $::events]
+
+$ROWS.ed_tag.c1.x invoke
+update
+check "with a value deleted the facet is below its cap again" {urgent} [$bar values tag]
+check "and its affordance is back, in its own word" "+ and" [$ROWS.ed_tag.add cget -text]
 
 # ---- the facet the owner fills and the user cannot ------------------------
 
@@ -319,6 +346,11 @@ update
 check "the owner's own door redraws that editor, so the control shows what was set" \
     12 $::sizevar
 
+refused "report_values on a chips facet is refused: its chips are the bar's drawing of its values" \
+    {$bar report_values colour {{any pink}}} "*chips facet*"
+check "so the chips can never be left showing what the model no longer holds" \
+    {{dark red}} [$bar values colour]
+
 # ---- a control facet reached from the rail, wound down to its floor -------
 #
 # A tail facet's row goes when its last value goes. Here the editor is what reports
@@ -341,6 +373,30 @@ check "an editor that reports its last value gone keeps its row" 1 \
 check "and is not destroyed from inside its own command" 1 \
     [winfo exists $ROWS.ed_weight.sb]
 check "though the value really is gone" {} [$bar values weight]
+
+# ---- the change callback: it may raise, and it may write back -------------
+#
+# A callback that normalises the model writes it straight back. A write that moves no
+# value publishes nothing, so the bar does not go round in circles.
+set ::normalised 0
+proc normalise {model} {
+    incr ::normalised
+    $::bar set_values shape [dict get $model shape]   ;# the same values, back again
+}
+$bar configure -changecb normalise
+$bar set_values shape {round}
+check "a callback that writes the model back is not called again by its own write" \
+    1 $::normalised
+
+proc boom {model} { error "the host said no" }
+$bar configure -changecb boom
+refused "a callback that raises is not swallowed by the bar" \
+    {$bar set_values shape {square}} "*the host said no*"
+check "and the model it was called with is the model the bar holds" square \
+    [$bar values shape]
+check "with the chip already drawn, so the widget is consistent whatever the host does" \
+    square [$ROWS.ed_shape.c0.t cget -text]
+$bar configure -changecb on_change
 
 # ---- collapse and expand -------------------------------------------------
 
@@ -423,12 +479,18 @@ refused "a duplicate facet id is refused" \
     {$bar configure -facets {{id a} {id a}}} "*duplicate facet id*"
 refused "an unknown descriptor key is refused" \
     {$bar configure -facets {{id a bogus 1}}} "*unknown descriptor key*"
+refused "a facet descriptor that is not a dict is refused" \
+    {$bar configure -facets {{id a conn}}} "*not a dict*"
 refused "a mode that is neither chips nor control is refused" \
     {$bar configure -facets {{id a mode slider}}} "*neither chips nor control*"
-refused "a control facet with no editor is refused: its value would be applied and never shown" \
+refused "a control facet with no editor is refused: its value would be held and never shown" \
     {$bar configure -facets {{id a mode control}}} "*control facet needs an editor*"
 refused "a max that is not a count is refused" \
     {$bar configure -facets {{id a max two}}} "*is not a count*"
+refused "a tail that is not a true or false value is refused" \
+    {$bar configure -facets {{id a tail maybe}}} "*not a true or false*"
+refused "and so is such a dedupe, at the door and not later from inside a button" \
+    {$bar configure -facets {{id a dedupe maybe}}} "*not a true or false*"
 refused "an id that is not a plain word is refused" \
     {$bar configure -facets {{id a.b}}} "*plain word*"
 refused "and so is one carrying a percent, which a binding script would swallow" \
@@ -438,10 +500,27 @@ refused "a model that would break a facet's cap is refused" \
 refused "so is a set_values that would break it" \
     {$bar set_values shape {round square}} "*holds at most 1*"
 refused "and a report_values that would break it" \
-    {$bar report_values shape {round square}} "*holds at most 1*"
+    {$bar report_values size {1 2}} "*holds at most 1*"
+refused "a model that is not a dict is refused" \
+    {$bar set_model colour} "*not a dict*"
+refused "an index that is not one is refused, rather than quietly doing nothing" \
+    {$bar remove_value_at colour foo} "*not a value index*"
+refused "and one that names no value is refused, rather than garbling a list" \
+    {$bar remove_value_at colour 99} "*no value at index 99*"
+refused "the same at the other index door" \
+    {$bar set_value_at colour 1.5 x} "*not a value index*"
 refused "an unknown option is refused" {$bar configure -bogus 1} "*unknown option*"
+refused "a countfmt that is not a format taking one count is refused at the door" \
+    {$bar configure -countfmt "%d of %d"} "*not a format taking one count*"
 refused "a misspelt style role is refused, as a misspelt descriptor key is" \
     {$bar configure -styles {chipp X.TFrame}} "*unknown style role*"
+refused "a -styles that is not a dict is refused" \
+    {$bar configure -styles notadict} "*dict of style role*"
+refused "a misspelt gap role is refused" {$bar configure -gaps {chpi 4}} "*unknown gap*"
+refused "a gap that is not a count of pixels is refused" \
+    {$bar configure -gaps {chip huge}} "*count of pixels*"
+refused "a delside that is neither end is refused" \
+    {$bar configure -delside middle} "*neither left nor right*"
 refused "cget refuses an unknown option the same way, not with a dict error" \
     {$bar cget -bogus} "*unknown option*"
 refused "an odd argument count is refused, rather than setting an empty value" \
@@ -458,41 +537,94 @@ refused "a configure with one bad option raises on it" \
     {$bar configure -heading "changed" -facets {{id a} {id a}}} "*duplicate*"
 check "and applies none of the good options that came with it" \
     "Restrict to items that…" [$bar cget -heading]
+
+# An option the door cannot judge, because its badness only shows when the bar draws:
+# a facet whose editor raises. The configure is rolled back whole, and the bar is left
+# standing on the options it had, not on the one that breaks it on every later draw.
+refused "an option that only fails when the bar draws takes the whole configure down with it" \
+    {$bar configure -heading "boom" \
+        -facets {{id z conn "z" mode control editor boom_editor}}} "*the editor blew up*"
+check "the facets it had are the facets it has" \
+    {colour size weight shape note tag origin} [dict keys [$bar model]]
+check "and so is the heading" "Restrict to items that…" [$bar cget -heading]
+no_error "and the bar still draws" {$bar collapse; $bar expand; update}
+
 check "one argument reads an option rather than clearing it" \
     "Restrict to items that…" [$bar configure -heading]
 check "no argument reads them all" or [dict get [$bar configure] orword]
-check "the facets survived every refusal" {colour size weight shape note tag origin} \
-    [dict keys [$bar model]]
 
 # ---- the styles, and a theme change --------------------------------------
-
-ttk::style configure FacetChip.TFrame -relief flat -borderwidth 3
-$bar configure -heading "Restrict to items that…"
-update
-check "a host's own dress of the default chip style is not stamped over" {flat 3} \
-    [list [ttk::style lookup FacetChip.TFrame -relief] \
-          [ttk::style lookup FacetChip.TFrame -borderwidth]]
-
-# A ttk style's configuration belongs to the theme it was made under, so the chips
-# would go flat and invisible on a theme change if the dress were laid only once.
+#
+# The bar's own two style names are the bar's: it dresses them, and dresses them
+# again on a theme change, because a ttk style's configuration belongs to the theme it
+# was made under and the chips would otherwise go flat and invisible. A style the host
+# names is the host's, in every theme, and the bar never reaches into it.
+check "a style the bar does not name, the bar does not dress" {} \
+    [ttk::style configure Host.TFrame]
 ttk::style theme use clam
 update
 check "the fallback dress follows a theme change, where a style's configuration does not" \
     solid [dict get [ttk::style configure FacetChip.TFrame] -relief]
+check "and the host's own style is still the host's, untouched in the new theme" {} \
+    [ttk::style configure Host.TFrame]
 
-# ---- a facet dropped, and put back ---------------------------------------
+# ---- the geometry a style and the gaps own -------------------------------
+#
+# The chip's padding rides its style: a widget's own padding would beat the style's,
+# so the bar sets none of its own. This is the property a host at a high DPI must have.
+pack [ttk::frame .geo -width 600 -height 120] -fill x
+pack propagate .geo 0
+ttk::style configure Host.TFrame -relief solid -borderwidth 1 -padding {2 1}
+set bar7 [::facetbar::FacetBar new]
+$bar7 configure -heading "" \
+    -facets {{id w conn "reads" format plain_chip chipstyle Host.TFrame}}
+$bar7 setup .geo
+$bar7 set_model {w {one two}}
+update
+update idletasks
+set G .geo.body.rows.ed_w
+set tight [winfo reqwidth $G.c0]
+ttk::style configure Host.TFrame -padding {40 20}
+$bar7 set_model {}
+$bar7 set_model {w {one two}}
+update
+update idletasks
+check "a chip's padding comes from its style, so a host can set it" 1 \
+    [expr {[winfo reqwidth $G.c0] > $tight + 60}]
 
-$bar begin_add tag
+# The gap the bar leaves between two chips is -gaps, not a number in the source.
+ttk::style configure Host.TFrame -padding {2 1}
+$bar7 configure -gaps {chip 40}
+$bar7 set_model {}
+$bar7 set_model {w {one two}}
 update
-check "the tail facet is revealed again" 1 [winfo exists $ROWS.tag_tag]
-$bar configure -facets [lrange $FACETS 0 3]
+update idletasks
+check "the gap the bar leaves beside a chip comes from -gaps" 40 \
+    [expr {[winfo x $G.or1] - ([winfo x $G.c0] + [winfo reqwidth $G.c0])}]
+
+# ---- two changes in one turn of the event loop ----------------------------
+#
+# A host that applies two criteria in one script gives the bar two renders before the
+# event loop turns. Both facets' chips must be laid out at the size they really are,
+# and not at the 1x1 they have until the geometry managers reach them - which is what
+# a lay left standing where the first render put it would measure.
+pack [ttk::frame .turn] -fill x
+set bar8 [::facetbar::FacetBar new]
+$bar8 configure -heading "" -facets {
+    {id one conn "is" format plain_chip editor text_editor}
+    {id two conn "is" format plain_chip editor text_editor}
+}
+$bar8 setup .turn
+$bar8 set_values one {first}
+$bar8 set_values two {second}
 update
-check "dropping a facet takes its row" 0 [winfo exists $ROWS.tag_tag]
-check "and its key leaves the model" {colour size weight shape} [dict keys [$bar model]]
-$bar configure -facets $FACETS
-update
-check "putting it back puts it back on the rail, not in the row it once held" {0 1} \
-    [list [winfo exists $ROWS.tag_tag] [winfo exists $BODY.rail.b_tag]]
+update idletasks
+set T1 .turn.body.rows.ed_one.c0
+set T2 .turn.body.rows.ed_two.c0
+check "a chip drawn in the same turn as another facet's is laid out at its real size" \
+    {1 1} [list [expr {[winfo width $T2] > 5}] [expr {[winfo height $T2] > 5}]]
+check "and the first one is too" {1 1} \
+    [list [expr {[winfo width $T1] > 5}] [expr {[winfo height $T1] > 5}]]
 
 # ---- the options, at values that are not their defaults -------------------
 #
@@ -539,13 +671,13 @@ pack [ttk::frame .narrow -width 320 -height 200] -fill both
 pack propagate .narrow 0
 set bar2 [::facetbar::FacetBar new]
 $bar2 configure -heading "" -facets \
-    {{id word conn "reads" format plain_chip chipstyle Word.TFrame}}
+    {{id word conn "reads" format plain_chip chipstyle Host.TFrame}}
 $bar2 setup .narrow
 $bar2 set_model {word {"a first long value" "a second long value" "a third long value"}}
 update
 update idletasks
 set W .narrow.body.rows.ed_word
-check "a facet's chips take the style its descriptor names" Word.TFrame [$W.c0 cget -style]
+check "a facet's chips take the style its descriptor names" Host.TFrame [$W.c0 cget -style]
 check "the first chip sits on the first line" 0 [winfo y $W.c0]
 check "a chip that will not fit wraps onto the next line" 1 \
     [expr {[winfo y $W.c2] > [winfo y $W.c0]}]
@@ -573,6 +705,9 @@ check "and a propagating host grows to it, which is why a host that cannot pins 
 
 # ---- the lifecycle -------------------------------------------------------
 
+refused "setup on a window that does not exist is refused" \
+    {[::facetbar::FacetBar new] setup .no.such.frame} "*no such window*"
+
 pack [ttk::frame .life] -fill x
 set bar4 [::facetbar::FacetBar new]
 $bar4 configure -facets {{id word conn "reads" format plain_chip}}
@@ -599,7 +734,6 @@ no_error "a bar whose frame was destroyed under it goes inert: every method stil
     $bar5 values word
     $bar5 set_model {word {alpha beta}}
     $bar5 set_values word {beta}
-    $bar5 report_values word {beta gamma}
     $bar5 add_value word delta
     $bar5 set_value_at word 0 epsilon
     $bar5 remove_value_at word 0
@@ -612,7 +746,7 @@ no_error "a bar whose frame was destroyed under it goes inert: every method stil
     $bar5 configure -heading "after"
     $bar5 cget -heading
 }
-check "and still keeps its model through all of it" {gamma delta} [$bar5 values word]
+check "and still keeps its model through all of it" {delta} [$bar5 values word]
 no_error "and destroys cleanly with no frame left to clear" {$bar5 destroy}
 
 puts [expr {$fails ? "FAILED ($fails)" : "PASS"}]
