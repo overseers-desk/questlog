@@ -70,30 +70,33 @@ oo::class create ::questlog::ui::Viewer {
     variable NextTableId      ;# monotonic id for rendered markdown tables
     variable Tables           ;# dict: table id -> parsed payload, for tab re-fit
     variable Bodies           ;# dict: jsonl line -> raw body (for Copy message)
-    variable MatchBtn         ;# head-strip "N matches" count, packed on demand
-    variable MatchList        ;# listbox of per-match rows inside the band
+    variable MatchList        ;# listbox of per-match rows (alias of BandDesc matches list)
     variable MatchLabels      ;# per-match one-line excerpt, parallel to FindMatches
-    variable MatchCountText   ;# "N matches" string, shared by the head count and band tab
-    variable ToolBtn          ;# head-strip "N tool calls" count, packed on demand
-    variable ToolList         ;# listbox of per-call rows inside the band
+    variable ToolList         ;# listbox of per-call rows (alias of BandDesc tools list)
     variable ToolLines        ;# jsonl line of each call, parallel to the ToolList rows
-    variable ToolCountText    ;# "N tool calls" string, shared by the head count and band tab
-    variable QuoteBtn         ;# head-strip "N quotes" count, packed on demand
-    variable QuoteList        ;# listbox of per-quote rows inside the band
+    variable QuoteList        ;# listbox of per-quote rows (alias of BandDesc quotes list)
     variable QuoteIdx         ;# text index of each quote box, parallel to QuoteList rows
-    variable QuoteCountText   ;# "N quotes" string, shared by the head count and band tab
     variable CurTs            ;# ISO stamp of the record being rendered, read for a quote row
     variable Roles            ;# dict: jsonl line -> uppercased role, for row colour
     # Docked index band above the transcript: one collapsible pane whose content
     # switches between the match index and the tool-call timeline. It replaces the
     # two floating panels that used to cover the reading view.
     variable Band             ;# the band frame, gridded in the body's row 0
-    variable BandTab          ;# "matches"|"tools": which list the band currently shows
+    variable BandTab          ;# "matches"|"tools"|"quotes": which list the band shows
     variable BandOpen         ;# 1 while the band is gridded (taking transcript height)
     variable BandCount        ;# band-header count label
-    variable TabMatches       ;# band-header "Matches" tab label
-    variable TabTools         ;# band-header "Tools" tab label
-    variable TabQuotes        ;# band-header "Quotes" tab label
+    # BandDesc: ordered dict key -> per-tab descriptor, one entry per band tab in
+    # canonical left-to-right order (matches, tools, quotes). Each descriptor
+    # carries the tab's header label (tab), head-strip count label (btn), listbox
+    # (list) and its scrollbar (sb), the current count string (count, "" while the
+    # tab is empty), its singular/plural unit words (unit, a {singular plural}
+    # pair), auto (1 only for matches, whose refresh auto-opens the band), and
+    # onselect (the <<ListboxSelect>> handler method). Every per-tab loop -- widget
+    # creation in build, set_tab, update_band_tabs, update_band_glyphs, and
+    # refresh_band_control -- walks this one dict, so a new tab is one more entry
+    # here, not a fourth parallel set of vars. (tabtext/stem are build-time helpers
+    # for the label text and the historical short widget path names.)
+    variable BandDesc
     variable OnToggle         ;# cb: () -> ask the app to fold/unfold the list pane
     variable OnMove           ;# cb: [list path] -> app move router (⋯ menu)
     variable OnBookmark       ;# cb: path -> app bookmark router (⋯ menu)
@@ -139,11 +142,8 @@ oo::class create ::questlog::ui::Viewer {
         set Tables [dict create]
         set Bodies [dict create]
         set MatchLabels [list]
-        set MatchCountText ""
         set ToolLines [list]
-        set ToolCountText ""
         set QuoteIdx [list]
-        set QuoteCountText ""
         set CurTs ""
         set Roles [dict create]
         set BandTab "matches"
@@ -226,6 +226,24 @@ oo::class create ::questlog::ui::Viewer {
         # atop a text editor. A plain frame/label carries a subtle background
         # tint so it reads as part of the pane rather than a control bar.
         set strip [::questlog::ui::theme::c strip]
+        # The docked band's tabs all share one shape (a head-strip count, a header
+        # tab, a listbox+scrollbar, a count string). BandDesc is the ordered
+        # key->descriptor dict that drives every per-tab loop below; the loops here
+        # fill in each descriptor's widget paths (tab/btn/list/sb). Canonical order
+        # is matches, tools, quotes. tabtext is the header label; stem keeps the
+        # historical short widget names (matchlist/toolsb/...); unit is the
+        # {singular plural} count word; auto=1 (matches only) auto-opens the band on
+        # refresh; onselect is the <<ListboxSelect>> handler.
+        set BandDesc [dict create \
+            matches [dict create tabtext "Matches" stem match \
+                         unit {match matches} auto 1 onselect match_list_select \
+                         count ""] \
+            tools   [dict create tabtext "Tools" stem tool \
+                         unit {{tool call} {tool calls}} auto 0 \
+                         onselect tool_list_select count ""] \
+            quotes  [dict create tabtext "Quotes" stem quote \
+                         unit {quote quotes} auto 0 onselect quote_list_select \
+                         count ""]]
         frame $Top.head -background $strip
         pack $Top.head -side top -fill x
         label $Top.head.path -text "no session selected" -background $strip \
@@ -244,32 +262,20 @@ oo::class create ::questlog::ui::Viewer {
         set IdLabel $Top.head.sid
         pack $IdLabel -side right -padx 6 -before $Top.head.path
         bind $IdLabel <Button-1> [list [self] copy_uuid]
-        # Match index: a count on the right of the head strip that opens the
-        # docked band (built below) on its Matches tab, and collapses it when
-        # clicked again. It carries the count even while the band is collapsed;
-        # its glyph reads ▾ closed, ▴ open. Packed on demand by
-        # refresh_match_control; absent when the session was opened without a
-        # search.
-        label $Top.head.matches -text "" -background $strip \
-            -foreground [::questlog::ui::theme::c sessionhead] -cursor hand2
-        set MatchBtn $Top.head.matches
-        bind $MatchBtn <Button-1> [list [self] band_toggle matches]
-        # Tool-call timeline: a sibling count on the head strip that opens the
-        # band on its Tools tab. It carries the session's tool-call count;
-        # glyph ▾ closed, ▴ open, like the match count. Packed on demand by
-        # refresh_tool_control; absent when the session made no tool calls.
-        label $Top.head.tools -text "" -background $strip \
-            -foreground [::questlog::ui::theme::c sessionhead] -cursor hand2
-        set ToolBtn $Top.head.tools
-        bind $ToolBtn <Button-1> [list [self] band_toggle tools]
-        # Quote index: a third head-strip count that opens the band on its Quotes
-        # tab. It carries the count of quoted passages (email drafts, quoted
-        # messages the assistant wrote out); glyph ▾ closed, ▴ open. Packed on
-        # demand by refresh_quote_control; absent when the session quoted nothing.
-        label $Top.head.quotes -text "" -background $strip \
-            -foreground [::questlog::ui::theme::c sessionhead] -cursor hand2
-        set QuoteBtn $Top.head.quotes
-        bind $QuoteBtn <Button-1> [list [self] band_toggle quotes]
+        # Head-strip index counts, one per band tab: a count on the right of the
+        # strip that opens the docked band (built below) on its own tab and
+        # collapses it when clicked again. Each carries its count even while the
+        # band is collapsed; glyph ▾ closed, ▴ open. Packed on demand by
+        # refresh_band_control (through the per-tab wrappers) and absent when the
+        # tab has nothing to show: no search (matches), no tool calls (tools), or
+        # no quoted passages (quotes). Widget path $Top.head.<key>.
+        foreach key [dict keys $BandDesc] {
+            set btn $Top.head.$key
+            label $btn -text "" -background $strip \
+                -foreground [::questlog::ui::theme::c sessionhead] -cursor hand2
+            bind $btn <Button-1> [list [self] band_toggle $key]
+            dict set BandDesc $key btn $btn
+        }
         # Overflow menu at the right of the head strip: a plain "⋯" label
         # affordance (matching the strip's flat look) holding the reading-font
         # picker, and in Stage 2 the session action set. Packed first on the
@@ -346,9 +352,9 @@ oo::class create ::questlog::ui::Viewer {
         # content switches between the match index and the tool-call timeline.
         # Gridded into the body's row 0 (no weight, no minsize) so collapsing it
         # gives every pixel back to the transcript, and full-width so the reading
-        # column keeps its width (the win over a side column). Two listboxes
-        # share the band's content cell; set_tab grids one and removes the other.
-        # The header carries the Matches|Tools tabs, the active count, and ✕.
+        # column keeps its width (the win over a side column). Its listboxes
+        # share the band's content cell; set_tab grids one and removes the rest.
+        # The header carries the Matches|Tools|Quotes tabs, the active count, and ✕.
         # A classic tk frame/label set tinted with the head strip's background,
         # not ttk (clam ignores -background on ttk frames), so the head strip and
         # band read as one contiguous chrome zone over the transcript.
@@ -356,23 +362,20 @@ oo::class create ::questlog::ui::Viewer {
         frame $Band -background $strip
         frame $Band.hdr -background $strip
         frame $Band.hdr.tabs -background $strip
-        set TabMatches $Band.hdr.tabs.matches
-        label $TabMatches -text "Matches" -background $strip -cursor hand2 \
-            -foreground [::questlog::ui::theme::c muted] -font QLMonoBold
-        bind $TabMatches <Button-1> [list [self] set_tab matches]
-        set TabTools $Band.hdr.tabs.tools
-        label $TabTools -text "Tools" -background $strip -cursor hand2 \
-            -foreground [::questlog::ui::theme::c muted] -font QLMonoBold
-        bind $TabTools <Button-1> [list [self] set_tab tools]
-        set TabQuotes $Band.hdr.tabs.quotes
-        label $TabQuotes -text "Quotes" -background $strip -cursor hand2 \
-            -foreground [::questlog::ui::theme::c muted] -font QLMonoBold
-        bind $TabQuotes <Button-1> [list [self] set_tab quotes]
-        # update_band_tabs re-packs whichever tabs have rows in canonical order;
-        # this initial pack only fixes their left-to-right sequence.
-        pack $TabMatches -side left
-        pack $TabTools   -side left -padx {10 0}
-        pack $TabQuotes  -side left -padx {10 0}
+        # Header tabs, one per band tab. update_band_tabs later re-packs whichever
+        # have rows in canonical order; this creation pack only fixes their initial
+        # left-to-right sequence (BandDesc order). Widget path $Band.hdr.tabs.<key>.
+        set first 1
+        foreach key [dict keys $BandDesc] {
+            set tab $Band.hdr.tabs.$key
+            label $tab -text [dict get $BandDesc $key tabtext] -background $strip \
+                -cursor hand2 -foreground [::questlog::ui::theme::c muted] \
+                -font QLMonoBold
+            bind $tab <Button-1> [list [self] set_tab $key]
+            pack $tab -side left -padx [expr {$first ? "0" : "10 0"}]
+            set first 0
+            dict set BandDesc $key tab $tab
+        }
         set BandCount $Band.hdr.count
         label $BandCount -text "" -background $strip \
             -foreground [::questlog::ui::theme::c sessionhead]
@@ -382,36 +385,34 @@ oo::class create ::questlog::ui::Viewer {
         pack $Band.hdr.tabs  -side left -padx 8 -pady 2
         pack $BandCount      -side left -padx 6
         pack $Band.hdr.close -side right -padx 8
-        # Match index listbox: rows "ROLE · …excerpt… · line N", coloured by role,
-        # each jumping the reading view to that hit.
-        set MatchList $Band.matchlist
-        listbox $MatchList -height 1 -width 44 -activestyle none \
-            -borderwidth 0 -highlightthickness 0 \
-            -yscrollcommand [list $Band.matchsb set]
-        ttk::scrollbar $Band.matchsb -orient vertical \
-            -command [list $MatchList yview]
-        bind $MatchList <<ListboxSelect>> [list [self] match_list_select]
-        # Tool-call timeline listbox: the did-versus-claimed audit (issue #15),
-        # rows "time · tool · path" in chronological order, each jumping the
-        # reading view to the call's line.
-        set ToolList $Band.toollist
-        listbox $ToolList -height 1 -width 44 -activestyle none \
-            -borderwidth 0 -highlightthickness 0 \
-            -yscrollcommand [list $Band.toolsb set]
-        ttk::scrollbar $Band.toolsb -orient vertical \
-            -command [list $ToolList yview]
-        bind $ToolList <<ListboxSelect>> [list [self] tool_list_select]
-        # Quote index listbox: rows "time · first quoted line", each jumping the
-        # reading view to that quote box. A quote is invisible to $Text search
-        # (its text lives in an embedded child widget), so this is the only way
-        # to reach one that Ctrl-F cannot.
-        set QuoteList $Band.quotelist
-        listbox $QuoteList -height 1 -width 44 -activestyle none \
-            -borderwidth 0 -highlightthickness 0 \
-            -yscrollcommand [list $Band.quotesb set]
-        ttk::scrollbar $Band.quotesb -orient vertical \
-            -command [list $QuoteList yview]
-        bind $QuoteList <<ListboxSelect>> [list [self] quote_list_select]
+        # One listbox + scrollbar per band tab, all sharing the band's content
+        # cell (set_tab grids the active one and removes the rest). Each tab's
+        # producer fills its rows: the match index "ROLE · …excerpt… · line N"
+        # coloured by role; the tool timeline (the did-versus-claimed audit, issue
+        # #15) "time · tool · path" in chronological order; the quote index "time ·
+        # first quoted line" -- a quote is invisible to $Text search (its text lives
+        # in an embedded child widget), so the index is the only way to reach one
+        # Ctrl-F cannot. A row click jumps the reading view to its target. The
+        # widget paths keep the historical stems ($Band.matchlist/$Band.matchsb ...).
+        foreach key [dict keys $BandDesc] {
+            set stem [dict get $BandDesc $key stem]
+            set lb $Band.${stem}list
+            set sb $Band.${stem}sb
+            listbox $lb -height 1 -width 44 -activestyle none \
+                -borderwidth 0 -highlightthickness 0 \
+                -yscrollcommand [list $sb set]
+            ttk::scrollbar $sb -orient vertical -command [list $lb yview]
+            bind $lb <<ListboxSelect>> \
+                [list [self] [dict get $BandDesc $key onselect]]
+            dict set BandDesc $key list $lb
+            dict set BandDesc $key sb $sb
+        }
+        # Convenience aliases so methods that touch only one list (match_list_select,
+        # index_tool_calls, quote_list_select, render, insert_quote_box) need no
+        # descriptor lookup.
+        set MatchList [dict get $BandDesc matches list]
+        set ToolList  [dict get $BandDesc tools list]
+        set QuoteList [dict get $BandDesc quotes list]
         grid $Band.hdr -row 0 -column 0 -columnspan 2 -sticky ew
         grid columnconfigure $Band 0 -weight 1
         grid rowconfigure    $Band 1 -weight 1
@@ -1549,21 +1550,14 @@ oo::class create ::questlog::ui::Viewer {
         return $line
     }
 
-    # Fill the match listbox and the head-strip count from the current matches,
-    # then open the band on its Matches tab. With no matches (a session opened
-    # while browsing) the count is hidden and the band, if it was showing
-    # matches, collapses. Auto-opening on every populate is what lands a session
-    # click on the index when a search is active, with no second gesture.
+    # Fill the match listbox from the current matches (coloured by role), then
+    # hand off to refresh_band_control, which sizes the count and -- matches being
+    # the one auto-opening tab -- opens the band on Matches. With no matches (a
+    # session opened while browsing) the count is hidden and the band, if it was
+    # showing matches, collapses. Auto-opening on every populate is what lands a
+    # session click on the index when a search is active, with no second gesture.
     method refresh_match_control {} {
-        set n [llength $FindMatches]
         $MatchList delete 0 end
-        if {$n == 0} {
-            pack forget $MatchBtn
-            set MatchCountText ""
-            if {$BandOpen && $BandTab eq "matches"} { my band_hide }
-            my update_band_tabs
-            return
-        }
         set i 0
         foreach m $FindMatches lab $MatchLabels {
             set ln [my line_at $m]
@@ -1577,18 +1571,7 @@ oo::class create ::questlog::ui::Viewer {
             $MatchList itemconfigure $i -foreground [my role_color $ty]
             incr i
         }
-        $MatchList configure -height [expr {min($n, 8)}]
-        $MatchList selection clear 0 end
-        $MatchList selection set 0
-        set MatchCountText "$n [expr {$n == 1 ? {match} : {matches}}]"
-        # Reserve the count's width on the right before the path fills the rest,
-        # so a long file path clips rather than squeezing it out of the strip.
-        # Re-packing the path after fixes the order regardless of which packed
-        # first.
-        pack forget $PathLabel
-        pack $MatchBtn -side right -padx 6
-        pack $PathLabel -side left -padx 6 -pady 1 -fill x -expand 1
-        my band_show matches
+        my refresh_band_control matches [llength $FindMatches]
     }
 
     # Row foreground by role, echoing the rendered transcript's role colours.
@@ -1604,23 +1587,19 @@ oo::class create ::questlog::ui::Viewer {
     # ---- docked band: open/collapse and tab switching --------------------
 
     # Switch the band's content without changing its open/collapsed state: grid
-    # the chosen list into the content cell and remove the other, so only the
+    # the chosen list into the content cell and remove the rest, so only the
     # active list's height drives the band. Re-derives the tab styling and the
-    # head-strip glyphs.
-    # ponytail: three parallel per-tab var sets (list/scrollbar/tab/count); a
-    # fourth tab is the trigger to replace them with a tab-descriptor list
-    # driving set_tab/update_band_tabs/update_band_glyphs.
+    # head-strip glyphs. Loop-driven off BandDesc: every tab is one dict entry
+    # carrying its {tab btn list sb count unit auto onselect} descriptor, so a new
+    # tab needs no new branch here (nor in update_band_tabs/update_band_glyphs).
     method set_tab {tab} {
         set BandTab $tab
-        grid remove $MatchList $Band.matchsb $ToolList $Band.toolsb \
-            $QuoteList $Band.quotesb
-        switch -- $tab {
-            matches { set lb $MatchList; set sb $Band.matchsb }
-            tools   { set lb $ToolList;  set sb $Band.toolsb }
-            quotes  { set lb $QuoteList; set sb $Band.quotesb }
+        dict for {key d} $BandDesc {
+            grid remove [dict get $d list] [dict get $d sb]
         }
-        grid $lb -row 1 -column 0 -sticky nsew
-        grid $sb -row 1 -column 1 -sticky ns
+        set d [dict get $BandDesc $tab]
+        grid [dict get $d list] -row 1 -column 0 -sticky nsew
+        grid [dict get $d sb]   -row 1 -column 1 -sticky ns
         my update_band_tabs
         my update_band_glyphs
     }
@@ -1653,47 +1632,79 @@ oo::class create ::questlog::ui::Viewer {
     }
 
     # Show only the tabs whose list has rows, mark the active one, and carry the
-    # active tab's count in the band header. Forget both first, then re-pack the
-    # present ones in canonical Matches-then-Tools order, so a tab that was
-    # hidden for the prior session never re-packs after its sibling.
+    # active tab's count in the band header. Forget them all first, then re-pack
+    # the present ones in canonical BandDesc order, so a tab that was hidden for
+    # the prior session never re-packs after its sibling. A tab has rows exactly
+    # when its descriptor count is non-empty (refresh_band_control sets count ""
+    # for an empty list), so that one field drives visibility.
     method update_band_tabs {} {
-        pack forget $TabMatches $TabTools $TabQuotes
         set active   [::questlog::ui::theme::c sessionhead]
         set inactive [::questlog::ui::theme::c faint]
+        dict for {key d} $BandDesc {
+            pack forget [dict get $d tab]
+        }
         set first 1
-        foreach {tab lab has} [list \
-                matches $TabMatches [llength $FindMatches] \
-                tools   $TabTools   [llength $ToolLines] \
-                quotes  $TabQuotes  [llength $QuoteIdx]] {
-            if {$has == 0} continue
+        dict for {key d} $BandDesc {
+            if {[dict get $d count] eq ""} continue
+            set lab [dict get $d tab]
             pack $lab -side left -padx [expr {$first ? "0" : "10 0"}]
             set first 0
             $lab configure \
-                -foreground [expr {$BandTab eq $tab ? $active : $inactive}]
+                -foreground [expr {$BandTab eq $key ? $active : $inactive}]
         }
-        $BandCount configure -text [switch -- $BandTab {
-            matches { set MatchCountText }
-            tools   { set ToolCountText }
-            quotes  { set QuoteCountText }
-            default { lindex "" }
-        }]
+        $BandCount configure -text [dict get $BandDesc $BandTab count]
     }
 
-    # Keep the ▾/▴ glyph on both head-strip counts: ▴ on the count whose tab is
-    # the open front tab, ▾ otherwise. Each count may be unpacked (its list is
-    # empty), so guard on existence in the strip.
+    # Keep the ▾/▴ glyph on each head-strip count: ▴ on the count whose tab is the
+    # open front tab, ▾ otherwise. Each count may be unpacked (its list is empty),
+    # so skip a tab whose descriptor count is "" rather than touch a stub label.
     method update_band_glyphs {} {
-        set mglyph [expr {$BandOpen && $BandTab eq "matches" ? "▴" : "▾"}]
-        set tglyph [expr {$BandOpen && $BandTab eq "tools" ? "▴" : "▾"}]
-        set qglyph [expr {$BandOpen && $BandTab eq "quotes" ? "▴" : "▾"}]
-        if {$MatchCountText ne ""} {
-            $MatchBtn configure -text "$mglyph $MatchCountText"
+        dict for {key d} $BandDesc {
+            set count [dict get $d count]
+            if {$count eq ""} continue
+            set glyph [expr {$BandOpen && $BandTab eq $key ? "▴" : "▾"}]
+            [dict get $d btn] configure -text "$glyph $count"
         }
-        if {$ToolCountText ne ""} {
-            $ToolBtn configure -text "$tglyph $ToolCountText"
+    }
+
+    # The shared tail of every refresh_*_control: given a tab key and its row
+    # count n (its listbox already filled by the caller), size and expose the tab
+    # or hide it. Empty (n == 0): forget the head count, clear the descriptor
+    # count, collapse the band if this very tab was the open front tab, and re-run
+    # update_band_tabs so the header drops the tab. Non-empty: size the listbox to
+    # min(n, 8) rows, set the count string from the unit words, and reserve the
+    # count's width on the right of the strip before the path re-packs to fill the
+    # rest (so a long file path clips rather than squeezing the count out; the
+    # re-pack fixes the order regardless of which packed first). The one behaviour
+    # that varies by tab is auto: the matches tab (auto 1) pre-selects its first
+    # row and auto-opens the band on itself, which is what lands a session click on
+    # the index after a search; the opt-in tabs (auto 0) only refresh the header
+    # and glyphs, leaving the band as it was.
+    method refresh_band_control {key n} {
+        set d    [dict get $BandDesc $key]
+        set btn  [dict get $d btn]
+        set lb   [dict get $d list]
+        set auto [dict get $d auto]
+        if {$n == 0} {
+            pack forget $btn
+            dict set BandDesc $key count ""
+            if {$BandOpen && $BandTab eq $key} { my band_hide }
+            my update_band_tabs
+            return
         }
-        if {$QuoteCountText ne ""} {
-            $QuoteBtn configure -text "$qglyph $QuoteCountText"
+        $lb configure -height [expr {min($n, 8)}]
+        $lb selection clear 0 end
+        if {$auto} { $lb selection set 0 }
+        set unit [dict get $d unit]
+        dict set BandDesc $key count "$n [lindex $unit [expr {$n == 1 ? 0 : 1}]]"
+        pack forget $PathLabel
+        pack $btn -side right -padx 6
+        pack $PathLabel -side left -padx 6 -pady 1 -fill x -expand 1
+        if {$auto} {
+            my band_show $key
+        } else {
+            my update_band_tabs
+            my update_band_glyphs
         }
     }
 
@@ -1748,30 +1759,14 @@ oo::class create ::questlog::ui::Viewer {
         return [clock format $epoch -format "%H:%M:%S"]
     }
 
-    # Fill the head-strip count and size the listbox from the collected calls,
-    # then expose the Tools entry point. With no calls the count is hidden and a
-    # band already on Tools collapses. Unlike a search, the audit is opt-in: this
-    # never opens the band, it only makes the Tools tab and count available, so
-    # the matches that index_matches auto-opened (it runs first) stay in front.
+    # Expose the Tools entry point from the collected calls (index_tool_calls has
+    # already filled the rows). Opt-in, not auto (descriptor auto is 0): with
+    # calls this makes the Tools tab and count available but leaves the band as it
+    # was, so the matches that index_matches auto-opened (it runs first) stay in
+    # front; with no calls the count is hidden and a band already on Tools
+    # collapses. All that lives in refresh_band_control.
     method refresh_tool_control {} {
-        set n [llength $ToolLines]
-        if {$n == 0} {
-            pack forget $ToolBtn
-            set ToolCountText ""
-            if {$BandOpen && $BandTab eq "tools"} { my band_hide }
-            my update_band_tabs
-            return
-        }
-        $ToolList configure -height [expr {min($n, 8)}]
-        $ToolList selection clear 0 end
-        set ToolCountText "$n tool [expr {$n == 1 ? {call} : {calls}}]"
-        # Reserve the count's width on the strip before the path fills the rest,
-        # so a long file path clips rather than squeezing it out.
-        pack forget $PathLabel
-        pack $ToolBtn -side right -padx 6
-        pack $PathLabel -side left -padx 6 -pady 1 -fill x -expand 1
-        my update_band_tabs
-        my update_band_glyphs
+        my refresh_band_control tools [llength $ToolLines]
     }
 
     # Jump the reading view to the clicked call's line.
@@ -1796,26 +1791,12 @@ oo::class create ::questlog::ui::Viewer {
         return "(quote)"
     }
 
-    # Size the listbox and expose the head-strip count from the quotes collected
-    # during render. Opt-in like the tool audit: it never opens the band, only
-    # makes the Quotes tab and count available. With no quotes both stay hidden.
+    # Expose the head-strip count from the quotes collected during render (their
+    # rows were filled by insert_quote_box). Opt-in like the tool audit (auto 0):
+    # it never opens the band, only makes the Quotes tab and count available; with
+    # no quotes both stay hidden. refresh_band_control does the work.
     method refresh_quote_control {} {
-        set n [llength $QuoteIdx]
-        if {$n == 0} {
-            pack forget $QuoteBtn
-            set QuoteCountText ""
-            if {$BandOpen && $BandTab eq "quotes"} { my band_hide }
-            my update_band_tabs
-            return
-        }
-        $QuoteList configure -height [expr {min($n, 8)}]
-        $QuoteList selection clear 0 end
-        set QuoteCountText "$n [expr {$n == 1 ? {quote} : {quotes}}]"
-        pack forget $PathLabel
-        pack $QuoteBtn -side right -padx 6
-        pack $PathLabel -side left -padx 6 -pady 1 -fill x -expand 1
-        my update_band_tabs
-        my update_band_glyphs
+        my refresh_band_control quotes [llength $QuoteIdx]
     }
 
     # Jump the reading view to the clicked quote's box.
