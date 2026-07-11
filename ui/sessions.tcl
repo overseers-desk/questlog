@@ -1620,10 +1620,10 @@ oo::class create ::questlog::ui::SessionList {
     # True while a lens is narrowing the view, so some loaded sessions may be
     # hidden. When none is, the model count is exact and the per-session walk
     # below is skipped. Every lens counts, the model lens included: it hides
-    # loaded rows exactly as the segments do, and a folder whose rows it all hides
-    # must not go on reporting them.
+    # loaded rows exactly as the other two do, and a folder whose rows it all
+    # hides must not go on reporting them.
     method any_view_toggle {} {
-        return [expr {[::questlog::sessionlist::active_lens $Snapshot] ne ""}]
+        return [expr {[llength [::questlog::sessionlist::active_lenses $Snapshot]] > 0}]
     }
 
     # A row that arrives while a lens is on lands hidden, and the folder created
@@ -2506,30 +2506,31 @@ oo::class create ::questlog::ui::SessionList {
     # Bookmarked. lens_counts does the arithmetic; the strip says the cut, and the
     # banner names it and offers the two escapes.
 
-    # The active lens's whole membership, uuid -> {path ?cwd?}, as the caller
-    # gathered it outside the search. A running member carries the cwd its process
-    # runs in, which the registry knows for free; a bookmarked one carries none,
-    # because finding it would mean reading a transcript on a path that must not
-    # (member_name resolves what it needs, when it needs it). Recounts the cut; the
-    # lens itself is not touched, so this can arrive on any tick without disturbing
-    # the view.
+    # The membership the active lenses claim, uuid -> {path ?cwd?}, as the caller
+    # gathered it outside the search: with both lenses on it is the intersection of
+    # the two sets, so every uuid here is a session the list would show. A running
+    # member carries the cwd its process runs in, which the registry knows for
+    # free; a bookmarked one carries none, because finding it would mean reading a
+    # transcript on a path that must not (member_name resolves what it needs, when
+    # it needs it). Recounts the cut; the lenses themselves are not touched, so
+    # this can arrive on any tick without disturbing the view.
     method set_lens_members {members} {
         set LensMembers $members
         my refresh_lens_note
     }
 
-    # Recount the active lens against its membership: the strip's clause, the cut
-    # members the banner names, and the criterion it offers to relax. With no lens
-    # on, or no membership for it (the model lens has none: a row's model is known
-    # only once its transcript is parsed), nothing is claimed.
+    # Recount the active lenses against their membership: the strip's clause, the
+    # cut members the banner names, and the criterion it offers to relax. With no
+    # lens on, or none that has a membership (the model lens has none: a row's
+    # model is known only once its transcript is parsed), nothing is claimed.
     method refresh_lens_note {} {
-        set lens [::questlog::sessionlist::active_lens $Snapshot]
-        if {$lens eq "" || ![dict size $LensMembers]} { my drop_lens_note; return }
+        set lenses [::questlog::sessionlist::member_lenses $Snapshot]
+        if {![llength $lenses] || ![dict size $LensMembers]} { my drop_lens_note; return }
         set rows [my loaded_rows]
         set c [::questlog::sessionlist::lens_counts \
                    $Snapshot $rows $LensMembers $RunningSet]
-        set label [dict get {running Running bookmarked Bookmarked model Model} $lens]
-        set LensNote "$label · showing [dict get $c shown] of [dict get $c total]"
+        set LensNote "[my lens_phrase $lenses] · showing [dict get $c shown]\
+            of [dict get $c total]"
         set CutMembers [list]
         foreach uuid [::questlog::sessionlist::lens_excluded \
                           $Snapshot $rows $LensMembers] {
@@ -2552,6 +2553,19 @@ oo::class create ::questlog::ui::SessionList {
         set CutReason ""
         my refresh_status
         my refresh_cut_banner
+    }
+
+    # The lenses in words: "Running", "Bookmarked", or "Running and Bookmarked"
+    # when both are on. The conjunction is the honest word for what is on screen -
+    # a row must be running AND bookmarked to pass both lenses - and it is what the
+    # counts beside it are measured against: the membership is the intersection of
+    # the two sets, so a running session that carries no bookmark is neither shown
+    # nor counted as something the search withheld. Naming one lens and dropping
+    # the other would put a count from one sentence under the heading of another.
+    # The strip takes the phrase as it stands and the banner lowercases it into the
+    # adjective on "session", so the two lines cannot name different lenses.
+    method lens_phrase {lenses} {
+        return [join [lmap lens $lenses {string totitle $lens}] " and "]
     }
 
     # The loaded rows as the lens predicate reads them. Built from the node store,
@@ -2681,8 +2695,8 @@ oo::class create ::questlog::ui::SessionList {
         if {![winfo exists $b]} return
         set n [llength $CutMembers]
         if {$n == 0} { pack forget $b; return }
-        set lens [::questlog::sessionlist::active_lens $Snapshot]
-        set noun [expr {$lens eq "bookmarked" ? "bookmarked" : "running"}]
+        set noun [string tolower \
+            [my lens_phrase [::questlog::sessionlist::member_lenses $Snapshot]]]
         set it [expr {$n == 1 ? "it" : "them"}]
         set names [list]
         foreach m [lrange $CutMembers 0 1] { lappend names [my member_name $m] }

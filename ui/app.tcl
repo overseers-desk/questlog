@@ -401,25 +401,31 @@ proc ::questlog::ui::app::run_tick {} {
 
 # ---- what the active lens holds, beyond what the search loaded ----------
 
-# The active lens's whole membership, gathered outside the search and handed to
-# the list, which counts it against the rows it did load and says the cut (see
+# The membership the active lenses claim, gathered outside the search and handed
+# to the list, which counts it against the rows it did load and says the cut (see
 # the lens-cut section of ui/sessions.tcl). Running is free: the live registry
 # knows every session running on this machine, whatever window the search ran
 # with. Bookmarked is the file's +x bit, so its membership is a stat sweep of the
 # corpus - cheap, but never on the lens's own path: it runs here, on the poll and
-# on a filter change, so toggling the lens stays an instant in-place re-filter and
+# on a filter change, so toggling a lens stays an instant in-place re-filter and
 # the count lands a moment behind it. The model lens has no membership outside the
-# loaded rows (a row's model is known only once its transcript is parsed), so it
-# reports none and the strip claims nothing for it.
+# loaded rows (a row's model is known only once its transcript is parsed), so
+# member_lenses leaves it out and the strip claims nothing for it.
+#
+# Each lens gathers its own set; lens_members reduces them to the membership the
+# lenses jointly claim, which with both on is the intersection - the sessions the
+# list would show if the search had loaded them, and nothing else.
 proc ::questlog::ui::app::refresh_lens_members {} {
     variable SessionList
     variable PrevSnapshot
-    set members [dict create]
-    switch -- [::questlog::sessionlist::active_lens $PrevSnapshot] {
-        running    { set members [::questlog::ui::live::running_sessions] }
-        bookmarked { set members [bookmarked_members] }
+    set sets [list]
+    foreach lens [::questlog::sessionlist::member_lenses $PrevSnapshot] {
+        switch -- $lens {
+            running    { lappend sets [::questlog::ui::live::running_sessions] }
+            bookmarked { lappend sets [bookmarked_members] }
+        }
     }
-    $SessionList set_lens_members $members
+    $SessionList set_lens_members [::questlog::sessionlist::lens_members $sets]
 }
 
 # Every bookmarked session on disk, uuid -> {path}: one glob per project folder

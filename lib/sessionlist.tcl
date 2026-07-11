@@ -18,7 +18,8 @@ package require Tcl 9
 # tell-don't-ask all fail.
 
 namespace eval ::questlog::sessionlist {
-    namespace export toggle row_visible lens_counts lens_excluded active_lens
+    namespace export toggle row_visible lens_counts lens_excluded \
+        active_lenses member_lenses lens_members
 }
 
 # One list-view toggle's value from a snapshot, with the toggle's own default
@@ -53,17 +54,17 @@ proc ::questlog::sessionlist::row_visible {snapshot row {running_set {}}} {
     return 1
 }
 
-# What an active lens shows versus what it truly contains. A lens only filters
+# What the active lenses show versus what they truly contain. A lens only filters
 # rows the search loaded, so a genuine member the search's window skipped is
 # invisible and, unsaid, reads as "nothing there". rows is the loaded row list;
-# full_set is the lens's whole membership as a uuid-keyed dict the caller
-# gathers outside the search (the live poll for running_only, a bookmark sweep
-# for bookmarked_only), {} when it has none. Returns shown (loaded rows the
-# toggles admit, asked of row_visible so this count and the list agree), total
-# (full_set's size) and excluded (members with no loaded row - the search's
-# cut, not rows a lens hides: hiding a loaded row is the lens working). With no
-# lens on, or an empty full_set, excluded is 0; a caller without membership
-# context must not be told a cut exists.
+# full_set is the membership the active lenses jointly claim, as a uuid-keyed
+# dict the caller gathers outside the search (lens_members, from the live poll
+# for running_only and a bookmark sweep for bookmarked_only), {} when it has
+# none. Returns shown (loaded rows the toggles admit, asked of row_visible so
+# this count and the list agree), total (full_set's size) and excluded (members
+# with no loaded row - the search's cut, not rows a lens hides: hiding a loaded
+# row is the lens working). With no lens on, or an empty full_set, excluded is 0;
+# a caller without membership context must not be told a cut exists.
 proc ::questlog::sessionlist::lens_counts {snapshot rows full_set {running_set {}}} {
     set shown 0
     foreach row $rows {
@@ -79,7 +80,7 @@ proc ::questlog::sessionlist::lens_counts {snapshot rows full_set {running_set {
 # lens_counts, which counts these - one reading of what the search left behind,
 # not two. Empty with no lens on, or with no membership context.
 proc ::questlog::sessionlist::lens_excluded {snapshot rows full_set} {
-    if {[active_lens $snapshot] eq "" || ![dict size $full_set]} { return [list] }
+    if {![llength [active_lenses $snapshot]] || ![dict size $full_set]} { return [list] }
     set loaded [dict create]
     foreach row $rows { dict set loaded [dict getdef $row uuid ""] 1 }
     set out [list]
@@ -89,14 +90,55 @@ proc ::questlog::sessionlist::lens_excluded {snapshot rows full_set} {
     return $out
 }
 
-# Which lens is narrowing the list: running, bookmarked, model, or "" when none
-# is. The name a caller narrates ("Running - showing 1 of 2") and the one it
-# gathers a membership for. Running and bookmarked are one single-select segment
-# group, so at most one of them is ever set; the model lens rides alongside
-# either, and is named only when neither segment is.
-proc ::questlog::sessionlist::active_lens {snapshot} {
-    if {[toggle $snapshot running_only 0]} { return running }
-    if {[toggle $snapshot bookmarked_only 0]} { return bookmarked }
-    if {[toggle $snapshot model ""] ne ""} { return model }
-    return ""
+# Which lenses are narrowing the list, in the order a caller words them: running,
+# bookmarked, model. Empty when none is, and the list shows every row it loaded.
+# Each lens latches on its own, so any combination is reachable and the list then
+# shows the rows that pass all of them (row_visible ANDs the clauses): both
+# segments on means running AND bookmarked, one set of rows, not two.
+proc ::questlog::sessionlist::active_lenses {snapshot} {
+    set out [list]
+    if {[toggle $snapshot running_only 0]}    { lappend out running }
+    if {[toggle $snapshot bookmarked_only 0]} { lappend out bookmarked }
+    if {[toggle $snapshot model ""] ne ""}    { lappend out model }
+    return $out
+}
+
+# The active lenses that HAVE a membership outside the search - the ones a caller
+# can gather a full set for, and so the only ones that can say what the search
+# left on disk. Running is the live registry, bookmarked is the +x bit; the model
+# lens has neither, because a row's model is known only once its transcript is
+# parsed, and a filter reads no transcript. So the model lens hides loaded rows
+# like any other and claims nothing about what it cannot see.
+proc ::questlog::sessionlist::member_lenses {snapshot} {
+    set out [list]
+    foreach lens [active_lenses $snapshot] {
+        if {$lens in {running bookmarked}} { lappend out $lens }
+    }
+    return $out
+}
+
+# The membership the active lenses jointly claim, out of the sets the caller
+# gathered for member_lenses (a list of uuid-keyed dicts, in that order).
+#
+# With both segments on, a row must be running AND bookmarked to show, so the
+# membership is the INTERSECTION: a session that is running but not bookmarked is
+# not a member of what the list is showing, and counting it would tell the reader
+# the search cut a member it never held. One set is its own membership; no set at
+# all is an empty membership, and a caller with none must not be told a cut
+# exists. A uuid in several sets keeps every key any of them recorded, so a
+# running bookmark still carries the cwd the registry knows for free (which names
+# it without opening its transcript) alongside the path the sweep found on disk.
+proc ::questlog::sessionlist::lens_members {sets} {
+    if {![llength $sets]} { return [dict create] }
+    set out [lindex $sets 0]
+    foreach s [lrange $sets 1 end] {
+        set both [dict create]
+        dict for {uuid m} $out {
+            if {[dict exists $s $uuid]} {
+                dict set both $uuid [dict merge $m [dict get $s $uuid]]
+            }
+        }
+        set out $both
+    }
+    return $out
 }

@@ -58,5 +58,17 @@ check run_and_match   1 [visible $snap $opus $live]
 check run_wrong_model 0 [visible $snap $sonnet $live]
 check match_not_run   0 [visible $snap $opus]
 
+# ---- all three lenses at once: every clause must admit the row ---------------
+# Running and Bookmarked latch independently, so both can be on, and the row that
+# shows is the one that is running AND bookmarked AND the chosen model. Running
+# alone is not enough, and neither is the bookmark: the clauses AND, they do not
+# widen each other.
+set snap [dict create listview \
+    [dict create model {Opus 4.8} running_only 1 bookmarked_only 1]]
+check all_three_match  1 [visible $snap [dict merge $opus {bookmarked 1}] $live]
+check running_not_bm   0 [visible $snap $opus $live]
+check bm_not_running   0 [visible $snap [dict merge $opus {bookmarked 1}]]
+check both_wrong_model 0 [visible $snap [dict merge $sonnet {bookmarked 1}] $live]
+
 puts [expr {$fails ? "FAILED ($fails)" : "PASS"}]
 exit $fails
