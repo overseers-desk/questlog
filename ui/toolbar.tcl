@@ -332,6 +332,33 @@ oo::class create ::questlog::ui::Toolbar {
         my publish
     }
 
+    # Relax one criterion, for the list's cut banner: the lens member it names was
+    # left on disk by exactly this criterion, so dropping it is what brings the
+    # session into the next load. `search` drops every content criterion, not the
+    # search box alone - a file, tool or regex clause decides what loads just as
+    # the typed terms do, and clearing half of them would leave the session as
+    # invisible as before while the banner claimed otherwise. One publish, as with
+    # every other control here.
+    method widen {criterion} {
+        switch -- $criterion {
+            since   { set WindowVar all }
+            subtree {
+                dict set Clauses subtree {}
+                my rebuild_clause_rows
+            }
+            search {
+                set SearchVar ""
+                set LastQueryText ""
+                foreach k {file tool pattern} { dict set Clauses $k {} }
+                my rebuild_clause_rows
+                my refresh_add_rail
+            }
+            min_turns { set MinTurnsVar 1 }
+            default   { return }
+        }
+        my publish
+    }
+
     # The search-scope picker. The value is the region-spec the search terms are
     # matched in (parsed by lib/search.tcl parse_regions); the label is the
     # friendly word shown on the button.

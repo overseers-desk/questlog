@@ -18,7 +18,7 @@ package require Tcl 9
 # tell-don't-ask all fail.
 
 namespace eval ::questlog::sessionlist {
-    namespace export toggle row_visible lens_counts
+    namespace export toggle row_visible lens_counts lens_excluded active_lens
 }
 
 # One list-view toggle's value from a snapshot, with the toggle's own default
@@ -69,16 +69,34 @@ proc ::questlog::sessionlist::lens_counts {snapshot rows full_set {running_set {
     foreach row $rows {
         if {[row_visible $snapshot $row $running_set]} { incr shown }
     }
-    set excluded 0
-    set active [expr {[toggle $snapshot running_only 0]
-                      || [toggle $snapshot bookmarked_only 0]
-                      || [toggle $snapshot model ""] ne ""}]
-    if {$active && [dict size $full_set]} {
-        set loaded [dict create]
-        foreach row $rows { dict set loaded [dict getdef $row uuid ""] 1 }
-        foreach uuid [dict keys $full_set] {
-            if {![dict exists $loaded $uuid]} { incr excluded }
-        }
+    return [dict create shown $shown total [dict size $full_set] \
+        excluded [llength [lens_excluded $snapshot $rows $full_set]]]
+}
+
+# The same cut as lens_counts' excluded, by name: the uuids in full_set that no
+# loaded row carries. A caller that must NAME what it is missing (the banner
+# offering to load it) needs them, and a caller that must count them asks
+# lens_counts, which counts these - one reading of what the search left behind,
+# not two. Empty with no lens on, or with no membership context.
+proc ::questlog::sessionlist::lens_excluded {snapshot rows full_set} {
+    if {[active_lens $snapshot] eq "" || ![dict size $full_set]} { return [list] }
+    set loaded [dict create]
+    foreach row $rows { dict set loaded [dict getdef $row uuid ""] 1 }
+    set out [list]
+    foreach uuid [dict keys $full_set] {
+        if {![dict exists $loaded $uuid]} { lappend out $uuid }
     }
-    return [dict create shown $shown total [dict size $full_set] excluded $excluded]
+    return $out
+}
+
+# Which lens is narrowing the list: running, bookmarked, model, or "" when none
+# is. The name a caller narrates ("Running - showing 1 of 2") and the one it
+# gathers a membership for. Running and bookmarked are one single-select segment
+# group, so at most one of them is ever set; the model lens rides alongside
+# either, and is named only when neither segment is.
+proc ::questlog::sessionlist::active_lens {snapshot} {
+    if {[toggle $snapshot running_only 0]} { return running }
+    if {[toggle $snapshot bookmarked_only 0]} { return bookmarked }
+    if {[toggle $snapshot model ""] ne ""} { return model }
+    return ""
 }

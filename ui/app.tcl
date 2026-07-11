@@ -184,7 +184,8 @@ proc ::questlog::ui::app::start {root {seed {}}} {
         [namespace code on_scan_path] \
         [namespace code on_search_cancel] \
         [namespace code on_subagents] \
-        [namespace code on_subagent_cost]]
+        [namespace code on_subagent_cost] \
+        [namespace code on_widen]]
     pack $list_frame.s -side top -fill both -expand 1
     # The toolbar's model lens offers the models the loaded rows carry, so it
     # reads them off the list. The Toolbar is built first (it heads the pane), so
@@ -388,10 +389,68 @@ proc ::questlog::ui::app::run_tick {} {
     variable RunTimer
     set Running [::questlog::ui::live::running_uuids]
     $SessionList reconcile_running $Running
+    # The same tick refreshes the active lens's membership, so a session that
+    # starts running outside the search's window is counted (and named) within one
+    # poll of starting, rather than staying silently absent.
+    refresh_lens_members
     # Heartbeat backstop: if a done-signal is ever missed, the next tick settles
     # the spinner once the liveness flags have all cleared.
     update_spinner
     set RunTimer [after [::questlog::config::get running_poll_ms] [namespace code run_tick]]
+}
+
+# ---- what the active lens holds, beyond what the search loaded ----------
+
+# The active lens's whole membership, gathered outside the search and handed to
+# the list, which counts it against the rows it did load and says the cut (see
+# the lens-cut section of ui/sessions.tcl). Running is free: the live registry
+# knows every session running on this machine, whatever window the search ran
+# with. Bookmarked is the file's +x bit, so its membership is a stat sweep of the
+# corpus - cheap, but never on the lens's own path: it runs here, on the poll and
+# on a filter change, so toggling the lens stays an instant in-place re-filter and
+# the count lands a moment behind it. The model lens has no membership outside the
+# loaded rows (a row's model is known only once its transcript is parsed), so it
+# reports none and the strip claims nothing for it.
+proc ::questlog::ui::app::refresh_lens_members {} {
+    variable SessionList
+    variable PrevSnapshot
+    set members [dict create]
+    switch -- [::questlog::sessionlist::active_lens $PrevSnapshot] {
+        running    { set members [::questlog::ui::live::running_sessions] }
+        bookmarked { set members [bookmarked_members] }
+    }
+    $SessionList set_lens_members $members
+}
+
+# Every bookmarked session on disk, uuid -> {path cwd}: one glob per project
+# folder and one stat per session file, no file reads. The +x bit is the
+# bookmark, so this is the Bookmarked lens's whole membership, window or no
+# window. The folder's cwd is resolved only for a folder that holds one, and the
+# resolver memoises, so a corpus of unbookmarked projects costs nothing.
+proc ::questlog::ui::app::bookmarked_members {} {
+    variable Scan
+    set out [dict create]
+    set root [::questlog::path::projects_root]
+    if {![file isdirectory $root]} { return $out }
+    foreach folder [glob -nocomplain -directory $root -type d -- *] {
+        set cwd ""
+        foreach path [glob -nocomplain -directory $folder -- *.jsonl] {
+            if {![file executable $path]} continue
+            if {$cwd eq ""} { set cwd [$Scan resolve_folder [file tail $folder]] }
+            dict set out [file rootname [file tail $path]] \
+                [dict create path $path cwd $cwd]
+        }
+    }
+    return $out
+}
+
+# The cut banner's widen escape: relax the criterion that left the named session
+# on disk. The criterion is the toolbar's own state, so the toolbar drops it and
+# publishes; the list then rebuilds on the resulting snapshot like it does for any
+# other filter change, and the session loads with the rest.
+proc ::questlog::ui::app::on_widen {criterion} {
+    variable Toolbar
+    $Toolbar widen $criterion
 }
 
 # ---- toolbar callback --------------------------------------------------
@@ -431,6 +490,11 @@ proc ::questlog::ui::app::on_filter {snapshot} {
         refresh_status
         update_spinner
         set PrevSnapshot $snapshot
+        # The lens just changed, so its membership did: the list re-filters in
+        # place from the rows it holds (no disk), and this hands it the set to
+        # count that against. Running's set is free; Bookmarked's stat sweep runs
+        # after the re-filter has already painted, never before it.
+        refresh_lens_members
         return
     }
 
@@ -491,6 +555,9 @@ proc ::questlog::ui::app::on_filter {snapshot} {
     refresh_status
     update_spinner
     set PrevSnapshot $snapshot
+    # A new scope or search loads a different set of rows, so what the lens is
+    # missing has changed even though the lens has not.
+    refresh_lens_members
 }
 
 # ---- scan callbacks ----------------------------------------------------
@@ -638,10 +705,14 @@ proc ::questlog::ui::app::on_scan_done {scanned} {
     variable StatusMode
     variable CriteriaActive
     variable ScanActive
+    variable SessionList
     set ScanActive 0
     if {!$CriteriaActive} { set StatusMode browse }
     refresh_status
     update_spinner
+    # The loaded set is final, so recount what the lens is missing from it now,
+    # rather than leave a mid-scan count standing until the next poll tick.
+    $SessionList refresh_lens_note
 }
 
 # ---- search callbacks --------------------------------------------------

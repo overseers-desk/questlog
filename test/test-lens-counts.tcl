@@ -70,5 +70,31 @@ check bm_cut_shown    1 [dict get $c shown]
 check bm_cut_total    2 [dict get $c total]
 check bm_cut_excluded 1 [dict get $c excluded]
 
+# ---- lens_excluded names the same cut lens_counts counts --------------------
+# The banner must NAME what the strip counts, so the two readings are one: the
+# excluded count is the length of the excluded list, always.
+proc excluded {snapshot rows full_set} {
+    return [::questlog::sessionlist::lens_excluded $snapshot $rows $full_set]
+}
+set snap [dict create listview [dict create running_only 1]]
+set live [dict create aaaa p dddd p ffff p]
+check named_cut [list dddd ffff] [excluded $snap $rows $live]
+check named_cut_agrees_with_count \
+    [dict get [counts $snap $rows $live [dict create aaaa p dddd p ffff p]] excluded] \
+    [llength [excluded $snap $rows $live]]
+check named_no_lens {} [excluded [dict create listview {}] $rows $live]
+check named_no_context {} [excluded $snap $rows [dict create]]
+
+# ---- active_lens: which lens the caller narrates and gathers a set for -------
+check lens_none  "" [::questlog::sessionlist::active_lens [dict create listview {}]]
+check lens_run   running \
+    [::questlog::sessionlist::active_lens [dict create listview {running_only 1}]]
+check lens_bm    bookmarked \
+    [::questlog::sessionlist::active_lens [dict create listview {bookmarked_only 1}]]
+check lens_model model \
+    [::questlog::sessionlist::active_lens [dict create listview {model {Opus 4.8}}]]
+# A snapshot with no listview key at all is a lens-free one, not an error.
+check lens_bare  "" [::questlog::sessionlist::active_lens [dict create since 7d]]
+
 puts [expr {$fails ? "FAILED ($fails)" : "PASS"}]
 exit $fails

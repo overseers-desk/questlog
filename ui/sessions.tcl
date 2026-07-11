@@ -73,6 +73,10 @@ proc ::questlog::ui::session_columns {} {
 
 oo::class create ::questlog::ui::SessionList {
     superclass ::streamtree::StreamTree
+    # The list arms one deferred call of its own (the debounced view rebuild), and
+    # a raw [after] naming this object would fire into its remains after a destroy:
+    # leash's `later` ties the arm to the object's life (leash-1.0.tm).
+    mixin leash
     # Shared with the StreamTree engine (same per-object variables): the widget
     # refs, the node store, the column geometry and the sort state.
     variable Top
@@ -102,10 +106,17 @@ oo::class create ::questlog::ui::SessionList {
     variable OnBookmarkSet    ;# cb: paths -> flip the +x bit across a selection
     variable OnRename         ;# cb: path -> app rename router (dialog + apply + refresh)
     variable OnScanPath       ;# cb: path -> row (synchronous single-file scan)
+    variable OnWiden          ;# cb: criterion -> relax it in the toolbar and republish
     variable Snapshot
     variable CriteriaActive
     variable RunningSet       ;# dict uuid -> 1, replaced wholesale each tick
     variable PrevRunning      ;# the prior tick's running set, to redraw only the rows that flipped
+    variable LensMembers      ;# dict uuid -> {path cwd}: the active lens's whole membership
+    variable LensNote         ;# the strip's lens clause, "" when no lens or no membership
+    variable CutMembers       ;# the members with no loaded row, as {path cwd resolved} dicts
+    variable CutReason        ;# the criterion that cut them: subtree|search|since|min_turns|""
+    variable Pinned           ;# dict path -> 1: sessions the reader pulled in past the search
+    variable ViewRebuildTimer ;# after-id of the debounced hidden-aware rebuild, or ""
     variable Query            ;# {terms <list> nocase 0|1} for hit highlighting
     variable HitTags
     # Domain indices into the node store: a folder name or a session/subagent
@@ -126,10 +137,14 @@ oo::class create ::questlog::ui::SessionList {
     variable OnSubagents      ;# cb: parent path -> list of child row dicts
     variable OnSubagentCost   ;# cb: child path -> start the cost pass for it
 
+    # on_widen is optional: without it the cut banner still names what the search
+    # left behind and still offers to load it (that is this object's own doing),
+    # and only the widen escape - which relaxes a toolbar criterion, and so needs
+    # the toolbar - is absent.
     constructor {parent resolve_cb lookup_cb on_open on_move_request \
                  on_drop_move on_bookmark_toggle on_bookmark_set on_rename \
                  on_scan_path cancel_cb \
-                 on_subagents on_subagent_cost} {
+                 on_subagents on_subagent_cost {on_widen ""}} {
         set Top $parent
         set ResolveFolder $resolve_cb
         set LookupSession $lookup_cb
@@ -143,6 +158,7 @@ oo::class create ::questlog::ui::SessionList {
         set CancelCb $cancel_cb
         set OnSubagents $on_subagents
         set OnSubagentCost $on_subagent_cost
+        set OnWiden $on_widen
         set StatusVar "Idle"
         set StatusBase ""
         set TotalCost 0.0
@@ -150,6 +166,12 @@ oo::class create ::questlog::ui::SessionList {
         set CriteriaActive 0
         set RunningSet [dict create]
         set PrevRunning [dict create]
+        set LensMembers [dict create]
+        set LensNote ""
+        set CutMembers [list]
+        set CutReason ""
+        set Pinned [dict create]
+        set ViewRebuildTimer ""
         set Query [dict create terms [list] nocase 0]
         set SelectedSet [dict create]
         set SelectAnchor ""
@@ -277,6 +299,8 @@ oo::class create ::questlog::ui::SessionList {
         pack $Top.bar.status -side left -padx 4 -pady 2
         ttk::button $Top.bar.cancel -text "Cancel" -command [list [self] cancel]
         pack $Top.bar.cancel -side right -padx 4 -pady 2
+
+        my build_cut_banner
 
         # The list strip: it sits between the status bar and the body's
         # column-header strip, taking that strip's #ececec colour so it reads as
@@ -487,6 +511,13 @@ oo::class create ::questlog::ui::SessionList {
         set SelectAnchor ""
         set TotalCost 0.0
         set StatusBase ""
+        # The pinned sessions were pulled in past the old search; the new one has
+        # its own answer. The lens membership survives (it is gathered outside the
+        # search), but its cut cannot be recounted against a list that has not
+        # been filled yet - the reconcile that follows the fill recounts it, so the
+        # banner never flashes a cut that the new search does load.
+        set Pinned [dict create]
+        my drop_lens_note
         my refresh_status
     }
 
@@ -504,6 +535,9 @@ oo::class create ::questlog::ui::SessionList {
     method apply_listview {snapshot} {
         set Snapshot $snapshot
         set CriteriaActive [::questlog::ui::any_criteria $snapshot]
+        # reconcile_running re-derives the shown set from the loaded rows alone and
+        # ends by recounting the lens against its membership, so the new lens says
+        # what it shows and what it is missing in the same turn, with no disk read.
         my reconcile_running $RunningSet
     }
 
@@ -561,11 +595,14 @@ oo::class create ::questlog::ui::SessionList {
         $Text configure -state normal
         my anchor_save
         my model_add_session $path $row
-        set shown [my session_shown $path $row]
-        my sflagset $path hidden [expr {!$shown}]
         # The model holds every in-scope session; the toggles decide only whether it is
-        # drawn, so a later toggle hides/shows it in place without a re-scan.
-        if {$shown && [my folder_expanded [dict get $row folder]]} {
+        # drawn (model_add_session flagged it), so a later toggle hides/shows it in
+        # place without a re-scan.
+        if {[my sflag $path hidden]} {
+            # It landed hidden under a lens, so its folder may now be a heading
+            # over nothing; the debounced rebuild settles that.
+            my schedule_view_rebuild
+        } elseif {[my folder_expanded [dict get $row folder]]} {
             my render_session $path
         }
         my anchor_restore
@@ -616,17 +653,18 @@ oo::class create ::questlog::ui::SessionList {
         if {![my has_session $path]} {
             set row [{*}$LookupSession $path]
             if {$row eq ""} { set row [dict create folder [dict get $first folder]] }
-            my model_add_session $path $row [dict get $first lineoff]
-            # A streamed result obeys the view toggles from its first paint,
-            # the same three lines on_scan_row applies - not two seconds
+            # A streamed result obeys the view toggles from its first paint (the
+            # hidden flag is settled inside model_add_session) - not two seconds
             # later when the running-reconcile tick recomputes visibility.
-            my sflagset $path hidden [expr {![my session_shown $path $row]}]
+            my model_add_session $path $row [dict get $first lineoff]
         }
         # Search folders are expanded, so render the session if it is visible
-        # and not yet drawn.
-        if {![my sflag $path hidden] \
-            && [my folder_expanded [my sget $path folder]] \
-            && ![my sflag $path rendered]} {
+        # and not yet drawn. A result a lens hides leaves its folder a heading
+        # over nothing until the debounced rebuild re-derives the view.
+        if {[my sflag $path hidden]} {
+            my schedule_view_rebuild
+        } elseif {[my folder_expanded [my sget $path folder]] \
+                  && ![my sflag $path rendered]} {
             my render_session $path
         }
         set cap [::questlog::config::get snippets_per_session]
@@ -685,6 +723,12 @@ oo::class create ::questlog::ui::SessionList {
             sub_total 0 children_listed 0 all_child_paths [list]]]
         dict set PathNode $path $sid
         my node_set $fid children [linsert [my node_field $fid children] end $sid]
+        # Whether the lenses admit this row is settled here, before the folder
+        # heading below is redrawn from it: a row added hidden and flagged after
+        # the fact is counted into a heading that then shows nothing under it, and
+        # the heading reads "(1)" over an empty folder. The model holds every
+        # in-scope session either way; the flag only decides what paints.
+        my node_set $sid hidden [expr {![my session_shown $path $row]}]
 
         # Enumerate and trigger subagents' cost if there are any
         if {[dict getdef $row has_subagents 0]} {
@@ -1163,9 +1207,8 @@ oo::class create ::questlog::ui::SessionList {
         if {![my has_session $parent]} {
             set row [{*}$LookupSession $parent]
             if {$row eq ""} { set row [dict create folder $folder] }
-            my model_add_session $parent $row
             # The same first-paint toggle discipline as render_session_matches.
-            my sflagset $parent hidden [expr {![my session_shown $parent $row]}]
+            my model_add_session $parent $row
         }
         my sset $parent has_subagents 1
         if {![my sflag $parent hidden] \
@@ -1574,12 +1617,34 @@ oo::class create ::questlog::ui::SessionList {
         return $src
     }
 
-    # True while a list-view toggle is narrowing the view, so some loaded
-    # sessions may be hidden. When none is, the model count is exact and the
-    # per-session walk below is skipped.
+    # True while a lens is narrowing the view, so some loaded sessions may be
+    # hidden. When none is, the model count is exact and the per-session walk
+    # below is skipped. Every lens counts, the model lens included: it hides
+    # loaded rows exactly as the segments do, and a folder whose rows it all hides
+    # must not go on reporting them.
     method any_view_toggle {} {
-        return [expr {[::questlog::sessionlist::toggle $Snapshot running_only 0]
-                   || [::questlog::sessionlist::toggle $Snapshot bookmarked_only 0]}]
+        return [expr {[::questlog::sessionlist::active_lens $Snapshot] ne ""}]
+    }
+
+    # A row that arrives while a lens is on lands hidden, and the folder created
+    # for it draws a heading with nothing under it: rows stream in one at a time
+    # (the scan, the search) and no step in that path re-derives the view, so the
+    # heading stands over an empty folder claiming a size and a cost. rebuild is
+    # the pass that does re-derive it (hidden-aware, dropping a folder with no
+    # shown row), so ask for one - debounced, so a flood of streamed rows costs one
+    # rebuild rather than one per row.
+    method schedule_view_rebuild {} {
+        if {![my any_view_toggle]} return
+        if {$ViewRebuildTimer ne ""} { my forget $ViewRebuildTimer }
+        set ViewRebuildTimer [my later [::questlog::config::get resort_debounce_ms] \
+            [list [self] do_view_rebuild]]
+    }
+
+    method do_view_rebuild {} {
+        set ViewRebuildTimer ""
+        if {![my any_view_toggle]} return
+        my rebuild
+        my refresh_lens_note
     }
 
     # The number of a folder's sessions that are currently shown (not hidden by
@@ -2171,14 +2236,14 @@ oo::class create ::questlog::ui::SessionList {
                 if {[llength $subtree] > 0 \
                     && ![::questlog::filter::row_subtree_match $row $subtree]} continue
                 my model_add_session $path $row
-                set shown [my session_shown $path $row]
-                my sflagset $path hidden [expr {!$shown}]
                 # Drawing is the dirty pass's job below: rebuild is
                 # hidden-aware and creates the folder heading, which this
                 # import cannot assume exists (under running_only a folder
                 # whose every row is hidden has no heading in the buffer, and
                 # rendering into it dies on a bad text index).
-                if {$shown} { dict set imported [dict get $row folder] 1 }
+                if {![my sflag $path hidden]} {
+                    dict set imported [dict get $row folder] 1
+                }
             }
         }
         set dirty $imported
@@ -2200,8 +2265,11 @@ oo::class create ::questlog::ui::SessionList {
                 # session OUTSIDE the subtree scope does not.
                 set in_subtree [expr {[llength $subtree] == 0 || $row eq "" \
                     || [::questlog::filter::row_subtree_match $row $subtree]}]
-                set retained [expr {$in_subtree \
-                    && (($row ne "" && [my row_matches_snapshot $row]) || $is_running)}]
+                # A session the reader pulled in through the cut banner stays,
+                # whatever the scope says: they named it and asked for it, and
+                # dropping it on the next tick would answer them by taking it away.
+                set retained [expr {[dict exists $Pinned $path] || ($in_subtree \
+                    && (($row ne "" && [my row_matches_snapshot $row]) || $is_running))}]
             }
             if {!$retained} { my forget_session $path; continue }
             set now_hidden [expr {![my session_shown $path $row]}]
@@ -2234,6 +2302,10 @@ oo::class create ::questlog::ui::SessionList {
             # non-default sort needs a re-render to reseat them.
             if {[my session_count] != $before} { my schedule_resort }
         }
+        # The loaded set and the running set have both just settled, so this is
+        # where the lens's cut is recounted: every tick, and every filter change
+        # that routes through here.
+        my refresh_lens_note
         my check_invariant reconcile_running
     }
 
@@ -2305,6 +2377,7 @@ oo::class create ::questlog::ui::SessionList {
         }
         dict unset PathNode $path
         dict unset SelectedSet $path
+        dict unset Pinned $path
         if {$SelectAnchor eq $path} { set SelectAnchor "" }
     }
 
@@ -2416,6 +2489,290 @@ oo::class create ::questlog::ui::SessionList {
         if {$m eq ""} { $Text yview moveto 0 } else { catch {$Text yview $m} }
     }
 
+    # ---- the lens cut ------------------------------------------------
+    #
+    # A lens shows a subset of the rows the SEARCH loaded, so a session that
+    # genuinely belongs to the lens but that the search never read is invisible.
+    # Running is the case that bites: a session burning tokens right now, outside
+    # the time window, is not in the list, and an unqualified "1 session" tells
+    # the reader nothing else is running. The cure is not to let the lens read
+    # disk (that would make it a search, and a search drops the selection): it is
+    # to count what the lens is missing and say so, and to let the reader ask for
+    # the missing session by name.
+    #
+    # The membership comes from outside the search and is pushed in by the poll
+    # (set_lens_members): the live registry for Running, which knows every session
+    # running on this machine whatever the window was, and a bookmark sweep for
+    # Bookmarked. lens_counts does the arithmetic; the strip says the cut, and the
+    # banner names it and offers the two escapes.
+
+    # The active lens's whole membership, uuid -> {path cwd}, as the caller
+    # gathered it outside the search. Recounts the cut; the lens itself is not
+    # touched, so this can arrive on any tick without disturbing the view.
+    method set_lens_members {members} {
+        set LensMembers $members
+        my refresh_lens_note
+    }
+
+    # Recount the active lens against its membership: the strip's clause, the cut
+    # members the banner names, and the criterion it offers to relax. With no lens
+    # on, or no membership for it (the model lens has none: a row's model is known
+    # only once its transcript is parsed), nothing is claimed.
+    method refresh_lens_note {} {
+        set lens [::questlog::sessionlist::active_lens $Snapshot]
+        if {$lens eq "" || ![dict size $LensMembers]} { my drop_lens_note; return }
+        set rows [my loaded_rows]
+        set c [::questlog::sessionlist::lens_counts \
+                   $Snapshot $rows $LensMembers $RunningSet]
+        set label [dict get {running Running bookmarked Bookmarked model Model} $lens]
+        set LensNote "$label · showing [dict get $c shown] of [dict get $c total]"
+        set CutMembers [list]
+        foreach uuid [::questlog::sessionlist::lens_excluded \
+                          $Snapshot $rows $LensMembers] {
+            set m [dict get $LensMembers $uuid]
+            dict set m resolved [my member_file $m]
+            lappend CutMembers $m
+        }
+        set CutReason ""
+        if {[llength $CutMembers]} {
+            append LensNote " · [llength $CutMembers] outside your search"
+            set CutReason [my cut_reason [lindex $CutMembers 0]]
+        }
+        my refresh_status
+        my refresh_cut_banner
+    }
+
+    method drop_lens_note {} {
+        set LensNote ""
+        set CutMembers [list]
+        set CutReason ""
+        my refresh_status
+        my refresh_cut_banner
+    }
+
+    # The loaded rows as the lens predicate reads them. Built from the node store,
+    # not from the scanner's cache, so every row the list is holding is counted:
+    # the number in the strip and the rows on screen are the one set.
+    method loaded_rows {} {
+        set rows [list]
+        foreach path [my all_session_paths] {
+            lappend rows [dict create \
+                uuid       [my sget $path uuid] \
+                model      [my sget $path model] \
+                bookmarked [my session_bookmarked $path]]
+        }
+        return $rows
+    }
+
+    # Which criterion left this member on disk, as the key the banner words and
+    # the widen button relaxes. A member with no transcript at all blames nothing:
+    # the session is running but has not written a line, so no criterion excluded
+    # it and no widening would bring it in. Otherwise the criteria are asked in
+    # the order they bind: the subtree scope is hard (even a running session
+    # outside it never surfaces, see reconcile_running), then the content criteria
+    # (with a search active the matches decide what loads, and a session with no
+    # hit is not among them), then the recency window, then the min-turns floor.
+    method cut_reason {member} {
+        if {[dict getdef $member resolved ""] eq ""} { return "" }
+        set subtree [dict getdef $Snapshot subtree {}]
+        if {[llength $subtree] > 0 && ![my member_in_subtree $member $subtree]} {
+            return subtree
+        }
+        if {$CriteriaActive} { return search }
+        if {[::questlog::filter::cutoff_for $Snapshot] > 0} { return since }
+        if {[dict getdef $Snapshot min_turns 1] > 1} { return min_turns }
+        return ""
+    }
+
+    # Is the member inside the folder scope? The live registry records the cwd the
+    # session runs in, which answers it outright; a member with no cwd (a bookmark
+    # sweep records none) falls back to its row if the model has one, and finally
+    # to its encoded folder name, the same evidence the scanner's walk uses.
+    method member_in_subtree {member subtree} {
+        set cwd [dict getdef $member cwd ""]
+        if {$cwd ne ""} { return [::questlog::filter::in_subtree_of $cwd $subtree] }
+        set path [dict get $member path]
+        set row [{*}$LookupSession $path]
+        if {$row ne ""} { return [::questlog::filter::row_subtree_match $row $subtree] }
+        return [::questlog::filter::folder_subtree_candidate \
+                    [file tail [file dirname $path]] $subtree]
+    }
+
+    # The member's transcript on disk, or "" when there is none to load. The live
+    # registry names where the process would write; a session the manager has
+    # moved lives elsewhere under the same file name, so look for it by name
+    # across the projects (a glob, no reads). A session that has not written a
+    # line yet has no file at all, and nothing can show it.
+    method member_file {member} {
+        set path [dict get $member path]
+        if {[file isfile $path]} { return $path }
+        foreach hit [glob -nocomplain -directory [::questlog::path::projects_root] \
+                         -- */[file tail $path]] {
+            if {[file isfile $hit]} { return $hit }
+        }
+        return ""
+    }
+
+    # A missing member's name for the banner. The registry carries the cwd, so the
+    # project it runs in names it with no disk read; a member the model happens to
+    # know (a bookmarked row loaded under another lens) is named by its title. The
+    # uuid head is the last resort.
+    method member_name {member} {
+        set resolved [dict getdef $member resolved ""]
+        if {$resolved ne ""} {
+            set row [{*}$LookupSession $resolved]
+            if {$row ne "" && [dict getdef $row slug ""] ne ""} {
+                return [dict get $row slug]
+            }
+        }
+        set cwd [dict getdef $member cwd ""]
+        if {$cwd ne ""} { return [::questlog::path::pretty_home $cwd] }
+        return [string range [file rootname [file tail [dict get $member path]]] 0 7]
+    }
+
+    method build_cut_banner {} {
+        set b $Top.cut
+        ttk::frame $b -style Cut.TFrame -padding {8 3}
+        ttk::label $b.msg -style Cut.TLabel -anchor w
+        # The list column can be narrower than the sentence, so wrap the message
+        # to the room the escapes leave: a cramped pane then costs the banner a
+        # second line, never the half of the sentence that names the session. The
+        # width is taken from the BANNER, whose width the parent imposes - taking
+        # it from the label would feed the label's own re-wrap back into it and
+        # spin the event loop.
+        bind $b <Configure> [list [self] wrap_cut_message %w]
+        ttk::button $b.show -style CutAct.TButton -takefocus 0 \
+            -command [list [self] show_excluded]
+        ttk::button $b.widen -style CutAct.TButton -takefocus 0 \
+            -command [list [self] widen_cut]
+        # Nothing is packed here. refresh_cut_banner raises the banner only while
+        # there is a cut to report, and packs the escapes BEFORE the message: pack
+        # gives each slave its room in order, so a message longer than the column
+        # is wide would otherwise leave the two buttons no width at all, and the
+        # escapes - the point of the banner - would be the first thing off-screen.
+    }
+
+    # Say the cut in one line: how many members the search left behind, which they
+    # are, and what excluded them. Raised only while the cut is non-zero, so the
+    # banner's presence is itself the signal.
+    method refresh_cut_banner {} {
+        set b $Top.cut
+        if {![winfo exists $b]} return
+        set n [llength $CutMembers]
+        if {$n == 0} { pack forget $b; return }
+        set lens [::questlog::sessionlist::active_lens $Snapshot]
+        set noun [expr {$lens eq "bookmarked" ? "bookmarked" : "running"}]
+        set it [expr {$n == 1 ? "it" : "them"}]
+        set names [list]
+        foreach m [lrange $CutMembers 0 1] { lappend names [my member_name $m] }
+        set who [join $names ", "]
+        if {$n > [llength $names]} {
+            append who " and [expr {$n - [llength $names]}] more"
+        }
+        $b.msg configure -text "$n $noun session[expr {$n == 1 ? {} : {s}}]\
+            outside your search: $who. [my reason_phrase $CutReason $it]"
+        # Show it reads the named transcripts - a disk read, which is the whole
+        # point: the reader asked for exactly these files. Nothing to read, no
+        # button.
+        if {[llength [my loadable_members]] == 0} {
+            pack forget $b.show
+        } else {
+            $b.show configure -text [expr {$n == 1 ? "Show it" : "Show them"}]
+            pack $b.show -side right -padx {6 0}
+        }
+        set widen [my widen_label $CutReason]
+        if {$widen eq "" || $OnWiden eq ""} {
+            pack forget $b.widen
+        } else {
+            $b.widen configure -text $widen
+            pack $b.widen -side right
+        }
+        # The message last, so it fills what the escapes leave and is the thing
+        # that clips in a narrow column.
+        pack $b.msg -side left -fill x -expand 1
+        pack $b -side top -fill x -after $Top.bar
+    }
+
+    # Wrap the message into the banner's width less what the two escapes take, so
+    # the buttons keep their room and the sentence flows under itself. Written only
+    # when it changes: a re-wrap re-lays the banner, which calls this straight back.
+    method wrap_cut_message {w} {
+        set room [expr {$w - [winfo reqwidth $Top.cut.show] \
+                           - [winfo reqwidth $Top.cut.widen] - 30}]
+        if {$room < 80} { set room 80 }
+        if {[$Top.cut.msg cget -wraplength] == $room} return
+        $Top.cut.msg configure -wraplength $room
+    }
+
+    method loadable_members {} {
+        set out [list]
+        foreach m $CutMembers {
+            if {[dict getdef $m resolved ""] ne ""} { lappend out $m }
+        }
+        return $out
+    }
+
+    method reason_phrase {reason it} {
+        switch -- $reason {
+            subtree   { return "The folder scope excluded $it." }
+            search    { return "Your search terms excluded $it." }
+            since     { return "The time window excluded $it." }
+            min_turns { return "The min-turns floor excluded $it." }
+            default   { return "No transcript on disk to load yet." }
+        }
+    }
+
+    method widen_label {reason} {
+        return [dict getdef {
+            subtree   "Clear the folder scope"
+            search    "Clear the search"
+            since     "Clear the time window"
+            min_turns "Clear the min-turns floor"
+        } $reason ""]
+    }
+
+    # The escape that reads disk, and the only one here that does: load exactly the
+    # sessions the search left behind, because the reader asked for them by name.
+    # Each is scanned in (a single-file read), pinned so the next reconcile does
+    # not put it back out of scope, and drawn in its folder. The lens is not
+    # touched and needs no exemption: a running session admitted under the Running
+    # lens passes row_visible on its own.
+    method show_excluded {} {
+        set added 0
+        foreach m [my loadable_members] {
+            set path [dict get $m resolved]
+            set row [{*}$OnScanPath $path]
+            if {$row eq "" || ![dict size $row]} continue
+            # OnScanPath republishes the row through the scanner, so it may have
+            # entered the model (and left the widget disabled) on the way; add it
+            # only if it did not, and re-assert the state the inserts below need.
+            $Text configure -state normal
+            if {![my has_session $path]} { my model_add_session $path $row }
+            $Text configure -state disabled
+            dict set Pinned $path 1
+            my open_folder_node [my sget $path folder]
+            set added 1
+        }
+        # rebuild is hidden-aware and owns its own widget state: it reseats every
+        # folder from the store, so the new row lands in its place under the lens
+        # rather than being appended past the list's end.
+        if {$added} { my rebuild }
+        my refresh_lens_note
+    }
+
+    # Mark a folder open in the store without drawing it; the rebuild that follows
+    # draws its shown rows. A browse folder is created collapsed, and a session
+    # pulled in behind a collapsed heading would be loaded and still invisible.
+    method open_folder_node {folder} {
+        if {![my has_folder $folder]} return
+        my node_set [my fid $folder] expanded 1
+    }
+
+    method widen_cut {} {
+        if {$OnWiden eq "" || $CutReason eq ""} return
+        {*}$OnWiden $CutReason
+    }
+
     # ---- status ------------------------------------------------------
 
     method set_progress {done total matches} {
@@ -2428,7 +2785,9 @@ oo::class create ::questlog::ui::SessionList {
         } else {
             set StatusBase "Done. $total sessions, $matches matches."
         }
-        my refresh_status
+        # The result set is final, so the lens's shown count is too: recount it
+        # here rather than leave the strip a poll tick behind the answer.
+        my refresh_lens_note
     }
     method cancel {} {
         if {$CancelCb ne ""} { {*}$CancelCb }
@@ -2436,21 +2795,17 @@ oo::class create ::questlog::ui::SessionList {
         my refresh_status
     }
 
-    # Recompute the visible status string from the current base + total.
-    # The total is hidden when zero so a fresh app or a rate-table miss
-    # does not show "$0.00" as a misleading aggregate. The bullet
-    # separator only appears between a non-empty base and the total, so
-    # a browse-mode scan (base empty) shows the dollar amount alone.
+    # Recompute the visible status string: what the list is doing, what the active
+    # lens is showing out of what it holds, and what it all cost. Each clause is
+    # omitted when it has nothing to say - a zero total would read as a misleading
+    # "$0.00" aggregate, and a list under no lens is showing everything it loaded -
+    # so the bullets only ever separate clauses that are there.
     method refresh_status {} {
-        set total ""
-        if {$TotalCost > 0} { set total [::questlog::cost::format_usd $TotalCost] }
-        if {$StatusBase ne "" && $total ne ""} {
-            set StatusVar "$StatusBase · $total"
-        } elseif {$total ne ""} {
-            set StatusVar $total
-        } else {
-            set StatusVar $StatusBase
-        }
+        set parts [list]
+        if {$StatusBase ne ""} { lappend parts $StatusBase }
+        if {$LensNote ne ""}   { lappend parts $LensNote }
+        if {$TotalCost > 0}    { lappend parts [::questlog::cost::format_usd $TotalCost] }
+        set StatusVar [join $parts " · "]
     }
 
     # ---- formatting helpers ------------------------------------------

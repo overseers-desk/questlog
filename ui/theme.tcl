@@ -296,6 +296,20 @@ proc ::questlog::ui::theme::build_chrome {} {
     # so it reads as advisory, not error.
     ttk::style configure Notice.TLabel -background [c recap] \
         -foreground [c cost_mid] -padding {10 4}
+    # ---- the list's cut banner ---------------------------------------------
+    # The strip above the list that names what an active lens contains and the
+    # search never loaded (a session running right now, outside the window). It
+    # takes the notice strip's cream and amber, because it says the same kind of
+    # thing: the view is not the whole truth, and here is the remedy. The two
+    # escapes are flat text buttons on that surface, brightening to full ink
+    # under the pointer.
+    ttk::style configure Cut.TFrame -background [c recap]
+    ttk::style configure Cut.TLabel -background [c recap] -foreground [c cost_mid]
+    ttk::style configure CutAct.TButton -background [c recap] \
+        -foreground [c cost_mid] -borderwidth 0 -padding {6 0} -shiftrelief 0
+    ttk::style map CutAct.TButton \
+        -background [list active [c recap] pressed [c recap]] \
+        -foreground [list active [c ink] pressed [c ink]]
     # ---- rounded snippet-badge pills (shape only; Tk draws the label) ------
     set bh [font metrics QLBold -linespace]
     set bw [expr {[font measure QLBold "TOOL RESULT"] + 16}]

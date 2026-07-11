@@ -15,15 +15,22 @@ package require Tcl 9
 # to absorb.
 
 namespace eval ::questlog::ui::live {
-    namespace export running_uuids
+    namespace export running_uuids running_sessions
 }
 
-# Returns a dict: uuid -> expected jsonl path. The path is where the
+# Returns a dict: uuid -> {path <p> cwd <c>}. The path is where the
 # running process would write (projects_root / encode_cwd(cwd) /
 # uuid.jsonl); for a session the manager has moved this no longer names
 # the on-disk file, so callers MATCH by uuid (stable across a move) and
-# use the path only to scan a freshly-started session into view.
-proc ::questlog::ui::live::running_uuids {} {
+# use the path only to scan a freshly-started session into view. The cwd
+# is the project the session runs in, as the registry recorded it: it
+# names a live session for a reader (the list's cut banner) without
+# opening its transcript.
+#
+# This is the Running lens's whole membership, and it owes nothing to the
+# search: a session running right now is here whether or not the search's
+# window would have loaded its file.
+proc ::questlog::ui::live::running_sessions {} {
     set dir [file join [file home] .claude sessions]
     if {![file isdirectory $dir]} { return [dict create] }
     set out [dict create]
@@ -40,7 +47,18 @@ proc ::questlog::ui::live::running_uuids {} {
         if {![proc_alive_matching $pid $procstart]} continue
         set path [file join [::questlog::path::projects_root] \
                       [::questlog::path::encode_cwd $cwd] $uuid.jsonl]
-        dict set out $uuid $path
+        dict set out $uuid [dict create path $path cwd $cwd]
+    }
+    return $out
+}
+
+# The same live set as uuid -> path, for the callers that only ever match a
+# row's uuid and open its file (the running markers, the move and rename
+# guards).
+proc ::questlog::ui::live::running_uuids {} {
+    set out [dict create]
+    dict for {uuid s} [running_sessions] {
+        dict set out $uuid [dict get $s path]
     }
     return $out
 }
