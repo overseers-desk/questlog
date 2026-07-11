@@ -451,6 +451,20 @@ oo::class create ::questlog::ui::Viewer {
         # render both in its TkFixedFont default.
         $Text tag configure body          -font QLBody -foreground [::questlog::ui::theme::c body] -lmargin1 10 -lmargin2 10 -spacing2 3 -spacing3 6
         $Text tag configure code          -font QLMono -foreground [::questlog::ui::theme::c body] -lmargin1 10 -lmargin2 10 -spacing2 3 -spacing3 6
+        # Detail-block faces, one per block kind insert_blocks renders: tool
+        # calls, tool results and the [image] placeholder in mono, thinking in
+        # the italic reading face, all muted so detail reads apart from prose;
+        # dk-chrome is the separately-inserted visual lead-in ([thinking] ).
+        # They share body/code's left margins so columns align, but carry no
+        # -spacing1/2/3: Tk paints tag spacing outside an elided range, and a
+        # hidden block must collapse to nothing, not to a seam of padding.
+        foreach dk {dk-tool_use dk-tool_result dk-image dk-chrome} {
+            $Text tag configure $dk -font QLMono \
+                -foreground [::questlog::ui::theme::c muted] \
+                -lmargin1 10 -lmargin2 10
+        }
+        $Text tag configure dk-thinking -font QLBodyItalic \
+            -foreground [::questlog::ui::theme::c muted] -lmargin1 10 -lmargin2 10
         # Assistant blockquotes are plain tagged text, not embedded widgets:
         # `quote` is the inset block face (reading font, body ink, a deep left
         # margin so the block reads set in from the prose). Configured before the
@@ -784,7 +798,17 @@ oo::class create ::questlog::ui::Viewer {
         # Label -> tag: lowercased with spaces to underscores (TOOL RESULT ->
         # lbl-tool_result). The four lbl-* tags are configured in build.
         $Text insert end "$label  " "lbl-[string map {{ } _} [string tolower $label]]"
-        my insert_body $t $body
+        # Assistant and tool_result records render one content block at a time
+        # so each tool_use/thinking/image block is its own dk-* tagged region
+        # (a region detail-hiding can elide without touching the prose around
+        # it); prompts and system records keep the flat extract_text body.
+        # start_idx above is the record's whole extent either way, label line
+        # included, which is what a hidden tool_result record will cover.
+        if {$t eq "assistant" || [::questlog::jsonl::is_tool_result_record $rec]} {
+            my insert_blocks $rec
+        } else {
+            my insert_body $t $body
+        }
 
         if {$ts_epoch > 0} { set last_ts $ts_epoch }
         return [list $last_ts $in_section]
@@ -1155,6 +1179,47 @@ oo::class create ::questlog::ui::Viewer {
         $Text insert end "\n" body
     }
 
+    # Render an assistant or tool_result record body one content block at a
+    # time, per extract_blocks. Text blocks keep the whole markdown path
+    # (fences, tables, blockquotes) through insert_body; tool_use, thinking,
+    # tool_result and image blocks each become one dk-* tagged region, the
+    # regions detail-hiding elides per turn. Every block's content goes in
+    # verbatim as one contiguous run - lib/match.tcl indexes these exact
+    # strings, and search highlighting must keep landing on the same
+    # characters (issue #21) - so any visual lead-in is a separate dk-chrome
+    # insert that shifts no content offset.
+    method insert_blocks {rec} {
+        set last ""
+        foreach {btype content} [::questlog::jsonl::extract_blocks $rec] {
+            switch -- $btype {
+                assistant - user {
+                    my insert_body $btype $content
+                }
+                thinking {
+                    # extract_blocks emits thinking bare, without the
+                    # "[thinking] " prefix extract_text carries; restore it as
+                    # chrome so the reading view is unchanged. The redacted
+                    # placeholder never carried the prefix, so it gets none.
+                    if {$content ne "\[redacted thinking\]"} {
+                        $Text insert end "\[thinking\] " dk-chrome
+                    }
+                    $Text insert end "$content\n" dk-thinking
+                }
+                default {
+                    # tool_use / tool_result / image, one line per block.
+                    # tool_use content is format_tool_use_full, the very
+                    # string extract_text flattened, so the words on screen
+                    # do not change, only their tag.
+                    $Text insert end "$content\n" dk-$btype
+                }
+            }
+            set last $btype
+        }
+        # insert_body closes a text block with its own blank line; a record
+        # ending on a detail block still owes the record separator.
+        if {$last ni {assistant user}} { $Text insert end "\n" body }
+    }
+
     # Render an assistant body that contains at least one blockquote run:
     # normal text inline, each blockquote run as an inset tagged block.
     method insert_segments {body} {
@@ -1340,7 +1405,10 @@ oo::class create ::questlog::ui::Viewer {
         set start 1.0
         while {1} {
             set len 0
-            set m [$Text search -count len -nocase -- $pattern $start [my content_end]]
+            # -elide: without it `search` skips hidden text, and a hit inside
+            # an elided detail block must still be findable (it is what lets
+            # a jump reveal the block).
+            set m [$Text search -elide -count len -nocase -- $pattern $start [my content_end]]
             if {$m eq ""} break
             $Text tag add find $m "$m + ${len}c"
             lappend results $m
@@ -1383,10 +1451,12 @@ oo::class create ::questlog::ui::Viewer {
             set start 1.0
             while {1} {
                 set len 0
+                # -elide as in collect_matches: hits inside hidden detail
+                # blocks still index.
                 if {$nocase} {
-                    set m [$Text search -nocase -count len -- $term $start [my content_end]]
+                    set m [$Text search -elide -nocase -count len -- $term $start [my content_end]]
                 } else {
-                    set m [$Text search -count len -- $term $start [my content_end]]
+                    set m [$Text search -elide -count len -- $term $start [my content_end]]
                 }
                 if {$m eq ""} break
                 if {$len <= 0} { set len 1 }
