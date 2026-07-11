@@ -230,7 +230,7 @@ check "turn 2 held its fold across the close" \
 check "new turn renders visible" \
     [expr {[vischars "Fourth question arrives"] > 0}] 1
 
-# ---- C5: Turns index tab + fold-all affordances --------------------------------
+# ---- Turns index tab + fold-all affordances -------------------------------------
 # The sections above left the fold and detail state churned (turns folded and
 # refolded, a turn streamed in mid-fold); a fresh show resets that to a known
 # baseline before the Turns-tab assertions. show refills the band's per-tab
@@ -294,7 +294,7 @@ update idletasks
 check "the Tools jump reveals the tool_use line" \
     [expr {[vischars "needle-alpha"] > 0}] 1
 
-# ---- C6: hover copy button ------------------------------------------------------
+# ---- hover copy button -----------------------------------------------------------
 # A shared ⧉ button rides the top-right of the user/assistant message under the
 # pointer, copying that message's whole body (Bodies, unfiltered by fold state) -
 # the discoverable twin of the right-click "Copy message". Synthetic <Motion> is
