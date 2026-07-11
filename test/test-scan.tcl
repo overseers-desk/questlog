@@ -109,10 +109,12 @@ check resolve_absent_dir "" [$s resolve_folder "-no-such-folder-xyz"]
 #
 # The two folders below are the two cases. The first has an extant directory, so
 # the filesystem walk answers it and folder_cwd is as good as resolve_folder. The
-# second is the folder that bit: its sessions were moved in from elsewhere (the
-# cwd they record encodes to another basename) and that directory is gone, so
-# resolve_folder reads every file in it, gets nothing for the reading, and caches
-# nothing - which is why it used to read them all again on the next poll tick.
+# second is the expensive one: its sessions were moved in from elsewhere (the cwd
+# they record encodes to another basename) and that directory is gone, so the walk
+# cannot name it. resolve_folder then reads every transcript in the folder, learns
+# nothing it can trust, and caches nothing - so it pays those reads again on every
+# call, which on a UI path is every poll tick. folder_cwd stops at the walk, and
+# the open counter below is what holds it there.
 rename open real_open
 proc open {args} {
     if {[string match *.jsonl [lindex $args 0]]} { incr ::opens }

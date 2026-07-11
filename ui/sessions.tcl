@@ -112,7 +112,7 @@ oo::class create ::questlog::ui::SessionList {
     variable RunningSet       ;# dict uuid -> 1, replaced wholesale each tick
     variable PrevRunning      ;# the prior tick's running set, to redraw only the rows that flipped
     variable LensMembers      ;# dict uuid -> {path ?cwd?}: what the active lenses jointly claim
-    variable LensNote         ;# the strip's lens clause, "" when no lens or no membership
+    variable LensNote         ;# the status line's lens clause, "" when no lens or no membership
     variable CutMembers       ;# the members with no loaded row, as {path ?cwd? resolved} dicts
     variable CutReason        ;# the criterion that cut them: subtree|search|since|min_turns|""
     variable Pinned           ;# dict path -> 1: sessions the reader pulled in past the search
@@ -302,7 +302,7 @@ oo::class create ::questlog::ui::SessionList {
 
         my build_cut_banner
 
-        # The list strip: it sits between the status bar and the body's
+        # The list strip: it sits between the status line and the body's
         # column-header strip, taking that strip's #ececec colour so it reads as
         # the top of the list. Packed before build_body so it lands above the
         # header band. It carries the expand-all button, which acts on the list
@@ -2503,7 +2503,7 @@ oo::class create ::questlog::ui::SessionList {
     # The membership comes from outside the search and is pushed in by the poll
     # (set_lens_members): the live registry for Running, which knows every session
     # running on this machine whatever the window was, and a bookmark sweep for
-    # Bookmarked. lens_counts does the arithmetic; the strip says the cut, and the
+    # Bookmarked. lens_counts does the arithmetic; the status line says the cut, and the
     # banner names it and offers the two escapes.
 
     # The membership the active lenses claim, uuid -> {path ?cwd?}, as the caller
@@ -2519,7 +2519,7 @@ oo::class create ::questlog::ui::SessionList {
         my refresh_lens_note
     }
 
-    # Recount the active lenses against their membership: the strip's clause, the
+    # Recount the active lenses against their membership: the status line's clause, the
     # cut members the banner names, and the criterion it offers to relax. With no
     # lens on, or none that has a membership (the model lens has none: a row's
     # model is known only once its transcript is parsed), nothing is claimed.
@@ -2562,15 +2562,26 @@ oo::class create ::questlog::ui::SessionList {
     # the two sets, so a running session that carries no bookmark is neither shown
     # nor counted as something the search withheld. Naming one lens and dropping
     # the other would put a count from one sentence under the heading of another.
-    # The strip takes the phrase as it stands and the banner lowercases it into the
-    # adjective on "session", so the two lines cannot name different lenses.
+    # The status line takes the phrase as it stands and the banner lowercases it
+    # into the adjective on "session", so the two lines cannot name different lenses.
     method lens_phrase {lenses} {
         return [join [lmap lens $lenses {string totitle $lens}] " and "]
     }
 
     # The loaded rows as the lens predicate reads them. Built from the node store,
-    # not from the scanner's cache, so every row the list is holding is counted:
-    # the number in the strip and the rows on screen are the one set.
+    # not from the scanner's cache, so what is counted is what the list is holding:
+    # the status line's number is the rows the list holds and the lenses admit, not
+    # the rows on screen (lens_counts in lib/sessionlist.tcl says why, and a folded
+    # folder is the plain case - its rows count and are not painted).
+    #
+    # The paint asks the same predicate over a different row: session_shown reads
+    # the scanner's cached row, this reads the node. They hold the same answer
+    # except while a cost result is landing, because on_cost_result writes the
+    # model into the scanner's cache at once and into the node on the coalesced
+    # flush (ui/app.tcl; cost_coalesce_ms, 80ms by default). Inside that window a
+    # model lens hides a row the count still counts, the row carrying the label on
+    # one side and no label on the other. It closes on the flush, and the next
+    # recount agrees again.
     method loaded_rows {} {
         set rows [list]
         foreach path [my all_session_paths] {
@@ -2828,7 +2839,7 @@ oo::class create ::questlog::ui::SessionList {
             set StatusBase "Done. $total sessions, $matches matches."
         }
         # The result set is final, so the lens's shown count is too: recount it
-        # here rather than leave the strip a poll tick behind the answer.
+        # here rather than leave the status line a poll tick behind the answer.
         my refresh_lens_note
     }
     method cancel {} {

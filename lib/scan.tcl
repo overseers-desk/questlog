@@ -535,7 +535,7 @@ oo::class create ::questlog::Scan {
     #      READS TRANSCRIPTS, which is why it is a scan-path step and why
     #      resolve_folder itself must never be called from a UI path
     #      (call folder_cwd instead).
-    #   3. folder_cwd - the memo and the filesystem walk.
+    #   3. folder_cwd - the Folders cache and the filesystem walk.
     #   4. "" - unresolvable. Not cached: a directory created or restored
     #      later in this process should get a fresh chance.
     method resolve_folder {folder} {
@@ -548,17 +548,17 @@ oo::class create ::questlog::Scan {
         return [my folder_cwd $folder]
     }
 
-    # The resolver without step 2: the memo, then the filesystem walk. It opens
-    # no transcript, so a UI path that wants a folder's cwd only to NAME it can
-    # have one without a redraw becoming a disk read - which is the whole line
+    # The resolver without step 2: the Folders cache, then the filesystem walk. It
+    # opens no transcript, so a UI path that wants a folder's cwd only to NAME it
+    # can have one without a redraw becoming a disk read - which is the whole line
     # between a filter and a search, and the reason the session list and the
     # bookmark sweep are wired to this and not to resolve_folder.
     #
-    # A walk that lands on exactly one directory is as good an answer as a
-    # peeked one, and is memoised the same way. The only answer this gives up on
-    # is the one where the basename is ambiguous and a recorded cwd would break
-    # the tie - and there, a folder the scan has touched already has its peeked
-    # answer sitting in the memo, so the label is the same either way.
+    # A walk that lands on exactly one directory is as good an answer as a peeked
+    # one, and is cached the same way. The only answer this gives up on is the one
+    # where the basename is ambiguous and a recorded cwd would break the tie - and
+    # there, a folder the scan has touched already has its peeked answer sitting in
+    # the cache, so the label is the same either way.
     method folder_cwd {folder} {
         if {[dict exists $Folders $folder]} { return [dict get $Folders $folder] }
         set cands [::questlog::path::candidate_cwds_for $folder]

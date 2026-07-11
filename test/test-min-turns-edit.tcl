@@ -90,7 +90,7 @@ check typed_floor_survives_a_tail_reveal 5 [$SB get]
 check and_it_is_still_unpublished 2 [dict get [$TB snapshot] min_turns]
 
 # A whole-model write from outside (here the cut banner's widen escape, dropping
-# the time window) redraws the bar top to bottom. min turns did not move, so the
+# the since bound) redraws the bar top to bottom. min turns did not move, so the
 # typed value must not either.
 $TB widen since
 update

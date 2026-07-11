@@ -60,11 +60,19 @@ proc ::questlog::sessionlist::row_visible {snapshot row {running_set {}}} {
 # full_set is the membership the active lenses jointly claim, as a uuid-keyed
 # dict the caller gathers outside the search (lens_members, from the live poll
 # for running_only and a bookmark sweep for bookmarked_only), {} when it has
-# none. Returns shown (loaded rows the toggles admit, asked of row_visible so
-# this count and the list agree), total (full_set's size) and excluded (members
-# with no loaded row - the search's cut, not rows a lens hides: hiding a loaded
-# row is the lens working). With no lens on, or an empty full_set, excluded is 0;
-# a caller without membership context must not be told a cut exists.
+# none. Returns shown (loaded rows the toggles admit), total (full_set's size)
+# and excluded (members with no loaded row - the search's cut, not rows a lens
+# hides: hiding a loaded row is the lens working). With no lens on, or an empty
+# full_set, excluded is 0; a caller without membership context must not be told a
+# cut exists.
+#
+# shown counts what the list HOLDS and the lenses ADMIT, which is not the same as
+# what is painted, and the difference is deliberate. A folder the reader has
+# folded still holds its rows and the lenses still admit them, so they still
+# count: folders open collapsed, so a count of painted rows would read 0 over a
+# freshly loaded list and would then move every time the reader folded something,
+# which says nothing about either the lens or the search's cut. Those two are what
+# the number is for, and folding is the reader's own business.
 proc ::questlog::sessionlist::lens_counts {snapshot rows full_set {running_set {}}} {
     set shown 0
     foreach row $rows {

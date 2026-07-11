@@ -436,9 +436,7 @@ proc ::questlog::ui::app::refresh_lens_members {} {
 # again on every poll tick while the lens is on, and a filter may not read a
 # transcript - so no cwd is stamped here. The one or two members the banner
 # NAMES get their project out of the no-read resolver, and only then (member_name
-# in ui/sessions.tcl). A folder whose cwd is gone, moved or renamed used to be
-# re-read in full on every tick from right here, for a name nobody was going to
-# print.
+# in ui/sessions.tcl).
 proc ::questlog::ui::app::bookmarked_members {} {
     set out [dict create]
     set root [::questlog::path::projects_root]
@@ -491,9 +489,21 @@ proc ::questlog::ui::app::on_filter {snapshot} {
     # A view-toggle-only change (search and scope unchanged) leaves the result set
     # intact: only which in-model rows are shown changes. Take the fast path - no
     # clear, no re-scan, no re-search - so the toggle is reversible and keeps the
-    # selection. It does not keep the scroll: hiding rows re-lays the list from the
-    # top (streamtree's rebuild anchors on the top visible node, and which rows are
-    # hidden is exactly what changed under it), so the view returns to the head.
+    # selection.
+    #
+    # What it does to the scroll depends on the row the reader is parked on. The
+    # re-filter ends in a rebuild, which reseats the view on the node that was at
+    # the top of the viewport (rebuild_restore in ui/sessions.tcl): that row when
+    # the lens still admits it, so the reader does not move; its folder heading
+    # when the row is now hidden but the folder still shows one, so the view slides
+    # up to the folder; and the head only when the row is hidden AND its folder
+    # lost every row, which takes the heading out from under it too. Two other
+    # things land on the head: a reader already there (rebuild keeps them), and a
+    # lens narrow enough that the rows it leaves fit the viewport, where the reseat
+    # still runs but there is no longer anything to scroll. A narrow lens over a
+    # long list is the common case, which is why the fast path so often reads as
+    # "jumped to the top" even though the anchor was honoured.
+    #
     # Any scope/search difference falls through to the rebuild.
     if {$PrevSnapshot ne {} && [scope_equal $PrevSnapshot $snapshot]} {
         set CriteriaActive [::questlog::ui::any_criteria $snapshot]
@@ -1123,9 +1133,9 @@ proc ::questlog::ui::app::on_subagent_cost {path} {
 # The project directory behind a folder basename, for the widgets that display
 # it: the folder headings, the context menu, the cut banner's names. The list
 # redraws on paths that must not touch disk, so this is Scan's no-read resolver
-# (the memo and the filesystem walk) and not resolve_folder, which peeks inside a
-# transcript. A folder it cannot resolve shows as its basename, which is what it
-# showed before: the read that is gone here never produced a name anyway.
+# (the Folders cache and the filesystem walk) and not resolve_folder, which peeks
+# inside a transcript. A folder it cannot resolve shows as its basename, which is
+# all a transcript read would have yielded for it anyway.
 proc ::questlog::ui::app::folder_cwd {folder} {
     variable Scan
     return [$Scan folder_cwd $folder]
