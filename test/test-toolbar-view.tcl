@@ -1,10 +1,11 @@
 #!/usr/bin/env wish9.0
 # The toolbar's View row: the lenses over the rows already loaded.
 #
-# Two things are under test. First, the segments are one single-select group
-# (all | running | bookmarked), so the snapshot's running_only and
-# bookmarked_only can never both be 1 - the pair is derived from the chosen
-# segment, not from two independent checkboxes. Second, the model lens offers
+# Two things are under test. First, Running and Bookmarked latch independently:
+# either can be on without the other, and BOTH can be on at once, which the
+# snapshot must carry as running_only 1 and bookmarked_only 1 together - that is
+# the state the list reads as "running AND bookmarked". Neither one on is every
+# loaded row, so the rest state is what says "all". Second, the model lens offers
 # the models the loaded rows actually carry (read through the provider the app
 # wires to the session list) plus "any model", and the pick lands in the
 # snapshot's listview/model key that lib/sessionlist.tcl row_visible reads.
@@ -48,26 +49,46 @@ proc lv {key} {
     return [::questlog::sessionlist::toggle $::Published $key ""]
 }
 
-# ---- the segments are single-select -----------------------------------------
+# ---- the two lenses latch independently -------------------------------------
 
-# At rest: All, so neither toggle is set and the list shows everything loaded.
-$TB set_view all
-check "All: running_only off"    0 [lv running_only]
-check "All: bookmarked_only off" 0 [lv bookmarked_only]
+# At rest: neither lens is on, and the list shows everything it loaded.
+$TB set_lens running 0
+$TB set_lens bookmarked 0
+check "at rest: running_only off"    0 [lv running_only]
+check "at rest: bookmarked_only off" 0 [lv bookmarked_only]
 
-$TB set_view running
-check "Running: running_only on"     1 [lv running_only]
-check "Running: bookmarked_only off" 0 [lv bookmarked_only]
+$TB set_lens running 1
+check "Running on: running_only set"       1 [lv running_only]
+check "Running on: bookmarked_only clear"  0 [lv bookmarked_only]
 
-# The move to Bookmarked releases Running: there is no both-on state to reach,
-# which the two independent checkboxes this row replaced could sit in.
-$TB set_view bookmarked
-check "Bookmarked: running_only off"   0 [lv running_only]
-check "Bookmarked: bookmarked_only on" 1 [lv bookmarked_only]
+# Bookmarked joins Running rather than replacing it: the snapshot carries both,
+# and the list shows the rows that are running AND bookmarked.
+$TB set_lens bookmarked 1
+check "both on: running_only set"    1 [lv running_only]
+check "both on: bookmarked_only set" 1 [lv bookmarked_only]
 
-$TB set_view all
-check "back to All: running_only off"    0 [lv running_only]
-check "back to All: bookmarked_only off" 0 [lv bookmarked_only]
+# Releasing one leaves the other pressed.
+$TB set_lens running 0
+check "Running released: running_only clear" 0 [lv running_only]
+check "Bookmarked stays on"                  1 [lv bookmarked_only]
+
+$TB set_lens bookmarked 0
+check "both released: running_only off"    0 [lv running_only]
+check "both released: bookmarked_only off" 0 [lv bookmarked_only]
+
+# The toggles are what the reader clicks, so the widgets themselves must reach
+# the both-on state: invoking each in turn presses both, and the snapshot the
+# clicks publish says so.
+.tb.view.lens.running invoke
+.tb.view.lens.bookmarked invoke
+check "clicking both: running_only set"    1 [lv running_only]
+check "clicking both: bookmarked_only set" 1 [lv bookmarked_only]
+check "and both toggles render pressed" {1 1} \
+    [list [.tb.view.lens.running instate selected] \
+          [.tb.view.lens.bookmarked instate selected]]
+.tb.view.lens.running invoke
+.tb.view.lens.bookmarked invoke
+check "clicking again releases both" {0 0} [list [lv running_only] [lv bookmarked_only]]
 
 # ---- the model lens ----------------------------------------------------------
 
@@ -94,7 +115,7 @@ check "menu offers any + the models the rows carry" \
 # row_visible compares a row against.
 $TB set_model "Sonnet 5"
 check "picked model reaches the snapshot" "Sonnet 5" [lv model]
-check "picking a model leaves the segments alone" 0 [lv running_only]
+check "picking a model leaves the toggles alone" 0 [lv running_only]
 
 # An unpriced local model is pickable like any other; its rows are reachable.
 $TB set_model qwen3-coder
@@ -109,7 +130,8 @@ check "any model clears the lens" "" [lv model]
 # None of the above touches a scope or search key, which is what buys the fast
 # path in app.tcl (scope_equal): the list re-filters in place and keeps its
 # selection instead of re-reading the corpus.
-$TB set_view running
+$TB set_lens running 1
+$TB set_lens bookmarked 1
 $TB set_model "Opus 4.8"
 foreach k {search search_case search_regions file tool pattern subtree since min_turns} {
     check "view change leaves $k at its default" \

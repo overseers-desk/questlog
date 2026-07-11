@@ -293,12 +293,13 @@ proc ::questlog::ui::theme::build_chrome {} {
     ttk::style map FacetToggle.TButton \
         -background [list active $panel pressed $panel] \
         -foreground [list active [c ink]]
-    # ---- the toolbar's view segments --------------------------------------
-    # All / Running / Bookmarked: one single-select group, drawn as abutting
-    # plates so the three read as one control. The chosen segment is filled with
-    # the same blue the list paints a selected row with, so the lens says what it
-    # is showing in the list's own colour. clam is a pure-Tk drawing theme, so a
-    # Toolbutton honours the -background/-relief set here, unlike a native theme.
+    # ---- the toolbar's view lenses ----------------------------------------
+    # Running and Bookmarked: two latching toggles, drawn as abutting plates so
+    # the pair reads as one control, and either or both can be down. A pressed
+    # lens is filled with the same blue the list paints a selected row with, so it
+    # says what it is showing in the list's own colour. clam is a pure-Tk drawing
+    # theme, so a Toolbutton honours the -background/-relief set here, unlike a
+    # native theme.
     ttk::style configure Seg.Toolbutton -background [c chip_bg] -foreground [c ink] \
         -bordercolor [c ctrl_border] -borderwidth 1 -relief raised \
         -padding {10 2} -anchor center -focuscolor [c chip_bg]

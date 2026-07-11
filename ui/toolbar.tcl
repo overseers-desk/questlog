@@ -29,9 +29,10 @@ package require facetbar
 #                    the corpus, not just the view - see lib/filter.tcl.
 #   listview         the session-list lenses, grouped away from the search and
 #                    scope keys above so no reader mistakes one for a search:
-#                    running_only 0|1, bookmarked_only 0|1 (the View row's
-#                    segments, single-select, so at most one is ever 1), and
-#                    model, the model label a row must carry to show ("" = any
+#                    running_only 0|1, bookmarked_only 0|1 (the View row's two
+#                    toggles, each latching on its own, so both may be 1 and the
+#                    list then shows the rows that are running AND bookmarked),
+#                    and model, the model label a row must carry to show ("" = any
 #                    model). They narrow what the left pane shows out of what is
 #                    already loaded, not what is searched, and so re-filter in
 #                    place without a re-read - see lib/sessionlist.tcl.
@@ -95,7 +96,8 @@ oo::class create ::questlog::ui::Toolbar {
     variable ScopeLabelVar    ;# the menubutton's friendly label for the scope
     variable MinTurnsVar
     variable MinTurnsModel    ;# the min_turns values the model held when the editor last read it
-    variable ViewVar          ;# the View row's segment: all | running | bookmarked
+    variable RunningVar       ;# the Running lens: show only rows live in the registry
+    variable BookmarkedVar    ;# the Bookmarked lens: show only rows carrying the +x bit
     variable ModelVar         ;# the model lens: a row's model label, or "" for any
     variable ModelLabelVar    ;# the model menubutton's text
     variable ModelsProvider   ;# callback returning the models the loaded rows carry
@@ -127,7 +129,8 @@ oo::class create ::questlog::ui::Toolbar {
         set ScopeLabelVar "anywhere"
         set MinTurnsVar [::questlog::config::get min_turns_default]
         set MinTurnsModel [my turns_vals $MinTurnsVar]
-        set ViewVar all
+        set RunningVar 0
+        set BookmarkedVar 0
         set ModelVar ""
         set ModelLabelVar $::questlog::ui::MODEL_ANY
         set ModelsProvider ""
@@ -201,8 +204,8 @@ oo::class create ::questlog::ui::Toolbar {
         pack $Top.view -side top -fill x -padx 6 -pady {0 3}
         ttk::label $Top.view.label -text "View:"
         pack $Top.view.label -side left -padx {0 6}
-        my build_view_segments $Top.view.seg
-        pack $Top.view.seg -side left
+        my build_view_toggles $Top.view.lens
+        pack $Top.view.lens -side left
         ttk::label $Top.view.mlbl -text "model"
         pack $Top.view.mlbl -side left -padx {12 2}
         my build_model_menu $Top.view.model
@@ -263,17 +266,20 @@ oo::class create ::questlog::ui::Toolbar {
         bind $Restrict <Configure> [list [self] fit_now %h]
     }
 
-    # The All / Running / Bookmarked segments: one variable over three values, so
-    # the states are exclusive by construction and there is no "running AND
-    # bookmarked" to reach. snapshot derives running_only / bookmarked_only from
-    # the chosen segment, so the predicate reads the keys it always did.
-    method build_view_segments {w} {
+    # Running and Bookmarked: two latching toggles, each answering for its own
+    # attribute, so both can be pressed and the list then shows the rows that are
+    # running AND bookmarked (row_visible ANDs the clauses). Neither pressed is
+    # every loaded row, which is why there is no third button offering it: the
+    # rest state already says "all", and a control for it would only be another
+    # way to release these two.
+    method build_view_toggles {w} {
         ttk::frame $w
-        foreach {val text} {all All running Running bookmarked Bookmarked} {
-            ttk::radiobutton $w.$val -text $text -style Seg.Toolbutton \
-                -variable [my varname ViewVar] -value $val \
+        foreach {name text var} {running    Running    RunningVar
+                                 bookmarked Bookmarked BookmarkedVar} {
+            ttk::checkbutton $w.$name -text $text -style Seg.Toolbutton \
+                -variable [my varname $var] -onvalue 1 -offvalue 0 \
                 -command [list [self] publish]
-            pack $w.$val -side left
+            pack $w.$name -side left
         }
     }
 
@@ -314,10 +320,15 @@ oo::class create ::questlog::ui::Toolbar {
         my publish
     }
 
-    # Choose a view segment from code; a click on a segment writes the variable
-    # and publishes on its own.
-    method set_view {which} {
-        set ViewVar $which
+    # Set one lens from code; a click on its toggle writes the variable and
+    # publishes on its own. The other lens is left where it stands, as the two
+    # toggles leave each other.
+    method set_lens {which on} {
+        switch -- $which {
+            running    { set RunningVar    [expr {!!$on}] }
+            bookmarked { set BookmarkedVar [expr {!!$on}] }
+            default    { return }
+        }
         my publish
     }
 
@@ -672,8 +683,8 @@ oo::class create ::questlog::ui::Toolbar {
             pattern        [dict get $m pattern] \
             min_turns      [my turns_value] \
             listview       [dict create \
-                running_only    [expr {$ViewVar eq "running"}] \
-                bookmarked_only [expr {$ViewVar eq "bookmarked"}] \
+                running_only    $RunningVar \
+                bookmarked_only $BookmarkedVar \
                 model           $ModelVar] \
             cwd            $Cwd]
     }
