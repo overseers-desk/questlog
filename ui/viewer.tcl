@@ -931,51 +931,63 @@ oo::class create ::questlog::ui::Viewer {
     # recent content turn (for idle-gap detection), in_section is 1 while a
     # section header is open. Pulled out of render so the wholesale fill and the
     # streamed append (append_new) make identical divider and header decisions.
-    # The caller holds $Text in -state normal.
+    # The per-record cues - compact boundary, empty-body clock advance, idle
+    # gap - come from ::questlog::jsonl::transcript_step, the one classifier
+    # this method and the markdown export both fold over (issue #31), so a
+    # divider rule can no longer land in one surface and miss the other. The
+    # step owns classification and the clock only: every glyph and tag, the
+    # in_section tracking, the section headers and the label/body rendering
+    # stay here. The caller holds $Text in -state normal.
     method render_record {rec last_ts in_section} {
         set t [dict getdef $rec type ""]
         # last-prompt records are repeated, truncated harness snapshots of the
         # most recent user prompt: the harness writes the same value many times,
         # and it echoes the real user turn already shown. Not part of the
-        # conversation, so omit it from the reading view.
+        # conversation, so this viewer-side pre-filter drops them upstream of
+        # the step - a deliberate fork from the markdown export, which renders
+        # them as SYSTEM turns and lets them advance the clock; converging the
+        # two is a separate decision nobody has made (the step's contract
+        # comment records the divergence).
         if {$t eq "last-prompt"} { return [list $last_ts $in_section] }
-        set ts_iso [::questlog::jsonl::record_timestamp $rec]
-        set ts_epoch [my parse_iso $ts_iso]
         set lineno [dict get $rec _line]
 
-        # Compact boundary primary divider.
-        if {[::questlog::jsonl::is_compact_boundary $rec]} {
-            $Text insert end "─── /compact ───\n" compact-divider
-            return [list 0 0]
+        # The step hands back this record's cues in render order; the switch
+        # owns their look. A compact boundary is the primary divider - the
+        # step's returned clock is 0, and the section closes so the next turn
+        # opens under a fresh header. An idle gap is the secondary divider,
+        # already ordered above its turn's body. The body event says THAT the
+        # record renders and supplies the flat extract_text copy (the
+        # Bodies($line) contract below); HOW it renders stays keyed off the
+        # record itself. A record yielding no body event draws nothing - the
+        # step advanced the clock over it, so a gap still spans quiet metadata
+        # records.
+        lassign [::questlog::jsonl::transcript_step $rec $last_ts $IdleGap] \
+            events last_ts
+        set body ""
+        foreach ev $events {
+            switch -- [lindex $ev 0] {
+                compact {
+                    $Text insert end "─── /compact ───\n" compact-divider
+                    set in_section 0
+                }
+                gap {
+                    $Text insert end \
+                        "─── [my fmt_gap [lindex $ev 1]] later ───\n" divider
+                    set in_section 0
+                }
+                body {
+                    set body [lindex $ev 1]
+                }
+            }
         }
-
-        # Records that carry no text body (permission-mode, file-history
-        # snapshots, attachments) head no section and draw no line; they only
-        # keep the clock moving for gap detection. Tested before the header so a
-        # leading metadata record never leaves a bare section glyph at the top of
-        # the transcript. Tool-only assistant turns now render (extract_text
-        # emits Tool(args), [thinking], [image] placeholders), so they pass
-        # through to the body path below.
-        set body [::questlog::jsonl::extract_text $rec]
         if {[::questlog::debug::enabled]} {
             ::questlog::debug::log render "line $lineno type=$t\
                 empty=[expr {$body eq ""}]\
                 tools=[llength [::questlog::jsonl::record_tool_uses $rec]]"
         }
-        if {$body eq ""} {
-            if {$ts_epoch > 0} { set last_ts $ts_epoch }
-            return [list $last_ts $in_section]
-        }
+        if {$body eq ""} { return [list $last_ts $in_section] }
 
-        # Idle-gap secondary divider, between content turns.
-        if {$last_ts > 0 && $ts_epoch > 0} {
-            set gap [expr {($ts_epoch - $last_ts) / 60}]
-            if {$gap >= $IdleGap} {
-                $Text insert end "─── [my fmt_gap $gap] later ───\n" divider
-                set in_section 0
-            }
-        }
-
+        set ts_iso [::questlog::jsonl::record_timestamp $rec]
         if {!$in_section} {
             $Text insert end "[my section_header $ts_iso]\n" section-header
             set in_section 1
@@ -1011,7 +1023,7 @@ oo::class create ::questlog::ui::Viewer {
             my insert_body $t $body
         }
 
-        if {$ts_epoch > 0} { set last_ts $ts_epoch }
+        # The clock already advanced inside the step; last_ts is its return.
         return [list $last_ts $in_section]
     }
 
