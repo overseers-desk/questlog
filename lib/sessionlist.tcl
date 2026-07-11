@@ -18,7 +18,7 @@ package require Tcl 9
 # tell-don't-ask all fail.
 
 namespace eval ::questlog::sessionlist {
-    namespace export toggle row_visible
+    namespace export toggle row_visible lens_counts
 }
 
 # One list-view toggle's value from a snapshot, with the toggle's own default
@@ -47,4 +47,34 @@ proc ::questlog::sessionlist::row_visible {snapshot row {running_set {}}} {
         if {$have ne "" && $have ne $want} { return 0 }
     }
     return 1
+}
+
+# What an active lens shows versus what it truly contains. A lens only filters
+# rows the search loaded, so a genuine member the search's window skipped is
+# invisible and, unsaid, reads as "nothing there". rows is the loaded row list;
+# full_set is the lens's whole membership as a uuid-keyed dict the caller
+# gathers outside the search (the live poll for running_only, a bookmark sweep
+# for bookmarked_only), {} when it has none. Returns shown (loaded rows the
+# toggles admit, asked of row_visible so this count and the list agree), total
+# (full_set's size) and excluded (members with no loaded row - the search's
+# cut, not rows a lens hides: hiding a loaded row is the lens working). With no
+# lens on, or an empty full_set, excluded is 0; a caller without membership
+# context must not be told a cut exists.
+proc ::questlog::sessionlist::lens_counts {snapshot rows full_set {running_set {}}} {
+    set shown 0
+    foreach row $rows {
+        if {[row_visible $snapshot $row $running_set]} { incr shown }
+    }
+    set excluded 0
+    set active [expr {[toggle $snapshot running_only 0]
+                      || [toggle $snapshot bookmarked_only 0]
+                      || [toggle $snapshot model ""] ne ""}]
+    if {$active && [dict size $full_set]} {
+        set loaded [dict create]
+        foreach row $rows { dict set loaded [dict getdef $row uuid ""] 1 }
+        foreach uuid [dict keys $full_set] {
+            if {![dict exists $loaded $uuid]} { incr excluded }
+        }
+    }
+    return [dict create shown $shown total [dict size $full_set] excluded $excluded]
 }
