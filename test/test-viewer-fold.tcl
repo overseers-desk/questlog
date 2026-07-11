@@ -438,8 +438,8 @@ check "a wheel notch on the button scrolls the transcript down" \
 # The cache is bare text-line numbers; append_new pops the stub (a mid-document
 # line delete), show swaps sessions entirely, and fold_all/expand_all reshape
 # the view - each must drop the button, or a parked pointer copies the message
-# above the one it hovers (found live by the invariants review: the stale
-# window survives every 300 ms stream tick).
+# above the one it hovers (unless invalidated, the stale cache survives
+# every 300 ms stream tick).
 set aidx [$Text search -elide "Final answer one." 1.0 [$V content_end]]
 $V copy_hide
 $Text see $aidx
@@ -467,7 +467,8 @@ check "show drops the placed button" [place info $CopyBtn] ""
 # claude writes a record in pieces; show can catch the file mid-write. load must
 # leave the unparseable newline-less tail uncounted so append_new re-reads the
 # finished record - counted, it would sit under LoadedLines and drop forever
-# (load/append_new asymmetry found by the streaming review).
+# (a load/append_new asymmetry: load must not count a tail it cannot parse,
+# or append_new will never get to re-read it).
 set JP2 [file join $TMP tail.jsonl]
 set fh [open $JP2 w]
 fconfigure $fh -encoding utf-8
@@ -506,7 +507,7 @@ check "an empty typed prompt opens no turn" [llength [set ${NS}::Turns]] 1
 check "the open turn still owns what follows (detail hidden, not preamble)" \
     [vischars "orphan-check"] 0
 
-# ---- 22. drain-floor regressions --------------------------------------------------
+# ---- 22. match-context label doubling and stale-prompt carryover ------------------
 # A match row already leads with the role; a hit landing on a record's first
 # line must not excerpt the label into the context too ("ASSISTANT ·
 # ...ASSISTANT ..."). And typed-but-unsent resume text stays with its session.

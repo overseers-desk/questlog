@@ -1055,8 +1055,8 @@ oo::class create ::questlog::ui::Viewer {
             my turn_close
             lassign [my render_record $rec $last_ts $in_section] \
                 last_ts in_section
-            # Belt to the gate's braces: should the body still have rendered
-            # no line (no LineMap entry), head no turn.
+            # Belt and braces alongside the gate above: should the body still
+            # have rendered no line (no LineMap entry), head no turn.
             if {[dict exists $LineMap [dict get $rec _line]]} {
                 my turn_open $rec
             }
