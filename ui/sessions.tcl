@@ -278,17 +278,14 @@ oo::class create ::questlog::ui::SessionList {
         ttk::button $Top.bar.cancel -text "Cancel" -command [list [self] cancel]
         pack $Top.bar.cancel -side right -padx 4 -pady 2
 
-        # The list-view toggle strip: the row the toolbar fills with the view
-        # toggles (running only / bookmarked only). It sits between the status
-        # bar and the body's column-header strip, taking that strip's #ececec
-        # colour, so the toggles read as the top of the list they filter, not as
-        # search chrome. Packed before build_body so it lands above the header
-        # band.
+        # The list strip: it sits between the status bar and the body's
+        # column-header strip, taking that strip's #ececec colour so it reads as
+        # the top of the list. Packed before build_body so it lands above the
+        # header band. It carries the expand-all button, which acts on the list
+        # rather than filtering it; the lenses that do filter (running,
+        # bookmarked, model) are the toolbar's View row.
         ttk::frame $Top.lvt -style LVStrip.TFrame -padding {8 4}
         pack $Top.lvt -side top -fill x
-        # The expand-all button sits flush left in the strip, before the view
-        # toggles the Toolbar packs on the right. It carries no filter state,
-        # so it lives with the list it acts on rather than with the Toolbar.
         ttk::button $Top.lvt.expandall -text "expand all" -style LV.TButton \
             -takefocus 0 -command [list [self] expand_all_folders]
         pack $Top.lvt.expandall -side left
@@ -510,11 +507,21 @@ oo::class create ::questlog::ui::SessionList {
         my reconcile_running $RunningSet
     }
 
-    # The frame at the top of the list region that hosts the list-view toggles.
-    # app.tcl hands it to the Toolbar's build_listview_toggles after both widgets
-    # exist, so the toggle state stays owned by the Toolbar while the widgets read
-    # as chrome of the list.
-    method listview_slot {} { return $Top.lvt }
+    # The models the loaded rows carry: every distinct, non-empty model label in
+    # the list, hidden rows included, sorted so the lens does not reorder itself
+    # with the scan. Hidden rows count because a row the model lens is hiding is
+    # exactly the row whose entry must stay in the menu for the lens to be widened
+    # back off it. A row whose cost pass has not landed yet has no label and is
+    # simply not named; row_visible keeps such a row visible under any lens, so it
+    # never disappears for want of an entry.
+    method loaded_models {} {
+        set seen [dict create]
+        foreach path [my all_session_paths] {
+            set model [my sget $path model]
+            if {$model ne ""} { dict set seen $model 1 }
+        }
+        return [lsort [dict keys $seen]]
+    }
 
     method set_query {terms nocase} {
         set Query [dict create terms $terms nocase $nocase]

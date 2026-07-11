@@ -186,10 +186,10 @@ proc ::questlog::ui::app::start {root {seed {}}} {
         [namespace code on_subagents] \
         [namespace code on_subagent_cost]]
     pack $list_frame.s -side top -fill both -expand 1
-    # The list-view toggles (running only / bookmarked only) belong to the
-    # session list visually but are owned by the toolbar (state + publish). Now
-    # both widgets exist, fill the list's toggle slot.
-    $Toolbar build_listview_toggles [$SessionList listview_slot]
+    # The toolbar's model lens offers the models the loaded rows carry, so it
+    # reads them off the list. The Toolbar is built first (it heads the pane), so
+    # the reader is wired here, once the list it asks exists.
+    $Toolbar set_models_provider [list $SessionList loaded_models]
     $PW add $list_frame -weight 58
 
     # Viewer pane: a full-height peer of the list, present from launch. It

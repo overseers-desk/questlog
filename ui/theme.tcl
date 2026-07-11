@@ -264,18 +264,25 @@ proc ::questlog::ui::theme::build_chrome {} {
 
         rrect_img qlPill_$t $pw $ch $r [c crit_${t}_bg] [c crit_${t}_bd] 1
     }
-    # ---- list-view toggle strip ------------------------------------------
-    # The list-view checkbuttons (running only / bookmarked only) sit at the top
-    # of the session-list region, not in the search toolbar, so they read as
-    # chrome of the list they filter. Their
-    # strip and the checkbuttons take the list's column-header strip colour, so
-    # the toggles tie to the #ececec header band directly below them rather than
-    # to the toolbar panel above. clam is a pure-Tk drawing theme, so the
-    # checkbutton -background (the area around the indicator and behind the
-    # label) honours the style here, unlike a native theme.
+    # ---- the toolbar's view segments --------------------------------------
+    # All / Running / Bookmarked: one single-select group, drawn as abutting
+    # plates so the three read as one control. The chosen segment is filled with
+    # the same blue the list paints a selected row with, so the lens says what it
+    # is showing in the list's own colour. clam is a pure-Tk drawing theme, so a
+    # Toolbutton honours the -background/-relief set here, unlike a native theme.
+    ttk::style configure Seg.Toolbutton -background [c chip_bg] -foreground [c ink] \
+        -bordercolor [c ctrl_border] -borderwidth 1 -relief raised \
+        -padding {10 2} -anchor center -focuscolor [c chip_bg]
+    ttk::style map Seg.Toolbutton \
+        -background [list selected [c sel] active [c strip]] \
+        -bordercolor [list selected [c ctrl_border_hi]] \
+        -relief [list selected sunken]
+    # ---- list strip ------------------------------------------------------
+    # The strip at the top of the session-list region, carrying the expand-all
+    # button. It takes the list's column-header strip colour, so it ties to the
+    # #ececec header band directly below it rather than to the toolbar panel
+    # above.
     ttk::style configure LVStrip.TFrame -background [c strip]
-    ttk::style configure LV.TCheckbutton -background [c strip] -foreground [c ink]
-    ttk::style map LV.TCheckbutton -background [list active [c strip]]
     # The expand-all button shares the strip surface: flat on the band, the
     # muted heading ink brightening to full ink under the pointer.
     ttk::style configure LV.TButton -background [c strip] -foreground [c muted] \

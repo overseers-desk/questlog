@@ -145,6 +145,21 @@ proc ::questlog::cost::fmt_model {id} {
     return [expr {$min eq "" ? "$fam $maj" : "$fam $maj.$min"}]
 }
 
+# The label a session is known by in the Model column and in the toolbar's model
+# lens: the "Family Ver" reading when fmt_model recognises the id, otherwise the
+# id itself with any date suffix trimmed. fmt_model alone blanks an id it does
+# not price (a local model), which erased the only handle those sessions had:
+# with no label they could be neither read off the list nor picked in the lens,
+# so they were unfilterable. An empty id stays empty (no session, no label).
+# Deliberately the label, not the raw id: two ids that differ only by a date
+# suffix are one model, and one label makes them one lens entry.
+proc ::questlog::cost::model_label {id} {
+    set label [fmt_model $id]
+    if {$label ne ""} { return $label }
+    regsub -- {-\d{6,}$} $id "" id
+    return $id
+}
+
 # ISO-8601 UTC timestamp (e.g. 2026-04-25T10:00:00.000Z) to epoch seconds.
 # Tolerates a missing fractional part; empty on any parse failure.
 proc ::questlog::cost::iso_to_epoch {ts} {
@@ -313,7 +328,7 @@ proc ::questlog::cost::build_cost_dict {res} {
         cache_write_tokens $cw \
         cache_read_tokens $cr \
         model_breakdown $per_model \
-        model [fmt_model [dict getdef $res last_model ""]] \
+        model [model_label [dict getdef $res last_model ""]] \
         turns $turns \
         duration_secs $active \
         human_secs $human]

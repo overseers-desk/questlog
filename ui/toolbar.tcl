@@ -18,13 +18,21 @@ package require Tk
 #   min_turns        the minimum-turns scope floor (1 = include all). A scope
 #                    filter alongside since/subtree: a session below the floor leaves
 #                    the corpus, not just the view - see lib/filter.tcl.
-#   listview         the session-list view toggles, grouped away from the search
-#                    and scope keys above so no reader mistakes one for a search:
-#                    running_only 0|1, bookmarked_only 0|1. They narrow what the
-#                    left pane shows, not what is searched - see lib/sessionlist.tcl.
+#   listview         the session-list lenses, grouped away from the search and
+#                    scope keys above so no reader mistakes one for a search:
+#                    running_only 0|1, bookmarked_only 0|1 (the View row's
+#                    segments, single-select, so at most one is ever 1), and
+#                    model, the model label a row must carry to show ("" = any
+#                    model). They narrow what the left pane shows out of what is
+#                    already loaded, not what is searched, and so re-filter in
+#                    place without a re-read - see lib/sessionlist.tcl.
 #   cwd              launch cwd, constant after startup
 
-namespace eval ::questlog::ui {}
+namespace eval ::questlog::ui {
+    # The model lens at rest: the word on the menubutton and the first menu entry
+    # when no model is chosen. One home, so the button and the entry cannot drift.
+    variable MODEL_ANY "any model"
+}
 
 # any_criteria snapshot - true iff the snapshot carries a content-matching
 # clause (search text, regex pattern, or a file/tool clause). The `subtree`
@@ -77,8 +85,10 @@ oo::class create ::questlog::ui::Toolbar {
     variable SearchScopeVar   ;# region-spec: any | user,assistant | tool-use | tool-result
     variable ScopeLabelVar    ;# the menubutton's friendly label for the scope
     variable MinTurnsVar
-    variable RunningOnlyVar
-    variable BookmarkedOnlyVar
+    variable ViewVar          ;# the View row's segment: all | running | bookmarked
+    variable ModelVar         ;# the model lens: a row's model label, or "" for any
+    variable ModelLabelVar    ;# the model menubutton's text
+    variable ModelsProvider   ;# callback returning the models the loaded rows carry
     variable Clauses          ;# dict kind -> list of values; file/tool are pairs
     variable Restrict         ;# the padded content frame holding the restrict rows
     variable RestrictHd       ;# the heading label above that frame (the legend)
@@ -111,8 +121,10 @@ oo::class create ::questlog::ui::Toolbar {
         set SearchScopeVar any
         set ScopeLabelVar "anywhere"
         set MinTurnsVar [::questlog::config::get min_turns_default]
-        set RunningOnlyVar    0
-        set BookmarkedOnlyVar 0
+        set ViewVar all
+        set ModelVar ""
+        set ModelLabelVar $::questlog::ui::MODEL_ANY
+        set ModelsProvider ""
         set Clauses [dict create subtree {} file {} tool {} pattern {}]
         set Subscribers [list]
         set RowFrames [dict create]
@@ -178,6 +190,22 @@ oo::class create ::questlog::ui::Toolbar {
             -command [list [self] publish]
         pack $Top.search.aa -side left -padx {6 0}
 
+        # View row: the lenses over the rows the list already holds. A change here
+        # leaves the search and the scope alone, so app.tcl's scope_equal sends it
+        # down the fast path - the list re-filters in place, keeping its selection
+        # and scroll, with no disk read. The restrict box below is the opposite:
+        # it decides which sessions are loaded at all.
+        ttk::frame $Top.view
+        pack $Top.view -side top -fill x -padx 6 -pady {0 3}
+        ttk::label $Top.view.label -text "View:"
+        pack $Top.view.label -side left -padx {0 6}
+        my build_view_segments $Top.view.seg
+        pack $Top.view.seg -side left
+        ttk::label $Top.view.mlbl -text "model"
+        pack $Top.view.mlbl -side left -padx {12 2}
+        my build_model_menu $Top.view.model
+        pack $Top.view.model -side left
+
         # Restrict group: a lightly-bordered box whose first inner line is the
         # heading (the legend sits inside, at the top, as in the design), then
         # the time row, the persistent folder/file rows, any revealed tail rows,
@@ -241,37 +269,67 @@ oo::class create ::questlog::ui::Toolbar {
             pack $AddRail.b$k -side left -padx {0 4}
         }
 
-        # The list-view toggles (running only / bookmarked only) are not part of
-        # the toolbar's chrome: they belong to the session list, so app.tcl hosts
-        # them at the top of the list region via build_listview_toggles. The
-        # Toolbar still owns their state and the publish wiring; only their
-        # on-screen home moved.
-
         # Render the persistent folder/file rows up front.
         my rebuild_clause_rows
         my refresh_add_rail
     }
 
-    # Build the list-view toggles into a caller-owned frame, so they read as the
-    # top of the session list (the region they filter) rather than as a search
-    # control. The Toolbar keeps the state (RunningOnlyVar / BookmarkedOnlyVar)
-    # and the publish wiring; only the widgets live in the passed parent. $parent
-    # is styled by its host to match the list surface, and the checkbuttons take
-    # the LV.TCheckbutton style so their background ties to that surface too. The
-    # two sit flush right: pack bookmarked-only first with -side right, then
-    # running-only, so the reading order stays "running only" then "bookmarked
-    # only" while both hug the strip's right edge.
-    method build_listview_toggles {parent} {
-        ttk::checkbutton $parent.booked -text "bookmarked only" \
-            -style LV.TCheckbutton \
-            -variable [my varname BookmarkedOnlyVar] \
-            -command [list [self] publish]
-        pack $parent.booked -side right
-        ttk::checkbutton $parent.running -text "running only" \
-            -style LV.TCheckbutton \
-            -variable [my varname RunningOnlyVar] \
-            -command [list [self] publish]
-        pack $parent.running -side right -padx {0 16}
+    # The All / Running / Bookmarked segments: one variable over three values, so
+    # the states are exclusive by construction and there is no "running AND
+    # bookmarked" to reach. snapshot derives running_only / bookmarked_only from
+    # the chosen segment, so the predicate reads the keys it always did.
+    method build_view_segments {w} {
+        ttk::frame $w
+        foreach {val text} {all All running Running bookmarked Bookmarked} {
+            ttk::radiobutton $w.$val -text $text -style Seg.Toolbutton \
+                -variable [my varname ViewVar] -value $val \
+                -command [list [self] publish]
+            pack $w.$val -side left
+        }
+    }
+
+    # The model lens. Its entries are the models the loaded rows actually carry,
+    # asked of the list each time the menu is posted, never a hardcoded roster: a
+    # model that lands with the cost pass shows up on the next post, and a local
+    # model questlog cannot price is offered by its own id rather than being
+    # unreachable. The value is the row's model label - what row_visible compares
+    # a row against - so a dated and an undated id of one model are one entry.
+    method build_model_menu {w} {
+        ttk::menubutton $w -textvariable [my varname ModelLabelVar] \
+            -menu $w.m -direction below
+        menu $w.m -tearoff 0 -postcommand [list [self] refresh_model_menu $w.m]
+        my refresh_model_menu $w.m
+    }
+
+    method refresh_model_menu {m} {
+        $m delete 0 end
+        set models [list]
+        if {$ModelsProvider ne ""} { set models [{*}$ModelsProvider] }
+        foreach val [linsert $models 0 ""] {
+            set label [expr {$val eq "" ? $::questlog::ui::MODEL_ANY : $val}]
+            $m add radiobutton -label $label -value $val \
+                -variable [my varname ModelVar] \
+                -command [list [self] set_model $val]
+        }
+    }
+
+    # Where the model lens reads its entries: a callback answering with the models
+    # present in the loaded rows. app.tcl wires it once both widgets exist (the
+    # Toolbar is built first); until then, and in a headless toolbar, the lens
+    # offers "any model" alone.
+    method set_models_provider {cb} { set ModelsProvider $cb }
+
+    method set_model {model} {
+        set ModelVar $model
+        set ModelLabelVar [expr {$model eq "" ? $::questlog::ui::MODEL_ANY : $model}]
+        my publish
+    }
+
+    # Choose a view segment from code; a click on a segment writes the variable
+    # and publishes on its own.
+    method set_view {which} {
+        set ViewVar $which
+        my publish
     }
 
     # The search-scope picker. The value is the region-spec the search terms are
@@ -588,8 +646,9 @@ oo::class create ::questlog::ui::Toolbar {
             pattern        [dict get $Clauses pattern] \
             min_turns      $MinTurnsVar \
             listview       [dict create \
-                running_only    $RunningOnlyVar \
-                bookmarked_only $BookmarkedOnlyVar] \
+                running_only    [expr {$ViewVar eq "running"}] \
+                bookmarked_only [expr {$ViewVar eq "bookmarked"}] \
+                model           $ModelVar] \
             cwd            $Cwd]
     }
 
