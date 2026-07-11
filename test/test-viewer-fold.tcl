@@ -392,6 +392,33 @@ update idletasks
 check "a wheel notch on the button scrolls the transcript down" \
     [expr {[lindex [$Text yview] 0] > $y0}] 1
 
+# ---- 20. a truncated tail read by show is re-read once complete -----------------
+# claude writes a record in pieces; show can catch the file mid-write. load must
+# leave the unparseable newline-less tail uncounted so append_new re-reads the
+# finished record - counted, it would sit under LoadedLines and drop forever
+# (load/append_new asymmetry found by the streaming review).
+set JP2 [file join $TMP tail.jsonl]
+set fh [open $JP2 w]
+fconfigure $fh -encoding utf-8
+puts $fh {{"type":"user","promptSource":"typed","timestamp":"2026-07-11T14:00:00Z","message":{"role":"user","content":"Tail question"}}}
+# One valid record, split mid-string: the prefix is the unparseable tail the
+# writer is caught on, the remainder completes it on the "next write".
+set tailrec {{"type":"assistant","timestamp":"2026-07-11T14:00:05Z","message":{"role":"assistant","content":[{"type":"text","text":"TAILMARKER redundant."}]}}}
+puts -nonewline $fh [string range $tailrec 0 end-20]
+close $fh
+$V show $JP2
+update idletasks
+check "the mid-write tail rendered nothing" \
+    [expr {[$Text search TAILMARKER 1.0 end] eq ""}] 1
+set fh [open $JP2 a]
+fconfigure $fh -encoding utf-8
+puts $fh [string range $tailrec end-19 end]
+close $fh
+$V append_new
+update idletasks
+check "the completed tail record renders on the next pass" \
+    [expr {[$Text search TAILMARKER 1.0 end] ne ""}] 1
+
 # ---- clean up -------------------------------------------------------------------
 ::questlog::path::_real_file delete -force $TMP
 puts [expr {$fails ? "FAILED ($fails)" : "PASS"}]

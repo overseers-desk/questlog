@@ -862,7 +862,16 @@ oo::class create ::questlog::ui::Viewer {
             incr lineno
             if {$line eq ""} continue
             set rec [::questlog::jsonl::parse_line $line]
-            if {$rec eq ""} continue
+            if {$rec eq ""} {
+                # A newline-less final line that does not parse is the tail
+                # claude is mid-write on: uncount it so append_new re-reads
+                # it once the writer completes it (counted here, it would sit
+                # under LoadedLines and the finished record would be skipped
+                # forever - append_new never counts such a tail). A complete
+                # garbage line stays counted and skipped, as ever.
+                if {[chan eof $fh]} { incr lineno -1 }
+                continue
+            }
             dict set rec _line $lineno
             lappend Records $rec
         }
@@ -1286,13 +1295,23 @@ oo::class create ::questlog::ui::Viewer {
     # routes here, because `see` cannot land on an elided char. Unfolds the
     # target's turn, and shows details only when the index itself sits in the
     # turn's detail region - jumping to a visible line must not spill the
-    # whole turn's hidden blocks.
+    # whole turn's hidden blocks. The see must wait for the reshaped line
+    # metrics: an un-elide moves thousands of display lines, its relayout
+    # registers through an idle handler, and a bare `see` in the same
+    # callback scrolls to where the target used to be (the first jump out of
+    # fold_all on a large session landed at the top; later jumps only worked
+    # because the first had warmed the metrics). Neither a targeted
+    # `count -update` nor a bare `sync` cures it - both run before the idle
+    # relayout has even invalidated the metrics - so drain idletasks first,
+    # then sync, then see. Click-latency price, paid only on a jump.
     method reveal_index {idx} {
         set n [my turn_at $idx]
         if {$n >= 0} {
             if {[dict get [lindex $Turns $n] folded]} { my turn_unfold $n }
             if {"d#$n" in [$Text tag names $idx]} { my details_show $n }
         }
+        update idletasks
+        $Text sync
         $Text see $idx
     }
 
