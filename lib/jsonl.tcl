@@ -718,10 +718,11 @@ proc ::questlog::jsonl::first_cwd {path} {
 }
 
 # One {line role text match} turn dict for a raw line, or "" when the line is
-# blank, unparseable, or renders to an empty body. An empty body is a record the
-# reading view also shows nothing for (a file-history snapshot, an image-only
-# turn, a harness echo), so it is not a context "message". match is 0 for a
-# neighbour; the hit's own record is built inline in context_window with match 1.
+# blank, unparseable, or renders to an empty body. An empty body is a record
+# extract_text draws no text from (a file-history snapshot, an empty-content
+# record), which the reading-view export skips too, so it is not a context
+# "message". match is 0 for a neighbour; the hit's own record is built inline in
+# context_window with match 1.
 proc ::questlog::jsonl::turn_at {line lineno match} {
     set rec [parse_line $line]
     if {$rec eq ""} { return "" }

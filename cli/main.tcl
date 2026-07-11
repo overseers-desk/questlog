@@ -146,9 +146,11 @@ proc ::questlog::cli::main::md_cost {usd} {
     return [format {$%.2f} $usd]
 }
 
-# The one-line identity/metadata line under a session or subagent heading: the
-# uuid (so `questlog show <uuid>` reaches it), the first timestamp when present
-# (subagents carry none), the turn count, and the cost when priced.
+# The one-line identity/metadata line under a session or subagent heading: a
+# session's uuid (which `questlog show <uuid>` reopens) or a subagent's agent_id
+# (show has no entry point for one, so it identifies but does not reopen), the
+# first timestamp when present (subagents carry none), the turn count, and the
+# cost when priced.
 proc ::questlog::cli::main::md_meta {ident ts turns usd} {
     set parts [list $ident]
     if {$ts ne ""} { lappend parts $ts }
