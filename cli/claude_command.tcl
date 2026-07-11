@@ -52,6 +52,20 @@ Bound the whole result with `--since <24h|7d|2w|2026-04-01|all>`, `--until <...>
 
 The output is an array of project folders, each with its `sessions`, and each session its `subagents`. A folder carries `project_path` (the session's original directory); a session carries `uuid`, `path`, `title`, `first_ts`, `cost_usd`, `turns`, and the matched `matches` snippets. Slice it with `jq`; the `uuid` or `path` feeds the next step.
 
+## Reading hits with their context
+
+`--json` is for slicing with `jq`; when the aim is to read the conversation around a match rather than pull fields from it, `--markdown` prints the same query as a document, each matching session with its hits as reading-view turns.
+
+```bash
+questlog --markdown --since 7d --keyword "stripe webhook"
+```
+
+Both `--json` and `--markdown` take grep-style context flags that carry the whole messages around each hit: `-B <N>` before, `-A <N>` after, `-C <N>` on both sides (long forms `--before-context`, `--after-context`, `--context`). Under context, `--markdown` shows the hit's own message in full with its neighbours as `[#N] ROLE` turns, and `--json` adds a `window` array to each match beside its snippet.
+
+```bash
+questlog --markdown -C 3 --keyword "race condition"
+```
+
 ## Reading a session
 
 ```bash
