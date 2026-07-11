@@ -65,6 +65,43 @@ $::questlog::cli::commandline::CL option --shortstat -section output -selects sh
     -help {{Emit a totals summary instead, headless: session and subagent}
            {counts, turns, tokens, and total cost over the result.}}
 
+# ---- context ---------------------------------------------------------------
+
+$::questlog::cli::commandline::CL section context {context (--json/--markdown; whole messages around each hit):}
+
+$::questlog::cli::commandline::CL option --before-context -section context -arg N \
+    -check {::questlog::cli::commandline::check_count --before-context $value 0} \
+    -modes {json markdown} -because {the totals and the GUI show no per-hit context} \
+    -fold {set ctx_before $value} \
+    -help {{Show N messages before each hit (grep -B).}}
+$::questlog::cli::commandline::CL option -B -section context -arg N \
+    -check {::questlog::cli::commandline::check_count -B $value 0} \
+    -modes {json markdown} -because {the totals and the GUI show no per-hit context} \
+    -fold {set ctx_before $value} \
+    -help {{Alias for --before-context.}}
+
+$::questlog::cli::commandline::CL option --after-context -section context -arg N \
+    -check {::questlog::cli::commandline::check_count --after-context $value 0} \
+    -modes {json markdown} -because {the totals and the GUI show no per-hit context} \
+    -fold {set ctx_after $value} \
+    -help {{Show N messages after each hit (grep -A).}}
+$::questlog::cli::commandline::CL option -A -section context -arg N \
+    -check {::questlog::cli::commandline::check_count -A $value 0} \
+    -modes {json markdown} -because {the totals and the GUI show no per-hit context} \
+    -fold {set ctx_after $value} \
+    -help {{Alias for --after-context.}}
+
+$::questlog::cli::commandline::CL option --context -section context -arg N \
+    -check {::questlog::cli::commandline::check_count --context $value 0} \
+    -modes {json markdown} -because {the totals and the GUI show no per-hit context} \
+    -fold {set ctx_before $value; set ctx_after $value} \
+    -help {{Show N messages on each side (grep -C; sets before and after).}}
+$::questlog::cli::commandline::CL option -C -section context -arg N \
+    -check {::questlog::cli::commandline::check_count -C $value 0} \
+    -modes {json markdown} -because {the totals and the GUI show no per-hit context} \
+    -fold {set ctx_before $value; set ctx_after $value} \
+    -help {{Alias for --context.}}
+
 # ---- clauses ---------------------------------------------------------------
 
 $::questlog::cli::commandline::CL section clause {clauses:} -note {
@@ -252,10 +289,11 @@ proc ::questlog::cli::commandline::keyword_restriction {value suffix} {
 
 # parse argv - the whole command line as one neutral query dict:
 #
-#   mode           gui | json | shortstat
+#   mode           gui | json | markdown | shortstat
 #   groups         the OR-of-ANDs: a list of AND-groups, each a list of clause
 #                  dicts {kind keyword|regex|tool, ..., neg 0|1}
-#   since until subtree limit limit_matches accrued nocase font debug
+#   since until subtree limit limit_matches accrued nocase ctx_before ctx_after
+#   font debug
 #
 # The grammar is an OR (--or) of AND-groups (adjacency) of optionally-negated
 # (--not) clauses; groups is the closed AND-groups and cur the one being built,
@@ -274,6 +312,8 @@ proc ::questlog::cli::commandline::parse {argv} {
     set debug 0
     set accrued 0
     set nocase 1
+    set ctx_before 0
+    set ctx_after 0
     set groups [list]
     set cur [list]
     set pending_neg 0
@@ -324,6 +364,7 @@ proc ::questlog::cli::commandline::parse {argv} {
     return [dict create mode $mode groups $groups \
         limit $limit limit_matches $limit_matches subtree $subtree \
         since $since until $until accrued $accrued nocase $nocase \
+        ctx_before $ctx_before ctx_after $ctx_after \
         font $font debug $debug]
 }
 

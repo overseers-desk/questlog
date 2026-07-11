@@ -78,6 +78,24 @@ check "format_json: human time figure passes through" \
 check "format_json: output is valid JSON" \
     [expr {![catch {::json::json2dict $out}]}] 1
 
+# ---- context window: format_matches carries the turns beside the snippet ----
+
+# A single match with a two-turn window (grep -A/-B/-C). The window rides beside
+# the existing line/type/content, so a consumer reading only the snippet is
+# unaffected; each turn names its line, role label, full body, and match bool.
+set wm [list [dict create line 40 type assistant content "snip" window [list \
+    [dict create line 38 role USER text "the question" match 0] \
+    [dict create line 40 role ASSISTANT text "the full reply" match 1]]]]
+set wout [::questlog::cli::main::format_matches $wm]
+check "format_matches: window rides beside the snippet fields" \
+    [regexp -- {"content":"snip","window":\[} $wout] 1
+check "format_matches: a context turn is line/role/text/match, hit false" \
+    [regexp -- {"line":38,"role":"USER","text":"the question","match":false} $wout] 1
+check "format_matches: the hit turn is match true" \
+    [regexp -- {"line":40,"role":"ASSISTANT","text":"the full reply","match":true} $wout] 1
+check "format_matches: a windowed match is valid JSON" \
+    [expr {![catch {::json::json2dict "\[$wout\]"}]}] 1
+
 # escape_json: every C0 control is escaped, so ANSI-bearing transcript
 # content cannot break the emitted document.
 check "escape_json: ESC becomes \\u001b" \

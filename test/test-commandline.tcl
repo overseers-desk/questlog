@@ -77,6 +77,35 @@ check bound_limit_all       0   [dict get [parse --json --limit all --keyword x]
 check bound_accrued         1   [dict get [parse --json --accrued-cost --since 7d --keyword x] accrued]
 check bound_font            Sans [dict get [parse --font Sans --keyword x] font]
 
+# ---- context: -A/-B/-C and their long aliases fold to ctx_before/ctx_after --
+check ctx_default {0 0} \
+    [list [dict get [parse --json --keyword x] ctx_before] [dict get [parse --json --keyword x] ctx_after]]
+check ctx_A {0 3} \
+    [list [dict get [parse --json -A 3 --keyword x] ctx_before] [dict get [parse --json -A 3 --keyword x] ctx_after]]
+check ctx_B {2 0} \
+    [list [dict get [parse --json -B 2 --keyword x] ctx_before] [dict get [parse --json -B 2 --keyword x] ctx_after]]
+check ctx_C {4 4} \
+    [list [dict get [parse --json -C 4 --keyword x] ctx_before] [dict get [parse --json -C 4 --keyword x] ctx_after]]
+check ctx_long {5 6} \
+    [list [dict get [parse --json --before-context 5 --after-context 6 --keyword x] ctx_before] \
+          [dict get [parse --json --before-context 5 --after-context 6 --keyword x] ctx_after]]
+check ctx_long_context {7 7} \
+    [list [dict get [parse --json --context 7 --keyword x] ctx_before] [dict get [parse --json --context 7 --keyword x] ctx_after]]
+# Occurrence order: a later -A overrides the after side -C set (grep-like).
+check ctx_C_then_A {3 5} \
+    [list [dict get [parse --json -C 3 -A 5 --keyword x] ctx_before] [dict get [parse --json -C 3 -A 5 --keyword x] ctx_after]]
+# Context is a headless-output feature, valid in markdown too.
+check ctx_markdown {1 1} \
+    [list [dict get [parse --markdown -C 1 --keyword x] ctx_before] [dict get [parse --markdown -C 1 --keyword x] ctx_after]]
+# ... but the GUI and the totals have no per-hit context to draw.
+check ctx_gui_refused {-A needs --json or --markdown (the totals and the GUI show no per-hit context)} \
+    [refusal -A 3 --keyword x]
+check ctx_shortstat_refused {-C needs --json or --markdown (the totals and the GUI show no per-hit context)} \
+    [refusal --shortstat -C 3 --keyword x]
+# The count must be a count.
+check ctx_not_a_count {-B: not a count: 'x' (want a non-negative integer)} \
+    [refusal --json -B x --keyword y]
+
 # An empty query is legal: it opens the window on the whole corpus.
 check empty_groups {} [dict get [parse] groups]
 check empty_mode   gui [dict get [parse] mode]

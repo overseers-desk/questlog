@@ -58,6 +58,27 @@ check "markdown: the -1.0 sentinel never reaches the page" \
 check "markdown: the subagent's own hit renders" \
     [regexp -- {- \*\*\[#3\] tool_use\*\* Bash\(command=grep scan_file\)} $out] 1
 
+# ---- context: a match with a window renders full turns, the hit tagged ------
+
+# Under -A/-B/-C a match carries a window instead of just a snippet: its whole
+# messages as **[#N] ROLE** blocks, the hit tagged (match), the run closed by a
+# rule. The full body is shown, not the char-window snippet.
+set wfolders [dict create f [dict create project_path /p sessions [list \
+    [dict create uuid s path /p/s.jsonl title "T" first_ts "" cost_usd "" turns 2 \
+        duration_secs "" human_secs "" subagents {} \
+        matches [list [dict create line 40 type assistant content "snip" window [list \
+            [dict create line 38 role USER text "the question" match 0] \
+            [dict create line 40 role ASSISTANT text "the full reply" match 1]]]]]]]]
+set wout [::questlog::cli::main::format_markdown $wfolders]
+check "markdown window: a context turn is a full anchored role block" \
+    [regexp -- {(?m)^\*\*\[#38\] USER\*\*$} $wout] 1
+check "markdown window: the hit turn is tagged (match)" \
+    [regexp -- {(?m)^\*\*\[#40\] ASSISTANT \(match\)\*\*$} $wout] 1
+check "markdown window: the full body is rendered" \
+    [regexp -- {the full reply} $wout] 1
+check "markdown window: no snippet bullet stands in for a windowed match" \
+    [regexp -- {- \*\*\[#40\]} $wout] 0
+
 if {$failures == 0} {
     puts "\nAll tests passed."
 } else {

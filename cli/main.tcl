@@ -21,14 +21,34 @@ proc ::questlog::cli::main::escape_json {str} {
     return [string map $JsonEscapeMap $str]
 }
 
-# Helper to format match records into JSON array elements
+# A context window (grep -A/-B/-C) as JSON array elements: each turn its
+# physical line, reading-view role label, full body, and whether it is the hit.
+proc ::questlog::cli::main::format_window {turns} {
+    set parts [list]
+    foreach t $turns {
+        lappend parts [format {{"line":%d,"role":"%s","text":"%s","match":%s}} \
+            [dict get $t line] \
+            [escape_json [dict get $t role]] \
+            [escape_json [dict get $t text]] \
+            [expr {[dict get $t match] ? "true" : "false"}]]
+    }
+    return [join $parts ","]
+}
+
+# Helper to format match records into JSON array elements. A match carries a
+# "window" only under a context flag; it is added beside line/type/content, so a
+# consumer reading only the snippet is unaffected.
 proc ::questlog::cli::main::format_matches {matches} {
     set parts [list]
     foreach m $matches {
-        lappend parts [format {{"line":%d,"type":"%s","content":"%s"}} \
+        set fields [format {"line":%d,"type":"%s","content":"%s"} \
             [dict get $m line] \
             [escape_json [dict get $m type]] \
             [escape_json [dict get $m content]]]
+        if {[dict exists $m window]} {
+            append fields ",\"window\":\[[format_window [dict get $m window]]\]"
+        }
+        lappend parts "{$fields}"
     }
     return [join $parts ","]
 }
@@ -138,12 +158,24 @@ proc ::questlog::cli::main::md_meta {ident ts turns usd} {
     return [join $parts " · "]
 }
 
-# A match list rendered to markdown. Each match is its one-line snippet, headed
-# by the same [#N] record anchor the JSON "line" field and the reading view use.
+# A match list rendered to markdown. Without a context flag a match is its
+# one-line snippet, headed by the same [#N] record anchor the JSON "line" field
+# and the reading view use. Under context the match carries a window: its whole
+# messages, each a **[#N] ROLE** turn as in the reading-view export, the hit's
+# own turn tagged (match), the run closed by a rule.
 proc ::questlog::cli::main::format_md_matches {matches} {
     set out [list]
     foreach m $matches {
-        lappend out "- **\[#[dict get $m line]] [dict get $m type]** [dict get $m content]"
+        if {[dict exists $m window]} {
+            foreach t [dict get $m window] {
+                set tag [expr {[dict get $t match] ? " (match)" : ""}]
+                lappend out "**\[#[dict get $t line]] [dict get $t role]$tag**" \
+                    "" [dict get $t text] ""
+            }
+            lappend out "---"
+        } else {
+            lappend out "- **\[#[dict get $m line]] [dict get $m type]** [dict get $m content]"
+        }
     }
     return [join $out "\n"]
 }
@@ -179,18 +211,27 @@ proc ::questlog::cli::main::format_markdown {folders_dict} {
     return [join $out "\n"]
 }
 
-# Helper to filter and limit matches to the requested cap
-proc ::questlog::cli::main::limit_matches {matches limit_cap {sub_path ""}} {
+# Filter and cap a session's or subagent's matches, and under grep-style
+# context (before/after > 0) attach each match's window: the whole messages
+# around the hit, read back from the session file by physical line. A match
+# already carries its file path and physical line, so the window is read here at
+# emission (only for the matches actually shown), not buffered during the scan.
+proc ::questlog::cli::main::limit_matches {matches limit_cap {sub_path ""} {before 0} {after 0}} {
     set out [list]
     if {$limit_cap <= 0} { return $out }
     set idx 0
     foreach m $matches {
         if {$sub_path ne "" && [dict getdef $m path ""] ne $sub_path} continue
         if {$idx >= $limit_cap} break
-        lappend out [dict create \
+        set entry [dict create \
             "line" [dict get $m lineoff] \
             "type" [dict get $m btype] \
             "content" [dict get $m content]]
+        if {$before > 0 || $after > 0} {
+            dict set entry window [::questlog::jsonl::context_window \
+                [dict get $m path] [dict get $m lineoff] $before $after]
+        }
+        lappend out $entry
         incr idx
     }
     return $out
@@ -318,6 +359,8 @@ proc ::questlog::cli::main::run {q} {
     set since         [dict get $q since]
     set until         [dict get $q until]
     set accrued       [dict get $q accrued]
+    set ctx_before    [dict get $q ctx_before]
+    set ctx_after     [dict get $q ctx_after]
     set mode          [dict get $q mode]
 
     # If --limit-matches is not set, default to config defaults
@@ -462,7 +505,7 @@ proc ::questlog::cli::main::run {q} {
         set parent_human [dict getdef $cost_info human_secs ""]
 
         # Limit parent matches
-        set limited_sess_matches [limit_matches [dict getdef $group_data parent_matches {}] $sess_limit]
+        set limited_sess_matches [limit_matches [dict getdef $group_data parent_matches {}] $sess_limit "" $ctx_before $ctx_after]
 
         # Resolve subagents; under --accrued-cost drop those with no in-window
         # spend, and accumulate their totals in temporaries so the whole subtree
@@ -491,7 +534,7 @@ proc ::questlog::cli::main::run {q} {
             set sub_cr_sum  [expr {$sub_cr_sum  + [dict getdef $sub_cost_info cache_read_tokens 0]}]
 
             # Find and limit matching snippets for this subagent if any
-            set limited_sub_matches [limit_matches [dict getdef $group_data subagent_matches {}] $sub_limit $sub_path]
+            set limited_sub_matches [limit_matches [dict getdef $group_data subagent_matches {}] $sub_limit $sub_path $ctx_before $ctx_after]
 
             lappend subagents_list [dict create \
                 "agent_id" [dict get $sub agent_id] \
