@@ -5,7 +5,7 @@ namespace eval ::questlog::jsonl {
     namespace export extract_text extract_blocks record_tool_uses \
         is_compact_boundary record_timestamp parse_iso fmt_gap first_cwd \
         segment_blockquotes segment_tables parse_inline is_user_turn \
-        is_turn_start record_role_label context_window
+        is_turn_start record_role_label context_window transcript_step
 }
 
 # Parse one JSONL line into a Tcl dict. Returns "" on parse failure.
@@ -719,6 +719,73 @@ proc ::questlog::jsonl::fmt_gap {minutes} {
     }
     set d [expr {$minutes / (60*24)}]
     return "${d} day(s)"
+}
+
+# The one home for the per-record transcript cues. The session viewer
+# (::questlog::ui::Viewer render_record) and the markdown export
+# (::questlog::markdown::export_session) both walk a session jsonl a record at a
+# time and both draw the same three cues off it - a compaction boundary, an
+# empty-body clock advance, and an idle gap between content records. They used to
+# spell that logic out twice, line for line, which is exactly the drift issue #31
+# set out to end: this proc is the single classifier both fold over, so a change
+# to when a divider fires can no longer land in one surface and miss the other.
+#
+# Given a parsed record, `last_ts` (the epoch of the most recent CONTENT record,
+# 0 when none has been seen yet), and the idle-gap threshold in minutes, return
+# {events new_last_ts}. `events` is an ordered list of typed items, emitted in
+# the order a consumer must render them:
+#   {compact}       the record is a compaction boundary. Sole event; the clock
+#                   resets (new_last_ts is 0) so the first content record after a
+#                   compaction never reads as an idle gap from before it.
+#   {gap <minutes>} an idle gap fired: `last_ts` and this record are both stamped
+#                   and the silence between them reached the threshold. Emitted
+#                   BEFORE the body so a consumer draws the divider above the
+#                   turn. A gap fires only between content records - a first
+#                   record (last_ts 0) or an unstamped record on either side
+#                   never gaps.
+#   {body <text>}   the record's extract_text body, non-empty. The turn itself.
+# A record with an empty extract_text body emits NO events but still advances the
+# clock when it carries a timestamp (new_last_ts becomes its epoch), so a gap is
+# measured from the last real message either side of the quiet metadata records.
+#
+# The step owns only classification and the clock. It never formats: the
+# consumers own every label, divider glyph and heading - the viewer's centred
+# "─── /compact ───" / "─── N later ───" and its section headers, the export's
+# "## --- /compact ---" / "## --- N later ---" - and each formats a gap through
+# fmt_gap itself from the raw minute count this step hands back. Consumer-only
+# concerns stay upstream too: the viewer drops last-prompt records and tracks an
+# in_section flag before ever reaching here; this step is agnostic to both.
+proc ::questlog::jsonl::transcript_step {rec last_ts idle_gap} {
+    set events [list]
+    set ts_epoch [parse_iso [record_timestamp $rec]]
+
+    # Compaction boundary: the primary cue. It is tested before the body so a
+    # boundary whose own content is empty still resets the clock rather than
+    # slipping through the empty-body path.
+    if {[is_compact_boundary $rec]} {
+        return [list [list [list compact]] 0]
+    }
+
+    # A record extract_text draws no text from (a file-history snapshot, an
+    # attachment, a permission-mode note) is not a turn: no event, but its stamp
+    # still moves the clock so an idle gap spans it.
+    set body [extract_text $rec]
+    if {$body eq ""} {
+        if {$ts_epoch > 0} { set last_ts $ts_epoch }
+        return [list $events $last_ts]
+    }
+
+    # Idle gap, between content records only. Integer minutes, floored, exactly
+    # as both consumers compute it.
+    if {$last_ts > 0 && $ts_epoch > 0} {
+        set gap [expr {($ts_epoch - $last_ts) / 60}]
+        if {$gap >= $idle_gap} {
+            lappend events [list gap $gap]
+        }
+    }
+    lappend events [list body $body]
+    if {$ts_epoch > 0} { set last_ts $ts_epoch }
+    return [list $events $last_ts]
 }
 
 # Last non-empty assistant text body in a session jsonl. Empty string if

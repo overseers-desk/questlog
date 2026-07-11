@@ -10,15 +10,17 @@ package require Tcl 9
 # placeholders, and prefixes tool_result with `ERROR: ` when is_error is true,
 # so all of that flows through into the exported markdown alongside the prose.
 #
-# Segmentation reuses the viewer's helpers and threshold so the two never
-# disagree on where a session breaks:
-#   primary   - a compact_boundary record (::questlog::jsonl::is_compact_boundary)
-#               opens a "## --- /compact ---" heading and resets the clock.
+# Segmentation runs off ::questlog::jsonl::transcript_step, the single classifier
+# the viewer folds over too (issue #31), so the two can no longer disagree on
+# where a session breaks. This export only formats the cues the step hands back:
+#   primary   - a compact_boundary record ({compact}) opens a "## --- /compact
+#               ---" heading and resets the clock.
 #   secondary - a silence of viewer_idle_gap_min minutes or more between content
-#               turns opens a "## --- N later ---" heading.
-# A record whose extract_text is empty (a metadata snapshot or attachment)
-# emits no turn but still advances the clock, the same as the viewer, so an idle
-# gap is measured from the last real message either side of the quiet records.
+#               turns ({gap N}) opens a "## --- N later ---" heading.
+# A record whose extract_text is empty (a metadata snapshot or attachment) yields
+# no event but still advances the clock inside the step, the same as the viewer,
+# so an idle gap is measured from the last real message either side of the quiet
+# records.
 namespace eval ::questlog::markdown {
     namespace export export_session
 }
@@ -47,37 +49,32 @@ proc ::questlog::markdown::export_session {path {anchors 0}} {
         set rec [::questlog::jsonl::parse_line $line]
         if {$rec eq ""} continue
 
-        set ts_iso [::questlog::jsonl::record_timestamp $rec]
-        set ts_epoch [::questlog::jsonl::parse_iso $ts_iso]
-
-        # Primary divider: a compaction boundary. Reset the clock so the first
-        # turn after a compaction never reads as an idle gap from before it.
-        if {[::questlog::jsonl::is_compact_boundary $rec]} {
-            lappend out [list divider "## --- /compact ---"]
-            set last_ts 0
-            continue
-        }
-
-        # A record with no text body (tool-only turn, file-history snapshot,
-        # attachment) emits nothing but keeps the clock moving for gap
-        # detection, matching the viewer's render.
-        set body [::questlog::jsonl::extract_text $rec]
-        if {$body eq ""} {
-            if {$ts_epoch > 0} { set last_ts $ts_epoch }
-            continue
-        }
-
-        # Secondary divider: an idle gap between content turns.
-        if {$last_ts > 0 && $ts_epoch > 0} {
-            set gap [expr {($ts_epoch - $last_ts) / 60}]
-            if {$gap >= $idle_gap} {
-                lappend out [list divider \
-                    "## --- [::questlog::jsonl::fmt_gap $gap] later ---"]
+        # The shared segmenter (::questlog::jsonl::transcript_step) classifies
+        # the record and moves the idle-gap clock; this export owns the format of
+        # every cue it hands back. A compact boundary opens a primary divider and
+        # resets the clock (the step returns last_ts 0); an idle gap opens a
+        # secondary divider, emitted before the body so it sits above the turn; a
+        # non-empty body is a role heading plus text. An empty-body record yields
+        # no events but still advances the clock, so a gap spans the quiet
+        # metadata records between two real messages.
+        lassign [::questlog::jsonl::transcript_step $rec $last_ts $idle_gap] \
+            events last_ts
+        foreach ev $events {
+            switch -- [lindex $ev 0] {
+                compact {
+                    lappend out [list divider "## --- /compact ---"]
+                }
+                gap {
+                    lappend out [list divider \
+                        "## --- [::questlog::jsonl::fmt_gap [lindex $ev 1]] later ---"]
+                }
+                body {
+                    lappend out [list turn \
+                        [::questlog::jsonl::record_role_label $rec] \
+                        [lindex $ev 1] $lineno]
+                }
             }
         }
-
-        lappend out [list turn [::questlog::jsonl::record_role_label $rec] $body $lineno]
-        if {$ts_epoch > 0} { set last_ts $ts_epoch }
     }
     close $fh
 
