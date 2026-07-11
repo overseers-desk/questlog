@@ -44,21 +44,25 @@ proc write_session {path ts} {
 }
 
 # Folder A: a01 newest .. a03 oldest, so date-descending display order is
-# a01, a02, a03. Folder B: b01, b02.
+# a01, a02, a03. Folder B: b01, b02, older still. Session moments are offsets
+# from now, not calendar dates: the scan below filters with `since 30d`, and a
+# fixed date silently ages out of that window and starves the sandbox (it
+# happened; the streamed-in counts collapsed to 1 and 0).
+proc session_moment {days_ago} { return [expr {[clock seconds] - $days_ago*24*3600}] }
 set A {}
 for {set i 1} {$i <= 3} {incr i} {
     set p [file join $DIRA [format a%02d $i].jsonl]
-    set day [format %02d [expr {13 - $i}]]
-    write_session $p "2026-06-${day}T10:00:00"
-    file mtime $p [clock scan "2026-06-${day} 10:00:00" -gmt 1]
+    set when [session_moment $i]
+    write_session $p [clock format $when -format "%Y-%m-%dT%H:%M:%S" -gmt 1]
+    file mtime $p $when
     lappend A $p
 }
 set B {}
 for {set i 1} {$i <= 2} {incr i} {
     set p [file join $DIRB [format b%02d $i].jsonl]
-    set day [format %02d [expr {9 - $i}]]
-    write_session $p "2026-06-${day}T10:00:00"
-    file mtime $p [clock scan "2026-06-${day} 10:00:00" -gmt 1]
+    set when [session_moment [expr {4 + $i}]]
+    write_session $p [clock format $when -format "%Y-%m-%dT%H:%M:%S" -gmt 1]
+    file mtime $p $when
     lappend B $p
 }
 lassign $A a01 a02 a03
