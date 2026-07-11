@@ -506,6 +506,20 @@ check "an empty typed prompt opens no turn" [llength [set ${NS}::Turns]] 1
 check "the open turn still owns what follows (detail hidden, not preamble)" \
     [vischars "orphan-check"] 0
 
+# ---- 22. drain-floor regressions --------------------------------------------------
+# A match row already leads with the role; a hit landing on a record's first
+# line must not excerpt the label into the context too ("ASSISTANT ·
+# ...ASSISTANT ..."). And typed-but-unsent resume text stays with its session.
+$V show $JP 0 {}
+update idletasks
+$V index_matches [dict create terms [list frobnication] nocase 0]
+check "a first-line hit's context excerpt starts past the label" \
+    [string match "*ASSISTANT*" [lindex [set ${NS}::MatchLabels] 0]] 0
+set ${NS}::PromptVar "typed for session A, unsent"
+$V show $JP2 0 {}
+update idletasks
+check "show clears the unsent prompt text" [set ${NS}::PromptVar] ""
+
 # ---- clean up -------------------------------------------------------------------
 ::questlog::path::_real_file delete -force $TMP
 puts [expr {$fails ? "FAILED ($fails)" : "PASS"}]

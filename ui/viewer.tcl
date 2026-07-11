@@ -221,6 +221,9 @@ oo::class create ::questlog::ui::Viewer {
         # show is a pointer click that already fired <Leave>, but the widget
         # invariant must not lean on where the pointer happens to be.
         my copy_hide
+        # Typed-but-unsent prompt text belongs to the session it was typed
+        # under, not the next one shown.
+        set PromptVar ""
         if {!$Shown} {
             grid remove $Empty
             grid $Text        -row 1 -column 0 -sticky nsew
@@ -1483,7 +1486,10 @@ oo::class create ::questlog::ui::Viewer {
     # the prompt is empty, or the session is live in an interactive resume
     # elsewhere (which would write the same jsonl underneath us).
     method resume_submit {} {
-        if {$Running} return
+        # One pipe at a time: a prior resume still draining (even detached, on
+        # a session navigated away from) blocks a new one until it exits. Say
+        # so - a Send that silently does nothing reads as a dead button.
+        if {$Running} { my prompt_status "still streaming a previous resume"; return }
         if {$Path eq "" || $Uuid eq ""} return
         set prompt [string trim $PromptVar]
         if {$prompt eq ""} return
@@ -2212,7 +2218,18 @@ oo::class create ::questlog::ui::Viewer {
     # A one-line, whitespace-collapsed excerpt of the match's line, for the
     # match index row.
     method match_context {idx} {
-        set line [regsub -all {\s+} [string trim [$Text get "$idx linestart" "$idx lineend"]] " "]
+        # A hit on a record's first line would excerpt the role label too, and
+        # the row already leads with the role - "ASSISTANT · ...ASSISTANT
+        # Write(" read twice. Start the excerpt where the content does: past
+        # the fold glyph and the label, when the line opens with them.
+        set s [$Text index "$idx linestart"]
+        foreach chrome {foldglyph lbl-user lbl-assistant lbl-system lbl-tool_result} {
+            set r [$Text tag nextrange $chrome $s "$s lineend"]
+            if {[llength $r] && [$Text compare [lindex $r 0] == $s]} {
+                set s [lindex $r 1]
+            }
+        }
+        set line [regsub -all {\s+} [string trim [$Text get $s "$s lineend"]] " "]
         if {[string length $line] > 60} { set line "[string range $line 0 59]…" }
         return $line
     }
