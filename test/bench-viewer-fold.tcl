@@ -25,6 +25,10 @@
 #   expand_all  the reverse (details stay hidden - a refold re-hides them).
 #   reveal jump jump_to_match into a hit that is hidden under a full fold:
 #               reveal_index unfolds the turn and un-hides its detail, then sees.
+#               Baseline note: this number moved from ~1 ms to ~0.2 s when
+#               reveal_index gained its idletasks+sync drain (the see must
+#               land on warm line metrics) - a click-latency price paid only
+#               on a jump, not a regression against earlier tables.
 #   yview sweep 20 moveto steps across the document, per-step median, once
 #               folded and once expanded: scroll cost over an elide-heavy doc.
 #   VmRSS       whole-document RSS delta from an empty viewer, median of 3 fresh
