@@ -151,8 +151,8 @@ proc ::questlog::cli::main::md_cost {usd} {
 # `questlog show <uuid>` reopens) or a subagent's agent_id (show has no entry
 # point for one, so it identifies but does not reopen), the first timestamp when
 # present (subagents carry none), the turn count, the duration and human time
-# when timed (fmt_dur's MM:SS/H:MM:SS, the session list's own Duration format),
-# and the cost when priced.
+# when timed (both via fmt_dur's MM:SS/H:MM:SS, the same format the session
+# list's Duration column uses), and the cost when priced.
 proc ::questlog::cli::main::md_meta {ident ts turns dur human usd} {
     set parts [list $ident]
     if {$ts ne ""} { lappend parts $ts }
