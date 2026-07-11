@@ -21,9 +21,10 @@
 #
 # ctx keys present only on a search-hit right-click (the list's snippet rows;
 # the viewer's "⋯" menu never sets them, so it shows neither hit entry):
-#   hit        dict {lineoff snippet}; its presence adds "Open at this match"
-#              and "Copy this snippet". The snippet is the model's full stored
-#              match text, resolved before it reaches here (never from a script).
+#   hit        dict {lineoff snippet}; adds "Copy this snippet", and - when
+#              on_open is also present - "Open at this match". The snippet is
+#              the model's full stored match text, resolved before it reaches
+#              here (never from a script).
 #   on_open_at command prefix; invoked {*}$cb path lineoff (opens at the match)
 #
 # ctx keys (mode=multi, a multi-selection): only the actions that apply to many
