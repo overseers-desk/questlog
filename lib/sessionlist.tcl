@@ -36,7 +36,11 @@ proc ::questlog::sessionlist::toggle {snapshot name dflt} {
 # liveness context and the toggle is off. model, when set, hides a row whose
 # model is known and different; a row with no model yet (the cost pass has not
 # filled it, or a search row that never carries one) stays visible, or the list
-# would flicker as the cost pass lands.
+# would flicker as the cost pass lands. Both sides of that comparison are the
+# model LABEL, what ::questlog::cost::model_label renders ("Opus 4.8", or a local
+# id it cannot price, trimmed of any date suffix), not the raw id from the
+# transcript: the row carries the label the list shows and the lens offers the
+# labels the loaded rows carry, so two ids differing only by a date are one model.
 proc ::questlog::sessionlist::row_visible {snapshot row {running_set {}}} {
     if {[toggle $snapshot bookmarked_only 0] && ![dict getdef $row bookmarked 0]} { return 0 }
     if {[toggle $snapshot running_only 0]

@@ -24,8 +24,8 @@ proc visible {snapshot row {running_set {}}} {
     return [::questlog::sessionlist::row_visible $snapshot $row $running_set]
 }
 
-set opus    [dict create uuid aaaa model claude-opus-4-8]
-set sonnet  [dict create uuid bbbb model claude-sonnet-5]
+set opus    [dict create uuid aaaa model {Opus 4.8}]
+set sonnet  [dict create uuid bbbb model {Sonnet 5}]
 set blank   [dict create uuid cccc model ""]
 set pending [dict create uuid dddd]   ;# no model key: cost pass has not landed
 
@@ -39,21 +39,21 @@ check no_filter_absent 1 [visible $snap $pending]
 check no_listview      1 [visible [dict create] $opus]
 
 # ---- filter set: only a known mismatch hides ---------------------------------
-set snap [dict create listview [dict create model claude-opus-4-8]]
+set snap [dict create listview [dict create model {Opus 4.8}]]
 check match_shows    1 [visible $snap $opus]
 check mismatch_hides 0 [visible $snap $sonnet]
 check blank_stays    1 [visible $snap $blank]
 check absent_stays   1 [visible $snap $pending]
 
 # ---- composes with bookmarked_only: both clauses must admit the row ---------
-set snap [dict create listview [dict create model claude-opus-4-8 bookmarked_only 1]]
+set snap [dict create listview [dict create model {Opus 4.8} bookmarked_only 1]]
 check bm_and_match   1 [visible $snap [dict merge $opus {bookmarked 1}]]
 check bm_wrong_model 0 [visible $snap [dict merge $sonnet {bookmarked 1}]]
 check match_not_bm   0 [visible $snap $opus]
 
 # ---- composes with running_only: liveness and model both gate ---------------
 set live [dict create aaaa p bbbb p]
-set snap [dict create listview [dict create model claude-opus-4-8 running_only 1]]
+set snap [dict create listview [dict create model {Opus 4.8} running_only 1]]
 check run_and_match   1 [visible $snap $opus $live]
 check run_wrong_model 0 [visible $snap $sonnet $live]
 check match_not_run   0 [visible $snap $opus]
