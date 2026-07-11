@@ -218,11 +218,11 @@ proc gui_err {args} {
     file delete $ef
     return $t
 }
-check gui_err_or      1 [string match {*--or needs --json or --shortstat*}    [gui_err --keyword a --or --keyword b]]
-check gui_err_not     1 [string match {*--not needs --json or --shortstat*}   [gui_err --not --keyword a --keyword b]]
+check gui_err_or      1 [string match {*--or needs --json or --markdown or --shortstat*}    [gui_err --keyword a --or --keyword b]]
+check gui_err_not     1 [string match {*--not needs --json or --markdown or --shortstat*}   [gui_err --not --keyword a --keyword b]]
 check gui_err_regions 1 [string match {*:regions suffix needs --json*}        [gui_err --keyword:user a]]
-check gui_err_until   1 [string match {*--until needs --json or --shortstat*} [gui_err --until 7d --keyword a]]
-check gui_err_limit   1 [string match {*--limit needs --json or --shortstat*} [gui_err --limit 5 --keyword a]]
+check gui_err_until   1 [string match {*--until needs --json or --markdown or --shortstat*} [gui_err --until 7d --keyword a]]
+check gui_err_limit   1 [string match {*--limit needs --json or --markdown or --shortstat*} [gui_err --limit 5 --keyword a]]
 check gui_err_lmatch  1 [string match {*--limit-matches needs --json*}        [gui_err --limit-matches 0 --keyword a]]
 check gui_err_accrued 1 [string match {*--accrued-cost needs --json*}         [gui_err --accrued-cost --since 7d --keyword a]]
 check gui_err_quote   1 [string match {*double quote needs --json*}           [gui_err --keyword {say "hi}]]

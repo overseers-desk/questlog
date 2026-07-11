@@ -118,6 +118,67 @@ proc ::questlog::cli::main::format_shortstat {stats limit} {
 }
 
 
+# A cost_usd domain value to its markdown token: blank for the "no figure"
+# sentinel (unpriced or no assistant turns), a "$0.00"-style figure otherwise.
+# The markdown twin of format_cost, which serves the same distinction as null.
+proc ::questlog::cli::main::md_cost {usd} {
+    if {$usd eq "" || $usd < 0} { return "" }
+    return [format {$%.2f} $usd]
+}
+
+# The one-line identity/metadata line under a session or subagent heading: the
+# uuid (so `questlog show <uuid>` reaches it), the first timestamp when present
+# (subagents carry none), the turn count, and the cost when priced.
+proc ::questlog::cli::main::md_meta {ident ts turns usd} {
+    set parts [list $ident]
+    if {$ts ne ""} { lappend parts $ts }
+    lappend parts "$turns turns"
+    set c [md_cost $usd]
+    if {$c ne ""} { lappend parts $c }
+    return [join $parts " · "]
+}
+
+# A match list rendered to markdown. Each match is its one-line snippet, headed
+# by the same [#N] record anchor the JSON "line" field and the reading view use.
+proc ::questlog::cli::main::format_md_matches {matches} {
+    set out [list]
+    foreach m $matches {
+        lappend out "- **\[#[dict get $m line]] [dict get $m type]** [dict get $m content]"
+    }
+    return [join $out "\n"]
+}
+
+# Render the whole result to markdown - the same folders/sessions/subagents/
+# matches model --json emits, as a document meant to be read and analysed rather
+# than parsed. Folders head the document, each session its title and identity
+# line, each hit its anchored snippet; subagents nest under their parent. Reuses
+# the [#N] anchor style of the reading-view export so the two markdown surfaces
+# read alike.
+proc ::questlog::cli::main::format_markdown {folders_dict} {
+    set out [list]
+    dict for {folder data} $folders_dict {
+        set path [dict get $data project_path]
+        lappend out "# [expr {$path ne {} ? $path : $folder}]"
+        foreach sess [dict get $data sessions] {
+            lappend out "" "## [dict get $sess title]"
+            lappend out [md_meta [dict get $sess uuid] [dict get $sess first_ts] \
+                [dict get $sess turns] [dict get $sess cost_usd]]
+            lappend out "`[dict get $sess path]`"
+            set mm [format_md_matches [dict get $sess matches]]
+            if {$mm ne ""} { lappend out "" $mm }
+            foreach sub [dict get $sess subagents] {
+                lappend out "" "### subagent [dict get $sub agent_type]: [dict get $sub description]"
+                lappend out [md_meta [dict get $sub agent_id] "" \
+                    [dict get $sub turns] [dict get $sub cost_usd]]
+                set sm [format_md_matches [dict get $sub matches]]
+                if {$sm ne ""} { lappend out "" $sm }
+            }
+        }
+        lappend out ""
+    }
+    return [join $out "\n"]
+}
+
 # Helper to filter and limit matches to the requested cap
 proc ::questlog::cli::main::limit_matches {matches limit_cap {sub_path ""}} {
     set out [list]
@@ -500,6 +561,8 @@ proc ::questlog::cli::main::run {q} {
             sessions $n_sessions subagents $n_subagents cost $total_cost \
             turns $total_turns input_tokens $total_in output_tokens $total_out \
             cache_write_tokens $total_cw cache_read_tokens $total_cr] $limit]
+    } elseif {$mode eq "markdown"} {
+        puts [format_markdown $output_folders]
     } else {
         puts [format_json $output_folders]
     }

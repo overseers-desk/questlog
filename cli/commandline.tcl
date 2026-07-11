@@ -23,7 +23,7 @@ namespace eval ::questlog::cli::commandline {
     variable CL [ocmdline new questlog $::QUESTLOG_VERSION]
 }
 
-$::questlog::cli::commandline::CL synopsis {[--json|--shortstat] [bounds] [clauses]}
+$::questlog::cli::commandline::CL synopsis {[--json|--markdown|--shortstat] [bounds] [clauses]}
 
 $::questlog::cli::commandline::CL preamble {
     {A session is returned when its clauses hold. Each clause is one needle in an}
@@ -44,6 +44,7 @@ $::questlog::cli::commandline::CL subcommand install-claude-command {} \
 $::questlog::cli::commandline::CL mode gui -default -section output \
     -help {{Open the GUI on the query. Needs a display.}}
 $::questlog::cli::commandline::CL mode json
+$::questlog::cli::commandline::CL mode markdown
 $::questlog::cli::commandline::CL mode shortstat
 
 # ---- output ----------------------------------------------------------------
@@ -57,6 +58,9 @@ $::questlog::cli::commandline::CL section output {output:} -note {
 }
 $::questlog::cli::commandline::CL option --json -section output -selects json \
     -help {{Emit the full result as JSON, headless.}}
+$::questlog::cli::commandline::CL option --markdown -section output -selects markdown \
+    -help {{Emit the result as markdown, headless: each matching session with}
+           {its hits, rendered as reading-view turns.}}
 $::questlog::cli::commandline::CL option --shortstat -section output -selects shortstat \
     -help {{Emit a totals summary instead, headless: session and subagent}
            {counts, turns, tokens, and total cost over the result.}}
@@ -109,14 +113,14 @@ $::questlog::cli::commandline::CL option --tool: -section clause -repeat -tag cl
     -help {{A file the session touched (by path-tail), or a tool it used.}}
 
 $::questlog::cli::commandline::CL option --or -section clause -repeat \
-    -modes {json shortstat} -because {the GUI ANDs its criteria} \
+    -modes {json markdown shortstat} -because {the GUI ANDs its criteria} \
     -fold {if {![llength $cur]} { $CL fail "--or needs a clause on each side" }
            lappend groups $cur
            set cur [list]} \
     -help {{OR between the clause before and the clause after.}}
 
 $::questlog::cli::commandline::CL option --not -section clause -repeat \
-    -modes {json shortstat} -because {the GUI has no negated criterion} \
+    -modes {json markdown shortstat} -because {the GUI has no negated criterion} \
     -fold {set pending_neg 1} \
     -help {{Negate the next clause. The whole query still}
            {needs at least one positive clause.}}
@@ -132,7 +136,7 @@ $::questlog::cli::commandline::CL option --since -fold {set since $value} -secti
 
 $::questlog::cli::commandline::CL option --until -fold {set until $value} -section bound -arg when \
     -check {::questlog::cli::commandline::check_when --until $value} \
-    -modes {json shortstat} \
+    -modes {json markdown shortstat} \
     -help {{Older bound: a window ago (7d), a date (covers the whole day),}
            {a precise instant, or 'all' (no bound).}}
 
@@ -142,18 +146,18 @@ $::questlog::cli::commandline::CL option --subtree -fold {set subtree [::questlo
            {itself and everything below it (~ is expanded).}}
 
 $::questlog::cli::commandline::CL option --accrued-cost -fold {set accrued 1} -section bound \
-    -modes {json shortstat} \
+    -modes {json markdown shortstat} \
     -help {{Count only spend dated inside the window, by each message's}
            {timestamp. Needs a time bound.}}
 
 $::questlog::cli::commandline::CL option --limit -fold {set limit [expr {$value eq "all" ? 0 : $value}]} -section bound -arg N \
     -check {::questlog::cli::commandline::check_count --limit $value 1} \
-    -modes {json shortstat} \
+    -modes {json markdown shortstat} \
     -help {{Cap returned sessions (0, 'all', or unset = unlimited).}}
 
 $::questlog::cli::commandline::CL option --limit-matches -fold {set limit_matches $value} -section bound -arg N \
     -check {::questlog::cli::commandline::check_count --limit-matches $value 0} \
-    -modes {json shortstat} \
+    -modes {json markdown shortstat} \
     -help {{Cap snippets per session/subagent (0 = no snippets).}}
 
 $::questlog::cli::commandline::CL option --case -fold {set nocase 0} -section bound \
@@ -230,7 +234,7 @@ proc ::questlog::cli::commandline::check_subtree {value} {
 
 proc ::questlog::cli::commandline::regions_restriction {suffix} {
     if {$suffix eq "" || ![llength [::questlog::search::parse_regions $suffix]]} { return {} }
-    return [dict create subject "a :regions suffix" modes {json shortstat} \
+    return [dict create subject "a :regions suffix" modes {json markdown shortstat} \
         because "the GUI's scope covers the whole search"]
 }
 
@@ -239,7 +243,7 @@ proc ::questlog::cli::commandline::keyword_restriction {value suffix} {
     if {[llength $r]} { return $r }
     if {[string first "\"" $value] >= 0} {
         return [dict create subject "a keyword holding a double quote" \
-            modes {json shortstat} because "the search field quotes phrases with it"]
+            modes {json markdown shortstat} because "the search field quotes phrases with it"]
     }
     return {}
 }

@@ -40,7 +40,11 @@ proc refusal {args} {
 # ---- mode: an output flag chooses the answer, absence opens the window ------
 check mode_default   gui       [dict get [parse --keyword x] mode]
 check mode_json      json      [dict get [parse --json --keyword x] mode]
+check mode_markdown  markdown  [dict get [parse --markdown --keyword x] mode]
 check mode_shortstat shortstat [dict get [parse --shortstat --keyword x] mode]
+# Two output flags conflict: neither wins, the query is refused.
+check mode_conflict {choose one output: --json or --markdown} \
+    [refusal --json --markdown --keyword x]
 
 # ---- groups: an OR-of-ANDs of clause dicts, in the order written ------------
 # A B --or C is (A AND B) OR C: two groups, the first holding two clauses.
@@ -90,22 +94,22 @@ check gui_regions_any "" [refusal --keyword:any x]
 
 # ... and refuses what has no control behind it, naming the flag that would
 # have answered the query as asked.
-check gui_or      {--or needs --json or --shortstat (the GUI ANDs its criteria)} \
+check gui_or      {--or needs --json or --markdown or --shortstat (the GUI ANDs its criteria)} \
     [refusal --keyword a --or --keyword b]
-check gui_not     {--not needs --json or --shortstat (the GUI has no negated criterion)} \
+check gui_not     {--not needs --json or --markdown or --shortstat (the GUI has no negated criterion)} \
     [refusal --not --keyword a --keyword b]
-check gui_regions {a :regions suffix needs --json or --shortstat (the GUI's scope covers the whole search)} \
+check gui_regions {a :regions suffix needs --json or --markdown or --shortstat (the GUI's scope covers the whole search)} \
     [refusal --keyword:user x]
-check gui_until   {--until needs --json or --shortstat}   [refusal --until 7d --keyword x]
-check gui_limit   {--limit needs --json or --shortstat}   [refusal --limit 5 --keyword x]
+check gui_until   {--until needs --json or --markdown or --shortstat}   [refusal --until 7d --keyword x]
+check gui_limit   {--limit needs --json or --markdown or --shortstat}   [refusal --limit 5 --keyword x]
 # 0 snippets is a request, not an absence, so it is refused like any other cap.
-check gui_lmatch  {--limit-matches needs --json or --shortstat} \
+check gui_lmatch  {--limit-matches needs --json or --markdown or --shortstat} \
     [refusal --limit-matches 0 --keyword x]
-check gui_accrued {--accrued-cost needs --json or --shortstat} \
+check gui_accrued {--accrued-cost needs --json or --markdown or --shortstat} \
     [refusal --accrued-cost --since 7d --keyword x]
 # The search field quotes a phrase with ", so a needle holding one cannot be
 # written into it; the headless matcher takes the needle literally.
-check gui_quote {a keyword holding a double quote needs --json or --shortstat (the search field quotes phrases with it)} \
+check gui_quote {a keyword holding a double quote needs --json or --markdown or --shortstat (the search field quotes phrases with it)} \
     [refusal --keyword {say "hi}]
 # The reading font is the window's, and a headless run has nothing to render.
 check headless_font {--font is not available with --json (the reading font is the GUI's)} \
