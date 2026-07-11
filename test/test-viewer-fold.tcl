@@ -230,6 +230,70 @@ check "turn 2 held its fold across the close" \
 check "new turn renders visible" \
     [expr {[vischars "Fourth question arrives"] > 0}] 1
 
+# ---- C5: Turns index tab + fold-all affordances --------------------------------
+# The sections above left the fold and detail state churned (turns folded and
+# refolded, a turn streamed in mid-fold); a fresh show resets that to a known
+# baseline before the Turns-tab assertions. show refills the band's per-tab
+# listboxes (index_turns among them), so their rows are current afterward.
+$V show $JP 0 {}
+update idletasks
+update
+set TurnLB [dict get [set ${NS}::BandDesc] turns list]
+set ToolLB [dict get [set ${NS}::BandDesc] tools list]
+
+# ---- 10. the Turns tab is a jump list over the registry ------------------------
+check "turns listbox row count equals the registry after show" \
+    [$TurnLB size] [llength [set ${NS}::Turns]]
+check "a turn row reads its stamp and the prompt's first line" \
+    [$TurnLB get 0] \
+    "[$V tool_time [dict get [turn 0] ts]] · [dict get [turn 0] label]"
+
+# ---- 11. a Turns-tab jump lands on the header, even everything folded -----------
+# fold_all collapses every turn to its header; a jump to the last row must still
+# reveal that header (turn_list_select routes through reveal_index, which
+# unfolds the folded target and scrolls it in).
+$V fold_all
+update idletasks
+set last [expr {[llength [set ${NS}::Turns]] - 1}]
+$TurnLB selection clear 0 end
+$TurnLB selection set $last
+$V turn_list_select
+update idletasks
+check "the jump scrolls the folded last turn's header into view (bbox non-empty)" \
+    [expr {[$Text bbox [dict get [turn $last] hdr]] ne ""}] 1
+$V expand_all
+update idletasks
+
+# ---- 12. index_turns re-run (as resume_finish does) tracks a grown registry ----
+# A new typed prompt streamed in opens a fresh turn; resume_finish re-runs
+# index_turns to catch the listbox up, and the refill must show the grown count.
+set before [llength [set ${NS}::Turns]]
+set fh [open $JP a]
+fconfigure $fh -encoding utf-8
+puts $fh {{"type":"user","promptSource":"typed","timestamp":"2026-07-11T13:00:00Z","message":{"role":"user","content":"Fifth question after the reset"}}}
+puts $fh {{"type":"assistant","timestamp":"2026-07-11T13:00:05Z","message":{"role":"assistant","content":[{"type":"text","text":"Fifth reply."}]}}}
+close $fh
+$V append_new
+$V index_turns
+update idletasks
+check "append_new grew the registry by one turn" \
+    [llength [set ${NS}::Turns]] [expr {$before + 1}]
+check "index_turns shows the grown count" \
+    [$TurnLB size] [llength [set ${NS}::Turns]]
+
+# ---- 13. a Tools-tab jump opens the turn's detail to reach the call -------------
+# A tool_use renders after its record's visible label, so a plain reveal lands
+# on the label and leaves the call elided; the Tools tab is the caller that
+# asked for the hidden line, so its jump also spills the turn's detail. Row 0 is
+# turn 0's Read(/tmp/needle-alpha.txt) call (document order).
+check "the target tool line is hidden by default" [vischars "needle-alpha"] 0
+$ToolLB selection clear 0 end
+$ToolLB selection set 0
+$V tool_list_select
+update idletasks
+check "the Tools jump reveals the tool_use line" \
+    [expr {[vischars "needle-alpha"] > 0}] 1
+
 # ---- clean up -------------------------------------------------------------------
 ::questlog::path::_real_file delete -force $TMP
 puts [expr {$fails ? "FAILED ($fails)" : "PASS"}]

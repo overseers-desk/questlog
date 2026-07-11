@@ -68,6 +68,7 @@ oo::class create ::questlog::ui::Viewer {
     variable NextTableId      ;# monotonic id for rendered markdown tables
     variable Tables           ;# dict: table id -> parsed payload, for tab re-fit
     variable Bodies           ;# dict: jsonl line -> raw body (for Copy message)
+    variable TurnList         ;# listbox of per-turn rows (alias of BandDesc turns list)
     variable MatchList        ;# listbox of per-match rows (alias of BandDesc matches list)
     variable MatchLabels      ;# per-match one-line excerpt, parallel to FindMatches
     variable ToolList         ;# listbox of per-call rows (alias of BandDesc tools list)
@@ -95,8 +96,9 @@ oo::class create ::questlog::ui::Viewer {
     variable BandTab          ;# "matches"|"tools"|"quotes": which list the band shows
     variable BandOpen         ;# 1 while the band is gridded (taking transcript height)
     variable BandCount        ;# band-header count label
+    variable FoldBar          ;# band-header fold-all/expand-all affordance, shown only on the Turns tab
     # BandDesc: ordered dict key -> per-tab descriptor, one entry per band tab in
-    # canonical left-to-right order (matches, tools, quotes). Each descriptor
+    # canonical left-to-right order (turns, matches, tools, quotes). Each descriptor
     # carries the tab's header label (tab), head-strip count label (btn), listbox
     # (list) and its scrollbar (sb), the current count string (count, "" while the
     # tab is empty), its singular/plural unit words (unit, a {singular plural}
@@ -222,6 +224,7 @@ oo::class create ::questlog::ui::Viewer {
         my index_matches $query
         my index_tool_calls
         my refresh_quote_control
+        my index_turns
         my add_endhint
         if {$scroll_to_line > 0} {
             my scroll_to_line $scroll_to_line
@@ -241,11 +244,16 @@ oo::class create ::questlog::ui::Viewer {
         # tab, a listbox+scrollbar, a count string). BandDesc is the ordered
         # key->descriptor dict that drives every per-tab loop below; the loops here
         # fill in each descriptor's widget paths (tab/btn/list/sb). Canonical order
-        # is matches, tools, quotes. tabtext is the header label; stem keeps the
-        # historical short widget names (matchlist/toolsb/...); unit is the
-        # {singular plural} count word; auto=1 (matches only) auto-opens the band on
-        # refresh; onselect is the <<ListboxSelect>> handler.
+        # is turns, matches, tools, quotes (Turns leftmost). tabtext is the header
+        # label; stem keeps the historical short widget names (matchlist/toolsb/...);
+        # unit is the {singular plural} count word; auto=1 (matches only) auto-opens
+        # the band on refresh, and the Turns tab is deliberately auto 0 so a session
+        # click never surfaces it - it is a reach-for index; onselect is the
+        # <<ListboxSelect>> handler.
         set BandDesc [dict create \
+            turns   [dict create tabtext "Turns" stem turn \
+                         unit {turn turns} auto 0 onselect turn_list_select \
+                         count ""] \
             matches [dict create tabtext "Matches" stem match \
                          unit {match matches} auto 1 onselect match_list_select \
                          count ""] \
@@ -365,7 +373,8 @@ oo::class create ::questlog::ui::Viewer {
         # gives every pixel back to the transcript, and full-width so the reading
         # column keeps its width (the win over a side column). Its listboxes
         # share the band's content cell; set_tab grids one and removes the rest.
-        # The header carries the Matches|Tools|Quotes tabs, the active count, and ✕.
+        # The header carries the Turns|Matches|Tools|Quotes tabs, the active count,
+        # the Turns-tab fold-all/expand-all affordance, and ✕.
         # A classic tk frame/label set tinted with the head strip's background,
         # not ttk (clam ignores -background on ttk frames), so the head strip and
         # band read as one contiguous chrome zone over the transcript.
@@ -396,15 +405,33 @@ oo::class create ::questlog::ui::Viewer {
         pack $Band.hdr.tabs  -side left -padx 8 -pady 2
         pack $BandCount      -side left -padx 6
         pack $Band.hdr.close -side right -padx 8
+        # Fold-all / expand-all affordance, a right-aligned pair shown only while
+        # the Turns tab is the front tab (set_tab packs it there and forgets it on
+        # every other tab). Faint mono labels in the tabs' key, subtler than a tab
+        # so they read as a control not a fourth heading; a click drives the fold
+        # primitives over every turn. Built here (unpacked, so it stays hidden until
+        # the Turns tab is chosen) and parked just left of the ✕.
+        set FoldBar $Band.hdr.foldbar
+        frame $FoldBar -background $strip
+        label $FoldBar.fold -text "fold all" -background $strip -cursor hand2 \
+            -font QLMono -foreground [::questlog::ui::theme::c faint]
+        label $FoldBar.expand -text "expand all" -background $strip -cursor hand2 \
+            -font QLMono -foreground [::questlog::ui::theme::c faint]
+        bind $FoldBar.fold   <Button-1> [list [self] fold_all]
+        bind $FoldBar.expand <Button-1> [list [self] expand_all]
+        pack $FoldBar.fold   -side left -padx {0 8}
+        pack $FoldBar.expand -side left
         # One listbox + scrollbar per band tab, all sharing the band's content
         # cell (set_tab grids the active one and removes the rest). Each tab's
-        # producer fills its rows: the match index "ROLE · …excerpt… · line N"
-        # coloured by role; the tool timeline (the did-versus-claimed audit, issue
-        # #15) "time · tool · path" in chronological order; the quote index "time ·
-        # first quoted line" -- a quick jump list to an assistant's quoted
-        # passages (their text is plain tagged text now, found by $Text search
-        # like any prose, so this is a convenience index, not the only way in). A
-        # row click jumps the reading view to its target. The
+        # producer fills its rows: the turn index "time · first prompt line"
+        # coloured like a user label, a jump list over the turn registry (the
+        # reading model's unit, foldable to a table of contents); the match index
+        # "ROLE · …excerpt… · line N" coloured by role; the tool timeline (the
+        # did-versus-claimed audit, issue #15) "time · tool · path" in chronological
+        # order; the quote index "time · first quoted line" -- a quick jump list to
+        # an assistant's quoted passages (their text is plain tagged text now, found
+        # by $Text search like any prose, so this is a convenience index, not the
+        # only way in). A row click jumps the reading view to its target. The
         # widget paths keep the historical stems ($Band.matchlist/$Band.matchsb ...).
         foreach key [dict keys $BandDesc] {
             set stem [dict get $BandDesc $key stem]
@@ -419,9 +446,10 @@ oo::class create ::questlog::ui::Viewer {
             dict set BandDesc $key list $lb
             dict set BandDesc $key sb $sb
         }
-        # Convenience aliases so methods that touch only one list (match_list_select,
-        # index_tool_calls, quote_list_select, render, insert_quote_text) need no
-        # descriptor lookup.
+        # Convenience aliases so methods that touch only one list (index_turns,
+        # turn_list_select, match_list_select, index_tool_calls, quote_list_select,
+        # render, insert_quote_text) need no descriptor lookup.
+        set TurnList  [dict get $BandDesc turns list]
         set MatchList [dict get $BandDesc matches list]
         set ToolList  [dict get $BandDesc tools list]
         set QuoteList [dict get $BandDesc quotes list]
@@ -698,6 +726,15 @@ oo::class create ::questlog::ui::Viewer {
         set idx [::questlog::ui::session_actions::populate $ActionMenu $ctx]
         ::questlog::ui::session_actions::apply_state \
             $ActionMenu $idx [dict get $ctx state]
+        # Fold-all / expand-all over the turn registry; the band-header pair on the
+        # Turns tab is their twin. Disabled when the session rendered no turns, so
+        # they read as unavailable rather than silently doing nothing.
+        $ActionMenu add separator
+        set tstate [expr {[llength $Turns] ? "normal" : "disabled"}]
+        $ActionMenu add command -label "Fold all turns" -state $tstate \
+            -command [list [self] fold_all]
+        $ActionMenu add command -label "Expand all turns" -state $tstate \
+            -command [list [self] expand_all]
         $ActionMenu add separator
         $ActionMenu add command -label "Continue with one prompt…" \
             -command [list [self] prompt_show]
@@ -1393,6 +1430,7 @@ oo::class create ::questlog::ui::Viewer {
             my index_matches $Query
             my index_tool_calls
             my refresh_quote_control
+            my index_turns
             my add_endhint
             my set_prompt_enabled 1
             if {$status} {
@@ -1989,6 +2027,11 @@ oo::class create ::questlog::ui::Viewer {
         set d [dict get $BandDesc $tab]
         grid [dict get $d list] -row 1 -column 0 -sticky nsew
         grid [dict get $d sb]   -row 1 -column 1 -sticky ns
+        # The fold-all/expand-all pair belongs to the Turns tab alone; re-pack it
+        # left of the ✕ there (the close stays packed, so -side right lands the
+        # bar just inside it) and forget it on every other tab.
+        pack forget $FoldBar
+        if {$tab eq "turns"} { pack $FoldBar -side right -padx 8 }
         my update_band_tabs
         my update_band_glyphs
     }
@@ -2158,11 +2201,25 @@ oo::class create ::questlog::ui::Viewer {
         my refresh_band_control tools [llength $ToolLines]
     }
 
-    # Jump the reading view to the clicked call's line.
+    # Jump the reading view to the clicked call's line, then open that turn's
+    # detail so the call itself is on screen. scroll_to_line routes through
+    # reveal_index, which unfolds the landing turn but shows hidden detail only
+    # when the jump index sits inside it; a tool_use renders after its record's
+    # visible label line, so a plain reveal lands on the label and leaves the
+    # call elided. The Tools tab is the one caller that explicitly asked for that
+    # hidden line, so it spills the whole turn's detail after landing. The other
+    # scroll_to_line callers (the session-list snippet deep links) keep the
+    # reveal-only-what-you-hit rule - which is exactly why this detail spill lives
+    # in the caller and not in scroll_to_line or reveal_index.
     method tool_list_select {} {
         set sel [$ToolList curselection]
         if {$sel eq ""} return
-        my scroll_to_line [lindex $ToolLines [lindex $sel 0]]
+        set lineno [lindex $ToolLines [lindex $sel 0]]
+        my scroll_to_line $lineno
+        if {[dict exists $LineMap $lineno]} {
+            set n [my turn_at [dict get $LineMap $lineno]]
+            if {$n >= 0} { my details_show $n }
+        }
     }
 
     # ---- quote index (jump to an assistant's quoted passage) --------------
@@ -2193,5 +2250,54 @@ oo::class create ::questlog::ui::Viewer {
         set sel [$QuoteList curselection]
         if {$sel eq ""} return
         my reveal_index [lindex $QuoteIdx [lindex $sel 0]]
+    }
+
+    # ---- turns index (jump to a turn's header) ----------------------------
+
+    # Fill the Turns listbox from the registry, one row per turn "time · first
+    # prompt line" coloured like a user label (a turn opens on a user prompt).
+    # The label was captured at turn_open (the prompt's first line); collapse
+    # its whitespace and clip it the way the match and quote rows clip, so a
+    # long or ragged opening still reads as one tidy row. Called from show and,
+    # after a streamed turn lands, from resume_finish - the registry is the one
+    # source of truth, so a refill always tracks [llength $Turns]. Unlike the
+    # quote rows (appended live during render) turn rows are not maintained
+    # incrementally, so this rebuilds them wholesale.
+    method index_turns {} {
+        $TurnList delete 0 end
+        foreach T $Turns {
+            set label [regsub -all {\s+} [string trim [dict get $T label]] " "]
+            if {[string length $label] > 60} {
+                set label "[string range $label 0 59]…"
+            }
+            $TurnList insert end "[my tool_time [dict get $T ts]] · $label"
+            $TurnList itemconfigure end -foreground [::questlog::ui::theme::c user]
+        }
+        my refresh_turn_control
+    }
+
+    # Expose the head-strip Turns count from the registry (index_turns has
+    # filled the rows). Opt-in like the tool and quote audits (descriptor auto
+    # is 0): it makes the Turns tab and count available but never opens the band
+    # on its own - the Turns index is reached for, not surfaced by a session
+    # click. With no turns the count is hidden and a band already on Turns
+    # collapses; refresh_band_control does the work.
+    method refresh_turn_control {} {
+        my refresh_band_control turns [llength $Turns]
+    }
+
+    # Jump the reading view to a clicked turn's header. A header line is never
+    # elided (turn_fold hides from the body down, keeping the header as the
+    # fold's visible handle), so the reveal here only unfolds a folded target
+    # and scrolls - it spills no detail. The jump still routes through
+    # reveal_index rather than a bare `see`, because that one-gate rule is the
+    # whole discipline: every transcript jump lands through the primitive that
+    # knows how to make an elided target visible, even where this particular
+    # target can never be elided.
+    method turn_list_select {} {
+        set sel [$TurnList curselection]
+        if {$sel eq ""} return
+        set T [lindex $Turns [lindex $sel 0]]
+        my reveal_index [dict get $T hdr]
     }
 }
