@@ -77,6 +77,12 @@ namespace eval ::questlog::ui::theme {
         crit_regex_bg   #fff4d6
         crit_regex_fg   #7a5d00
         crit_regex_bd   #e8c870
+        crit_time_bg    #dde9ff
+        crit_time_fg    #1c3a6a
+        crit_time_bd    #b9cdf0
+        crit_turns_bg   #d5eef2
+        crit_turns_fg   #0f5f6e
+        crit_turns_bd   #a9d5de
         op_either_bg    #edeef0
         op_either_fg    #5a5f66
         op_read_bg      #d9ebff
@@ -251,19 +257,42 @@ proc ::questlog::ui::theme::build_chrome {} {
         -focuscolor [c chip_bg]
     ttk::style map ChipX.TButton \
         -foreground [list active [c ink]] -background [list active [c chip_bg]]
-    # The type pill is a fixed-size label image (text drawn centred over it), so
-    # it is sized to the widest type word, not stretched like the 9-patch chips.
-    set pw [expr {[font measure TkDefaultFont "regex"] + 20}]
     # per criterion type: the white value chip and the tinted type pill share
-    # the type's hairline tint.
-    foreach t {subtree file tool regex} {
+    # the type's hairline tint. Both are 9-patch, so a pill takes the width of
+    # its own word - the criteria bar grids the pills into one column, which
+    # aligns the connective words after them without giving any pill a width.
+    foreach t {subtree file tool regex time turns} {
         rrect_img qlChip_$t $w $ch $r [c chip_bg] [c crit_${t}_bd] 1
         ttk::style element create Chip_$t.bg image qlChip_$t \
             -border $B -padding 0 -sticky nsew
         ttk::style layout Crit_$t.TFrame [list Chip_$t.bg -sticky nsew]
 
-        rrect_img qlPill_$t $pw $ch $r [c crit_${t}_bg] [c crit_${t}_bd] 1
+        rrect_img qlPill_$t $w $ch $r [c crit_${t}_bg] [c crit_${t}_bd] 1
+        ttk::style element create Pill_$t.bg image qlPill_$t \
+            -border $B -padding 0 -sticky nsew
+        ttk::style layout Pill_$t.TLabel [list Pill_$t.bg -sticky nsew -children \
+            {Label.padding -sticky nsew -children {Label.label -sticky nsew}}]
+        ttk::style configure Pill_$t.TLabel -foreground [c crit_${t}_fg] \
+            -anchor center -padding {8 1}
     }
+    # ---- the criteria bar's own roles --------------------------------------
+    # facetbar (facetbar-1.0.tm) names every widget it draws by a style role and
+    # names no colour itself, so this is where the criteria bar gets its look.
+    # The chips, the type pills, the delete × and the ghost add button are the
+    # styles above, handed to the module per facet in ui/toolbar.tcl; these are
+    # the rest of its roles. The disclosure sits on the panel fill in every
+    # state, so its background map is pinned rather than left to brighten.
+    set panel [ttk::style lookup . -background]
+    ttk::style configure FacetHeading.TLabel -foreground [c muted]
+    ttk::style configure FacetConn.TLabel -foreground [c ink]
+    ttk::style configure FacetOr.TLabel -foreground [c chip_or]
+    ttk::style configure FacetChipText.TLabel -background [c chip_bg] \
+        -foreground [c ink] -font QLMono
+    ttk::style configure FacetToggle.TButton -relief flat -borderwidth 0 \
+        -padding {6 0} -background $panel -foreground [c muted] -focuscolor $panel
+    ttk::style map FacetToggle.TButton \
+        -background [list active $panel pressed $panel] \
+        -foreground [list active [c ink]]
     # ---- the toolbar's view segments --------------------------------------
     # All / Running / Bookmarked: one single-select group, drawn as abutting
     # plates so the three read as one control. The chosen segment is filled with
