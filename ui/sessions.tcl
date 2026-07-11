@@ -113,7 +113,7 @@ oo::class create ::questlog::ui::SessionList {
     variable PrevRunning      ;# the prior tick's running set, to redraw only the rows that flipped
     variable LensMembers      ;# dict uuid -> {path ?cwd?}: the active lens's whole membership
     variable LensNote         ;# the strip's lens clause, "" when no lens or no membership
-    variable CutMembers       ;# the members with no loaded row, as {path cwd resolved} dicts
+    variable CutMembers       ;# the members with no loaded row, as {path ?cwd? resolved} dicts
     variable CutReason        ;# the criterion that cut them: subtree|search|since|min_turns|""
     variable Pinned           ;# dict path -> 1: sessions the reader pulled in past the search
     variable ViewRebuildTimer ;# after-id of the debounced hidden-aware rebuild, or ""
@@ -2569,15 +2569,23 @@ oo::class create ::questlog::ui::SessionList {
     }
 
     # Which criterion left this member on disk, as the key the banner words and
-    # the widen button relaxes. A member with no transcript at all blames nothing:
-    # the session is running but has not written a line, so no criterion excluded
-    # it and no widening would bring it in. Otherwise the criteria are asked in
-    # the order they bind: the subtree scope is hard (even a running session
-    # outside it never surfaces, see reconcile_running), then the content criteria
-    # (with a search active the matches decide what loads, and a session with no
-    # hit is not among them), then the recency window, then the min-turns floor.
+    # the widen button relaxes. Two of the six keys blame no criterion, and they
+    # are not the same state, which is why they are not the same answer:
+    #
+    #   none      there is no transcript. The session is running and has not
+    #             written a line, so nothing excluded it and nothing can show it.
+    #   unloaded  there IS a transcript, and no criterion accounts for its absence
+    #             (a bookmark the scan has not reached, a file that landed after
+    #             the search ran). Nothing to widen, but "Show it" can read it in.
+    #
+    # Collapsing the two would put "no transcript on disk to load yet" next to a
+    # button offering to load it. Otherwise the criteria are asked in the order
+    # they bind: the subtree scope is hard (even a running session outside it never
+    # surfaces, see reconcile_running), then the content criteria (with a search
+    # active the matches decide what loads, and a session with no hit is not among
+    # them), then the recency window, then the min-turns floor.
     method cut_reason {member} {
-        if {[dict getdef $member resolved ""] eq ""} { return "" }
+        if {[dict getdef $member resolved ""] eq ""} { return none }
         set subtree [dict getdef $Snapshot subtree {}]
         if {[llength $subtree] > 0 && ![my member_in_subtree $member $subtree]} {
             return subtree
@@ -2585,7 +2593,7 @@ oo::class create ::questlog::ui::SessionList {
         if {$CriteriaActive} { return search }
         if {[::questlog::filter::cutoff_for $Snapshot] > 0} { return since }
         if {[dict getdef $Snapshot min_turns 1] > 1} { return min_turns }
-        return ""
+        return unloaded
     }
 
     # Is the member inside the folder scope? The live registry records the cwd the
@@ -2725,12 +2733,16 @@ oo::class create ::questlog::ui::SessionList {
         return $out
     }
 
+    # The banner's second sentence. `unloaded` is the one that must not read like a
+    # criterion, because none excluded the session: it is on disk, the search did
+    # not take it, and the "Show it" button beside this sentence will.
     method reason_phrase {reason it} {
         switch -- $reason {
             subtree   { return "The folder scope excluded $it." }
             search    { return "Your search terms excluded $it." }
             since     { return "The time window excluded $it." }
             min_turns { return "The min-turns floor excluded $it." }
+            unloaded  { return "The search did not load $it." }
             default   { return "No transcript on disk to load yet." }
         }
     }
@@ -2781,8 +2793,11 @@ oo::class create ::questlog::ui::SessionList {
         my node_set [my fid $folder] expanded 1
     }
 
+    # The widen button is only ever drawn for a reason that names a criterion, and
+    # the guard is written off the same predicate the drawing is, so a reason that
+    # blames nothing (none, unloaded) can never be handed to the toolbar as one.
     method widen_cut {} {
-        if {$OnWiden eq "" || $CutReason eq ""} return
+        if {$OnWiden eq "" || [my widen_label $CutReason] eq ""} return
         {*}$OnWiden $CutReason
     }
 

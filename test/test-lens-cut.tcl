@@ -22,7 +22,9 @@
 #   5. the pin survives the next reconcile, which would otherwise drop a row the
 #      scope does not admit;
 #   6. "widen" hands the blamed criterion back to the caller;
-#   7. the lens stays a pure UI operation: toggling it loads nothing.
+#   7. the lens stays a pure UI operation: toggling it loads nothing;
+#   8. a member no criterion excluded is worded as one, and not as a session with
+#      no file - the banner cannot deny a transcript it is offering to load.
 
 package require Tcl 9
 package require Tk
@@ -194,6 +196,34 @@ check "the banner blames the search" \
 check "and offers to clear it"              [.s.cut.widen cget -text] "Clear the search"
 .s.cut.widen invoke
 check "widen names the search"              $::widened search
+
+# --- 8. A cut member that NO criterion excluded. A bookmarked session sits on
+#        disk inside the scope, the search carries no criterion at all, and the
+#        list has not loaded it. The banner may not say there is nothing to load -
+#        the "Show it" button beside that sentence would be offering to load
+#        exactly what the sentence denies exists. It is not the same state as a
+#        running session that has written no file yet, and it must not be worded
+#        as one.
+set Cp [file join $PROJDIR cccc.jsonl]
+write_session $Cp $INSIDE {c-first c-second} "2026-05-24T19:00"
+file mtime $Cp [clock seconds]
+::questlog::path::set_bookmark $Cp
+
+set OPEN [snap listview [dict create running_only 0 bookmarked_only 1 model ""]]
+$SL apply_filter $OPEN
+$SL reconcile_running [dict create]
+$SL set_lens_members [dict create cccc [dict create path $Cp]]
+settle
+check "the bookmarked session was not loaded" [$SL has_session $Cp] 0
+check "the banner blames no criterion, and does not deny the file" \
+    [banner] \
+    "1 bookmarked session outside your search: cccc. The search did not load it."
+check "and still offers to load it"        [.s.cut.show cget -text] "Show it"
+check "with nothing to widen"              [winfo manager .s.cut.widen] ""
+.s.cut.show invoke
+settle
+check "show it loaded the session"         [$SL has_session $Cp] 1
+check "and the banner is gone"             [winfo manager .s.cut] ""
 
 ::questlog::path::_real_file delete -force $SAND
 puts [expr {$fails ? "FAILED ($fails)" : "PASS"}]
