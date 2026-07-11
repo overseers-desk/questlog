@@ -14,13 +14,26 @@
 # corpus below holds one running session that is not bookmarked and one bookmark
 # that is not running, both outside the search, and neither may be counted.
 #
+# The model lens is here for what it may NOT say. It hides loaded rows like the
+# other two, but it has no membership outside the search - a row's model is known
+# only once its transcript is parsed, and a filter parses nothing - so it can name
+# no session the search left on disk. The words and the number must therefore both
+# come from the lenses that DO have one: with Running pressed and a model picked,
+# the strip and the banner name Running alone and count Running's membership. A
+# phrase built from every lens that is on would read "1 running and model session
+# outside your search" over a number that only ever counted running ones, and claim
+# the model was checked against the disk. It cannot be.
+#
 # Under test, on a real SessionList over a sandbox corpus:
 #   1. the lenses compose: only the row that is both shows;
 #   2. the membership is the intersection, so the cut is the intersection's;
 #   3. the strip and the banner say both lenses, not one of them;
 #   4. "show it" loads the cut member, which passes both lenses, and the cut
 #      closes;
-#   5. a lens is a filter: pressing both and releasing them loads nothing, drops
+#   5. a model picked beside Running is named by neither line, and the count is
+#      Running's membership whether the model shows the rows or hides them all;
+#   6. the model lens alone claims no cut, though it is hiding every row;
+#   7. a lens is a filter: pressing both and releasing them loads nothing, drops
 #      nothing and keeps the selection - even the selection of a row the lenses
 #      hide while they are on.
 
@@ -142,9 +155,15 @@ proc push {snap} {
     $::SL set_lens_members [::questlog::sessionlist::lens_members $sets]
 }
 
-proc snap {run bm} {
+# The model lens carries the LABEL a loaded row carries, which is what the lens
+# menu offers: every session in the corpus is written by one model, so MODEL shows
+# every row the other lenses admit and OTHER_MODEL hides every one of them.
+set MODEL [::questlog::cost::model_label claude-3-5-sonnet-20241022]
+set OTHER_MODEL "Opus 4.8"
+
+proc snap {run bm {model ""}} {
     return [dict create since all min_turns 1 search "" subtree [list $::INSIDE] \
-        listview [dict create running_only $run bookmarked_only $bm model ""]]
+        listview [dict create running_only $run bookmarked_only $bm model $model]]
 }
 
 # --- 1. Browse, scoped to one project: A, B and C load; D and E never do.
@@ -227,7 +246,78 @@ check "Running alone again: B shows"  [$SL sflag $Bp rendered] 1
 check "Running alone again: the strip counts running sessions" \
     [strip] "Running · showing 3 of 4 · 1 outside your search"
 
-# --- 6. Releasing both: every loaded row paints again, the strip drops the lens
+# --- 6. A model picked while Running is pressed. Two lenses are on, and the rows
+#        on screen answer to both - but only one of them can say what the search
+#        left on disk, so only one of them may be named beside a number. The model
+#        lens is not it: E is a running session the search never read, and nothing
+#        knows what model E ran without opening it.
+#
+#        First a model every loaded row carries, so the model lens hides nothing:
+#        the lines must read exactly as they do with Running alone, above.
+#
+#        A row's model is the label the COST PASS put there: the worker parses the
+#        transcript, the main thread stamps the label, and the result lands in two
+#        places, because two readers want it. The scan's cache holds it for the
+#        render, which reads a row back through LookupSession; the list's node holds
+#        it for the count, which reads it with sget. ui/app.tcl makes both landings
+#        on a cost result - update_cost always, refresh_cost either in the same turn
+#        (cost_render immediate) or in the next coalesced flush. That is the only way
+#        a model ever reaches a row, and it is why the lens can claim no member it
+#        has not already loaded. Run the pass over the loaded rows so they carry
+#        what the app's rows carry.
+foreach path [$SL all_session_paths] {
+    set cd [::questlog::cost::build_cost_dict [::questlog::cost::parse_file $path]]
+    $::Scan update_cost $path $cd
+    $SL refresh_cost $path $cd
+}
+update
+check "the cost pass put the model on the rows" [$SL sget $Bp model] $MODEL
+$SL apply_listview [snap 1 0 $MODEL]
+push [snap 1 0 $MODEL]
+settle
+check "model beside Running: the rows the model admits still show" \
+    [$SL sflag $Bp rendered] 1
+check "model beside Running: the strip names Running alone" \
+    [strip] "Running · showing 3 of 4 · 1 outside your search"
+check "model beside Running: the banner names Running alone" \
+    [banner] \
+    "1 running session outside your search: $ELSEWHERE.\
+     The folder scope excluded it."
+
+# Now a model no loaded row carries, so the model lens hides every row the
+# Running lens admits. Only `showing` may move: it is the rows on screen. The
+# membership and the cut are Running's, and the model lens neither adds a member
+# nor takes one away - it never looked. A phrase drawn from every active lens
+# would now put "and model" over a 4 and a 1 that counted running sessions.
+$SL apply_listview [snap 1 0 $OTHER_MODEL]
+push [snap 1 0 $OTHER_MODEL]
+settle
+check "another model: it hides the rows Running admits" \
+    [$SL sflag $Bp rendered] 0
+check "another model: no row is left showing" \
+    [$SL folder_visible_count $FOLDER] 0
+check "another model: the strip still names Running, and counts Running's members" \
+    [strip] "Running · showing 0 of 4 · 1 outside your search"
+check "another model: the cut is Running's, and the banner says only running" \
+    [banner] \
+    "1 running session outside your search: $ELSEWHERE.\
+     The folder scope excluded it."
+check "the model lens loaded nothing" \
+    [llength [$SL all_session_paths]] [expr {$loaded_before + 1}]
+
+# --- 7. The model lens alone. It is hiding every row in the list, so it is plainly
+#        working - and it still claims nothing: there is no set of "sessions that
+#        ran this model" to count the loaded rows against, and a lens with no
+#        membership may not tell the reader the search cut one. No clause, no
+#        banner, no offer to load anything.
+$SL apply_listview [snap 0 0 $OTHER_MODEL]
+push [snap 0 0 $OTHER_MODEL]
+settle
+check "the model lens alone hides every row" [$SL folder_visible_count $FOLDER] 0
+check "the model lens alone says nothing in the strip" [strip] ""
+check "the model lens alone raises no cut banner"      [banner] ""
+
+# --- 8. Releasing both: every loaded row paints again, the strip drops the lens
 #        clause, and the selection the reader made before any of this is still
 #        theirs. Nothing was loaded and nothing dropped by a lens the whole way.
 $SL apply_listview [snap 0 0]
