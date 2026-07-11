@@ -265,7 +265,8 @@ oo::class create ::questlog::ui::SessionList {
                 set htag [my node_field $id tag]
                 set folder [my node_field $id key]
                 dict set TagNode $htag $id
-                $Text tag bind $htag <Button-1> [list [self] toggle_folder $folder]
+                $Text tag bind $htag <Button-1> \
+                    [list [self] toggle_folder [my pctsafe $folder]]
             }
             session { my wire_session_row $id }
             subagent { my wire_subagent_row $id }
@@ -738,29 +739,34 @@ oo::class create ::questlog::ui::SessionList {
         # any residual overflow. The full prompt is read in the viewer, which a
         # click on the row opens.
         $Text tag configure $stag -wrap none
+        # Every $path below rides through pctsafe: bind %-substitutes its
+        # script before Tcl parses it, and a project directory holding a %
+        # would be rewritten in place (issue #41's "100%pure" repro). The
+        # %X/%Y stay bare - they are the substitutions doing their job.
+        set bpath [my pctsafe $path]
         $Text tag bind $stag <ButtonPress-1> \
-            [list [self] on_session_press $path %X %Y]
+            [list [self] on_session_press $bpath %X %Y]
         $Text tag bind $stag <ButtonRelease-1> \
-            [list [self] on_session_release $path %X %Y]
+            [list [self] on_session_release $bpath %X %Y]
         # Shift/Control extend the selection. The modifier press is a no-op that
         # only outranks the plain <ButtonPress-1> above, so a modified click arms
         # no drag; the gesture resolves on the modified release.
         $Text tag bind $stag <Shift-ButtonPress-1>   [list [self] on_modified_press]
         $Text tag bind $stag <Control-ButtonPress-1> [list [self] on_modified_press]
         $Text tag bind $stag <Shift-ButtonRelease-1> \
-            [list [self] on_session_shift_release $path %X %Y]
+            [list [self] on_session_shift_release $bpath %X %Y]
         $Text tag bind $stag <Control-ButtonRelease-1> \
-            [list [self] on_session_ctrl_release $path %X %Y]
+            [list [self] on_session_ctrl_release $bpath %X %Y]
         # Tk's <<ContextMenu>> virtual event already maps to the right button
         # per platform (Button-2 on Aqua, Button-3 elsewhere); app.tcl extends
         # it with Control-Button-1 on Aqua so Ctrl+click works too.
         $Text tag bind $stag <<ContextMenu>> \
-            [list [self] on_session_right $path %X %Y]
+            [list [self] on_session_right $bpath %X %Y]
         # A whole session row is one clickable object: a hand cursor over it,
         # an arrow elsewhere. Text tags carry no -cursor, so swap the widget
         # cursor on enter/leave; entering also brightens the row's ⋯ control.
-        $Text tag bind $stag <Enter> [list [self] on_row_enter $path]
-        $Text tag bind $stag <Leave> [list [self] on_row_leave $path]
+        $Text tag bind $stag <Enter> [list [self] on_row_enter $bpath]
+        $Text tag bind $stag <Leave> [list [self] on_row_leave $bpath]
         foreach snip [my sget $path snippets] {
             lassign $snip btype content lineoff
             my render_snippet $path $btype $content $lineoff
@@ -812,11 +818,11 @@ oo::class create ::questlog::ui::SessionList {
         my emit $m "\n" [list snippet $ntag]
         my tag_hits_in_range [lindex $cr 0] [lindex $cr 1] $content
         $Text tag bind $ntag <ButtonRelease-1> \
-            [list [self] on_snippet_release $path $lineoff]
+            [list [self] on_snippet_release [my pctsafe $path] $lineoff]
         # A snippet row is an extension of its session, so right-clicking it
         # raises the same session menu as the header.
         $Text tag bind $ntag <<ContextMenu>> \
-            [list [self] on_session_right $path %X %Y]
+            [list [self] on_session_right [my pctsafe $path] %X %Y]
         # Hovering reveals the whole snippet line (bt leads it) on the bottom
         # strip; the row itself only shows what fits before the metadata columns.
         my peek_wire $ntag $bt $content
@@ -856,9 +862,9 @@ oo::class create ::questlog::ui::SessionList {
         }
         my emit $m "\n" [list snippet $ntag]
         $Text tag bind $ntag <ButtonRelease-1> \
-            [list [self] on_snippet_release $path $lineoff]
+            [list [self] on_snippet_release [my pctsafe $path] $lineoff]
         $Text tag bind $ntag <<ContextMenu>> \
-            [list [self] on_session_right $path %X %Y]
+            [list [self] on_session_right [my pctsafe $path] %X %Y]
         # The reveal leads with the breadcrumb's own badge word ("name" /
         # "former name") and carries the whole worn title.
         my peek_wire $ntag [string tolower $label] $content
@@ -878,8 +884,10 @@ oo::class create ::questlog::ui::SessionList {
             -font QLBold -foreground [::questlog::ui::theme::c $fgrole] \
             -background [$Text cget -background] -borderwidth 0 \
             -takefocus 0 -cursor hand2
-        bind $b <ButtonRelease-1> [list [self] on_snippet_release $path $lineoff]
-        bind $b <<ContextMenu>>   [list [self] on_session_right $path %X %Y]
+        bind $b <ButtonRelease-1> \
+            [list [self] on_snippet_release [my pctsafe $path] $lineoff]
+        bind $b <<ContextMenu>> \
+            [list [self] on_session_right [my pctsafe $path] %X %Y]
         return $b
     }
 
@@ -1059,8 +1067,10 @@ oo::class create ::questlog::ui::SessionList {
             set lineoff [lindex [lindex [dict get $c hits] 0] 2]
         }
         my node_pset $id open_lineoff $lineoff
-        $Text tag bind $ctag <ButtonRelease-1> [list [self] on_child_release $cp]
-        $Text tag bind $ctag <<ContextMenu>> [list [self] on_child_right $cp %X %Y]
+        $Text tag bind $ctag <ButtonRelease-1> \
+            [list [self] on_child_release [my pctsafe $cp]]
+        $Text tag bind $ctag <<ContextMenu>> \
+            [list [self] on_child_right [my pctsafe $cp] %X %Y]
         # The subagent header's description is truncated into the room before the
         # metadata; hovering reveals it whole on the strip, led by the agent type.
         my peek_wire $ctag [dict get $c agent_type] [dict get $c label]
@@ -1086,8 +1096,10 @@ oo::class create ::questlog::ui::SessionList {
         set cr [my emit $m $content [list childsnip $ntag]]
         my emit $m "\n" [list childsnip $ntag]
         my tag_hits_in_range [lindex $cr 0] [lindex $cr 1] $content
-        $Text tag bind $ntag <ButtonRelease-1> [list [self] on_child_open_at $cp $lineoff]
-        $Text tag bind $ntag <<ContextMenu>> [list [self] on_child_right $cp %X %Y]
+        $Text tag bind $ntag <ButtonRelease-1> \
+            [list [self] on_child_open_at [my pctsafe $cp] $lineoff]
+        $Text tag bind $ntag <<ContextMenu>> \
+            [list [self] on_child_right [my pctsafe $cp] %X %Y]
         # Same reveal as a parent snippet, one level deeper: the whole matched
         # line on the strip, led by its block type.
         my peek_wire $ntag $btype $content
@@ -2055,6 +2067,16 @@ oo::class create ::questlog::ui::SessionList {
         $Text configure -cursor arrow
         if {$OnStatusUnpeek ne ""} { {*}$OnStatusUnpeek }
     }
+
+    # Double the percents in data bound into a bind script. bind runs its
+    # %-substitution over the script string before Tcl ever parses it, so a
+    # spliced path or folder name holding a % is rewritten in place
+    # ("100%pure" -> "100??ure"; [list] cannot help, it quotes for Tcl and
+    # bind's pass runs first - issue #41). %% renders back to the literal %.
+    # Free-text content does not get this treatment: it rides PeekByTag and
+    # never enters a script at all. Machine-made splices (lineoff integers,
+    # tag names, [self]) are %-free and stay bare.
+    method pctsafe {v} { return [string map {% %%} $v] }
 
     # Wire a row tag's hover reveal. The bind script carries ONLY the
     # machine-made tag name, never the content: bind runs %-substitution over

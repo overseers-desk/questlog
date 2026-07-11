@@ -165,7 +165,9 @@ check "leave restores the standing scope line" \
 # --- Percent-laden content survives verbatim: the very characters bind's
 #     %-substitution corrupts ("printf %s" -> the state field, "50%" -> "50\ ")
 #     ride the registry untouched. Injected as a second match so the reveal
-#     runs the same wire -> registry -> resolve path as any snippet.
+#     runs the same wire -> registry -> resolve path as any snippet. (eval
+#     bypasses bind's %-pass, so this check alone cannot catch a splice
+#     regression - the no-splice assertion above is the guard.)
 set PCT {printf %s lands 50% done and %% stays doubled}
 $SL add_session_matches \
     [list [dict create path $SP folder $FA btype tool_use content $PCT lineoff 9]]
