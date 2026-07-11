@@ -25,3 +25,5 @@ Drive the UI with Tk `send`, not `xdotool` synthetic input (clicks and keystroke
 Run the test suite the same way. Some tests `package require Tk`, so run them on :99 (or with no DISPLAY, where they skip) rather than letting them flash windows on :0.
 
 Cleanup: kill only the PIDs you launched. Never `pkill wish9.0` or `tclsh9.0` by name: the user's own questlog runs as `tclsh9.0 ./questlog`, and a blanket pkill kills it.
+
+Tcl 9 removed tilde expansion: `open`/`file` on a `~/...` path fails (or opens a literal `./~` path) rather than reaching the home directory. Build paths with `$env(HOME)` or `file home` in tests and drivers.
