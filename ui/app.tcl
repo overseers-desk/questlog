@@ -548,8 +548,9 @@ proc ::questlog::ui::app::flush_cost {} {
     $SessionList refresh_cost_batch $batch
 }
 
-# The single writer of the bottom bar's text. An opened session's path overrides
-# every mode; otherwise the text follows StatusMode: the in-flight ProgressLine
+# The single writer of the bottom bar's text. A hover peek overrides
+# everything; then an opened session's path; otherwise the text follows
+# StatusMode: the in-flight ProgressLine
 # while scanning or searching, the persistent SearchSummary once a search has
 # finished or been cancelled, and the resting scope line while browsing. Every
 # callback that changes a mode or a stored line ends by calling this, so the bar

@@ -127,7 +127,7 @@ oo::class create ::questlog::ui::SessionList {
     variable OnSubagentCost   ;# cb: child path -> start the cost pass for it
     variable OnStatusPeek     ;# cb: text -> reveal it on the app's bottom strip, or ""
     variable OnStatusUnpeek   ;# cb: {} -> restore the strip's standing text, or ""
-    variable PeekByTag        ;# dict: row tag -> {kind text}, the reveal resolved at event time
+    variable PeekByTag        ;# dict: row tag -> {kind text}; hover reveal and hit menu resolve from it at event time
 
     constructor {parent resolve_cb lookup_cb on_open on_move_request \
                  on_drop_move on_bookmark_toggle on_bookmark_set on_rename \

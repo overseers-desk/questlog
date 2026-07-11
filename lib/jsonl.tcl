@@ -753,7 +753,8 @@ proc ::questlog::jsonl::fmt_gap {minutes} {
 # "─── /compact ───" / "─── N later ───" and its section headers, the export's
 # "## --- /compact ---" / "## --- N later ---" - and each formats a gap through
 # fmt_gap itself from the raw minute count this step hands back. Consumer-only
-# concerns stay upstream too: the viewer drops last-prompt records and tracks an
+# concerns stay upstream too: the viewer drops last-prompt records (the
+# markdown export instead renders them as SYSTEM turns) and tracks an
 # in_section flag before ever reaching here; this step is agnostic to both.
 proc ::questlog::jsonl::transcript_step {rec last_ts idle_gap} {
     set events [list]

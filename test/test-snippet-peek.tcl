@@ -8,7 +8,8 @@
 # and leaving restores the strip's standing text. The strip is app.tcl's, so
 # the list reaches it through the narrow status_peek/status_unpeek pair rather
 # than poking the label; this drives that seam end to end over a one-session
-# sandbox: the wired <Enter> binding carries the full text, a progress write
+# sandbox: the wired <Enter> binding carries only the reveal tag (the text
+# waits in the registry), a progress write
 # arriving mid-peek is not lost when <Leave> restores, and the resting scope
 # line returns.
 
