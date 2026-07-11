@@ -294,6 +294,104 @@ update idletasks
 check "the Tools jump reveals the tool_use line" \
     [expr {[vischars "needle-alpha"] > 0}] 1
 
+# ---- C6: hover copy button ------------------------------------------------------
+# A shared ⧉ button rides the top-right of the user/assistant message under the
+# pointer, copying that message's whole body (Bodies, unfiltered by fold state) -
+# the discoverable twin of the right-click "Copy message". Synthetic <Motion> is
+# flaky under Xvfb, so drive the placement handler (copy_motion) directly at real
+# on-screen coordinates taken from each line's bbox. A fresh show resets the
+# fold/detail churn the sections above left behind.
+$V show $JP 0 {}
+update idletasks
+update
+set CopyBtn [set ${NS}::CopyBtn]
+
+# Drive copy_motion at the on-screen position of a text index; 0 when the index
+# is off screen (no bbox), so a genuine hover is told from a miss.
+proc hover_at {idx} {
+    set bb [$::Text bbox $idx]
+    if {$bb eq ""} { return 0 }
+    lassign $bb bx by
+    $::V copy_motion [expr {$bx + 2}] [expr {$by + 2}]
+    return 1
+}
+
+# ---- 14. the button places over an assistant message ----------------------------
+set aidx [$Text search -elide "Final answer one." 1.0 [$V content_end]]
+$V copy_hide
+$Text see $aidx
+update idletasks
+check "an assistant line is on screen to hover" [hover_at $aidx] 1
+check "button placed over the assistant message" \
+    [expr {[place info $CopyBtn] ne ""}] 1
+check "cached line is the assistant message under the pointer" \
+    [set ${NS}::CopyLine] [$V line_at $aidx]
+set aln [lindex [split [$Text index $aidx] .] 0]
+check "the hovered line sits inside the cached span" \
+    [expr {$aln >= [set ${NS}::CopyFirst] && $aln < [set ${NS}::CopyLast]}] 1
+
+# ---- 15. the button copies the message body, then acknowledges with ✓ -----------
+clipboard clear
+clipboard append "sentinel-before-copy"
+$CopyBtn invoke
+check "copy button lifts the whole assistant body (Bodies, unfiltered)" \
+    [clipboard get] [dict get [set ${NS}::Bodies] [set ${NS}::CopyLine]]
+check "the button flips to a check on copy" [$CopyBtn cget -text] "✓"
+set ::c6fb 0
+after 900 {set ::c6fb 1}
+vwait ::c6fb
+check "the check restores to the glyph" [$CopyBtn cget -text] "⧉"
+
+# ---- 16. no button over a tool result -------------------------------------------
+# Reveal turn 0's detail so its tool_result is on screen, then hover it: a tool
+# result is not prose a reader lifts, so the role gate hides the button.
+$V details_show 0
+set tridx [$Text search -elide "needle-beta" 1.0 [$V content_end]]
+$Text see $tridx
+update idletasks
+$V copy_hide
+check "the tool_result line is on screen once revealed" [hover_at $tridx] 1
+check "no button over a tool result" [expr {[place info $CopyBtn] ne ""}] 0
+$V details_hide 0
+
+# ---- 17. no button over between-turn chrome -------------------------------------
+# The top line is a section header (▼ date), not a message; line_at finds no
+# bodied line at or above it, so the button hides.
+$Text see 1.0
+update idletasks
+$V copy_hide
+check "the top line is section-header chrome" \
+    [expr {"section-header" in [$Text tag names 1.0]}] 1
+check "the section header is on screen to hover" [hover_at 1.0] 1
+check "no button over a section header" [expr {[place info $CopyBtn] ne ""}] 0
+
+# ---- 18. no button over the end-of-session hint ---------------------------------
+# The endhint is chrome below the content boundary (content_end); the copy button
+# stops there like the searches do. Scroll it into view and hover it.
+$Text see end
+update idletasks
+set eidx [$Text search "Continue with one more prompt" 1.0 end]
+$V copy_hide
+check "the endhint is on screen to hover" [hover_at $eidx] 1
+check "no button over the endhint" [expr {[place info $CopyBtn] ne ""}] 0
+
+# ---- 19. a wheel notch on the button scrolls the transcript ---------------------
+# The placed button eats the wheel like any widget, so it is forwarded to $Text's
+# yview. Park the pointer on the button (event generate on it) and confirm the
+# transcript scrolls - the load-bearing behaviour of the whole hover design.
+$Text see 1.0
+update idletasks
+$V copy_hide
+hover_at $aidx
+update idletasks
+check "the button is placed for the wheel test" \
+    [expr {[place info $CopyBtn] ne ""}] 1
+set y0 [lindex [$Text yview] 0]
+event generate $CopyBtn <MouseWheel> -delta -120
+update idletasks
+check "a wheel notch on the button scrolls the transcript down" \
+    [expr {[lindex [$Text yview] 0] > $y0}] 1
+
 # ---- clean up -------------------------------------------------------------------
 ::questlog::path::_real_file delete -force $TMP
 puts [expr {$fails ? "FAILED ($fails)" : "PASS"}]

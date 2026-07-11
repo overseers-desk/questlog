@@ -89,6 +89,21 @@ oo::class create ::questlog::ui::Viewer {
     # and QuoteIdx rely on.
     variable Turns
     variable CurTurn          ;# index into Turns of the open turn, -1 outside one
+    # Hover copy affordance: one shared ⧉ button, built once as a child of $Text
+    # and placed on demand at the top-right of whatever user/assistant message
+    # the pointer is over - the discoverable twin of the right-click "Copy
+    # message". It is shown with `place` and hidden with `place forget`, never
+    # `window create`d into the text: an embedded window swallows the wheel as
+    # the pointer crosses it (the defect the quote de-widgetisation cured), so
+    # this button forwards the wheel to $Text's yview by hand. CopyLine is the
+    # jsonl line it would copy ("" while hidden); CopyFirst/CopyLast cache the
+    # message's text-line span so a Motion within one message does not re-place
+    # per pixel; CopyFbTok holds the ✓-acknowledgement restore timer's token.
+    variable CopyBtn
+    variable CopyLine
+    variable CopyFirst
+    variable CopyLast
+    variable CopyFbTok
     # Docked index band above the transcript: one collapsible pane whose content
     # switches between the match index and the tool-call timeline. It replaces the
     # two floating panels that used to cover the reading view.
@@ -159,6 +174,10 @@ oo::class create ::questlog::ui::Viewer {
         set Roles [dict create]
         set Turns [list]
         set CurTurn -1
+        set CopyLine ""
+        set CopyFirst 0
+        set CopyLast 0
+        set CopyFbTok ""
         set BandTab "matches"
         set BandOpen 0
         set OnToggle $on_toggle
@@ -590,6 +609,59 @@ oo::class create ::questlog::ui::Viewer {
         my build_menu
         bind $Text <<ContextMenu>> [list [self] on_right %x %y %X %Y]
         bind $Text <Configure>     [list [self] on_resize]
+
+        # Hover copy button: one shared ⧉ affordance riding the top-right of the
+        # message under the pointer (copy_motion places it, copy_hide forgets
+        # it). A child of $Text but never `window create`d into it, so the text
+        # never treats it as an embedded window and it consumes no text index; it
+        # is positioned purely by `place`. -takefocus 0 keeps it out of the tab
+        # ring, and it stays narrow (a single glyph). Its face reads the theme
+        # palette (the colour SSOT) but the style is defined here, co-located with
+        # its sole user: a flat chip in the reading background so it sits over the
+        # transcript as a light affordance, its muted glyph brightening to ink
+        # under the pointer (clam honours -background on a borderless ttk::button,
+        # the LV.TButton precedent).
+        set cbg [$Text cget -background]
+        ttk::style configure Copy.TButton -background $cbg \
+            -foreground [::questlog::ui::theme::c muted] \
+            -borderwidth 0 -relief flat -shiftrelief 0 -padding {2 0}
+        ttk::style map Copy.TButton \
+            -background [list active $cbg pressed $cbg] \
+            -foreground [list active [::questlog::ui::theme::c ink] \
+                              pressed [::questlog::ui::theme::c ink]]
+        set CopyBtn $Text.copybtn
+        ttk::button $CopyBtn -style Copy.TButton -text "⧉" -width 2 \
+            -takefocus 0 -cursor hand2 -command [list [self] copy_hovered]
+        # Wheel forwarding (load-bearing): a `place`d button over $Text still eats
+        # wheel events like any widget, so scroll $Text's yview exactly as its
+        # Text-class binding would. Tk 9 delivers the wheel - on X11 too - as
+        # <MouseWheel> with %D, scaled by tk::ScaleNum and divided by -4.0 into
+        # pixels; text.tcl binds only <MouseWheel>/<TouchpadScroll> (no
+        # <Button-4/5>), so mirroring those two is what "as the Text class would"
+        # means here. The trailing break stops the button's own class bindings
+        # from also firing.
+        bind $CopyBtn <MouseWheel> \
+            "tk::MouseWheel $Text y \[tk::ScaleNum %D\] -4.0 pixels; break"
+        bind $CopyBtn <Shift-MouseWheel> \
+            "tk::MouseWheel $Text x \[tk::ScaleNum %D\] -4.0 pixels; break"
+        bind $CopyBtn <TouchpadScroll> \
+            "lassign \[tk::PreciseScrollDeltas %D\] cbdx cbdy;\
+             if {\$cbdy != 0} {$Text yview scroll \[tk::ScaleNum \[expr {-\$cbdy}\]\] pixels};\
+             break"
+        # Show/hide as the pointer crosses the transcript: Motion resolves the
+        # message under it and places the button; leaving $Text hides it unless
+        # the pointer landed on the button itself; a wheel or resize over the
+        # transcript would strand a placed button, so drop it (the next Motion
+        # re-places it). A scrollbar drag is covered by <Leave> (the pointer
+        # leaves $Text for the scrollbar). copy_motion carries no break, so the
+        # text's own motion handling still runs.
+        bind $Text <Motion>    [list [self] copy_motion %x %y]
+        bind $Text <Leave>     [list [self] copy_leave]
+        bind $Text <Configure> +[list [self] copy_hide]
+        foreach ev {<MouseWheel> <Shift-MouseWheel> <TouchpadScroll> \
+                    <Button-4> <Button-5>} {
+            bind $Text $ev +[list [self] copy_hide]
+        }
 
         # Find overlay (hidden initially).
         set Find $Top.find
@@ -1785,6 +1857,107 @@ oo::class create ::questlog::ui::Viewer {
             }
         }
         return $best
+    }
+
+    # ---- hover copy button -------------------------------------------------
+    #
+    # The shared ⧉ button (built once in build) rides the top-right of whatever
+    # user/assistant message the pointer is over, the discoverable twin of the
+    # right-click "Copy message" and the quote glyph. It copies Bodies($line) -
+    # the record's raw extract_text, the whole message regardless of fold or
+    # detail state - deliberately unlike copy_selection, which is filtered to the
+    # reader's visible characters. Tool-result and system records get no button
+    # (the role gate below), matching neither being prose a reader means to lift.
+
+    # The pointer moved over the transcript at widget-local x,y. A cheap gate
+    # first: while the pointer stays within the cached message's text-line span
+    # the button is already in the right place, so do nothing (no re-place per
+    # pixel). Otherwise resolve the message under the pointer and place the
+    # button only over a user or assistant one. The end-of-session hint is chrome
+    # below the content (content_end), not a message, so it takes no button;
+    # neither does a spot that resolves to no bodied line (a section header or
+    # divider between turns, where line_at finds nothing at or above it).
+    method copy_motion {x y} {
+        set idx [$Text index @$x,$y]
+        set line [lindex [split $idx .] 0]
+        if {$CopyLine ne "" && $line >= $CopyFirst && $line < $CopyLast} return
+        set ce [my content_end]
+        if {$ce ne "end" && [$Text compare $idx >= $ce]} { my copy_hide; return }
+        set ml [my line_at $idx]
+        if {$ml eq ""} { my copy_hide; return }
+        if {[dict getdef $Roles $ml ""] ni {USER ASSISTANT}} { my copy_hide; return }
+        # The message spans from its own anchor to the next bodied record's
+        # anchor - its own detail blocks render in between, under the same
+        # record - or the content boundary for the last message. The span is
+        # cached in text-line numbers for the Motion gate above.
+        set start [dict get $LineMap $ml]
+        set end [my next_body_index $start]
+        set CopyLine $ml
+        set CopyFirst [lindex [split [$Text index $start] .] 0]
+        set CopyLast  [lindex [split [$Text index $end] .] 0]
+        my copy_place $start
+    }
+
+    # The text index of the message following the one anchored at $start: the
+    # nearest LineMap anchor strictly after it, else the content boundary (before
+    # the endhint, or the transcript end when no hint stands).
+    method next_body_index {start} {
+        set best ""
+        dict for {lineno pos} $LineMap {
+            if {[$Text compare $pos > $start]} {
+                if {$best eq "" || [$Text compare $pos < $best]} { set best $pos }
+            }
+        }
+        if {$best ne ""} { return $best }
+        set ce [my content_end]
+        return [expr {$ce eq "end" ? [$Text index end] : $ce}]
+    }
+
+    # Place the button with its north-east corner 8px in from the right edge,
+    # aligned to the top of the message's first line when that line is on screen.
+    # When the reader has scrolled past the head of a long message that line's
+    # bbox is empty, so ride the viewport's top edge instead - the button stays
+    # visible at the top of the message it copies.
+    method copy_place {start} {
+        set bb [$Text bbox $start]
+        set y [expr {$bb ne "" ? [lindex $bb 1] : 2}]
+        place $CopyBtn -in $Text -relx 1.0 -x -8 -y $y -anchor ne
+    }
+
+    method copy_hide {} {
+        if {$CopyLine eq ""} return
+        place forget $CopyBtn
+        set CopyLine ""
+        set CopyFirst 0
+        set CopyLast 0
+    }
+
+    # Leaving the transcript hides the button - but crossing onto the button
+    # itself also fires $Text <Leave> (a parent-to-child boundary crossing), so
+    # defer the decision to idle and keep the button when the pointer settled on
+    # it. A miniature of the overlay_check the quote boxes once carried.
+    method copy_leave {} { my later idle [list [self] copy_leave_check] }
+    method copy_leave_check {} {
+        if {$CopyLine eq "" || ![winfo exists $CopyBtn]} return
+        if {[winfo containing {*}[winfo pointerxy $CopyBtn]] eq $CopyBtn} return
+        my copy_hide
+    }
+
+    # The button's action: copy the cached message's whole body. Bodies is the
+    # record's raw extract_text - the full message, hidden detail included -
+    # unlike the visibility-filtered copy_selection. A brief ✓ acknowledges the
+    # copy, then the glyph returns; the button is a real widget, not text in the
+    # transcript, so this flip splices no bare index.
+    method copy_hovered {} {
+        if {$CopyLine eq "" || ![dict exists $Bodies $CopyLine]} return
+        my clipboard_set [dict get $Bodies $CopyLine]
+        if {$CopyFbTok ne ""} { my forget $CopyFbTok }
+        $CopyBtn configure -text "✓"
+        set CopyFbTok [my later 700 [list [self] copy_feedback_reset]]
+    }
+    method copy_feedback_reset {} {
+        set CopyFbTok ""
+        if {[winfo exists $CopyBtn]} { $CopyBtn configure -text "⧉" }
     }
 
     method section_header {ts_iso} {
