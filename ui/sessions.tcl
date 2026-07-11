@@ -353,6 +353,10 @@ oo::class create ::questlog::ui::SessionList {
             -tabs [list $content_col left] -wrap none \
             -font QLList -foreground [::questlog::ui::theme::c snippet] -spacing3 1
         $Text tag configure snippetbar -foreground [::questlog::ui::theme::c snippet_guide]
+        # A `names` snippet is a title breadcrumb, not a transcript block: when the
+        # matched name is superseded the row ends with an arrow to the name shown
+        # now, muted so the matched (highlighted) former name stays the focus.
+        $Text tag configure namearrow -foreground [::questlog::ui::theme::c muted]
         # Subagent child rows (issue #13): a session-header-style line one indent
         # deeper than the parent, on the same metadata tab stops (set by
         # layout_columns) so date/size/cost/turns/duration sit under the parent's
@@ -753,6 +757,12 @@ oo::class create ::questlog::ui::SessionList {
     }
 
     method render_snippet {path btype content lineoff} {
+        # A name hit is a title the session has worn, not a block of transcript,
+        # so it renders as a breadcrumb rather than a type badge.
+        if {$btype eq "names"} {
+            my render_name_snippet $path $content $lineoff
+            return
+        }
         set sid [my sid $path]
         set ntag "n#[incr NextId]"
         # Normalise to a type with a known badge pill; an unknown block type
@@ -775,7 +785,8 @@ oo::class create ::questlog::ui::SessionList {
         # eagerly building a widget per badge pegs a core; -create keeps it to a
         # screenful.
         set wr [my emit_window $m -align center -pady 1 -padx 3 \
-            -create [list [self] make_badge $bt $fgrole $path $lineoff]]
+            -create [list [self] make_badge $bt $fgrole \
+                [string toupper [string map {_ { }} $bt]] $path $lineoff]]
         set wstart [lindex $wr 0]
         # The window segment must carry the snippet tag too, or its untagged
         # -wrap (the widget default `word`) lets the row wrap to a second line.
@@ -796,13 +807,57 @@ oo::class create ::questlog::ui::SessionList {
         my append_close $sid $m
     }
 
+    # A name hit does not point at a message: it is a title the session has worn.
+    # When that title is the one shown now the headline already carries it, so a
+    # light "name" label beside the match is enough; when the search hit a name
+    # since replaced, the row explains itself - a "former name" badge, the matched
+    # name with the query still lit, and an arrow to the name shown today. The
+    # buffered snippet is kept either way (an empty match list drops the session).
+    # The row shape (spine, badge, tab, content) matches render_snippet's, so the
+    # name breadcrumb and the transcript snippets read as one column. With no
+    # browsed slug to compare against, the hit stays a plain "name": a former name
+    # is only claimed when there is a different current name to point at.
+    method render_name_snippet {path content lineoff} {
+        set sid [my sid $path]
+        set ntag "n#[incr NextId]"
+        set slug [my sget $path slug]
+        set superseded [expr {$slug ne "" && $content ne $slug}]
+        set label [expr {$superseded ? "FORMER NAME" : "NAME"}]
+        set m [my append_open $sid]
+        my emit $m "▏" [list snippet snippetbar $ntag]
+        set wr [my emit_window $m -align center -pady 1 -padx 3 \
+            -create [list [self] make_badge names name $label $path $lineoff]]
+        set wstart [lindex $wr 0]
+        $Text tag add snippet $wstart "$wstart +1c"
+        $Text tag add $ntag   $wstart "$wstart +1c"
+        my emit $m "\t" [list snippet $ntag]
+        set cr [my emit $m $content [list snippet $ntag]]
+        my tag_hits_in_range [lindex $cr 0] [lindex $cr 1] $content
+        # The arrow to the name shown now only earns its place when the matched
+        # name is a former one; an equal name is the headline directly above.
+        if {$superseded} {
+            my emit $m "  → $slug" [list snippet namearrow $ntag]
+        }
+        my emit $m "\n" [list snippet $ntag]
+        $Text tag bind $ntag <ButtonRelease-1> \
+            [list [self] on_snippet_release $path $lineoff]
+        $Text tag bind $ntag <<ContextMenu>> \
+            [list [self] on_session_right $path %X %Y]
+        $Text tag bind $ntag <Enter> [list $Text configure -cursor hand2]
+        $Text tag bind $ntag <Leave> [list $Text configure -cursor arrow]
+        my append_close $sid $m
+    }
+
     # Build one snippet badge on demand (the text widget's -create callback when
-    # the row scrolls into view). Embedded windows do not inherit the row's tag
-    # bindings, so click and context-menu are forwarded to the same handlers.
-    method make_badge {bt fgrole path lineoff} {
+    # the row scrolls into view). $pilltype selects the shared pill image and
+    # $text is its centred label: render_snippet derives both from the block type,
+    # render_name_snippet passes the breadcrumb's own. Embedded windows do not
+    # inherit the row's tag bindings, so click and context-menu are forwarded to
+    # the same handlers.
+    method make_badge {pilltype fgrole text path lineoff} {
         set b $Text.badge[incr NextId]
-        label $b -image [::questlog::ui::theme::badge_pill $bt] -compound center \
-            -text [string toupper [string map {_ { }} $bt]] \
+        label $b -image [::questlog::ui::theme::badge_pill $pilltype] -compound center \
+            -text $text \
             -font QLBold -foreground [::questlog::ui::theme::c $fgrole] \
             -background [$Text cget -background] -borderwidth 0 \
             -takefocus 0 -cursor hand2

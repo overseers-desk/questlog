@@ -30,11 +30,13 @@ namespace eval ::questlog::ui::theme {
         tool            #7a4a14
         tool_result     #693f6e
         system          #555555
+        name            #0f5f6e
         user_bg         #dde9ff
         assistant_bg    #e0f1d9
         tool_bg         #fce8ce
         tool_result_bg  #f4dff5
         system_bg       #e8e8e8
+        name_bg         #d5eef2
         snippet_guide   #c6dbff
         ink             #1d1d1d
         body            #262626
@@ -301,4 +303,10 @@ proc ::questlog::ui::theme::build_chrome {} {
         rrect_img qlBadge_$t $bw $bh $br [c $bgrole] [c $fgrole] 1 0.30
         dict set BadgePill $t qlBadge_$t
     }
+    # The name-history breadcrumb rides the same badge column but carries a
+    # longer word than the block types ("former name"), so its pill is sized to
+    # that label rather than the shared "TOOL RESULT" width.
+    set nbw [expr {[font measure QLBold "FORMER NAME"] + 16}]
+    rrect_img qlBadge_names $nbw $bh $br [c name_bg] [c name] 1 0.30
+    dict set BadgePill names qlBadge_names
 }
