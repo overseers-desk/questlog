@@ -458,6 +458,18 @@ $V fold_all
 check "fold_all drops the placed button" [place info $CopyBtn] ""
 $V expand_all
 update idletasks
+# A find jump scrolls without moving the pointer (Return on the find entry),
+# the one churn path a listbox-select test cannot catch - the pointer is on
+# the transcript, the button placed, and the see slides new text under both.
+hover_at $aidx
+check "button placed before the find jump" [expr {[place info $CopyBtn] ne ""}] 1
+$V reveal_index [$Text search -elide "needle-beta" 1.0 [$V content_end]]
+check "a reveal jump drops the placed button" [place info $CopyBtn] ""
+$V details_hide 0
+hover_at $aidx
+$CopyBtn invoke
+$V copy_hide
+check "hiding cancels the pending check mark" [$CopyBtn cget -text] "⧉"
 hover_at $aidx
 $V show $JP 0 {}
 update idletasks

@@ -1352,6 +1352,12 @@ oo::class create ::questlog::ui::Viewer {
     # relayout has even invalidated the metrics - so drain idletasks first,
     # then sync, then see. Click-latency price, paid only on a jump.
     method reveal_index {idx} {
+        # The jump is layout churn like any other: the see slides new text
+        # under a pointer resting on the transcript (a find-entry Return jumps
+        # without moving the mouse), and a placed copy button would float over
+        # a message it does not name. Same rule as the wheel and the mass
+        # toggles: drop it, the next Motion re-places it.
+        my copy_hide
         set n [my turn_at $idx]
         if {$n >= 0} {
             if {[dict get [lindex $Turns $n] folded]} { my turn_unfold $n }
@@ -1582,7 +1588,13 @@ oo::class create ::questlog::ui::Viewer {
                 set PromptVar ""
             }
         }
-        if {$OnRefresh ne "" && $rpath ne ""} { {*}$OnRefresh $rpath }
+        if {$OnRefresh ne "" && $rpath ne ""} {
+            {*}$OnRefresh $rpath
+        }
+        # A detached finish frees the pipe for whichever session is shown now;
+        # a "still streaming a previous resume" refusal may be standing in its
+        # status, and leaving it there reads as a Send still refused.
+        if {$was_detached} { my prompt_status "" }
     }
 
     # Insert inline-parsed runs into a text widget. The style->tag mapping lives
@@ -1999,6 +2011,11 @@ oo::class create ::questlog::ui::Viewer {
         set CopyLine ""
         set CopyFirst 0
         set CopyLast 0
+        # A hidden button holds no acknowledgement: cancel a pending ✓ restore
+        # and put the glyph back, or the next hover (a session switch away)
+        # opens on a stale check mark.
+        if {$CopyFbTok ne ""} { my forget $CopyFbTok; set CopyFbTok "" }
+        $CopyBtn configure -text "⧉"
     }
 
     # Leaving the transcript hides the button - but crossing onto the button
