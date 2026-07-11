@@ -97,7 +97,7 @@ oo::class create ::questlog::ui::SessionList {
     variable ResortTimer
     variable StatusVar
     variable CancelCb
-    variable ResolveFolder    ;# cb: folder -> display cwd
+    variable ResolveFolder    ;# cb: folder -> display cwd; opens no transcript
     variable LookupSession    ;# cb: path -> row dict
     variable OnOpen           ;# cb: path lineno -> open + anchor in viewer
     variable OnMoveRequest    ;# cb: paths -> open move picker
@@ -111,7 +111,7 @@ oo::class create ::questlog::ui::SessionList {
     variable CriteriaActive
     variable RunningSet       ;# dict uuid -> 1, replaced wholesale each tick
     variable PrevRunning      ;# the prior tick's running set, to redraw only the rows that flipped
-    variable LensMembers      ;# dict uuid -> {path cwd}: the active lens's whole membership
+    variable LensMembers      ;# dict uuid -> {path ?cwd?}: the active lens's whole membership
     variable LensNote         ;# the strip's lens clause, "" when no lens or no membership
     variable CutMembers       ;# the members with no loaded row, as {path cwd resolved} dicts
     variable CutReason        ;# the criterion that cut them: subtree|search|since|min_turns|""
@@ -2506,9 +2506,13 @@ oo::class create ::questlog::ui::SessionList {
     # Bookmarked. lens_counts does the arithmetic; the strip says the cut, and the
     # banner names it and offers the two escapes.
 
-    # The active lens's whole membership, uuid -> {path cwd}, as the caller
-    # gathered it outside the search. Recounts the cut; the lens itself is not
-    # touched, so this can arrive on any tick without disturbing the view.
+    # The active lens's whole membership, uuid -> {path ?cwd?}, as the caller
+    # gathered it outside the search. A running member carries the cwd its process
+    # runs in, which the registry knows for free; a bookmarked one carries none,
+    # because finding it would mean reading a transcript on a path that must not
+    # (member_name resolves what it needs, when it needs it). Recounts the cut; the
+    # lens itself is not touched, so this can arrive on any tick without disturbing
+    # the view.
     method set_lens_members {members} {
         set LensMembers $members
         my refresh_lens_note
@@ -2613,10 +2617,15 @@ oo::class create ::questlog::ui::SessionList {
         return ""
     }
 
-    # A missing member's name for the banner. The registry carries the cwd, so the
-    # project it runs in names it with no disk read; a member the model happens to
-    # know (a bookmarked row loaded under another lens) is named by its title. The
-    # uuid head is the last resort.
+    # A missing member's name for the banner. The registry carries the cwd of a
+    # running session, so the project it runs in names it; a member the model
+    # happens to know (a bookmarked row loaded under another lens) is named by its
+    # title; a member with neither - every member of the bookmark sweep, which
+    # stamps no cwd - has its project folder resolved here. That resolution reads
+    # no transcript (ResolveFolder is Scan's no-read resolver), and it happens for
+    # the two members the banner names and for no others, so the cost of naming
+    # does not grow with the number of bookmarks on disk. The uuid head is the last
+    # resort, for a folder whose directory is gone.
     method member_name {member} {
         set resolved [dict getdef $member resolved ""]
         if {$resolved ne ""} {
@@ -2626,6 +2635,10 @@ oo::class create ::questlog::ui::SessionList {
             }
         }
         set cwd [dict getdef $member cwd ""]
+        if {$cwd eq ""} {
+            set folder [file tail [file dirname [dict get $member path]]]
+            set cwd [{*}$ResolveFolder $folder]
+        }
         if {$cwd ne ""} { return [::questlog::path::pretty_home $cwd] }
         return [string range [file rootname [file tail [dict get $member path]]] 0 7]
     }

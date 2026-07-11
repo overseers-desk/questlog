@@ -173,7 +173,7 @@ proc ::questlog::ui::app::start {root {seed {}}} {
     set Toolbar [::questlog::ui::Toolbar new $list_frame.tb [::questlog::path::launch_cwd]]
     pack $list_frame.tb -side top -fill x
     set SessionList [::questlog::ui::SessionList new $list_frame.s \
-        [namespace code resolve_folder] \
+        [namespace code folder_cwd] \
         [namespace code lookup_session] \
         [namespace code on_open] \
         [namespace code on_move_request] \
@@ -422,23 +422,25 @@ proc ::questlog::ui::app::refresh_lens_members {} {
     $SessionList set_lens_members $members
 }
 
-# Every bookmarked session on disk, uuid -> {path cwd}: one glob per project
-# folder and one stat per session file, no file reads. The +x bit is the
-# bookmark, so this is the Bookmarked lens's whole membership, window or no
-# window. The folder's cwd is resolved only for a folder that holds one, and the
-# resolver memoises, so a corpus of unbookmarked projects costs nothing.
+# Every bookmarked session on disk, uuid -> {path}: one glob per project folder
+# and one stat per session file. The +x bit is the bookmark, so this is the
+# Bookmarked lens's whole membership, window or no window.
+#
+# It opens nothing and resolves no folder. This runs on the filter fast path and
+# again on every poll tick while the lens is on, and a filter may not read a
+# transcript - so no cwd is stamped here. The one or two members the banner
+# NAMES get their project out of the no-read resolver, and only then (member_name
+# in ui/sessions.tcl). A folder whose cwd is gone, moved or renamed used to be
+# re-read in full on every tick from right here, for a name nobody was going to
+# print.
 proc ::questlog::ui::app::bookmarked_members {} {
-    variable Scan
     set out [dict create]
     set root [::questlog::path::projects_root]
     if {![file isdirectory $root]} { return $out }
     foreach folder [glob -nocomplain -directory $root -type d -- *] {
-        set cwd ""
         foreach path [glob -nocomplain -directory $folder -- *.jsonl] {
             if {![file executable $path]} continue
-            if {$cwd eq ""} { set cwd [$Scan resolve_folder [file tail $folder]] }
-            dict set out [file rootname [file tail $path]] \
-                [dict create path $path cwd $cwd]
+            dict set out [file rootname [file tail $path]] [dict create path $path]
         }
     }
     return $out
@@ -1109,9 +1111,15 @@ proc ::questlog::ui::app::on_subagent_cost {path} {
 
 # ---- shared helpers exposed to UI components --------------------------
 
-proc ::questlog::ui::app::resolve_folder {folder} {
+# The project directory behind a folder basename, for the widgets that display
+# it: the folder headings, the context menu, the cut banner's names. The list
+# redraws on paths that must not touch disk, so this is Scan's no-read resolver
+# (the memo and the filesystem walk) and not resolve_folder, which peeks inside a
+# transcript. A folder it cannot resolve shows as its basename, which is what it
+# showed before: the read that is gone here never produced a name anyway.
+proc ::questlog::ui::app::folder_cwd {folder} {
     variable Scan
-    return [$Scan resolve_folder $folder]
+    return [$Scan folder_cwd $folder]
 }
 
 proc ::questlog::ui::app::lookup_session {path} {

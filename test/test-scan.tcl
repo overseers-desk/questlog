@@ -98,6 +98,67 @@ check resolve_absent_dir "" [$s resolve_folder "-no-such-folder-xyz"]
 ::questlog::path::_real_file delete -force $realcwd
 ::questlog::path::_real_file delete -force [file join /tmp/questlog-test-projects $rf]
 
+# ---- folder_cwd: the resolver that opens nothing ---------------------
+#
+# The UI is wired to folder_cwd, not to resolve_folder, and the whole line
+# between a filter and a search runs through the difference: a lens re-filters
+# rows already loaded, and the Bookmarked lens's sweep and the cut banner's names
+# ride on that path, so neither may open a transcript. resolve_folder does open
+# one (peek_folder_cwd), which is fine on the scan path and fatal on the filter
+# path.
+#
+# The two folders below are the two cases. The first has an extant directory, so
+# the filesystem walk answers it and folder_cwd is as good as resolve_folder. The
+# second is the folder that bit: its sessions were moved in from elsewhere (the
+# cwd they record encodes to another basename) and that directory is gone, so
+# resolve_folder reads every file in it, gets nothing for the reading, and caches
+# nothing - which is why it used to read them all again on the next poll tick.
+rename open real_open
+proc open {args} {
+    if {[string match *.jsonl [lindex $args 0]]} { incr ::opens }
+    return [uplevel 1 [list real_open {*}$args]]
+}
+
+set walkcwd /tmp/questlog-test-walkcwd
+::questlog::path::_real_file mkdir $walkcwd
+set wf [::questlog::path::encode_cwd $walkcwd]
+::questlog::path::_real_file mkdir [file join /tmp/questlog-test-projects $wf]
+set fh [real_open [file join /tmp/questlog-test-projects $wf walk-1.jsonl] w]
+puts $fh "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":\"a\"},\"cwd\":\"$walkcwd\"}"
+close $fh
+
+set movedf -tmp-questlog-test-moved-away
+::questlog::path::_real_file mkdir [file join /tmp/questlog-test-projects $movedf]
+foreach n {1 2 3} {
+    set fh [real_open [file join /tmp/questlog-test-projects $movedf moved-$n.jsonl] w]
+    puts $fh "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":\"a\"},\"cwd\":\"/tmp/questlog-test-somewhere-else\"}"
+    close $fh
+}
+
+set sr [::questlog::Scan new "" ""]
+
+set ::opens 0
+check folder_cwd_walks_to_real_dir $walkcwd [$sr folder_cwd $wf]
+check folder_cwd_read_nothing 0 $::opens
+
+set ::opens 0
+check folder_cwd_gives_up_on_moved "" [$sr folder_cwd $movedf]
+check folder_cwd_read_nothing_when_it_gives_up 0 $::opens
+
+# The same question through the full resolver: it reads, and (having found no
+# answer) it will read again next time. That is the cost the filter path no
+# longer pays.
+set ::opens 0
+check resolve_folder_gives_up_on_moved "" [$sr resolve_folder $movedf]
+check resolve_folder_read_the_folder 3 $::opens
+
+rename open {}
+rename real_open open
+$sr destroy
+::questlog::path::_real_file delete -force $walkcwd
+::questlog::path::_real_file delete -force [file join /tmp/questlog-test-projects $wf]
+::questlog::path::_real_file delete -force [file join /tmp/questlog-test-projects $movedf]
+
 # min_turns is scope: the scanner records each row's nturns (capped), and
 # filter::row_matches drops a row below the floor. The 3-turn aaa session records
 # nturns 3; the single-turn bbb-2 records nturns 1. A min_turns 2 scope keeps the
