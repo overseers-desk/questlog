@@ -5,7 +5,7 @@ namespace eval ::questlog::jsonl {
     namespace export extract_text extract_blocks record_tool_uses \
         is_compact_boundary record_timestamp parse_iso fmt_gap first_cwd \
         segment_blockquotes segment_tables parse_inline is_user_turn \
-        record_role_label context_window
+        is_turn_start record_role_label context_window
 }
 
 # Parse one JSONL line into a Tcl dict. Returns "" on parse failure.
@@ -61,6 +61,47 @@ proc ::questlog::jsonl::is_tool_result_record {rec} {
     set c [dict get $msg content]
     if {[is_string_content $c]}               { return 0 }
     return [expr {[dict getdef [lindex $c 0] type ""] eq "tool_result"}]
+}
+
+# 1 iff a parsed record starts a turn in the double-ESC-rollback sense: one
+# genuine typed prompt and everything until the next one. The turn predicate
+# for the viewer's turn model, the parsed-record twin of is_user_turn. It reads
+# lower than is_user_turn on purpose. is_user_turn is a line regex the scanner
+# and cost pass run over every line to count nturns and hold the min-turns
+# floor, so it counts every role:user prompt shape - a queued or sdk prompt
+# among them. This one folds the viewer's turns to what the rollback list shows,
+# so a queued/sdk/system prompt injected into a running turn stays inside it and
+# does not open one: the Turns tab can read a smaller count than the list row's
+# Turns column, by design. When the harness stamps promptSource that field is
+# the authority; origin is not consulted, because claude >=2.1.177 writes
+# promptSource with no origin key on some genuine typed prompts. Absent
+# promptSource (old jsonl) falls back to record shape.
+proc ::questlog::jsonl::is_turn_start {rec} {
+    if {[dict getdef $rec type ""] ne "user"} { return 0 }
+    if {![dict exists $rec message]}          { return 0 }
+    set msg [dict get $rec message]
+    if {![dict exists $msg content]}          { return 0 }
+    if {[dict exists $rec promptSource]} {
+        set ps [dict get $rec promptSource]
+        return [expr {$ps eq "typed" || $ps eq "suggestion_accepted"}]
+    }
+    # Old-format fallback: exclude the tool_result carrier, meta/summary/
+    # sidechain records, and the harness "[Request interrupted by user]" record
+    # (which carries interruptedMessageId), before reading content shape.
+    if {[is_tool_result_record $rec]}            { return 0 }
+    if {[dict getdef $rec isMeta 0]}             { return 0 }
+    if {[dict getdef $rec isCompactSummary 0]}   { return 0 }
+    if {[dict getdef $rec isSidechain 0]}        { return 0 }
+    if {[dict exists $rec interruptedMessageId]} { return 0 }
+    set c [dict get $msg content]
+    if {[is_string_content $c]} {
+        foreach pre {<command-name> <local-command-stdout> <local-command-caveat> <task-notification>} {
+            if {[string match "$pre*" $c]} { return 0 }
+        }
+        return 1
+    }
+    set bt [dict getdef [lindex $c 0] type ""]
+    return [expr {$bt eq "text" || $bt eq "image"}]
 }
 
 # Extract the canonical text body of a record. Mirrors the jq pipeline
@@ -546,6 +587,8 @@ proc ::questlog::jsonl::extract_blocks {rec} {
                     } elseif {$bt eq "thinking"} {
                         set tx [dict getdef $blk thinking ""]
                         if {$tx ne ""} { lappend out thinking $tx }
+                    } elseif {$bt eq "redacted_thinking"} {
+                        lappend out thinking "\[redacted thinking\]"
                     } elseif {$bt eq "image"} {
                         lappend out image "\[image\]"
                     }
