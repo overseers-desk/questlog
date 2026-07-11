@@ -120,10 +120,15 @@ set ntag [lindex $ntags 0]
 set enter [$TX tag bind $ntag <Enter>]
 set leave [$TX tag bind $ntag <Leave>]
 
-# The binding captured the model's full line, not the clipped display: the whole
-# 200-odd-char string is embedded verbatim in the <Enter> script.
-check "enter binding carries the full model text" \
-    [string match "*$LONG*" $enter] 1
+# The binding must NOT embed the content: bind %-substitutes its script at
+# event time, so embedded text holding a % is corrupted in place ("printf %s"
+# becomes the state field). The script carries only the machine-made tag; the
+# content waits in the registry and resolves when the event fires.
+check "enter binding does not splice content into bind's script" \
+    [string match "*$LONG*" $enter] 0
+set NS [info object namespace $SL]
+check "the registry resolves the tag to the full model text" \
+    [string match "*$LONG*" [dict get [set ${NS}::PeekByTag] $ntag]] 1
 
 # --- Standing text before any hover: the resting scope line. start() seeds the
 #     bar from the machine once at launch; do the same before asserting on it.
@@ -156,6 +161,19 @@ check "peek again while browsing" [statusvar] "tool_use · $LONG"
 eval $leave
 check "leave restores the standing scope line" \
     [statusvar] [::questlog::ui::app::scope_status]
+
+# --- Percent-laden content survives verbatim: the very characters bind's
+#     %-substitution corrupts ("printf %s" -> the state field, "50%" -> "50\ ")
+#     ride the registry untouched. Injected as a second match so the reveal
+#     runs the same wire -> registry -> resolve path as any snippet.
+set PCT {printf %s lands 50% done and %% stays doubled}
+$SL add_session_matches \
+    [list [dict create path $SP folder $FA btype tool_use content $PCT lineoff 9]]
+update
+set ptag [lindex [lsearch -all -inline -glob [$TX tag names] n#*] end]
+eval [$TX tag bind $ptag <Enter>]
+check "a percent-laden snippet reveals verbatim" [statusvar] "tool_use · $PCT"
+eval [$TX tag bind $ptag <Leave>]
 
 # --- A wholesale clear under a parked pointer: the hovered row is deleted with
 #     no guarantee Tk synthesizes its <Leave>, so reset_nodes itself unpeeks -

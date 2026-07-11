@@ -127,6 +127,7 @@ oo::class create ::questlog::ui::SessionList {
     variable OnSubagentCost   ;# cb: child path -> start the cost pass for it
     variable OnStatusPeek     ;# cb: text -> reveal it on the app's bottom strip, or ""
     variable OnStatusUnpeek   ;# cb: {} -> restore the strip's standing text, or ""
+    variable PeekByTag        ;# dict: row tag -> {kind text}, the reveal resolved at event time
 
     constructor {parent resolve_cb lookup_cb on_open on_move_request \
                  on_drop_move on_bookmark_toggle on_bookmark_set on_rename \
@@ -148,6 +149,7 @@ oo::class create ::questlog::ui::SessionList {
         set OnSubagentCost $on_subagent_cost
         set OnStatusPeek $on_status_peek
         set OnStatusUnpeek $on_status_unpeek
+        set PeekByTag [dict create]
         set StatusVar "Idle"
         set StatusBase ""
         set TotalCost 0.0
@@ -197,7 +199,9 @@ oo::class create ::questlog::ui::SessionList {
         # parked pointer (a streaming search's clear-and-fill); a peek must
         # not outlive its row, and relying on Tk to synthesize the <Leave> is
         # a bet this line does not take. Same invalidation family as the
-        # viewer's hover-copy cache.
+        # viewer's hover-copy cache. The reveal registry dies with the rows
+        # it describes.
+        set PeekByTag [dict create]
         if {$OnStatusUnpeek ne ""} { {*}$OnStatusUnpeek }
     }
 
@@ -815,8 +819,7 @@ oo::class create ::questlog::ui::SessionList {
             [list [self] on_session_right $path %X %Y]
         # Hovering reveals the whole snippet line (bt leads it) on the bottom
         # strip; the row itself only shows what fits before the metadata columns.
-        $Text tag bind $ntag <Enter> [list [self] peek_enter $bt $content]
-        $Text tag bind $ntag <Leave> [list [self] peek_leave]
+        my peek_wire $ntag $bt $content
         my append_close $sid $m
     }
 
@@ -858,9 +861,7 @@ oo::class create ::questlog::ui::SessionList {
             [list [self] on_session_right $path %X %Y]
         # The reveal leads with the breadcrumb's own badge word ("name" /
         # "former name") and carries the whole worn title.
-        $Text tag bind $ntag <Enter> \
-            [list [self] peek_enter [string tolower $label] $content]
-        $Text tag bind $ntag <Leave> [list [self] peek_leave]
+        my peek_wire $ntag [string tolower $label] $content
         my append_close $sid $m
     }
 
@@ -1062,9 +1063,7 @@ oo::class create ::questlog::ui::SessionList {
         $Text tag bind $ctag <<ContextMenu>> [list [self] on_child_right $cp %X %Y]
         # The subagent header's description is truncated into the room before the
         # metadata; hovering reveals it whole on the strip, led by the agent type.
-        $Text tag bind $ctag <Enter> \
-            [list [self] peek_enter [dict get $c agent_type] [dict get $c label]]
-        $Text tag bind $ctag <Leave> [list [self] peek_leave]
+        my peek_wire $ctag [dict get $c agent_type] [dict get $c label]
         # Cost rides the same second pass as a session's; trigger it once (when
         # the child has no cost yet), so a re-render after the result does not
         # re-queue it.
@@ -1091,8 +1090,7 @@ oo::class create ::questlog::ui::SessionList {
         $Text tag bind $ntag <<ContextMenu>> [list [self] on_child_right $cp %X %Y]
         # Same reveal as a parent snippet, one level deeper: the whole matched
         # line on the strip, led by its block type.
-        $Text tag bind $ntag <Enter> [list [self] peek_enter $btype $content]
-        $Text tag bind $ntag <Leave> [list [self] peek_leave]
+        my peek_wire $ntag $btype $content
         my append_close $cid $m
     }
 
@@ -1611,11 +1609,13 @@ oo::class create ::questlog::ui::SessionList {
     # Drop the per-snippet / per-child-snippet tags ("n#" / "c#") left empty by a
     # body delete. They are loose row content, not nodes, so the engine's
     # node-based cleanup does not reach them; without this they accumulate.
+    # Their reveal-registry entries go with them.
     method sweep_loose_tags {} {
         foreach tg [$Text tag names] {
             if {([string match "n#*" $tg] || [string match "c#*" $tg]) \
                 && [llength [$Text tag ranges $tg]] == 0} {
                 $Text tag delete $tg
+                dict unset PeekByTag $tg
             }
         }
     }
@@ -2054,6 +2054,28 @@ oo::class create ::questlog::ui::SessionList {
     method peek_leave {} {
         $Text configure -cursor arrow
         if {$OnStatusUnpeek ne ""} { {*}$OnStatusUnpeek }
+    }
+
+    # Wire a row tag's hover reveal. The bind script carries ONLY the
+    # machine-made tag name, never the content: bind runs %-substitution over
+    # its script at event time, and a snippet holding a % is corrupted in
+    # place ("50% done" -> "50\\ done", "printf %s" -> the state field) - the
+    # same splice bug issue #41 tracks for paths in menu binds. The content
+    # waits in PeekByTag and is resolved when the event fires; a tag with no
+    # entry (swept, or cleared by reset) still swaps the cursor and reveals
+    # nothing.
+    method peek_wire {tag kind text} {
+        dict set PeekByTag $tag [list $kind $text]
+        $Text tag bind $tag <Enter> [list [self] peek_enter_tag $tag]
+        $Text tag bind $tag <Leave> [list [self] peek_leave]
+    }
+    method peek_enter_tag {tag} {
+        if {![dict exists $PeekByTag $tag]} {
+            $Text configure -cursor hand2
+            return
+        }
+        lassign [dict get $PeekByTag $tag] kind text
+        my peek_enter $kind $text
     }
 
     # Resolve a drag point to the folder under it: the engine maps the point to a
