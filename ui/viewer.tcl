@@ -216,6 +216,11 @@ oo::class create ::questlog::ui::Viewer {
         my prompt_hide
         my set_prompt_enabled 1
         my prompt_status ""
+        # The hover-copy cache is line numbers into the OLD session; a stale
+        # button would copy an arbitrary record of the new one. Today every
+        # show is a pointer click that already fired <Leave>, but the widget
+        # invariant must not lean on where the pointer happens to be.
+        my copy_hide
         if {!$Shown} {
             grid remove $Empty
             grid $Text        -row 1 -column 0 -sticky nsew
@@ -516,8 +521,10 @@ oo::class create ::questlog::ui::Viewer {
         # the italic reading face, all muted so detail reads apart from prose;
         # dk-chrome is the separately-inserted visual lead-in ([thinking] ).
         # They share body/code's left margins so columns align, but carry no
-        # -spacing1/2/3: Tk paints tag spacing outside an elided range, and a
-        # hidden block must collapse to nothing, not to a seam of padding.
+        # -spacing1/2/3. (Probed on Tk 9.0.3: a fully elided line contributes
+        # no spacing either way, so this is caution, not load-bearing - kept
+        # because a spacing-free detail line costs nothing and asks nothing of
+        # the elide renderer.)
         foreach dk {dk-tool_use dk-tool_result dk-image dk-chrome} {
             $Text tag configure $dk -font QLMono \
                 -foreground [::questlog::ui::theme::c muted] \
@@ -640,12 +647,16 @@ oo::class create ::questlog::ui::Viewer {
         # <Button-4/5>), so mirroring those two is what "as the Text class would"
         # means here. The trailing break stops the button's own class bindings
         # from also firing.
+        # Each forward starts by dropping the button itself: the scroll slides
+        # new text under the pointer, and a button left placed would sit over
+        # content it does not copy (the transcript-side wheel hide below cannot
+        # cover this path - the event never reaches $Text).
         bind $CopyBtn <MouseWheel> \
-            "tk::MouseWheel $Text y \[tk::ScaleNum %D\] -4.0 pixels; break"
+            "[list [self] copy_hide]; tk::MouseWheel $Text y \[tk::ScaleNum %D\] -4.0 pixels; break"
         bind $CopyBtn <Shift-MouseWheel> \
-            "tk::MouseWheel $Text x \[tk::ScaleNum %D\] -4.0 pixels; break"
+            "[list [self] copy_hide]; tk::MouseWheel $Text x \[tk::ScaleNum %D\] -4.0 pixels; break"
         bind $CopyBtn <TouchpadScroll> \
-            "lassign \[tk::PreciseScrollDeltas %D\] cbdx cbdy;\
+            "[list [self] copy_hide]; lassign \[tk::PreciseScrollDeltas %D\] cbdx cbdy;\
              if {\$cbdy != 0} {$Text yview scroll \[tk::ScaleNum \[expr {-\$cbdy}\]\] pixels};\
              break"
         # Show/hide as the pointer crosses the transcript: Motion resolves the
@@ -1018,13 +1029,19 @@ oo::class create ::questlog::ui::Viewer {
     # lines at once, so a fold taken mid-stream holds as content arrives. A
     # compact boundary closes nothing: the conversation resumes mid-turn.
     method render_record_turned {rec last_ts in_section} {
-        if {[::questlog::jsonl::is_turn_start $rec]} {
+        # A turn start is gated on a body: a typed record whose extract_text
+        # is empty would render no header line to open a turn at, and closing
+        # the running turn for it would orphan everything after into
+        # always-visible preamble. Such a record is treated as any other
+        # bodiless one - the clock advances, the open turn keeps owning what
+        # follows.
+        if {[::questlog::jsonl::is_turn_start $rec]
+                && [::questlog::jsonl::extract_text $rec] ne ""} {
             my turn_close
             lassign [my render_record $rec $last_ts $in_section] \
                 last_ts in_section
-            # A turn start whose body rendered nothing (no LineMap entry: the
-            # empty-body skip) heads no turn; what follows reads as preamble
-            # until the next one.
+            # Belt to the gate's braces: should the body still have rendered
+            # no line (no LineMap entry), head no turn.
             if {[dict exists $LineMap [dict get $rec _line]]} {
                 my turn_open $rec
             }
@@ -1077,6 +1094,12 @@ oo::class create ::questlog::ui::Viewer {
         # tick (the 300 ms cadence outruns claude's writes) mutates nothing -
         # in particular it does not churn the open turn's stub line.
         if {![llength $recs]} { return 0 }
+        # The stub pop below deletes a mid-document line, so every text line
+        # number at or under it shifts - including the hover-copy cache, whose
+        # stale window otherwise makes the ⧉ copy the message ABOVE the one
+        # under a parked pointer, every 300 ms tick. Invalidate it first; the
+        # next Motion re-resolves against the settled transcript.
+        my copy_hide
         set at_bottom [expr {[lindex [$Text yview] 1] >= 0.999}]
         # New content makes any endhint stale; clearing it here (a no-op on
         # the streaming path, where resume_submit already did) keeps the two
@@ -1156,7 +1179,11 @@ oo::class create ::questlog::ui::Viewer {
     # higher tag priority: where both cover a char (a detail block inside a
     # turn) the d#N elide wins, and unfolding a turn does not spill its hidden
     # detail. turn_fold forces d#N back to 1, stating the same rule from the
-    # other side: re-folding re-hides whatever was revealed.
+    # other side: re-folding re-hides whatever was revealed. The priority
+    # rule cuts both ways: no tag created after a turn's t#/d# (or raised
+    # above them) may set an explicit -elide of its own, or it would override
+    # the fold - today's body/dk-*/find/sel/tbl tags all leave -elide unset,
+    # which never overrides.
     #
     # The stub line ("▸ · 7 tool calls · 2 thinking") is tagged {stub t#N},
     # never d#N: it is the visible toggle for the hidden detail, and it folds
@@ -1267,11 +1294,16 @@ oo::class create ::questlog::ui::Viewer {
     }
 
     # Fold every turn: the table-of-contents reading, one header per turn.
+    # Both mass toggles drop the hover-copy button: the relayout slides new
+    # text under the pointer, and a placed button would float over a message
+    # it does not copy until the next Motion.
     method fold_all {} {
+        my copy_hide
         for {set n 0} {$n < [llength $Turns]} {incr n} { my turn_fold $n }
     }
 
     method expand_all {} {
+        my copy_hide
         for {set n 0} {$n < [llength $Turns]} {incr n} { my turn_unfold $n }
     }
 
@@ -2064,9 +2096,12 @@ oo::class create ::questlog::ui::Viewer {
             set m [$Text search -elide -count len -nocase -- $pattern $start [my content_end]]
             if {$m eq ""} break
             set start "$m + ${len}c"
-            # A stub's own words ("7 tool calls") are turn chrome, not
-            # transcript; a hit there would step the reader nowhere useful.
-            if {"stub" in [$Text tag names $m]} continue
+            # A stub's own words ("7 tool calls") and a header's fold glyph
+            # are turn chrome, not transcript; a hit there would step the
+            # reader nowhere useful, and a glyph hit would go stale the moment
+            # swap_glyph flips it.
+            set mtags [$Text tag names $m]
+            if {"stub" in $mtags || "foldglyph" in $mtags} continue
             $Text tag add find $m "$m + ${len}c"
             lappend results $m
         }
@@ -2117,8 +2152,9 @@ oo::class create ::questlog::ui::Viewer {
                 if {$m eq ""} break
                 if {$len <= 0} { set len 1 }
                 set start "$m + ${len}c"
-                # Skip stub-line hits, as in collect_matches.
-                if {"stub" in [$Text tag names $m]} continue
+                # Skip stub-line and fold-glyph hits, as in collect_matches.
+                set mtags [$Text tag names $m]
+                if {"stub" in $mtags || "foldglyph" in $mtags} continue
                 $Text tag add find $m "$m + ${len}c"
                 lappend positions $m
             }

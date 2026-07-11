@@ -115,6 +115,14 @@ check "turnhdr spans all three headers" \
     [expr {[llength [$Text tag ranges turnhdr]] / 2}] 3
 set caveat [$Text search -elide "Caveat:" 1.0 end]
 check "preamble belongs to no turn" [$V turn_at $caveat] -1
+# The 2.5 h silence between turns 0 and 1 draws the idle-gap divider, and it
+# lands between the sealed end and the next header: turn chrome, owned by
+# neither side (the fixture's gap was previously set up but never asserted).
+set gapidx [$Text search -elide " later ───" 1.0 end]
+check "idle-gap divider rendered" [expr {$gapidx ne ""}] 1
+check "divider sits between the turns" \
+    [expr {[$Text compare $gapidx >= [dict get [turn 0] end]] \
+        && [$Text compare $gapidx < [dict get [turn 1] hdr]]}] 1
 
 # ---- 2. detail hidden by default, prose visible -------------------------------
 check "prose visible" [expr {[vischars "frobnicate it gently"] > 0}] 1
@@ -134,8 +142,18 @@ check "turn 1 stub counts its detail" \
     [$Text get [dict get [turn 1] stub] "[dict get [turn 1] stub] lineend"] \
     "▸ · 2 tool calls · 1 thinking"
 check "prose-only turn takes no stub" [dict get [turn 2] stub] ""
-# The stub's words are chrome: a search for them must not index.
+# The stub's words are chrome: a search for them must not index - on either
+# collector (the index_matches twin was previously unexercised).
 check "stub words are not matches" [llength [$V collect_matches "tool call"]] 0
+$V index_matches [dict create terms [list "tool call"] nocase 0]
+check "stub words do not index either" [llength [set ${NS}::FindMatches]] 0
+# Both collectors and both case branches reach hidden detail (-elide on every
+# search site; the Ctrl-F path and the nocase branch were unexercised).
+check "the find path reaches hidden detail" \
+    [llength [$V collect_matches "needle-beta"]] 1
+$V index_matches [dict create terms [list NEEDLE-BETA] nocase 1]
+check "a nocase query reaches hidden detail" \
+    [llength [set ${NS}::FindMatches]] 1
 
 # ---- 4. hidden hit found and revealed by the jump ------------------------------
 $V index_matches [dict create terms [list needle-beta] nocase 0]
@@ -175,6 +193,11 @@ foreach n {0 1 2} {
     check "turn $n body folds to nothing" \
         [$Text count -displaylines [dict get [turn $n] body] [turnend $n]] 0
     check "turn $n glyph folded" [$Text get [dict get [turn $n] hdr]] "▸"
+    # The header itself must survive as the ToC line: a fold range that
+    # started one line early would swallow it and stay green here otherwise.
+    check "turn $n header stays a visible ToC line" \
+        [expr {[$Text count -displaychars [dict get [turn $n] hdr] \
+            "[dict get [turn $n] hdr] lineend"] > 0}] 1
 }
 check "preamble survives fold_all" \
     [$Text count -displaylines $caveat "$caveat +1line linestart"] 1
@@ -248,20 +271,27 @@ check "a turn row reads its stamp and the prompt's first line" \
     [$TurnLB get 0] \
     "[$V tool_time [dict get [turn 0] ts]] · [dict get [turn 0] label]"
 
-# ---- 11. a Turns-tab jump lands on the header, even everything folded -----------
-# fold_all collapses every turn to its header; a jump to the last row must still
-# reveal that header (turn_list_select routes through reveal_index, which
-# unfolds the folded target and scrolls it in).
-$V fold_all
+# ---- 11. a Turns-tab jump scrolls the view to the target header ------------------
+# The old bbox-only check was vacuous: folded, the whole ToC fits the viewport
+# and every header has a bbox no matter what the jump does. Shrink the viewport
+# below the expanded document's height, park the view at the top, and demand
+# the row select actually moves it.
+set oldh [$Text cget -height]
+$Text configure -height 8
+$V expand_all
+update idletasks
+$Text yview moveto 0
 update idletasks
 set last [expr {[llength [set ${NS}::Turns]] - 1}]
 $TurnLB selection clear 0 end
 $TurnLB selection set $last
 $V turn_list_select
 update idletasks
-check "the jump scrolls the folded last turn's header into view (bbox non-empty)" \
+check "the jump moves the view to the last header" \
+    [expr {[lindex [$Text yview] 0] > 0}] 1
+check "the last header is on screen after the jump" \
     [expr {[$Text bbox [dict get [turn $last] hdr]] ne ""}] 1
-$V expand_all
+$Text configure -height $oldh
 update idletasks
 
 # ---- 12. index_turns re-run (as resume_finish does) tracks a grown registry ----
@@ -341,6 +371,18 @@ set ::c6fb 0
 after 900 {set ::c6fb 1}
 vwait ::c6fb
 check "the check restores to the glyph" [$CopyBtn cget -text] "⧉"
+# The "unfiltered" half of the contract, proven on a record that HAS hidden
+# detail (the prose-only record above cannot tell filtered from unfiltered):
+# the clipboard must carry the elided tool call.
+set didx [$Text search -elide "frobnicate it gently" 1.0 [$V content_end]]
+$V copy_hide
+$Text see $didx
+update idletasks
+check "the detailed assistant line is on screen to hover" [hover_at $didx] 1
+clipboard clear
+$CopyBtn invoke
+check "the copy carries the hidden tool call (Bodies, unfiltered)" \
+    [string match "*needle-alpha*" [clipboard get]] 1
 
 # ---- 16. no button over a tool result -------------------------------------------
 # Reveal turn 0's detail so its tool_result is on screen, then hover it: a tool
@@ -392,6 +434,35 @@ update idletasks
 check "a wheel notch on the button scrolls the transcript down" \
     [expr {[lindex [$Text yview] 0] > $y0}] 1
 
+# ---- 19b. layout churn invalidates the hover cache -------------------------------
+# The cache is bare text-line numbers; append_new pops the stub (a mid-document
+# line delete), show swaps sessions entirely, and fold_all/expand_all reshape
+# the view - each must drop the button, or a parked pointer copies the message
+# above the one it hovers (found live by the invariants review: the stale
+# window survives every 300 ms stream tick).
+set aidx [$Text search -elide "Final answer one." 1.0 [$V content_end]]
+$V copy_hide
+$Text see $aidx
+update idletasks
+hover_at $aidx
+check "button placed before the stream tick" [expr {[place info $CopyBtn] ne ""}] 1
+set fh [open $JP a]
+fconfigure $fh -encoding utf-8
+puts $fh {{"type":"assistant","timestamp":"2026-07-11T13:01:00Z","message":{"role":"assistant","content":[{"type":"text","text":"Streamed while hovering."}]}}}
+close $fh
+$V append_new
+check "a streamed append drops the placed button" [place info $CopyBtn] ""
+hover_at $aidx
+check "the next motion re-places it" [expr {[place info $CopyBtn] ne ""}] 1
+$V fold_all
+check "fold_all drops the placed button" [place info $CopyBtn] ""
+$V expand_all
+update idletasks
+hover_at $aidx
+$V show $JP 0 {}
+update idletasks
+check "show drops the placed button" [place info $CopyBtn] ""
+
 # ---- 20. a truncated tail read by show is re-read once complete -----------------
 # claude writes a record in pieces; show can catch the file mid-write. load must
 # leave the unparseable newline-less tail uncounted so append_new re-reads the
@@ -418,6 +489,22 @@ $V append_new
 update idletasks
 check "the completed tail record renders on the next pass" \
     [expr {[$Text search TAILMARKER 1.0 end] ne ""}] 1
+
+# ---- 21. an empty-bodied typed prompt opens no turn ------------------------------
+# is_turn_start would accept it, but with nothing to render there is no header
+# line to fold from; ungated, it would close the running turn and orphan
+# everything after into always-visible preamble. The gate treats it as any
+# bodiless record: clock advances, the open turn keeps owning what follows.
+set fh [open $JP2 a]
+fconfigure $fh -encoding utf-8
+puts $fh {{"type":"user","promptSource":"typed","timestamp":"2026-07-11T14:01:00Z","message":{"role":"user","content":""}}}
+puts $fh {{"type":"user","timestamp":"2026-07-11T14:01:05Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t9","content":"orphan-check contents"}]}}}
+close $fh
+$V append_new
+update idletasks
+check "an empty typed prompt opens no turn" [llength [set ${NS}::Turns]] 1
+check "the open turn still owns what follows (detail hidden, not preamble)" \
+    [vischars "orphan-check"] 0
 
 # ---- clean up -------------------------------------------------------------------
 ::questlog::path::_real_file delete -force $TMP
