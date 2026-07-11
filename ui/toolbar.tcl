@@ -193,9 +193,10 @@ oo::class create ::questlog::ui::Toolbar {
 
         # View row: the lenses over the rows the list already holds. A change here
         # leaves the search and the scope alone, so app.tcl's scope_equal sends it
-        # down the fast path - the list re-filters in place, keeping its selection
-        # and scroll, with no disk read. The restrict box below is the opposite:
-        # it decides which sessions are loaded at all.
+        # down the fast path - the list re-filters in place, keeping its selection,
+        # with no disk read. The scroll is not kept: the rows that are hidden are
+        # what changed, and the list re-lays from the top. The restrict box below is
+        # the opposite: it decides which sessions are loaded at all.
         ttk::frame $Top.view
         pack $Top.view -side top -fill x -padx 6 -pady {0 3}
         ttk::label $Top.view.label -text "View:"

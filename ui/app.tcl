@@ -485,7 +485,10 @@ proc ::questlog::ui::app::on_filter {snapshot} {
     # A view-toggle-only change (search and scope unchanged) leaves the result set
     # intact: only which in-model rows are shown changes. Take the fast path - no
     # clear, no re-scan, no re-search - so the toggle is reversible and keeps the
-    # selection and scroll. Any scope/search difference falls through to the rebuild.
+    # selection. It does not keep the scroll: hiding rows re-lays the list from the
+    # top (streamtree's rebuild anchors on the top visible node, and which rows are
+    # hidden is exactly what changed under it), so the view returns to the head.
+    # Any scope/search difference falls through to the rebuild.
     if {$PrevSnapshot ne {} && [scope_equal $PrevSnapshot $snapshot]} {
         set CriteriaActive [::questlog::ui::any_criteria $snapshot]
         $SessionList apply_listview $snapshot
