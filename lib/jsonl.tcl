@@ -5,7 +5,7 @@ namespace eval ::questlog::jsonl {
     namespace export extract_text extract_blocks record_tool_uses \
         is_compact_boundary record_timestamp parse_iso fmt_gap first_cwd \
         segment_blockquotes segment_tables parse_inline is_user_turn \
-        record_role_label
+        record_role_label context_window
 }
 
 # Parse one JSONL line into a Tcl dict. Returns "" on parse failure.
@@ -715,4 +715,69 @@ proc ::questlog::jsonl::first_cwd {path} {
     }
     close $fh
     return $cwd
+}
+
+# One {line role text match} turn dict for a raw line, or "" when the line is
+# blank, unparseable, or renders to an empty body. An empty body is a record the
+# reading view also shows nothing for (a file-history snapshot, an image-only
+# turn, a harness echo), so it is not a context "message". match is 0 for a
+# neighbour; the hit's own record is built inline in context_window with match 1.
+proc ::questlog::jsonl::turn_at {line lineno match} {
+    set rec [parse_line $line]
+    if {$rec eq ""} { return "" }
+    set body [extract_text $rec]
+    if {$body eq ""} { return "" }
+    return [dict create line $lineno role [record_role_label $rec] \
+        text $body match $match]
+}
+
+# The reading-view turns immediately around a search hit, for grep-style context
+# (-A/-B/-C). Returns an ordered list of {line role text match} dicts, earliest
+# first: up to `before` renderable records above `hitline`, the hit's own record
+# (match 1, shown in full), then up to `after` renderable records below it.
+# Blank, unparseable and empty-body records are counted in the physical line
+# number but not toward the before/after tallies, so "3 before" is three visible
+# messages, not three raw lines. `hitline` is the physical line (blanks counted)
+# that scan_file numbered, so it addresses the same record. Built from the same
+# parse_line/record_role_label/extract_text primitives as the whole-session
+# export, so a windowed turn reads as it does in `questlog show`. Empty list if
+# the file cannot be opened.
+proc ::questlog::jsonl::context_window {path hitline before after} {
+    if {[catch {open $path r} fh]} { return [list] }
+    chan configure $fh -encoding utf-8 -profile replace
+    set lineno 0
+    set pre [list]
+    set anchor ""
+    set post [list]
+    while {[chan gets $fh line] >= 0} {
+        incr lineno
+        if {$lineno < $hitline} {
+            if {$before <= 0} continue
+            set turn [turn_at $line $lineno 0]
+            if {$turn eq ""} continue
+            lappend pre $turn
+            if {[llength $pre] > $before} { set pre [lrange $pre 1 end] }
+        } elseif {$lineno == $hitline} {
+            # The hit's own record is always emitted, in full, even if its body
+            # is unusual - it is the centre of the window. (In practice it has a
+            # body: it carried the matched block.)
+            set rec [parse_line $line]
+            if {$rec ne ""} {
+                set anchor [dict create line $lineno \
+                    role [record_role_label $rec] text [extract_text $rec] match 1]
+            }
+            if {$after <= 0} break
+        } else {
+            set turn [turn_at $line $lineno 0]
+            if {$turn eq ""} continue
+            lappend post $turn
+            if {[llength $post] >= $after} break
+        }
+    }
+    close $fh
+    set out [list]
+    lappend out {*}$pre
+    if {$anchor ne ""} { lappend out $anchor }
+    lappend out {*}$post
+    return $out
 }
