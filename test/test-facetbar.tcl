@@ -1,24 +1,9 @@
 #!/usr/bin/env wish
-# facetbar is a portable widget, so this test invents a host for it out of
-# nothing: a colour facet whose chips carry a per-value control, a size facet
-# edited by one bespoke stepper, a weight facet that is a stepper reached from the
-# add rail and reports itself empty at its floor, a shape facet that may hold only
-# one value, a note facet where the same value twice is two criteria and a third is
-# one too many, a tag facet that joins its values with "and", and an origin facet
-# the owner fills and the user cannot type into. The test sources the module and no
-# other file, and drives the bar through the widgets the bar itself built - the
-# chips' delete buttons, the add rail, the inline editors - so a green run says the
-# pattern holds for a host the module has never seen.
-#
-# It also holds the module to what its header promises, at the places where such a
-# promise is easiest to make and quietly break: every way to an editor a facet's cap
-# must close, a model written from outside while an editor is open, an editor that
-# reports itself empty from inside its own command, a change callback that raises
-# and one that writes the model straight back, an option whose badness only shows
-# when the bar draws, the lifecycle in both teardown orders, the styles across a
-# theme change, the geometry that a style and the gaps are supposed to own, the width
-# the bar asks of a master that does not pin it, and every option at a value no
-# default could be mistaken for.
+# The bar, driven through the widgets it builds: the chips' delete buttons, the add
+# rail, the inline editors, the disclosure. The facets here are colour, size, weight,
+# shape, note, tag and origin - a chip list with a per-value control, two steppers,
+# a single-valued facet, one that takes repeats up to a cap, one revealed from the
+# rail, and one only the owner can fill.
 
 package require Tcl 8.6-
 package require Tk 8.6-
@@ -132,6 +117,11 @@ proc type_into {area id value} {
 }
 proc plain_chip {v} { return $v }
 proc boom_editor {parent id values} { error "the editor blew up" }
+# A formatter that meets a value it cannot print.
+proc picky_chip {v} {
+    if {$v eq "unprintable"} { error "cannot print that" }
+    return $v
+}
 
 proc on_change {model} { lappend ::events $model }
 set ::events {}
@@ -532,22 +522,67 @@ refused "and reading one is refused too, rather than answering 'nothing applied'
 refused "a second setup is refused" {$bar setup .f} "*already run*"
 refused "an internal method is no part of the contract" \
     {$bar refresh} "*unknown method*"
+refused "add_value on a control facet is refused, the mirror of report_values on a chips one" \
+    {$bar add_value size 3} "*control facet*"
+
+# The rail withholds an editorless tail facet because a row with nothing to type into
+# is one nothing on the bar can dismiss. begin_add stands in for the rail's button, so
+# it must withhold it too.
+set n [llength $::events]
+$bar begin_add origin
+update
+check "begin_add on a facet with no editor reveals no row" 0 [winfo exists $ROWS.tag_origin]
+check "and publishes nothing" $n [llength $::events]
 
 refused "a configure with one bad option raises on it" \
     {$bar configure -heading "changed" -facets {{id a} {id a}}} "*duplicate*"
 check "and applies none of the good options that came with it" \
     "Restrict to items that…" [$bar cget -heading]
 
-# An option the door cannot judge, because its badness only shows when the bar draws:
-# a facet whose editor raises. The configure is rolled back whole, and the bar is left
-# standing on the options it had, not on the one that breaks it on every later draw.
+# A rolled-back configure has to put back the model too, values and all. A facet list
+# rewrites the model on its way in, so an option list that rolls back while the model
+# stays rewritten would drop the values of a facet the rollback then restores - and
+# drop them without a word, because a configure publishes nothing.
+$bar set_model {colour {{any red} {any blue}} shape round tag {urgent}}
+update
+set full [$bar model]
 refused "an option that only fails when the bar draws takes the whole configure down with it" \
     {$bar configure -heading "boom" \
-        -facets {{id z conn "z" mode control editor boom_editor}}} "*the editor blew up*"
+        -facets {{id colour conn "is" format colour_chip editor text_editor} \
+                 {id z conn "z" mode control editor boom_editor}}} "*the editor blew up*"
 check "the facets it had are the facets it has" \
     {colour size weight shape note tag origin} [dict keys [$bar model]]
+check "and the values they held are still held: the rollback puts the model back too" \
+    $full [$bar model]
 check "and so is the heading" "Restrict to items that…" [$bar cget -heading]
 no_error "and the bar still draws" {$bar collapse; $bar expand; update}
+
+# A facet list is a route into the model, so it meets the model's cap.
+refused "a facet list that would cap a facet below what it already holds is refused" \
+    {$bar configure -facets [lreplace $FACETS 0 0 \
+        {id colour conn "is" format colour_chip editor text_editor max 1}]} \
+    "*holds at most 1*"
+check "and the model it would have broken is untouched" $full [$bar model]
+
+# A formatter that meets a value it cannot print. The value goes back where it came
+# from, the owner is not told of a change that did not happen, and the bar still draws
+# - rather than be left holding a value that raises on every later draw.
+$bar configure -facets [lreplace $FACETS 4 4 \
+    {id note conn "notes" format picky_chip editor text_editor dedupe 0 max 3}]
+update
+set n [llength $::events]
+set was [$bar model]
+refused "a value the formatter cannot print is refused by the door that took it" \
+    {$bar add_value note unprintable} "*cannot print that*"
+check "the value is not in the model" $was [$bar model]
+check "the owner is not told of a change that did not happen" $n [llength $::events]
+no_error "and the bar still draws, rather than raise on every later draw" \
+    {$bar collapse; $bar expand; update}
+no_error "a value it can print still goes in" {$bar add_value note plain}
+check "and lands" {plain} [$bar values note]
+$bar configure -facets $FACETS
+$bar set_model $full
+update
 
 check "one argument reads an option rather than clearing it" \
     "Restrict to items that…" [$bar configure -heading]
@@ -571,7 +606,7 @@ check "and the host's own style is still the host's, untouched in the new theme"
 # ---- the geometry a style and the gaps own -------------------------------
 #
 # The chip's padding rides its style: a widget's own padding would beat the style's,
-# so the bar sets none of its own. This is the property a host at a high DPI must have.
+# so the bar sets none of its own and reads the style's instead.
 pack [ttk::frame .geo -width 600 -height 120] -fill x
 pack propagate .geo 0
 ttk::style configure Host.TFrame -relief solid -borderwidth 1 -padding {2 1}
@@ -664,6 +699,50 @@ check "-emptytext is the affordance of a collapsed bar with nothing applied" \
 $bar6 expand
 update
 check "-addtext is the affordance on a facet with no values" new [$A.add cget -text]
+
+# ---- the disclosure, which a bar need not have ---------------------------
+
+$bar6 configure -disclosure 0
+update
+check "-disclosure 0 takes the disclosure button away" "" [winfo manager .opts.head.tog]
+$bar6 configure -heading ""
+update
+check "and with no heading either the head line goes, leaving the rows and nothing above them" \
+    [list {} grid] [list [winfo manager .opts.head] [winfo manager .opts.body.rows.ed_a]]
+$bar6 collapse
+update
+check "a bar with no head line collapses to a bare strip of chips" 1 \
+    [winfo exists .opts.body.strip]
+$bar6 expand
+$bar6 configure -disclosure 1 -heading "H"
+update
+check "and the disclosure comes back when it is asked for" pack [winfo manager .opts.head.tog]
+refused "a disclosure that is neither true nor false is refused" \
+    {$bar6 configure -disclosure maybe} "*not a true or false*"
+
+# ---- a build that fails hands the frame back -----------------------------
+
+pack [ttk::frame .retry] -fill x
+set barR [::facetbar::FacetBar new]
+$barR configure -facets {{id z conn "z" mode control editor boom_editor}}
+refused "a setup whose build raises does not swallow the frame" \
+    {$barR setup .retry} "*the editor blew up*"
+$barR configure -facets {{id w conn "reads" format plain_chip}}
+no_error "and the bar can be set up again, rather than refuse every retry as a second setup" \
+    {$barR setup .retry}
+$barR set_model {w {ok}}
+update
+check "and it draws" ok [.retry.body.rows.ed_w.c0.t cget -text]
+
+# ---- values are lists, and compare as lists ------------------------------
+
+$bar set_model {tag {urgent}}
+update
+set n [llength $::events]
+$bar set_values tag "urgent "
+check "a write that moves no value publishes nothing, whatever its spacing" \
+    $n [llength $::events]
+check "and the model holds what it held" {urgent} [$bar values tag]
 
 # ---- wrapping, in a frame that pins its width ----------------------------
 

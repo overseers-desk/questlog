@@ -4,8 +4,7 @@ package provide facetbar 1.0
 
 namespace eval ::facetbar {}
 
-# One dict read with a default. Not every interpreter this module runs on has it
-# as a built-in, so it is written here once and used throughout.
+# One dict read with a default, for interpreters without the built-in.
 proc ::facetbar::getdef {d key dflt} {
     if {[dict exists $d $key]} { return [dict get $d $key] }
     return $dflt
@@ -110,14 +109,23 @@ proc ::facetbar::getdef {d key dflt} {
 # means its dress across a theme change is yours to lay again, as any ttk style's
 # is.
 #
-# A chip's padding rides its style with the rest of its look, which is where a host
-# at a high DPI sets it. Tk will not hand a frame the padding its style names, so
-# the bar reads it out of the style and applies it, rather than set a padding of its
-# own that would beat the style's; a style that names none is given the bar's gaps,
-# so an undressed chip is still a chip, and a style that wants none says {0 0}.
+# A chip's padding rides its style with the rest of its look. Tk will not hand a
+# frame the padding its style names, so the bar reads it out of the style and applies
+# it, rather than set a padding of its own that would beat the style's; a style that
+# names none is given the bar's gaps, so an undressed chip is still a chip, and a
+# style that wants none says {0 0}.
 #
-# Every gap the bar leaves is in -gaps, in pixels, and nowhere else: at a high DPI
-# they are scaled, not hardcoded.
+# Every gap the bar leaves is in -gaps, in pixels, and nowhere else.
+#
+# The arrangement. A head line carrying the heading and the disclosure; below it, one
+# row per facet - a tag, a connective word, an editor area - in three columns that
+# line up down the bar; the add rail last. The disclosure can be taken away
+# (-disclosure 0), and with no heading either the head line goes with it, which leaves
+# a plain strip of chips or a plain set of editor rows. The rest of the arrangement is
+# fixed: the columns line up because a bar whose editors start at different x is a
+# list of unrelated controls; the chips wrap where they are because that is the one
+# place a value can be shown and removed; the rail is last because it offers what is
+# not yet there.
 #
 # Widget paths, stable, so a host can reach a widget the bar built (to hang a
 # tooltip on a chip, to drive one from a test):
@@ -144,7 +152,7 @@ proc ::facetbar::getdef {d key dflt} {
 #         .add                       the add affordance, when nothing is applied
 # A chip holds `x` (its delete), `lead` (the optional per-value control) and `t`
 # (its text). Every other method of the class, and every variable, is unexported:
-# the four tables below are the whole contract.
+# the paths above and the three tables below are the whole contract.
 #
 # Usage:
 #   ::tcl::tm::path add $dir
@@ -164,11 +172,19 @@ proc ::facetbar::getdef {d key dflt} {
 #
 # Methods. Every one that takes a facet id refuses an id no descriptor declares,
 # and every one that takes a value index refuses an index no value sits at.
-#   setup frame           build the bar into a frame the host owns. Once only.
+#   setup frame           build the bar into a frame the host owns. Once only, though a
+#                         build that fails hands the frame back and can be retried.
 #   configure ?args?      no arguments reads every option, one reads that option,
-#                         pairs set them. A set applies all of them or, if one is
-#                         bad, none of them - including an option whose badness only
-#                         shows when the bar redraws.
+#                         pairs set them. A set applies all of them or, if one is bad,
+#                         none of them - including an option whose badness only shows
+#                         when the bar redraws, and including the model, which a facet
+#                         list rewrites and a rollback puts back.
+#
+#   Every door below that changes a value draws the change before it reports it, and
+#   a drawing that raises - a formatter meeting a value it cannot print - puts the
+#   value back where it came from and re-lays the bar, so one value a host cannot
+#   print cannot leave a bar that can no longer draw at all. The error reaches the
+#   caller; the change callback does not fire, because nothing ended up changing.
 #   cget -opt             read one option.
 #   model                 the whole model: every facet id, applied or not.
 #   values id             one facet's values.
@@ -188,7 +204,9 @@ proc ::facetbar::getdef {d key dflt} {
 #                         `chips` facet it is an error, because the chips ARE that
 #                         facet's drawing of its values and leaving them unredrawn
 #                         would leave them lying about the model.
-#   add_value id value    commit one value from a `chips` facet's editor. A facet at
+#   add_value id value    commit one value from a `chips` facet's editor, and its door
+#                         alone: on a `control` facet it is an error, the mirror of
+#                         report_values on a `chips` one. A facet at
 #                         `max 1` takes it in place of the value it holds; one at its
 #                         cap takes no more; a repeat is no second criterion unless
 #                         the facet sets `dedupe 0`. The editor stays open while the
@@ -200,12 +218,13 @@ proc ::facetbar::getdef {d key dflt} {
 #   cancel_add id         abandon an open add. The editor closes and its unconfirmed
 #                         text goes with it; a tail facet revealed only to be typed
 #                         into returns to the rail.
-#   begin_add id          open a facet's editor as its add affordance would: reveal
-#                         the facet if it waits on the rail, expand the bar if it is
-#                         collapsed. On a facet at its cap it opens no editor, because
-#                         the affordance it stands in for is not drawn there either,
-#                         and a value typed into an editor the model has no room for
-#                         would be dropped on commit.
+#   begin_add id          open a facet's editor as its add affordance would: reveal the
+#                         facet if it waits on the rail, expand the bar if it is
+#                         collapsed. It opens exactly what that affordance opens and
+#                         nothing more, so on a facet at its cap, or one with no editor,
+#                         it opens nothing and reveals nothing: an editor the model has
+#                         no room for would drop what is typed into it, and a revealed
+#                         row with no editor is one nothing on the bar can dismiss.
 #   expand, collapse, toggle   the disclosure.
 #   expanded              1 while the editor rows show, 0 while collapsed to chips.
 #
@@ -213,7 +232,9 @@ proc ::facetbar::getdef {d key dflt} {
 #   -facets       the ordered descriptor list; that order is the rows' reading
 #                 order. Checked at the door: a duplicate id, an unknown key, an id
 #                 that cannot name a widget, or a `control` facet with no editor is
-#                 an error where it was written. A facet the new list drops takes its
+#                 an error where it was written, and so is a `max` that the values a
+#                 facet already holds would break: a facet list is a route into the
+#                 model, and it meets the model's rules. A facet the new list drops takes its
 #                 values, its revealed row and its open editor with it, and no change
 #                 callback fires for them: swapping the facet list is a change to what
 #                 the bar can hold, which the owner is making, and not a change to the
@@ -230,12 +251,15 @@ proc ::facetbar::getdef {d key dflt} {
 #   -delside      which end of the chip that affordance sits at, left or right
 #                 ("right", where a chip control is usually looked for). A chip can be
 #                 wider than the bar it sits in (see Wrapping), and the far end of one
-#                 that is will be out of view: a host whose values run long puts the
-#                 delete at the near end with "left".
+#                 that is goes out of view; "left" keeps the affordance at the near end.
 #   -raillabel    the leading word on the add rail ("Add"; "" draws none)
 #   -emptytext    the affordance shown collapsed while nothing is applied ("+ add")
 #   -expandtext   the disclosure while collapsed ("▸")
 #   -collapsetext the disclosure while expanded ("▾")
+#   -disclosure   1 (default) to draw the disclosure button, 0 to leave it out. With it
+#                 out, the bar stays in whichever state it is in unless the owner calls
+#                 expand or collapse, and a bar with no heading either has no head line
+#                 at all: an always-expanded set of editor rows, or a bare chip strip.
 #   -changecb     a command prefix invoked with the model dict every time the widget
 #                 changes it, and only then: a write that moves no value publishes
 #                 nothing, so a callback that writes the model back cannot drive the
@@ -252,13 +276,13 @@ proc ::facetbar::getdef {d key dflt} {
 #                 defaults, and a role no widget has is an error. Roles: heading
 #                 toggle tag conn or chip chiptext del add.
 #   -gaps         dict of role -> pixels; a partial dict merges over the defaults, and
-#                 a role no gap has is an error. Roles: chip (between the items of one
-#                 chip area, and inside a chip), column (between the three columns of
-#                 a row, and between a tag and its chips), row (above and below a row),
-#                 line (between two wrapped lines of chips), group (between two facets
-#                 in the collapsed summary), rail (around the add rail's buttons).
-#                 Defaults {chip 4 column 6 row 1 line 2 group 12 rail 4}: a host at a
-#                 high DPI scales them.
+#                 a role no gap has is an error. Roles: chip (between the items of a
+#                 chip area, and between a chip's own parts), column (between the three
+#                 columns of a row, and between a tag and its chips), row (above and
+#                 below a row), line (between two wrapped lines of chips), group
+#                 (between two facets in the collapsed summary), rail (around the add
+#                 rail's buttons). Defaults {chip 4 column 6 row 1 line 2 group 12
+#                 rail 4}. A chip whose style names no padding is padded {chip row}.
 #
 # Descriptor keys (only `id` is required):
 #   id        the facet's key in the model. It names widgets and rides into a binding
@@ -306,24 +330,18 @@ proc ::facetbar::getdef {d key dflt} {
 #             editor gets no add affordance: its values are the owner's to set, and
 #             the bar shows them and deletes them.
 #   chipctl   a command prefix, `{*}$chipctl $w $id $index $value`, for an optional
-#             control inside the chip, belonging to the value it sits on (a two-way
-#             switch on a `topping` chip, choosing light or extra). The caller creates
-#             a widget at the path $w names, and the bar lays out whatever it finds
-#             there; creating nothing leaves a plain chip. It reports an edit with
-#             `set_value_at`.
+#             control inside the chip, belonging to the value it sits on, as a swatch
+#             belongs on a colour facet's chip.
+#             The caller creates a widget at the path $w names, and the bar lays out
+#             whatever it finds there; creating nothing leaves a plain chip. It reports
+#             an edit with `set_value_at`.
 #   railtext  the facet's button on the add rail (defaults to "+ <label>")
 #   tagstyle  ttk style for this facet's tag, over the -styles default
 #   chipstyle ttk style for this facet's chips, over the -styles default. The chip's
-#             padding is read from this style, so it is where a host at a high DPI sets
-#             it; a style that names no padding is given the bar's own gaps instead.
+#             padding is read from this style; one that names none is padded from -gaps.
 #
-# Limits. Every chip carries a delete and every value can be removed: the bar has no
-# locked criterion and no read-only state, so a host that must keep a value applied
-# cannot say so here, and would have to put it back from the change callback and live
-# with the flicker. Nor is a facet disableable: dropping it from -facets takes its
-# values with it. Both are absent because the widget cannot own what they mean -
-# whether a locked value still counts as the user's, whether a disabled facet still
-# holds - and a knob whose meaning lives in the host is a knob the host should hold.
+# Limits. Every value can be removed and every facet can be edited: there is no locked
+# value, no read-only state and no disabled facet.
 #
 # Wrapping, and the width the bar asks for. Tk's packers do not wrap, so the chips
 # are placed: an area lays them left to right and breaks to a new line when the next
@@ -388,6 +406,7 @@ oo::class create ::facetbar::FacetBar {
             emptytext    "+ add" \
             expandtext   "▸" \
             collapsetext "▾" \
+            disclosure   1 \
             changecb     "" \
             styles       [dict create \
                 heading  FacetHeading.TLabel \
@@ -429,15 +448,25 @@ oo::class create ::facetbar::FacetBar {
                         error "facetbar: delside '$val' is neither left nor right"
                     }
                 }
+                disclosure {
+                    if {![string is boolean -strict $val]} {
+                        error "facetbar: disclosure '$val' is not a true or false value"
+                    }
+                }
                 styles   { set val [my merge_roles styles $val "style role" 0] }
                 gaps     { set val [my merge_roles gaps   $val "gap"        1] }
             }
             dict set staged $k $val
         }
-        set before $Opts
+        # The model, the revealed rows and the open editors are keyed by facet id,
+        # so applying a facet list rewrites them too. They go into the snapshot with
+        # the options: rolling back an option list while leaving behind the model it
+        # was applied to would drop the values of a facet the rollback then restores,
+        # and drop them silently, because a configure publishes nothing.
+        set before [list $Opts $Model $Revealed $Editing]
         set Opts $staged
         if {[catch {my apply_opts} err info]} {
-            set Opts $before
+            lassign $before Opts Model Revealed Editing
             catch {my apply_opts}
             return -options $info $err
         }
@@ -556,12 +585,10 @@ oo::class create ::facetbar::FacetBar {
     # reach into it - which is what makes naming a style the way to own a chip's look,
     # padding and all.
     #
-    # It writes only what is not already written. `ttk::style configure` announces
-    # itself with <<ThemeChanged>>, which is the very event that brings this method
-    # back: a dress that wrote unconditionally would answer the event it had just
-    # raised, and two bars in one application would hand that ring back and forth
-    # until the host's event loop stopped serving anything else. Writing only a
-    # difference ends it on the first pass.
+    # It writes only what differs. `ttk::style configure` raises <<ThemeChanged>>,
+    # which is the event that calls this method: a handler for that event which
+    # configures a style unconditionally re-raises the event it is answering, and the
+    # ring does not close. Writing only a difference closes it on the first pass.
     method dress_styles {} {
         set mine [dict get [my default_opts] styles]
         foreach {role spec} {
@@ -682,6 +709,10 @@ oo::class create ::facetbar::FacetBar {
     # already revealed, on the strength of a key nothing explains any more.
     method sync_state {} {
         set ids [my ids]
+        # A facet list is a route into the model like any other, so it meets the same
+        # cap: a descriptor that would cap a facet below the values it already holds
+        # is refused here, and the configure that brought it rolls back.
+        foreach id $ids { my check_max $id [::facetbar::getdef $Model $id {}] }
         set m [dict create]
         set r [dict create]
         set e [dict create]
@@ -710,10 +741,14 @@ oo::class create ::facetbar::FacetBar {
         }
         set new [dict create]
         foreach id [my ids] { dict set new $id [::facetbar::getdef $m $id {}] }
+        set snap [my save_state]
         set Model    $new
         set Revealed [dict create]
         set Editing  [dict create]
-        my refresh
+        if {[catch {my refresh} err info]} {
+            my restore_state $snap
+            return -options $info $err
+        }
         return
     }
 
@@ -722,10 +757,11 @@ oo::class create ::facetbar::FacetBar {
     method set_values {id vals} {
         my desc $id
         my check_max $id $vals
-        if {$vals eq [my values $id]} return
-        set was [my present]
+        if {[my same_values $vals [my values $id]]} return
+        set was  [my present]
+        set snap [my save_state]
         dict set Model $id $vals
-        my after_change $id $was 1
+        my after_change $id $was 1 $snap
         return
     }
 
@@ -744,8 +780,9 @@ oo::class create ::facetbar::FacetBar {
                    report_values is a control editor's door"
         }
         my check_max $id $vals
-        if {$vals eq [my values $id]} return
-        set was [my present]
+        if {[my same_values $vals [my values $id]]} return
+        set was  [my present]
+        set snap [my save_state]
         dict set Model $id $vals
         # An editor that reports keeps its row. A tail facet loses its row when its
         # last value goes, and the row would take the editor with it - so a control
@@ -753,7 +790,7 @@ oo::class create ::facetbar::FacetBar {
         # callback, which is the one thing this door exists to prevent. The row it
         # was drawn in stays until something other than the editor closes it.
         if {[my dget $id tail 0] && $id in $was} { dict set Revealed $id 1 }
-        my after_change $id $was 0
+        my after_change $id $was 0 $snap
         return
     }
 
@@ -764,7 +801,16 @@ oo::class create ::facetbar::FacetBar {
     # closes it either way.
     method add_value {id value} {
         my desc $id
-        set was [my present]
+        # The mirror of the guard on report_values. A control facet's values are the
+        # caller's control to set, and appending one from outside would rebuild that
+        # control from under whatever is holding it.
+        if {[my dget $id mode chips] eq "control"} {
+            error "facetbar: facet '$id' is a control facet: its editor reports with\
+                   report_values, and an owner writes it with set_values.\
+                   add_value is a chips editor's door"
+        }
+        set was  [my present]
+        set snap [my save_state]
         set old [my values $id]
         set max [my dget $id max 0]
         set vals $old
@@ -785,10 +831,13 @@ oo::class create ::facetbar::FacetBar {
             # A repeat of an applied value is no second criterion, and a facet at its
             # cap takes no more. Nothing changed, so no one is told; the editor is
             # left open or closed by the same rule as a commit that did land.
-            my render_editor $id
+            if {[catch {my render_editor $id} err info]} {
+                my restore_state $snap
+                return -options $info $err
+            }
             return
         }
-        my after_change $id $was 1
+        my after_change $id $was 1 $snap
         return
     }
 
@@ -798,9 +847,10 @@ oo::class create ::facetbar::FacetBar {
     method remove_value_at {id idx} {
         my desc $id
         my check_index $id $idx
-        set was [my present]
+        set was  [my present]
+        set snap [my save_state]
         dict set Model $id [lreplace [my values $id] $idx $idx]
-        my after_change $id $was 1
+        my after_change $id $was 1 $snap
         return
     }
 
@@ -811,10 +861,11 @@ oo::class create ::facetbar::FacetBar {
         my check_index $id $idx
         set vals [my values $id]
         if {[lindex $vals $idx] eq $value} return
-        set was [my present]
+        set was  [my present]
+        set snap [my save_state]
         lset vals $idx $value
         dict set Model $id $vals
-        my after_change $id $was 1
+        my after_change $id $was 1 $snap
         return
     }
 
@@ -828,7 +879,22 @@ oo::class create ::facetbar::FacetBar {
     #
     # `redraw` is 0 on the one path that must not touch the facet's editor: a control
     # editor reporting, through report_values, what it now holds.
-    method after_change {id was redraw} {
+    method after_change {id was redraw snap} {
+        if {[catch {my draw_change $id $was $redraw} err info]} {
+            # The drawing is where a caller's formatter meets the value for the first
+            # time, and a formatter that cannot print it raises here, with the value
+            # already in the model and its chips half drawn. The value goes back where
+            # it came from and the bar is re-laid, so one value a host cannot print
+            # cannot leave a bar that can no longer draw at all. The owner is not
+            # told: nothing ended up changing.
+            my restore_state $snap
+            return -options $info $err
+        }
+        my publish
+        return
+    }
+
+    method draw_change {id was redraw} {
         # A value the change put out of reach of the editor closes it: an editor open
         # on a facet that can take no more would swallow whatever is typed into it.
         if {[::facetbar::getdef $Editing $id 0] && ![my addable $id]} {
@@ -840,8 +906,23 @@ oo::class create ::facetbar::FacetBar {
             if {$redraw} { my render_editor $id }
             my render_head
         }
-        my publish
-        return
+    }
+
+    # The three id-keyed pieces of state that a value change touches, saved before it
+    # is drawn and put back if the drawing will not have it.
+    method save_state {} { return [list $Model $Revealed $Editing] }
+    method restore_state {snap} {
+        lassign $snap Model Revealed Editing
+        catch {my refresh}
+    }
+
+    # Values compare as lists, not as strings: "a  b" and {a b} are the same two
+    # values, and a door that called them different would publish a change that moved
+    # nothing.
+    method same_values {a b} {
+        if {[llength $a] != [llength $b]} { return 0 }
+        foreach x $a y $b { if {$x ne $y} { return 0 } }
+        return 1
     }
 
     # The change is drawn before the owner hears of it, so the widget is consistent
@@ -895,6 +976,11 @@ oo::class create ::facetbar::FacetBar {
     # published: no value has changed.
     method begin_add {id} {
         my desc $id
+        # A facet with no editor is not opened and not revealed. The rail withholds
+        # such a facet for the reason that would apply here too: revealing it would
+        # leave a row with nothing to type into, no affordance, and nothing on the bar
+        # that could dismiss it again.
+        if {[my dget $id editor ""] eq ""} return
         set was [my present]
         if {[my dget $id tail 0]} { dict set Revealed $id 1 }
         if {[my dget $id mode chips] eq "chips" && [my addable $id]} {
@@ -934,6 +1020,18 @@ oo::class create ::facetbar::FacetBar {
             error "facetbar: setup: no such window '$parent'"
         }
         set Top $parent
+        # A build that fails (a frame that already holds a bar, an editor that raises)
+        # hands the frame back and forgets it, so the object can be set up again
+        # rather than be left refusing every attempt as a second setup.
+        if {[catch {my build} err info]} {
+            catch {destroy $parent.head $parent.body}
+            set Top ""
+            return -options $info $err
+        }
+        return
+    }
+
+    method build {} {
         my dress_styles
         ttk::frame $Top.head
         pack $Top.head -side top -fill x
@@ -946,7 +1044,6 @@ oo::class create ::facetbar::FacetBar {
         # that wants a bigger control gives its style more padding.
         ttk::button $Top.head.tog -style [my style toggle] -width 0 \
             -command [list [self] toggle]
-        pack $Top.head.tog -side right
         ttk::frame $Top.body
         pack $Top.body -side top -fill x
         # A ttk style's configuration belongs to the theme it was made under, so on a
@@ -982,6 +1079,9 @@ oo::class create ::facetbar::FacetBar {
         return $n
     }
 
+    # The head line, and whether there is one. A bar with no heading and no disclosure
+    # has nothing to put on that line, so the line goes: what is left is a plain strip
+    # of chips, or a plain set of editor rows, which is a bar a host may well want.
     method render_head {} {
         if {![my drawable]} return
         set txt [my opt heading]
@@ -992,8 +1092,18 @@ oo::class create ::facetbar::FacetBar {
             append txt [format $fmt $n]
         }
         $Top.head.hd configure -text $txt
-        $Top.head.tog configure -text \
-            [expr {$Expanded ? [my opt collapsetext] : [my opt expandtext]}]
+        if {[my opt disclosure]} {
+            $Top.head.tog configure -text \
+                [expr {$Expanded ? [my opt collapsetext] : [my opt expandtext]}]
+            pack $Top.head.tog -side right
+        } else {
+            pack forget $Top.head.tog
+        }
+        if {$txt eq "" && ![my opt disclosure]} {
+            pack forget $Top.head
+        } else {
+            pack $Top.head -side top -fill x -before $Top.body
+        }
     }
 
     # The expanded body: one row per present facet, then the add rail.
@@ -1272,8 +1382,9 @@ oo::class create ::facetbar::FacetBar {
     # what the header documents, and the rest stays free to change.
     unexport default_opts apply_opts opt style gap facet_style merge_roles \
         validate_countfmt validate_facets dress_styles ids desc dget tail_hidden \
-        present addable can_take_more check_max check_index sync_state after_change \
-        publish drawable refresh active_count render_head render_rows render_editor \
+        present addable can_take_more check_max check_index same_values \
+        sync_state save_state restore_state after_change draw_change publish \
+        build drawable refresh active_count render_head render_rows render_editor \
         render_chips chip_text render_add render_rail render_strip \
         flow_schedule flow_all flow_configure flow_area
 }
