@@ -94,6 +94,7 @@ oo::class create ::questlog::ui::Toolbar {
     variable SearchScopeVar   ;# region-spec: any | user,assistant | tool-use | tool-result
     variable ScopeLabelVar    ;# the menubutton's friendly label for the scope
     variable MinTurnsVar
+    variable MinTurnsModel    ;# the min_turns values the model held when the editor last read it
     variable ViewVar          ;# the View row's segment: all | running | bookmarked
     variable ModelVar         ;# the model lens: a row's model label, or "" for any
     variable ModelLabelVar    ;# the model menubutton's text
@@ -125,6 +126,7 @@ oo::class create ::questlog::ui::Toolbar {
         set SearchScopeVar any
         set ScopeLabelVar "anywhere"
         set MinTurnsVar [::questlog::config::get min_turns_default]
+        set MinTurnsModel [my turns_vals $MinTurnsVar]
         set ViewVar all
         set ModelVar ""
         set ModelLabelVar $::questlog::ui::MODEL_ANY
@@ -376,6 +378,10 @@ oo::class create ::questlog::ui::Toolbar {
         if {$MinTurnsVar < 1}    { set MinTurnsVar 1 }
         if {$MinTurnsVar > $cap} { set MinTurnsVar $cap }
         set want [my turns_vals $MinTurnsVar]
+        # The commit is what makes the typed floor the model's, so this is where
+        # the editor's picture of the model catches up with it (see turns_editor:
+        # a later redraw must not mistake this floor for one it has yet to read).
+        set MinTurnsModel $want
         if {$want eq [$Bar values min_turns]} return
         $Bar report_values min_turns $want
     }
@@ -867,8 +873,21 @@ oo::class create ::questlog::ui::Toolbar {
     # and reports, so a bad keystroke can never leave an out-of-range value; it is
     # wired to the buttons (-command, <<Increment>>/<<Decrement>>) and to
     # <Return>/<FocusOut> for typed edits.
+    #
+    # A half-typed floor stands through a redraw, as a half-typed chip does. This
+    # is the one editor here with typeable state the model has not been told about,
+    # and every draw of its row would otherwise re-read the model over the top of
+    # it: reveal a tail facet, collapse the bar, seed it from the launch query, and
+    # the 5 that was typed but not entered would silently become the 2 that is in
+    # force. So the model is read back only when the model itself moved (which is
+    # what MinTurnsModel remembers); a redraw that carries the same floor through
+    # leaves the spinbox exactly as the hand left it. The typed value is still not
+    # published until it is committed - that part is the point.
     method turns_editor {parent id values} {
-        set MinTurnsVar [expr {[llength $values] ? [lindex $values 0] : 1}]
+        if {$values ne $MinTurnsModel} {
+            set MinTurnsVar [expr {[llength $values] ? [lindex $values 0] : 1}]
+            set MinTurnsModel $values
+        }
         set sb $parent.sb
         ttk::spinbox $sb -from 1 -to [::questlog::config::get turn_count_cap] \
             -width 3 -textvariable [my varname MinTurnsVar] \
