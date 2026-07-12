@@ -176,61 +176,6 @@ check region_result_not_text  0 [sat [kw questlog {user assistant}] $user_tool_r
 check region_regex_any        1 [sat [rx alpha {}] $r_scope]
 check region_regex_scoped_out 0 [sat [rx alpha {tool_use}] $r_scope]
 
-# segment_blockquotes: split a body into ordered {kind text} segments,
-# de-quoting one leading "> "/">" per blockquote line, strict blank split.
-check seg_plain      {{normal hello}} \
-    [::questlog::jsonl::segment_blockquotes "hello"]
-check seg_pure_quote {{quote {To: a@b
-body}}} \
-    [::questlog::jsonl::segment_blockquotes "> To: a@b\n> body"]
-check seg_mixed      {{normal intro:} {quote {line one
-line two}} {normal outro}} \
-    [::questlog::jsonl::segment_blockquotes "intro:\n> line one\n> line two\noutro"]
-check seg_bare_gt    {{quote {has space
-no space}}} \
-    [::questlog::jsonl::segment_blockquotes "> has space\n>no space"]
-check seg_blank_split {{quote first} {normal {}} {quote second}} \
-    [::questlog::jsonl::segment_blockquotes "> first\n\n> second"]
-
-# segment_tables: split a prose run into {normal text} / {table payload}
-# segments, payload = {align <per-col> rows <header-then-body>}. Expected
-# values are built the same way the proc builds them (list + dict create), so
-# a dict-ordering quirk can never make a correct result read as a failure.
-check tbl_basic \
-    [list [list table [dict create align {left left} rows {{H1 H2} {a b}}]]] \
-    [::questlog::jsonl::segment_tables "| H1 | H2 |\n| --- | --- |\n| a | b |"]
-check tbl_align \
-    [list [list table [dict create align {left right center} \
-        rows {{L R C} {1 2 3}}]]] \
-    [::questlog::jsonl::segment_tables "| L | R | C |\n| :-- | --: | :-: |\n| 1 | 2 | 3 |"]
-check tbl_unbounded \
-    [list [list table [dict create align {left left} rows {{a b} {1 2}}]]] \
-    [::questlog::jsonl::segment_tables "a | b\n- | -\n1 | 2"]
-check tbl_escape \
-    [list [list table [dict create align {left left} \
-        rows [list {H1 H2} [list "a | b" c]]]]] \
-    [::questlog::jsonl::segment_tables "| H1 | H2 |\n| - | - |\n| a \\| b | c |"]
-check tbl_ragged \
-    [list [list table [dict create align {left left left} \
-        rows {{H1 H2 H3} {a b {}} {c d e}}]]] \
-    [::questlog::jsonl::segment_tables \
-        "| H1 | H2 | H3 |\n| - | - | - |\n| a | b |\n| c | d | e | f |"]
-check tbl_header_only \
-    [list [list table [dict create align {left left} rows {{H1 H2}}]]] \
-    [::questlog::jsonl::segment_tables "| H1 | H2 |\n| - | - |"]
-check tbl_setext \
-    [list [list normal "Heading\n---\nbody"]] \
-    [::questlog::jsonl::segment_tables "Heading\n---\nbody"]
-check tbl_pipe_no_delim \
-    [list [list normal "| not a table |\njust text"]] \
-    [::questlog::jsonl::segment_tables "| not a table |\njust text"]
-check tbl_interleave \
-    [list [list normal "intro\n"] \
-        [list table [dict create align {left left} rows {{H1 H2} {a b}}]] \
-        [list normal "\noutro"]] \
-    [::questlog::jsonl::segment_tables \
-        "intro\n\n| H1 | H2 |\n| - | - |\n| a | b |\n\noutro"]
-
 # ---- is_user_turn: the turn-count predicate over raw lines -----------------
 # String content counts; a block-array prompt (text or image first) counts; a
 # tool_result record - also role:user, array content - does not; the harness

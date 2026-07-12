@@ -113,6 +113,7 @@ source [file join $ROOT ui  state.tcl]
 source [file join $ROOT ui  drag.tcl]
 source [file join $ROOT ui  toolbar.tcl]
 package require streamtree
+package require tkdown
 source [file join $ROOT ui  session_actions.tcl]
 source [file join $ROOT ui  sessions.tcl]
 source [file join $ROOT ui  viewer.tcl]

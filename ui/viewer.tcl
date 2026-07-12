@@ -1602,7 +1602,7 @@ oo::class create ::questlog::ui::Viewer {
     # is the tag stacked under every run (body in the main pane, none in a box,
     # where the widget's default face already is QLBody).
     method insert_runs {w text base} {
-        foreach run [::questlog::jsonl::parse_inline $text] {
+        foreach run [::tkdown::parse_inline $text] {
             lassign $run style chunk
             set tags $base
             switch -- $style {
@@ -1622,7 +1622,7 @@ oo::class create ::questlog::ui::Viewer {
     # by segment_tables and rendered piecewise. The trailing newline(s) are a
     # rendering concern, passed as a suffix rather than parsed.
     method insert_prose {text {suffix "\n\n"}} {
-        set segs [::questlog::jsonl::segment_tables $text]
+        set segs [::tkdown::segment_tables $text]
         set has_table 0
         foreach s $segs { if {[lindex $s 0] eq "table"} { set has_table 1; break } }
         if {!$has_table} {
@@ -1713,7 +1713,7 @@ oo::class create ::questlog::ui::Viewer {
     # header cell.
     method cell_width {text bold} {
         set w 0
-        foreach run [::questlog::jsonl::parse_inline $text] {
+        foreach run [::tkdown::parse_inline $text] {
             lassign $run style chunk
             switch -- $style {
                 code       { set f QLMono }
@@ -1752,7 +1752,7 @@ oo::class create ::questlog::ui::Viewer {
             my insert_segments $body
             return
         }
-        foreach seg [::questlog::jsonl::segment_code_fences $body] {
+        foreach seg [::tkdown::segment_code_fences $body] {
             lassign $seg kind text
             if {$kind eq "code"} {
                 $Text insert end "$text\n" code
@@ -1838,7 +1838,7 @@ oo::class create ::questlog::ui::Viewer {
     # normal text inline, each blockquote run as an inset tagged block.
     method insert_segments {body} {
         set atstart 0
-        foreach seg [::questlog::jsonl::segment_blockquotes $body] {
+        foreach seg [::tkdown::segment_blockquotes $body] {
             lassign $seg kind text
             if {$kind eq "quote"} {
                 if {!$atstart} { $Text insert end "\n" body }
