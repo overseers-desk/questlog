@@ -295,6 +295,31 @@ oo::class create ::streamdoc::StreamDoc {
         my check_invariant region_close
     }
 
+    # reset: empty the document - drop every region's marks and elide tags,
+    # wipe the buffer and clear the store. The base of a fresh feed. The
+    # first call also seeds the engine state, so a host with bespoke widget
+    # assembly (its own text widget in Text) starts here instead of setup.
+    method reset {} {
+        if {![info exists Regions]} {
+            set Regions [list]
+            set Cur -1
+            set NextSave 0
+        }
+        set st [$Text cget -state]
+        $Text configure -state normal
+        set n -1
+        foreach R $Regions {
+            incr n
+            catch {$Text mark unset r#${n}s r#${n}e r#${n}m}
+            $Text tag delete f#$n d#$n
+        }
+        $Text delete 1.0 end
+        set Regions [list]
+        set Cur -1
+        $Text configure -state $st
+        my check_invariant reset
+    }
+
     # ---- content door ---------------------------------------------------
     #
     # Every character the host writes goes through here, inside `batch`. With
@@ -530,6 +555,21 @@ oo::class create ::streamdoc::StreamDoc {
             return -1
         }
         return -1
+    }
+
+    # A region's state for a host-side read, the boundary and summary line
+    # positions resolved from the marks: {start end summary open folded shown
+    # payload}, summary "" while no summary line stands.
+    method region_info {n} {
+        set R [lindex $Regions $n]
+        return [dict create \
+            start [$Text index [dict get $R start]] \
+            end [$Text index [dict get $R end]] \
+            summary [expr {[dict get $R summary] ? [$Text index r#${n}m] : ""}] \
+            open [dict get $R open] \
+            folded [dict get $R folded] \
+            shown [dict get $R shown] \
+            payload [dict get $R payload]]
     }
 
     method region_count {} { return [llength $Regions] }

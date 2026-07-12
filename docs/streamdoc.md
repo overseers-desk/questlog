@@ -51,6 +51,8 @@ The first character of a header line and of a summary line is a state glyph from
 | `detail_tag n` | the tag the host lays on region `n`'s detail lines as it emits |
 | `payload n` / `payload_set n payload` | the region's opaque host dict |
 | `region_count` / `live` / `folded n` / `shown n` | document and per-region state |
+| `region_info n` | a region's resolved state: `{start end summary open folded shown payload}` |
+| `reset` | empty the document: buffer, marks, elide tags, store |
 | `batch script` | run mutations with the widget editable and the view anchored once |
 | `follow` | jump to the tail and latch there |
 
