@@ -70,8 +70,8 @@ namespace eval ::streamtree {}
 
 # Coerce a {pos align ...} tab spec to strictly increasing positive stops,
 # which Tk requires. Guards the degenerate column geometry a too-narrow width
-# (a build-time placeholder, or high DPI) can produce. Shared by the metadata
-# strip here and the viewer's table columns (ui/viewer.tcl).
+# (a build-time placeholder, or high DPI) can produce. Used by the metadata
+# strip's column layout.
 proc ::streamtree::sane_tabs {tabs} {
     set out [list]
     set prev 0

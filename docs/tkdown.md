@@ -11,13 +11,13 @@ package require tkdown
 text .body
 ::tkdown::tags .body [dict create \
     body TkTextFont bold myBold italic myItalic bolditalic myBoldItalic \
-    mono TkFixedFont monobold myMonoBold]
+    mono TkFixedFont]
 ::tkdown::prose .body end $markdown {base} "\n\n"
 ```
 
 ## The host owns the chrome
 
-Every `td-*` tag tkdown configures is font-only. The module owns the faces: it configures `td-bold`, `td-italic`, `td-code`, the heading levels, and the per-table tab geometry, each carrying nothing but a `-font` (or, for a table, its tab stops and wrap). Colour, margins, spacing, and selection are the host's. A caller passes its own base tags into every emit call, and each styled span stacks the module's face over those base tags, so only the typeface changes and the host's ink and layout hold underneath.
+Every `td-*` tag but the table tag is font-only. The module owns the faces: it configures `td-bold`, `td-italic`, `td-code`, and the heading levels, each carrying nothing but a `-font`. A table's `td-tbl<N>` tag carries its tab stops, `-wrap none`, and the module's fixed table geometry (a 10 px left margin, single-pixel row spacing) alongside the stops; colour and selection stay the host's everywhere. A caller passes its own base tags into every emit call, and each styled span stacks the module's face over those base tags, so only the typeface changes and the host's ink and layout hold underneath.
 
 That split is why the host, not the module, configures the fonts. `tags` takes a dict of Tk font names the host has already created to match its own reading font, and the module simply binds those names onto its faces. A code block goes in one step further: `body` inserts it under a `codeTags` name the host passes outright, because a code block's margins and background are host chrome, not a tkdown face.
 
@@ -47,7 +47,7 @@ Each emit call inserts at an index the caller advances, a mark or `end`, paintin
 | `refit` | `w` | Recompute the tab stops of every rendered table under the current fonts. |
 | `forget` | `w` | Drop the widget's rendered tables, the registry payloads and the `td-tbl<N>` tags, before a full re-render. |
 
-The fonts dict `tags` takes requires the keys `body`, `bold`, `italic`, `bolditalic`, `mono`, and `monobold`; a missing one is an error. The heading keys `h1`, `h2`, and `h3` are optional, and each falls back to `bold` when the host leaves it out. ATX heading lines map by their marker count: one `#` is `h1`, two is `h2`, three is `h3`, and four through six all clamp to `h3`, so a document never asks for a face the host did not size.
+The fonts dict `tags` takes requires the keys `body`, `bold`, `italic`, `bolditalic`, and `mono`; a missing one is an error, and extra keys are kept but nothing draws with them. The heading keys `h1`, `h2`, and `h3` are optional, and each falls back to `bold` when the host leaves it out. ATX heading lines map by their marker count: one `#` is `h1`, two is `h2`, three is `h3`, and four through six all clamp to `h3`, so a document never asks for a face the host did not size.
 
 ## The table and refit lifecycle
 
