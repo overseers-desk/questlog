@@ -1,5 +1,6 @@
 package require Tcl 9
 package require Tk
+package require tkdown
 
 # Round-robin interleave of per-term hit-position lists, already ordered
 # rarest-term-first by the caller. Returns a flat list: the first hit of each
@@ -65,8 +66,6 @@ oo::class create ::questlog::ui::Viewer {
     variable LineMap          ;# dict: jsonl line offset (1-based) -> text index
     variable Menu             ;# right-click context menu
     variable MenuTarget       ;# dict capturing the clicked target
-    variable NextTableId      ;# monotonic id for rendered markdown tables
-    variable Tables           ;# dict: table id -> parsed payload, for tab re-fit
     variable Bodies           ;# dict: jsonl line -> raw body (for Copy message)
     variable TurnList         ;# listbox of per-turn rows (alias of BandDesc turns list)
     variable MatchList        ;# listbox of per-match rows (alias of BandDesc matches list)
@@ -163,8 +162,6 @@ oo::class create ::questlog::ui::Viewer {
         set Sections [list]
         set LineMap [dict create]
         set MenuTarget [dict create]
-        set NextTableId 0
-        set Tables [dict create]
         set Bodies [dict create]
         set MatchLabels [list]
         set ToolLines [list]
@@ -553,20 +550,19 @@ oo::class create ::questlog::ui::Viewer {
             -foreground [::questlog::ui::theme::c faint] -lmargin1 10 -lmargin2 10
         # Assistant blockquotes are plain tagged text, not embedded widgets:
         # `quote` is the inset block face (reading font, body ink, a deep left
-        # margin so the block reads set in from the prose). Configured before the
-        # i-* spans so inline emphasis inside a quote still wins on -font; its
-        # muted chrome tags (quotebar, qcopy) are configured just after them, so
+        # margin so the block reads set in from the prose). Configured before
+        # tkdown's faces so inline emphasis inside a quote still wins on -font;
+        # its muted chrome tags (quotebar, qcopy) are configured just after, so
         # their ink wins over the block's body ink where they stack.
         $Text tag configure quote -font QLBody \
             -foreground [::questlog::ui::theme::c body] -lmargin1 24 -lmargin2 24
-        # Inline-span tags carry only a -font; colour and margins keep coming
-        # from the body tag, which stays on every prose run (tags stack, and
-        # these later tags win on -font). i-code is kept separate from the
-        # block code tag so block-fence spacing and inline spans stay decoupled.
-        $Text tag configure i-bold       -font QLBodyBold
-        $Text tag configure i-italic     -font QLBodyItalic
-        $Text tag configure i-bolditalic -font QLBodyBoldItalic
-        $Text tag configure i-code       -font QLMono
+        # tkdown's td-* faces carry only a -font; colour and margins keep
+        # coming from the body tag, which stays on every prose run (tags stack,
+        # and the later tags win on -font). td-code is separate from the block
+        # code tag so block-fence spacing and inline spans stay decoupled.
+        ::tkdown::tags $Text [dict create \
+            body QLBody bold QLBodyBold italic QLBodyItalic \
+            bolditalic QLBodyBoldItalic mono QLMono monobold QLMonoBold]
         # The quote block's muted chrome: `quotebar` tints the per-line ▏ rule,
         # `qcopy` the ⧉ copy glyph heading the block. Configured after `quote` so
         # their muted ink outranks its body ink where they stack. qcopy also
@@ -598,10 +594,6 @@ oo::class create ::questlog::ui::Viewer {
         # then re-copying the raw characters. X11 PRIMARY (middle-click paste)
         # stays unfiltered - accepted; the explicit copy is the contract.
         bind $Text <<Copy>> "[list [self] copy_selection]; break"
-        # Markdown table header cells: bold, so the header reads apart from the
-        # body without a drawn rule. Configured after the i-* tags so it wins on
-        # -font when it stacks over body in a header cell.
-        $Text tag configure tbl-head     -font QLBodyBold
         $Text tag configure recap     -background [::questlog::ui::theme::c recap]
         $Text tag configure find      -background [::questlog::ui::theme::c find]
         # End-of-session hint: a centred, deeply inset cue that the reader can
@@ -897,18 +889,16 @@ oo::class create ::questlog::ui::Viewer {
         $Text configure -state normal
         $Text delete 1.0 end
         set Roles [dict create]
-        set Tables [dict create]
         set Bodies [dict create]
-        # The per-document tag families - t#N/d#N per turn, tbl<id> per table -
-        # survive `delete 1.0 end` as configured-but-empty tags and would pile
-        # up across loads; drop them wholesale. The \d guard keeps tbl-head,
-        # the global header-cell style, out of the sweep.
+        # The per-document t#N/d#N tag families survive `delete 1.0 end` as
+        # configured-but-empty tags and would pile up across loads; drop them
+        # wholesale. tkdown sweeps its own per-table tags the same way.
         foreach tag [$Text tag names] {
-            if {[string match {t#*} $tag] || [string match {d#*} $tag]
-                || [regexp {^tbl\d+$} $tag]} {
+            if {[string match {t#*} $tag] || [string match {d#*} $tag]} {
                 $Text tag delete $tag
             }
         }
+        ::tkdown::forget $Text
         set Turns [list]
         set CurTurn -1
         # Quotes are captured during render (insert_quote_text), so a wholesale
@@ -1597,158 +1587,18 @@ oo::class create ::questlog::ui::Viewer {
         if {$was_detached} { my prompt_status "" }
     }
 
-    # Insert inline-parsed runs into a text widget. The style->tag mapping lives
-    # here so the main pane and the quote boxes render emphasis identically; base
-    # is the tag stacked under every run (body in the main pane, none in a box,
-    # where the widget's default face already is QLBody).
-    method insert_runs {w text base} {
-        foreach run [::tkdown::parse_inline $text] {
-            lassign $run style chunk
-            set tags $base
-            switch -- $style {
-                code       { lappend tags i-code }
-                bold       { lappend tags i-bold }
-                italic     { lappend tags i-italic }
-                bolditalic { lappend tags i-bolditalic }
-            }
-            $w insert end $chunk $tags
-        }
-    }
-
-    # Insert a prose-or-table run into the main reading pane. A run with no GFM
-    # pipe table renders unchanged: inline markdown via insert_runs, each font
-    # tag stacking over body so colour and margins are inherited and only the
-    # face changes. A run carrying a table is split into normal and table parts
-    # by segment_tables and rendered piecewise. The trailing newline(s) are a
-    # rendering concern, passed as a suffix rather than parsed.
-    method insert_prose {text {suffix "\n\n"}} {
-        set segs [::tkdown::segment_tables $text]
-        set has_table 0
-        foreach s $segs { if {[lindex $s 0] eq "table"} { set has_table 1; break } }
-        if {!$has_table} {
-            my insert_runs $Text $text body
-            if {$suffix ne ""} { $Text insert end $suffix body }
-            return
-        }
-        foreach s $segs {
-            lassign $s kind payload
-            if {$kind eq "table"} {
-                my insert_table $payload
-            } else {
-                my insert_runs $Text $payload body
-            }
-        }
-        if {$suffix ne ""} { $Text insert end $suffix body }
-    }
-
-    # Render a parsed GFM table {align rows} as tab-aligned columns. Each table
-    # gets its own tag tbl$id carrying the computed -tabs (so two tables never
-    # share column geometry) plus -wrap none (a row wider than the pane clips at
-    # the right edge rather than wrapping and breaking the columns). Cells render
-    # through insert_runs so inline markdown inside a cell still styles; header
-    # cells also carry tbl-head for bold. The payload is kept in Tables so a font
-    # change can recompute the stops (fit_table, via on_resize).
-    method insert_table {payload} {
-        set id [incr NextTableId]
-        set tag tbl$id
-        set ncol [llength [dict get $payload align]]
-        $Text tag configure $tag -wrap none -lmargin1 10 -lmargin2 10 \
-            -spacing1 1 -spacing3 1 -tabs [my compute_table_tabs $payload]
-        set first 1
-        foreach row [dict get $payload rows] {
-            for {set j 0} {$j < $ncol} {incr j} {
-                if {$j > 0} { $Text insert end "\t" [list body $tag] }
-                set base [list body $tag]
-                if {$first} { lappend base tbl-head }
-                my insert_runs $Text [lindex $row $j] $base
-            }
-            $Text insert end "\n" [list body $tag]
-            set first 0
-        }
-        $Text insert end "\n" body
-        dict set Tables $id $payload
-    }
-
-    # The -tabs spec for a table: N-1 stops (column 0 anchors at the left margin,
-    # so a delimiter asking right/center on column 0 falls back to left). A
-    # column's stop sits at its content's left edge (left), right edge (right) or
-    # centre (center); column content widths are the per-column max over all rows,
-    # the header measured bold. The gutter and stops scale with the reading font,
-    # so the table re-fits when the font changes. Floored by sane_tabs because Tk
-    # rejects a non-increasing or non-positive stop.
-    method compute_table_tabs {payload} {
-        set align [dict get $payload align]
-        set ncol [llength $align]
-        set lm 10
-        set gut [font measure QLBody "00"]
-        set cw [lrepeat $ncol 0]
-        set first 1
-        foreach row [dict get $payload rows] {
-            for {set j 0} {$j < $ncol} {incr j} {
-                set w [my cell_width [lindex $row $j] $first]
-                if {$w > [lindex $cw $j]} { lset cw $j $w }
-            }
-            set first 0
-        }
-        set stops [list]
-        set x $lm
-        for {set j 0} {$j < $ncol} {incr j} {
-            if {$j > 0} {
-                set a [lindex $align $j]
-                switch -- $a {
-                    right  { set pos [expr {$x + [lindex $cw $j]}] }
-                    center { set pos [expr {$x + [lindex $cw $j] / 2}] }
-                    default { set pos $x }
-                }
-                lappend stops $pos $a
-            }
-            set x [expr {$x + [lindex $cw $j] + $gut}]
-        }
-        return [::streamtree::sane_tabs $stops]
-    }
-
-    # The rendered pixel width of one cell, summing each inline run in the font
-    # it will paint in (so a bold or `code` span is measured at its real width,
-    # not under-measured in the base face). bold widens the plain runs, for a
-    # header cell.
-    method cell_width {text bold} {
-        set w 0
-        foreach run [::tkdown::parse_inline $text] {
-            lassign $run style chunk
-            switch -- $style {
-                code       { set f QLMono }
-                bold       { set f QLBodyBold }
-                italic     { set f QLBodyItalic }
-                bolditalic { set f QLBodyBoldItalic }
-                default    { set f [expr {$bold ? "QLBodyBold" : "QLBody"}] }
-            }
-            incr w [font measure $f $chunk]
-        }
-        return $w
-    }
-
-    # Recompute one table's tab stops under the current fonts. Stops depend on
-    # the font, not the pane width, so a pane resize recomputes the same values;
-    # the live path is a reading-font change, which routes through on_resize.
-    method fit_table {id} {
-        if {![dict exists $Tables $id]} return
-        set tag tbl$id
-        if {![llength [$Text tag ranges $tag]]} return
-        $Text tag configure $tag -tabs [my compute_table_tabs [dict get $Tables $id]]
-    }
-
-    # Insert one turn's body. Plain prose goes through insert_prose, which renders
-    # inline `code`, *italic* and **bold** spans. A fenced body is split into
-    # prose and code runs (fenced code kept verbatim in monospace); a prose run
-    # that is an assistant blockquote becomes an inset tagged block.
+    # Insert one turn's body. A body with no blockquote goes wholesale to
+    # ::tkdown::body (fenced code under the block `code` tag, everything else
+    # markdown prose over `body`). An assistant body carrying blockquotes
+    # keeps the fence split here, because a quote run becomes an inset tagged
+    # block, app chrome tkdown knows nothing about.
     method insert_body {t body} {
-        set has_code  [regexp -line {^\s*```} $body]
         set has_quote [expr {$t eq "assistant" && [regexp -line {^>} $body]}]
-        if {!$has_code && !$has_quote} {
-            my insert_prose $body "\n\n"
+        if {!$has_quote} {
+            ::tkdown::body $Text end $body body code
             return
         }
-        if {!$has_code} {
+        if {![regexp -line {^\s*```} $body]} {
             my insert_segments $body
             return
         }
@@ -1756,10 +1606,10 @@ oo::class create ::questlog::ui::Viewer {
             lassign $seg kind text
             if {$kind eq "code"} {
                 $Text insert end "$text\n" code
-            } elseif {$has_quote && [regexp -line {^>} $text]} {
+            } elseif {[regexp -line {^>} $text]} {
                 my insert_segments $text
             } else {
-                my insert_prose $text "\n"
+                ::tkdown::prose $Text end $text body "\n"
             }
         }
         $Text insert end "\n" body
@@ -1845,7 +1695,7 @@ oo::class create ::questlog::ui::Viewer {
                 my insert_quote_text $text
                 set atstart 1
             } else {
-                my insert_prose $text "\n"
+                ::tkdown::prose $Text end $text body "\n"
                 set atstart 1
             }
         }
@@ -1854,7 +1704,7 @@ oo::class create ::questlog::ui::Viewer {
 
     # Render a de-quoted blockquote run as an inset block of tagged text. Each
     # physical line gets a muted ▏ rule and the reading font (inline *emphasis*
-    # and `code` still style through insert_runs, base tag `quote`), and a ⧉
+    # and `code` still style through ::tkdown::runs, base tag `quote`), and a ⧉
     # copy glyph heads the block. Unlike the embedded text widget it replaced,
     # this scrolls with the transcript (that widget's own Text-class wheel
     # binding swallowed the wheel as the pointer crossed a quote) and its text
@@ -1873,7 +1723,7 @@ oo::class create ::questlog::ui::Viewer {
         $Text insert end "⧉ " {qcopy quote}
         foreach line [split $dequoted "\n"] {
             $Text insert end "▏ " {quotebar quote}
-            my insert_runs $Text $line quote
+            ::tkdown::runs $Text end $line quote
             $Text insert end "\n" quote
         }
     }
@@ -1891,7 +1741,7 @@ oo::class create ::questlog::ui::Viewer {
     }
 
     method on_resize {} {
-        dict for {id  p} $Tables { my fit_table $id }
+        ::tkdown::refit $Text
     }
 
     method build_menu {} {

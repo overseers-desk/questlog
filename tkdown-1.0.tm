@@ -3,7 +3,10 @@ package provide tkdown 1.0
 
 namespace eval ::tkdown {
     namespace export parse_inline segment_tables segment_code_fences \
-        segment_blockquotes
+        segment_blockquotes tags runs prose body refit forget
+    # Emit state, one entry per registered widget:
+    # widget path -> {fonts <dict> tables <id -> payload> nextid <int>}
+    variable widgets [dict create]
 }
 
 # tkdown - a pragmatic markdown renderer for a Tk text widget.
@@ -12,12 +15,12 @@ namespace eval ::tkdown {
 # runs, then paints those onto a text widget with the styling tags the emit
 # half owns. It is not a full CommonMark implementation: it covers the block
 # and inline forms a chat or transcript body actually carries - fenced code,
-# blockquotes, GFM pipe tables, code spans, and asterisk emphasis - and leaves
-# the rest as literal text.
+# blockquotes, GFM pipe tables, ATX headings, code spans, and asterisk
+# emphasis - and leaves the rest as literal text.
 #
-# The parse half (this file so far) is pure Tcl, needs no Tk, and runs under a
-# bare tclsh. The block splitters are layered so each one sees a body the ones
-# above it have already peeled:
+# The parse half is pure Tcl, needs no Tk, and runs under a bare tclsh. The
+# block splitters are layered so each one sees a body the ones above it have
+# already peeled:
 #
 #   segment_code_fences  - {kind text}, kind in {prose code}. Splits on ```
 #                          fence lines; a code segment is the verbatim run
@@ -34,6 +37,20 @@ namespace eval ::tkdown {
 #                          of plain, code, bold, italic, bolditalic, and chunk
 #                          is the display text with the markers stripped.
 #                          Adjacent plain runs are coalesced.
+#
+# The emit half paints parsed text onto a text widget registered with `tags`:
+#
+#   tags    - register a widget: configure the td-* faces on it from a fonts
+#             dict and open its table registry.
+#   runs    - one prose run's inline spans, inserted at an index.
+#   prose   - prose plus pipe tables and ATX headings, closed by a suffix.
+#   body    - code fences plus prose; code goes in under the host's own tags.
+#   refit   - recompute every rendered table's tab stops (font change).
+#   forget  - drop the widget's rendered tables before a full re-render.
+#
+# Every td-* tag is font-only: colour, margins and spacing come from the base
+# tags the host stacks underneath, so the module owns the faces and the host
+# owns the chrome.
 
 # Split a message body into ordered {kind text} segments, where kind is
 # "prose" or "code". A code segment is the content between a pair of triple
@@ -373,4 +390,263 @@ proc ::tkdown::inline_close_emph {s from runlen} {
 # Restore the escape sentinels to their literal characters.
 proc ::tkdown::inline_unescape {s} {
     return [string map [list \uE000 "`" \uE001 "*" \uE002 "\\"] $s]
+}
+
+# Register a text widget for emission and configure the td-* faces on it.
+# fonts is a dict of Tk font names: body bold italic bolditalic mono monobold
+# are required; h1 h2 h3 are optional heading faces falling back to bold.
+# Registration opens the widget's table registry (the parsed payloads behind
+# refit); the registry entry dies with the widget.
+proc ::tkdown::tags {w fonts} {
+    variable widgets
+    foreach k {body bold italic bolditalic mono monobold} {
+        if {![dict exists $fonts $k]} {
+            error "tkdown: fonts dict missing \"$k\""
+        }
+    }
+    dict set widgets $w [dict create fonts $fonts tables [dict create] nextid 0]
+    # Later-configured tags win on -font where they stack: headings first so
+    # emphasis spans inside a heading still restyle, the table header face
+    # last so a header cell reads bold over any span it carries.
+    foreach lvl {h1 h2 h3} {
+        set f [expr {[dict exists $fonts $lvl]
+            ? [dict get $fonts $lvl] : [dict get $fonts bold]}]
+        $w tag configure td-$lvl -font $f
+    }
+    $w tag configure td-bold       -font [dict get $fonts bold]
+    $w tag configure td-italic     -font [dict get $fonts italic]
+    $w tag configure td-bolditalic -font [dict get $fonts bolditalic]
+    $w tag configure td-code       -font [dict get $fonts mono]
+    $w tag configure td-head       -font [dict get $fonts bold]
+    bind $w <Destroy> +[list ::tkdown::unregister $w]
+}
+
+# Drop a destroyed widget's registry entry; its tags died with it.
+proc ::tkdown::unregister {w} {
+    variable widgets
+    dict unset widgets $w
+}
+
+# Insert one prose run's inline spans at idx. Each styled chunk stacks its
+# td-* face over baseTags, so only the -font changes and the host's colour
+# and margins hold.
+proc ::tkdown::runs {w idx text baseTags} {
+    foreach run [::tkdown::parse_inline $text] {
+        lassign $run style chunk
+        set tags $baseTags
+        switch -- $style {
+            code       { lappend tags td-code }
+            bold       { lappend tags td-bold }
+            italic     { lappend tags td-italic }
+            bolditalic { lappend tags td-bolditalic }
+        }
+        $w insert $idx $chunk $tags
+    }
+}
+
+# Insert a prose-or-table run at idx, closed by suffix (a rendering concern,
+# passed rather than parsed). A run with no GFM pipe table goes straight to
+# the heading-and-inline pass; a run carrying one is split by segment_tables
+# and rendered piecewise, each table as tab-aligned columns under its own
+# td-tbl<N> tag.
+proc ::tkdown::prose {w idx text baseTags {suffix "\n\n"}} {
+    set segs [::tkdown::segment_tables $text]
+    set has_table 0
+    foreach s $segs { if {[lindex $s 0] eq "table"} { set has_table 1; break } }
+    if {!$has_table} {
+        ::tkdown::emit_normal $w $idx $text $baseTags
+    } else {
+        foreach s $segs {
+            lassign $s kind payload
+            if {$kind eq "table"} {
+                ::tkdown::emit_table $w $idx $payload $baseTags
+            } else {
+                ::tkdown::emit_normal $w $idx $payload $baseTags
+            }
+        }
+    }
+    if {$suffix ne ""} { $w insert $idx $suffix $baseTags }
+}
+
+# Insert a fenced body at idx: prose segments through prose (headings and
+# tables included), fenced code verbatim, one closing newline under baseTags.
+# Code goes in under codeTags, named by the host outright, because a code
+# block's chrome (margins, ink) is host styling, not a tkdown face.
+proc ::tkdown::body {w idx text baseTags codeTags} {
+    foreach seg [::tkdown::segment_code_fences $text] {
+        lassign $seg kind chunk
+        if {$kind eq "code"} {
+            $w insert $idx "$chunk\n" $codeTags
+        } else {
+            ::tkdown::prose $w $idx $chunk $baseTags "\n"
+        }
+    }
+    $w insert $idx "\n" $baseTags
+}
+
+# Recompute -tabs for every rendered table on w under the current fonts.
+# Stops depend on the font, not the pane width, so a resize recomputes the
+# same values; the live path is a reading-font change.
+proc ::tkdown::refit {w} {
+    variable widgets
+    if {![dict exists $widgets $w]} return
+    dict for {id payload} [dict get $widgets $w tables] {
+        set tag td-tbl$id
+        if {![llength [$w tag ranges $tag]]} continue
+        $w tag configure $tag -tabs [::tkdown::table_tabs $w $payload]
+    }
+}
+
+# Drop w's rendered tables: the registry payloads and the td-tbl<N> tags,
+# which survive a `delete 1.0 end` as configured-but-empty tags and would
+# pile up across reloads. Registration survives; call before a re-render.
+proc ::tkdown::forget {w} {
+    variable widgets
+    if {![dict exists $widgets $w]} return
+    dict set widgets $w tables [dict create]
+    dict set widgets $w nextid 0
+    foreach tag [$w tag names] {
+        if {[string match td-tbl* $tag]} { $w tag delete $tag }
+    }
+}
+
+# One normal (table-free) run: prose lines with any ATX heading line lifted
+# out as its own block under td-h1/h2/h3 (levels 4-6 render as h3), inline
+# spans parsed inside. A heading is a #{1,6} run plus a space opening a line.
+# Blocks re-join on the newlines the split consumed, so a run with no heading
+# emits byte-for-byte as one inline pass.
+proc ::tkdown::emit_normal {w idx text baseTags} {
+    set blocks [list]
+    set buf [list]
+    foreach line [split $text "\n"] {
+        if {[regexp {^(#{1,6}) (.*)$} $line -> marks rest]} {
+            if {[llength $buf]} {
+                lappend blocks [list text [join $buf "\n"]]
+                set buf [list]
+            }
+            set lvl [string length $marks]
+            if {$lvl > 3} { set lvl 3 }
+            lappend blocks [list td-h$lvl $rest]
+        } else {
+            lappend buf $line
+        }
+    }
+    if {[llength $buf]} { lappend blocks [list text [join $buf "\n"]] }
+    set first 1
+    foreach b $blocks {
+        lassign $b kind chunk
+        if {!$first} { $w insert $idx "\n" $baseTags }
+        if {$kind eq "text"} {
+            ::tkdown::runs $w $idx $chunk $baseTags
+        } else {
+            ::tkdown::runs $w $idx $chunk [concat $baseTags [list $kind]]
+        }
+        set first 0
+    }
+}
+
+# Render a parsed GFM table {align rows} as tab-aligned columns. Each table
+# gets its own tag td-tbl<N> carrying the computed -tabs (so two tables never
+# share column geometry) plus -wrap none (a row wider than the pane clips at
+# the right edge rather than wrapping and breaking the columns). Cells render
+# through runs so inline markdown inside a cell still styles; header cells
+# also carry td-head for bold. The payload is kept in the widget's registry
+# so a font change can recompute the stops (refit).
+proc ::tkdown::emit_table {w idx payload baseTags} {
+    variable widgets
+    set id [dict get $widgets $w nextid]
+    incr id
+    dict set widgets $w nextid $id
+    set tag td-tbl$id
+    set ncol [llength [dict get $payload align]]
+    $w tag configure $tag -wrap none -lmargin1 10 -lmargin2 10 \
+        -spacing1 1 -spacing3 1 -tabs [::tkdown::table_tabs $w $payload]
+    set rowtags [concat $baseTags [list $tag]]
+    set first 1
+    foreach row [dict get $payload rows] {
+        for {set j 0} {$j < $ncol} {incr j} {
+            if {$j > 0} { $w insert $idx "\t" $rowtags }
+            set base $rowtags
+            if {$first} { lappend base td-head }
+            ::tkdown::runs $w $idx [lindex $row $j] $base
+        }
+        $w insert $idx "\n" $rowtags
+        set first 0
+    }
+    $w insert $idx "\n" $baseTags
+    dict set widgets $w tables $id $payload
+}
+
+# The -tabs spec for a table: N-1 stops (column 0 anchors at the left margin,
+# so a delimiter asking right/center on column 0 falls back to left). A
+# column's stop sits at its content's left edge (left), right edge (right) or
+# centre (center); column content widths are the per-column max over all rows,
+# the header measured bold. The gutter and stops scale with the registered
+# fonts, so the table re-fits when the font changes. Floored by sane_tabs
+# because Tk rejects a non-increasing or non-positive stop.
+proc ::tkdown::table_tabs {w payload} {
+    variable widgets
+    set fonts [dict get $widgets $w fonts]
+    set align [dict get $payload align]
+    set ncol [llength $align]
+    set lm 10
+    set gut [font measure [dict get $fonts body] "00"]
+    set cw [lrepeat $ncol 0]
+    set first 1
+    foreach row [dict get $payload rows] {
+        for {set j 0} {$j < $ncol} {incr j} {
+            set width [::tkdown::cell_width $fonts [lindex $row $j] $first]
+            if {$width > [lindex $cw $j]} { lset cw $j $width }
+        }
+        set first 0
+    }
+    set stops [list]
+    set x $lm
+    for {set j 0} {$j < $ncol} {incr j} {
+        if {$j > 0} {
+            set a [lindex $align $j]
+            switch -- $a {
+                right  { set pos [expr {$x + [lindex $cw $j]}] }
+                center { set pos [expr {$x + [lindex $cw $j] / 2}] }
+                default { set pos $x }
+            }
+            lappend stops $pos $a
+        }
+        set x [expr {$x + [lindex $cw $j] + $gut}]
+    }
+    return [::tkdown::sane_tabs $stops]
+}
+
+# The rendered pixel width of one cell, summing each inline run in the font
+# it will paint in (so a bold or `code` span is measured at its real width,
+# not under-measured in the base face). bold widens the plain runs, for a
+# header cell.
+proc ::tkdown::cell_width {fonts text bold} {
+    set w 0
+    foreach run [::tkdown::parse_inline $text] {
+        lassign $run style chunk
+        switch -- $style {
+            code       { set f [dict get $fonts mono] }
+            bold       { set f [dict get $fonts bold] }
+            italic     { set f [dict get $fonts italic] }
+            bolditalic { set f [dict get $fonts bolditalic] }
+            default    { set f [dict get $fonts [expr {$bold ? "bold" : "body"}]] }
+        }
+        incr w [font measure $f $chunk]
+    }
+    return $w
+}
+
+# Coerce a {pos align ...} tab spec to strictly increasing positive stops,
+# which Tk requires. Guards the degenerate column geometry a too-narrow width
+# (a build-time placeholder, or high DPI) can produce.
+proc ::tkdown::sane_tabs {tabs} {
+    set out [list]
+    set prev 0
+    foreach {x align} $tabs {
+        if {$x <= $prev} { set x [expr {$prev + 1}] }
+        lappend out $x $align
+        set prev $x
+    }
+    return $out
 }
