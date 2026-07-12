@@ -18,10 +18,12 @@ DISPLAY=:99 import -window root out.png       # whole virtual screen; crop to $W
 kill $APP $XVFB
 ```
 
-A boot smoke check needs no interaction: `timeout 4 ./questlog` self-terminates (exit 124 means it ran the full window without crashing).
+A boot smoke check needs no interaction: `DISPLAY=:99 timeout 4 ./questlog` self-terminates (exit 124 means it ran the full window without crashing). Pin the display: a bare invocation inherits the caller's `DISPLAY` and flashes the window on :0.
 
 Drive the UI with Tk `send`, not `xdotool` synthetic input (clicks and keystrokes are silently dropped under XWayland). On :99 the app is the only interp, registered as appname `questlog`; reach a live object through it, for example: `echo 'send questlog {set o [lindex [info class instances ::questlog::ui::Toolbar] 0]; $o begin_edit file; update}; exit' | DISPLAY=:99 wish9.0`.
 
 Run the test suite the same way. Some tests `package require Tk`, so run them on :99 (or with no DISPLAY, where they skip) rather than letting them flash windows on :0.
 
 Cleanup: kill only the PIDs you launched. Never `pkill wish9.0` or `tclsh9.0` by name: the user's own questlog runs as `tclsh9.0 ./questlog`, and a blanket pkill kills it.
+
+Tcl 9 removed tilde expansion: `open`/`file` on a `~/...` path fails (or opens a literal `./~` path) rather than reaching the home directory. Build paths with `$env(HOME)` or `file home` in tests and drivers.

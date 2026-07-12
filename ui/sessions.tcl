@@ -136,6 +136,9 @@ oo::class create ::questlog::ui::SessionList {
     variable StatusBase       ;# last text set by set_progress/set_done
     variable OnSubagents      ;# cb: parent path -> list of child row dicts
     variable OnSubagentCost   ;# cb: child path -> start the cost pass for it
+    variable OnStatusPeek     ;# cb: text -> reveal it on the app's bottom strip, or ""
+    variable OnStatusUnpeek   ;# cb: {} -> restore the strip's standing text, or ""
+    variable PeekByTag        ;# dict: row tag -> {kind text}; hover reveal and hit menu resolve from it at event time
 
     # on_widen is optional: without it the cut banner still names what the search
     # left behind and still offers to load it (that is this object's own doing),
@@ -144,7 +147,8 @@ oo::class create ::questlog::ui::SessionList {
     constructor {parent resolve_cb lookup_cb on_open on_move_request \
                  on_drop_move on_bookmark_toggle on_bookmark_set on_rename \
                  on_scan_path cancel_cb \
-                 on_subagents on_subagent_cost {on_widen ""}} {
+                 on_subagents on_subagent_cost \
+                 {on_widen ""} {on_status_peek ""} {on_status_unpeek ""}} {
         set Top $parent
         set ResolveFolder $resolve_cb
         set LookupSession $lookup_cb
@@ -159,6 +163,9 @@ oo::class create ::questlog::ui::SessionList {
         set OnSubagents $on_subagents
         set OnSubagentCost $on_subagent_cost
         set OnWiden $on_widen
+        set OnStatusPeek $on_status_peek
+        set OnStatusUnpeek $on_status_unpeek
+        set PeekByTag [dict create]
         set StatusVar "Idle"
         set StatusBase ""
         set TotalCost 0.0
@@ -210,6 +217,14 @@ oo::class create ::questlog::ui::SessionList {
         set FolderNode [dict create]
         set PathNode [dict create]
         set TagNode [dict create]
+        # A wholesale clear can delete the hovered snippet out from under a
+        # parked pointer (a streaming search's clear-and-fill); a peek must
+        # not outlive its row, and relying on Tk to synthesize the <Leave> is
+        # a bet this line does not take. Same invalidation family as the
+        # viewer's hover-copy cache. The reveal registry dies with the rows
+        # it describes.
+        set PeekByTag [dict create]
+        if {$OnStatusUnpeek ne ""} { {*}$OnStatusUnpeek }
     }
 
     # ---- public payload accessors (white-box tests, and any caller that
@@ -272,7 +287,8 @@ oo::class create ::questlog::ui::SessionList {
                 set htag [my node_field $id tag]
                 set folder [my node_field $id key]
                 dict set TagNode $htag $id
-                $Text tag bind $htag <Button-1> [list [self] toggle_folder $folder]
+                $Text tag bind $htag <Button-1> \
+                    [list [self] toggle_folder [my pctsafe $folder]]
             }
             session { my wire_session_row $id }
             subagent { my wire_subagent_row $id }
@@ -774,29 +790,34 @@ oo::class create ::questlog::ui::SessionList {
         # any residual overflow. The full prompt is read in the viewer, which a
         # click on the row opens.
         $Text tag configure $stag -wrap none
+        # Every $path below rides through pctsafe: bind %-substitutes its
+        # script before Tcl parses it, and a project directory holding a %
+        # would be rewritten in place (issue #41's "100%pure" repro). The
+        # %X/%Y stay bare - they are the substitutions doing their job.
+        set bpath [my pctsafe $path]
         $Text tag bind $stag <ButtonPress-1> \
-            [list [self] on_session_press $path %X %Y]
+            [list [self] on_session_press $bpath %X %Y]
         $Text tag bind $stag <ButtonRelease-1> \
-            [list [self] on_session_release $path %X %Y]
+            [list [self] on_session_release $bpath %X %Y]
         # Shift/Control extend the selection. The modifier press is a no-op that
         # only outranks the plain <ButtonPress-1> above, so a modified click arms
         # no drag; the gesture resolves on the modified release.
         $Text tag bind $stag <Shift-ButtonPress-1>   [list [self] on_modified_press]
         $Text tag bind $stag <Control-ButtonPress-1> [list [self] on_modified_press]
         $Text tag bind $stag <Shift-ButtonRelease-1> \
-            [list [self] on_session_shift_release $path %X %Y]
+            [list [self] on_session_shift_release $bpath %X %Y]
         $Text tag bind $stag <Control-ButtonRelease-1> \
-            [list [self] on_session_ctrl_release $path %X %Y]
+            [list [self] on_session_ctrl_release $bpath %X %Y]
         # Tk's <<ContextMenu>> virtual event already maps to the right button
         # per platform (Button-2 on Aqua, Button-3 elsewhere); app.tcl extends
         # it with Control-Button-1 on Aqua so Ctrl+click works too.
         $Text tag bind $stag <<ContextMenu>> \
-            [list [self] on_session_right $path %X %Y]
+            [list [self] on_session_right $bpath %X %Y]
         # A whole session row is one clickable object: a hand cursor over it,
         # an arrow elsewhere. Text tags carry no -cursor, so swap the widget
         # cursor on enter/leave; entering also brightens the row's ⋯ control.
-        $Text tag bind $stag <Enter> [list [self] on_row_enter $path]
-        $Text tag bind $stag <Leave> [list [self] on_row_leave $path]
+        $Text tag bind $stag <Enter> [list [self] on_row_enter $bpath]
+        $Text tag bind $stag <Leave> [list [self] on_row_leave $bpath]
         foreach snip [my sget $path snippets] {
             lassign $snip btype content lineoff
             my render_snippet $path $btype $content $lineoff
@@ -837,7 +858,7 @@ oo::class create ::questlog::ui::SessionList {
         # screenful.
         set wr [my emit_window $m -align center -pady 1 -padx 3 \
             -create [list [self] make_badge $bt $fgrole \
-                [string toupper [string map {_ { }} $bt]] $path $lineoff]]
+                [string toupper [string map {_ { }} $bt]] $path $lineoff $ntag]]
         set wstart [lindex $wr 0]
         # The window segment must carry the snippet tag too, or its untagged
         # -wrap (the widget default `word`) lets the row wrap to a second line.
@@ -848,13 +869,17 @@ oo::class create ::questlog::ui::SessionList {
         my emit $m "\n" [list snippet $ntag]
         my tag_hits_in_range [lindex $cr 0] [lindex $cr 1] $content
         $Text tag bind $ntag <ButtonRelease-1> \
-            [list [self] on_snippet_release $path $lineoff]
+            [list [self] on_snippet_release [my pctsafe $path] $lineoff]
         # A snippet row is an extension of its session, so right-clicking it
-        # raises the same session menu as the header.
+        # raises the session menu - but on a specific match, so it goes through
+        # the hit-aware handler: the numeric lineoff rides the script bare, the
+        # snippet text is resolved at event time from the reveal registry
+        # ($ntag's entry) rather than spliced (issue #41's %-corruption).
         $Text tag bind $ntag <<ContextMenu>> \
-            [list [self] on_session_right $path %X %Y]
-        $Text tag bind $ntag <Enter> [list $Text configure -cursor hand2]
-        $Text tag bind $ntag <Leave> [list $Text configure -cursor arrow]
+            [list [self] on_hit_right [my pctsafe $path] $lineoff $ntag %X %Y]
+        # Hovering reveals the whole snippet line (bt leads it) on the bottom
+        # strip; the row itself only shows what fits before the metadata columns.
+        my peek_wire $ntag $bt $content
         my append_close $sid $m
     }
 
@@ -877,7 +902,7 @@ oo::class create ::questlog::ui::SessionList {
         set m [my append_open $sid]
         my emit $m "▏" [list snippet snippetbar $ntag]
         set wr [my emit_window $m -align center -pady 1 -padx 3 \
-            -create [list [self] make_badge names name $label $path $lineoff]]
+            -create [list [self] make_badge names name $label $path $lineoff $ntag]]
         set wstart [lindex $wr 0]
         $Text tag add snippet $wstart "$wstart +1c"
         $Text tag add $ntag   $wstart "$wstart +1c"
@@ -891,11 +916,14 @@ oo::class create ::questlog::ui::SessionList {
         }
         my emit $m "\n" [list snippet $ntag]
         $Text tag bind $ntag <ButtonRelease-1> \
-            [list [self] on_snippet_release $path $lineoff]
+            [list [self] on_snippet_release [my pctsafe $path] $lineoff]
+        # A name breadcrumb is a hit too: the hit-aware right-click carries the
+        # matched line and resolves the worn title from $ntag's reveal entry.
         $Text tag bind $ntag <<ContextMenu>> \
-            [list [self] on_session_right $path %X %Y]
-        $Text tag bind $ntag <Enter> [list $Text configure -cursor hand2]
-        $Text tag bind $ntag <Leave> [list $Text configure -cursor arrow]
+            [list [self] on_hit_right [my pctsafe $path] $lineoff $ntag %X %Y]
+        # The reveal leads with the breadcrumb's own badge word ("name" /
+        # "former name") and carries the whole worn title.
+        my peek_wire $ntag [string tolower $label] $content
         my append_close $sid $m
     }
 
@@ -904,16 +932,19 @@ oo::class create ::questlog::ui::SessionList {
     # $text is its centred label: render_snippet derives both from the block type,
     # render_name_snippet passes the breadcrumb's own. Embedded windows do not
     # inherit the row's tag bindings, so click and context-menu are forwarded to
-    # the same handlers.
-    method make_badge {pilltype fgrole text path lineoff} {
+    # the same handlers; $ntag is the row's reveal tag, carried into the
+    # hit-aware right-click so the menu can resolve this match's snippet text.
+    method make_badge {pilltype fgrole text path lineoff ntag} {
         set b $Text.badge[incr NextId]
         label $b -image [::questlog::ui::theme::badge_pill $pilltype] -compound center \
             -text $text \
             -font QLBold -foreground [::questlog::ui::theme::c $fgrole] \
             -background [$Text cget -background] -borderwidth 0 \
             -takefocus 0 -cursor hand2
-        bind $b <ButtonRelease-1> [list [self] on_snippet_release $path $lineoff]
-        bind $b <<ContextMenu>>   [list [self] on_session_right $path %X %Y]
+        bind $b <ButtonRelease-1> \
+            [list [self] on_snippet_release [my pctsafe $path] $lineoff]
+        bind $b <<ContextMenu>> \
+            [list [self] on_hit_right [my pctsafe $path] $lineoff $ntag %X %Y]
         return $b
     }
 
@@ -1086,17 +1117,20 @@ oo::class create ::questlog::ui::SessionList {
         set c    [my node_payload $id]
         foreach h [dict get $c hits] {
             lassign $h btype content lineoff
-            my render_child_snippet $path $cp $content $lineoff
+            my render_child_snippet $path $cp $btype $content $lineoff
         }
         set lineoff 0
         if {[llength [dict get $c hits]] > 0} {
             set lineoff [lindex [lindex [dict get $c hits] 0] 2]
         }
         my node_pset $id open_lineoff $lineoff
-        $Text tag bind $ctag <ButtonRelease-1> [list [self] on_child_release $cp]
-        $Text tag bind $ctag <<ContextMenu>> [list [self] on_child_right $cp %X %Y]
-        $Text tag bind $ctag <Enter> [list $Text configure -cursor hand2]
-        $Text tag bind $ctag <Leave> [list $Text configure -cursor arrow]
+        $Text tag bind $ctag <ButtonRelease-1> \
+            [list [self] on_child_release [my pctsafe $cp]]
+        $Text tag bind $ctag <<ContextMenu>> \
+            [list [self] on_child_right [my pctsafe $cp] %X %Y]
+        # The subagent header's description is truncated into the room before the
+        # metadata; hovering reveals it whole on the strip, led by the agent type.
+        my peek_wire $ctag [dict get $c agent_type] [dict get $c label]
         # Cost rides the same second pass as a session's; trigger it once (when
         # the child has no cost yet), so a re-render after the result does not
         # re-queue it.
@@ -1107,7 +1141,7 @@ oo::class create ::questlog::ui::SessionList {
     # own transcript at the hit (issue #13 chose per-file open over a unified
     # parent+child view). Lighter than a parent snippet (no badge widget): a
     # deeper spine then the hit-leading content with the terms emboldened.
-    method render_child_snippet {path cp content lineoff} {
+    method render_child_snippet {path cp btype content lineoff} {
         set cid [my sid $cp]
         set ntag "c#[incr NextId]"
         # A matched line is loose content inside the subagent's region: the door
@@ -1119,10 +1153,16 @@ oo::class create ::questlog::ui::SessionList {
         set cr [my emit $m $content [list childsnip $ntag]]
         my emit $m "\n" [list childsnip $ntag]
         my tag_hits_in_range [lindex $cr 0] [lindex $cr 1] $content
-        $Text tag bind $ntag <ButtonRelease-1> [list [self] on_child_open_at $cp $lineoff]
-        $Text tag bind $ntag <<ContextMenu>> [list [self] on_child_right $cp %X %Y]
-        $Text tag bind $ntag <Enter> [list $Text configure -cursor hand2]
-        $Text tag bind $ntag <Leave> [list $Text configure -cursor arrow]
+        $Text tag bind $ntag <ButtonRelease-1> \
+            [list [self] on_child_open_at [my pctsafe $cp] $lineoff]
+        # A subagent's matched line is a hit: the right-click carries its numeric
+        # lineoff bare and $ntag, so the child menu can open at the match and copy
+        # the snippet (text resolved from $ntag's reveal entry, never spliced).
+        $Text tag bind $ntag <<ContextMenu>> \
+            [list [self] on_child_right [my pctsafe $cp] %X %Y $ntag $lineoff]
+        # Same reveal as a parent snippet, one level deeper: the whole matched
+        # line on the strip, led by its block type.
+        my peek_wire $ntag $btype $content
         my append_close $cid $m
     }
 
@@ -1160,12 +1200,30 @@ oo::class create ::questlog::ui::SessionList {
     # The reduced menu for a subagent child row: a subagent is not a resumable
     # session (it has no session id of its own and no project cwd of its own), so
     # the resume / move / rename / bookmark verbs do not apply; only open, copy
-    # path, copy last output, and reveal remain.
+    # path, copy last output, and reveal remain. The widget is built empty and
+    # refilled per-open by populate_child_menu, so the header and a matched line
+    # can differ (the line gains the two hit entries).
     method build_child_menu {} {
         set CMenu $Top.ccmenu
         menu $CMenu -tearoff 0
+        set ChildMenuPath ""
+    }
+
+    # Refill the child menu for this open. A right-click on a matched line passes
+    # a hit {lineoff snippet}; a right-click on the header passes "". The two hit
+    # entries mirror the parent snippet's: open the subagent transcript at the
+    # match, and copy the matched snippet the model stored.
+    method populate_child_menu {hit} {
+        $CMenu delete 0 end
         $CMenu add command -label "Open in viewer" \
             -command [list [self] child_menu_open]
+        if {$hit ne ""} {
+            $CMenu add command -label "Open at this match" \
+                -command [list [self] on_child_open_at $ChildMenuPath \
+                    [dict get $hit lineoff]]
+            $CMenu add command -label "Copy this snippet" \
+                -command [list [self] clipboard_set [dict get $hit snippet]]
+        }
         $CMenu add separator
         $CMenu add command -label "Copy session path" \
             -command [list [self] child_menu_copy_path]
@@ -1174,11 +1232,22 @@ oo::class create ::questlog::ui::SessionList {
         $CMenu add separator
         $CMenu add command -label "Reveal folder" \
             -command [list [self] child_menu_reveal]
-        set ChildMenuPath ""
     }
 
-    method on_child_right {cp X Y} {
+    # A hitless open (from the subagent header) leaves $tag empty; a matched line
+    # passes its reveal tag and numeric lineoff, and the snippet text is resolved
+    # from the registry at event time - never carried in the bind script.
+    method on_child_right {cp X Y {tag ""} {lineoff ""}} {
         set ChildMenuPath $cp
+        set hit ""
+        if {$tag ne ""} {
+            set snippet ""
+            if {[dict exists $PeekByTag $tag]} {
+                set snippet [lindex [dict get $PeekByTag $tag] 1]
+            }
+            set hit [dict create lineoff $lineoff snippet $snippet]
+        }
+        my populate_child_menu $hit
         tk_popup $CMenu $X $Y
     }
     method child_menu_open {} { my on_child_release $ChildMenuPath }
@@ -1662,11 +1731,13 @@ oo::class create ::questlog::ui::SessionList {
     # Drop the per-snippet / per-child-snippet tags ("n#" / "c#") left empty by a
     # body delete. They are loose row content, not nodes, so the engine's
     # node-based cleanup does not reach them; without this they accumulate.
+    # Their reveal-registry entries go with them.
     method sweep_loose_tags {} {
         foreach tg [$Text tag names] {
             if {([string match "n#*" $tg] || [string match "c#*" $tg]) \
                 && [llength [$Text tag ranges $tg]] == 0} {
                 $Text tag delete $tg
+                dict unset PeekByTag $tg
             }
         }
     }
@@ -2086,6 +2157,59 @@ oo::class create ::questlog::ui::SessionList {
         my action_set_bright $path [my is_selected $path]
     }
 
+    # Hovering a snippet (or a subagent header) both swaps the cursor to the hand
+    # and reveals the row's full text on the app's bottom strip. The rendered row
+    # is clipped at the list column's right edge (-wrap none); $text is the
+    # model's full stored snippet (itself a lead/trail window around the hit),
+    # captured when the row was wired, so the reader sees the trailing context
+    # past the edge without opening the session. $kind
+    # is the badge word (tool_use, name, an agent type) and leads the reveal when
+    # present, so the strip reads e.g. "tool_use · <full line>". <Leave> restores
+    # the strip's standing text. No-op reveal when the app wired no peek callback
+    # (a bare SessionList in a test), so the cursor swap always stands alone.
+    method peek_enter {kind text} {
+        $Text configure -cursor hand2
+        if {$OnStatusPeek eq ""} return
+        if {$kind ne ""} { set text "$kind · $text" }
+        {*}$OnStatusPeek $text
+    }
+    method peek_leave {} {
+        $Text configure -cursor arrow
+        if {$OnStatusUnpeek ne ""} { {*}$OnStatusUnpeek }
+    }
+
+    # Double the percents in data bound into a bind script. bind runs its
+    # %-substitution over the script string before Tcl ever parses it, so a
+    # spliced path or folder name holding a % is rewritten in place
+    # ("100%pure" -> "100??ure"; [list] cannot help, it quotes for Tcl and
+    # bind's pass runs first - issue #41). %% renders back to the literal %.
+    # Free-text content does not get this treatment: it rides PeekByTag and
+    # never enters a script at all. Machine-made splices (lineoff integers,
+    # tag names, [self]) are %-free and stay bare.
+    method pctsafe {v} { return [string map {% %%} $v] }
+
+    # Wire a row tag's hover reveal. The bind script carries ONLY the
+    # machine-made tag name, never the content: bind runs %-substitution over
+    # its script at event time, and a snippet holding a % is corrupted in
+    # place ("50% done" -> "50\\ done", "printf %s" -> the state field) - the
+    # same splice bug issue #41 tracks for paths in menu binds. The content
+    # waits in PeekByTag and is resolved when the event fires; a tag with no
+    # entry (swept, or cleared by reset) still swaps the cursor and reveals
+    # nothing.
+    method peek_wire {tag kind text} {
+        dict set PeekByTag $tag [list $kind $text]
+        $Text tag bind $tag <Enter> [list [self] peek_enter_tag $tag]
+        $Text tag bind $tag <Leave> [list [self] peek_leave]
+    }
+    method peek_enter_tag {tag} {
+        if {![dict exists $PeekByTag $tag]} {
+            $Text configure -cursor hand2
+            return
+        }
+        lassign [dict get $PeekByTag $tag] kind text
+        my peek_enter $kind $text
+    }
+
     # Resolve a drag point to the folder under it: the engine maps the point to a
     # text index; a folder heading's drop tag (TagNode) names the target folder.
     method drag_hit {X Y} {
@@ -2114,13 +2238,17 @@ oo::class create ::questlog::ui::SessionList {
 
     # ---- right-click menu --------------------------------------------
 
-    method on_session_right {path X Y} {
+    # A right-click carrying a search hit ($hit is {lineoff snippet}) gains the
+    # two match-specific entries and always acts on the one hit's session, so it
+    # skips the multi-selection menu even when several rows are highlighted. A
+    # header/row right-click passes no hit and behaves as before.
+    method on_session_right {path X Y {hit ""}} {
         # A right-click on a row outside the current selection retargets the
         # selection to it (the menu then acts on what is highlighted). A click
         # on a member of a multi-selection keeps the set and shows the multi
         # menu - the actions that apply to many sessions at once.
         if {![my is_selected $path]} { my selection_set $path }
-        if {[my selection_count] > 1} {
+        if {$hit eq "" && [my selection_count] > 1} {
             my popup_multi_menu $X $Y
             return
         }
@@ -2149,10 +2277,33 @@ oo::class create ::questlog::ui::SessionList {
                 is_bookmarked [file executable $path] \
                 has_cwd [expr {$cwd ne ""}] \
                 has_folder [expr {$folder ne ""}]]]
+        # A hit adds the two match-specific entries: "Open at this match" reuses
+        # the badge's left-click open (on_snippet_release), "Copy this snippet"
+        # rides the clipboard. The snippet text was already resolved from the
+        # registry into $hit; it travels inside the ctx dict, never a script.
+        if {$hit ne ""} {
+            dict set ctx hit $hit
+            dict set ctx on_open_at [list [self] on_snippet_release]
+        }
         set MenuIndices [::questlog::ui::session_actions::populate $Menu $ctx]
         ::questlog::ui::session_actions::apply_state \
             $Menu $MenuIndices [dict get $ctx state]
         tk_popup $Menu $X $Y
+    }
+
+    # The hit-aware right-click for a snippet row (parent snippet, name
+    # breadcrumb, or badge). The numeric lineoff and the machine-made reveal tag
+    # ride the bind script bare; the snippet's free text does not - it is
+    # resolved here from the same PeekByTag entry peek_wire stored (issue #41:
+    # free text in a bind script is %-corrupted). A missing entry (swept row)
+    # leaves the snippet empty but still opens the match.
+    method on_hit_right {path lineoff tag X Y} {
+        set snippet ""
+        if {[dict exists $PeekByTag $tag]} {
+            set snippet [lindex [dict get $PeekByTag $tag] 1]
+        }
+        my on_session_right $path $X $Y \
+            [dict create lineoff $lineoff snippet $snippet]
     }
 
     # The menu for a multi-selection: only the actions that apply to many

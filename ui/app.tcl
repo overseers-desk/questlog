@@ -44,6 +44,7 @@ namespace eval ::questlog::ui::app {
     variable ViewerPath       ;# opened-session path line; overrides every mode, "" when none
     variable CriteriaActive   ;# 1 while search criteria are active (mirror of the snapshot)
     variable ProgressLine     ;# in-flight "Scanning…" / "Searching…" text, owned by the mode
+    variable PeekText         ;# a hover reveal that overrides the mode until unpeeked, "" at rest
     variable ScanActive       ;# 1 while the corpus scan coroutine is in flight
     variable SearchActive     ;# 1 while a search is in flight
     variable CostOutstanding  ;# cost jobs posted but not yet returned (the cost pass is live when > 0)
@@ -78,6 +79,7 @@ proc ::questlog::ui::app::start {root {seed {}}} {
     variable ViewerPath
     variable CriteriaActive
     variable ProgressLine
+    variable PeekText
     variable ScanActive
     variable SearchActive
     variable CostOutstanding
@@ -89,6 +91,7 @@ proc ::questlog::ui::app::start {root {seed {}}} {
     set ViewerPath ""
     set CriteriaActive 0
     set ProgressLine ""
+    set PeekText ""
     set ScanActive 0
     set SearchActive 0
     set CostOutstanding 0
@@ -185,7 +188,9 @@ proc ::questlog::ui::app::start {root {seed {}}} {
         [namespace code on_search_cancel] \
         [namespace code on_subagents] \
         [namespace code on_subagent_cost] \
-        [namespace code on_widen]]
+        [namespace code on_widen] \
+        [namespace code status_peek] \
+        [namespace code status_unpeek]]
     pack $list_frame.s -side top -fill both -expand 1
     # The toolbar's model lens offers the models the loaded rows carry, so it
     # reads them off the list. The Toolbar is built first (it heads the pane), so
@@ -631,8 +636,9 @@ proc ::questlog::ui::app::flush_cost {} {
     $SessionList refresh_cost_batch $batch
 }
 
-# The single writer of the bottom bar's text. An opened session's path overrides
-# every mode; otherwise the text follows StatusMode: the in-flight ProgressLine
+# The single writer of the bottom bar's text. A hover peek overrides
+# everything; then an opened session's path; otherwise the text follows
+# StatusMode: the in-flight ProgressLine
 # while scanning or searching, the persistent SearchSummary once a search has
 # finished or been cancelled, and the resting scope line while browsing. Every
 # callback that changes a mode or a stored line ends by calling this, so the bar
@@ -643,6 +649,16 @@ proc ::questlog::ui::app::refresh_status {} {
     variable SearchSummary
     variable ViewerPath
     variable ProgressLine
+    variable PeekText
+    # A hover reveal sits above every mode: while a peek is up the bar shows it
+    # verbatim. A mode change arriving mid-peek still runs its refresh_status and
+    # updates the stored lines (ProgressLine, SearchSummary, ...) - it just does
+    # not paint here - so status_unpeek can re-derive from the machine's current
+    # state rather than restoring a snapshot taken when the peek began.
+    if {$PeekText ne ""} {
+        set StatusVar $PeekText
+        return
+    }
     if {$ViewerPath ne ""} {
         set StatusVar $ViewerPath
         return
@@ -652,6 +668,22 @@ proc ::questlog::ui::app::refresh_status {} {
         search_done - search_cancelled { set StatusVar $SearchSummary }
         default { set StatusVar [scope_status] }
     }
+}
+
+# The narrow peek/restore pair the session list hovers a clipped snippet
+# through. peek shows $text on the bar over whatever the mode would otherwise
+# show; unpeek clears the flag and lets refresh_status re-derive the standing
+# text from the machine's current state. The list owns neither StatusVar nor the
+# label - it goes through these so the mode's other writers stay coherent.
+proc ::questlog::ui::app::status_peek {text} {
+    variable PeekText
+    set PeekText $text
+    refresh_status
+}
+proc ::questlog::ui::app::status_unpeek {} {
+    variable PeekText
+    set PeekText ""
+    refresh_status
 }
 
 # Show the progress bar while any background work runs (scan, search, or the

@@ -29,7 +29,7 @@ proc slurp {path} {
 
 # requires_tk: 1 when the file has a `package require Tk/Ttk`.
 proc requires_tk {body} {
-    return [regexp -line {^[ \t]*package require (?:Tk|Ttk|tk|ttk)} $body]
+    return [regexp -line {^[ \t]*package require (?:Tk|Ttk|tk|ttk)\M} $body]
 }
 
 # sources_ui: 1 when a source line names the ui/ directory.

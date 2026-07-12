@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
-# Run the whole test suite with the StreamTree structural audit gate on.
+# Run the whole test suite with the StreamTree and StreamDoc structural audit
+# gates on.
 #
 # Each test is a standalone script that prints PASS/FAILED and exits with its
-# failure count. With STREAMTREE_AUDIT set, every StreamTree mutation also checks the
-# per-folder mark invariant and, on the first desync, latches and writes an
-# "INVARIANT @ ..." line to stderr. A test can desync a mark yet still print PASS
-# (it never inspects the latch), so a green test is not enough: this runner fails
-# the suite on a non-zero test exit OR on any INVARIANT line.
+# failure count. With STREAMTREE_AUDIT / STREAMDOC_AUDIT set, every engine
+# mutation also checks its mark invariant and, on the first desync, latches and
+# writes an "INVARIANT @ ..." line to stderr. A test can desync a mark yet still
+# print PASS (it never inspects the latch), so a green test is not enough: this
+# runner fails the suite on a non-zero test exit OR on any INVARIANT line.
 #
 # A Tk test runs under wish9.0 on a private Xvfb :99 (never the user's :0, where
 # its windows would land over their work). A test with no `package require Tk` is
@@ -20,6 +21,7 @@ xvfb=$!
 sleep 2
 
 export STREAMTREE_AUDIT=1
+export STREAMDOC_AUDIT=1
 fails=0
 for t in test/test-*.tcl; do
     if grep -qE '^[[:space:]]*package require Tk' "$t"; then

@@ -1,5 +1,7 @@
 package require Tcl 9
 package require Tk
+package require tkdown
+package require streamdoc
 
 # Round-robin interleave of per-term hit-position lists, already ordered
 # rarest-term-first by the caller. Returns a flat list: the first hit of each
@@ -43,6 +45,7 @@ proc ::questlog::ui::rarity_round_robin {term_positions} {
 # Search-within: Ctrl-F focuses an entry; Return advances to the next match.
 
 oo::class create ::questlog::ui::Viewer {
+    superclass ::streamdoc::StreamDoc
     mixin leash
     variable Top
     variable Empty            ;# centered empty-state frame, shown until first load
@@ -65,9 +68,8 @@ oo::class create ::questlog::ui::Viewer {
     variable LineMap          ;# dict: jsonl line offset (1-based) -> text index
     variable Menu             ;# right-click context menu
     variable MenuTarget       ;# dict capturing the clicked target
-    variable NextTableId      ;# monotonic id for rendered markdown tables
-    variable Tables           ;# dict: table id -> parsed payload, for tab re-fit
     variable Bodies           ;# dict: jsonl line -> raw body (for Copy message)
+    variable TurnList         ;# listbox of per-turn rows (alias of BandDesc turns list)
     variable MatchList        ;# listbox of per-match rows (alias of BandDesc matches list)
     variable MatchLabels      ;# per-match one-line excerpt, parallel to FindMatches
     variable ToolList         ;# listbox of per-call rows (alias of BandDesc tools list)
@@ -77,6 +79,32 @@ oo::class create ::questlog::ui::Viewer {
     variable QuoteBodies      ;# raw de-quoted text of each quote, parallel to QuoteIdx (for copy)
     variable CurTs            ;# ISO stamp of the record being rendered, read for a quote row
     variable Roles            ;# dict: jsonl line -> uppercased role, for row colour
+    # Turns/CurTurn: a read-computed compatibility surface over the streamdoc
+    # engine's region store (one region per turn). A read trace (constructor)
+    # regenerates both from region_info on every read - the engine's marks
+    # are the truth, these exist for outside readers (the fold tests, the
+    # bench) that grew up on the hand-kept registry this replaced:
+    #   {id line hdr body end label ts folded shown counts stub}
+    # hdr/body/end/stub as text indices (end "" while the turn is open, stub
+    # "" while it has no summary line); line/label/ts/counts from the
+    # region's payload.
+    variable Turns
+    variable CurTurn          ;# index of the open turn, -1 outside one
+    # Hover copy affordance: one shared ⧉ button, built once as a child of $Text
+    # and placed on demand at the top-right of whatever user/assistant message
+    # the pointer is over - the discoverable twin of the right-click "Copy
+    # message". It is shown with `place` and hidden with `place forget`, never
+    # `window create`d into the text: an embedded window swallows the wheel as
+    # the pointer crosses it (the defect the quote de-widgetisation cured), so
+    # this button forwards the wheel to $Text's yview by hand. CopyLine is the
+    # jsonl line it would copy ("" while hidden); CopyFirst/CopyLast cache the
+    # message's text-line span so a Motion within one message does not re-place
+    # per pixel; CopyFbTok holds the ✓-acknowledgement restore timer's token.
+    variable CopyBtn
+    variable CopyLine
+    variable CopyFirst
+    variable CopyLast
+    variable CopyFbTok
     # Docked index band above the transcript: one collapsible pane whose content
     # switches between the match index and the tool-call timeline. It replaces the
     # two floating panels that used to cover the reading view.
@@ -84,8 +112,9 @@ oo::class create ::questlog::ui::Viewer {
     variable BandTab          ;# "matches"|"tools"|"quotes": which list the band shows
     variable BandOpen         ;# 1 while the band is gridded (taking transcript height)
     variable BandCount        ;# band-header count label
+    variable FoldBar          ;# band-header fold-all/expand-all affordance, shown only on the Turns tab
     # BandDesc: ordered dict key -> per-tab descriptor, one entry per band tab in
-    # canonical left-to-right order (matches, tools, quotes). Each descriptor
+    # canonical left-to-right order (turns, matches, tools, quotes). Each descriptor
     # carries the tab's header label (tab), head-strip count label (btn), listbox
     # (list) and its scrollbar (sb), the current count string (count, "" while the
     # tab is empty), its singular/plural unit words (unit, a {singular plural}
@@ -135,8 +164,6 @@ oo::class create ::questlog::ui::Viewer {
         set Sections [list]
         set LineMap [dict create]
         set MenuTarget [dict create]
-        set NextTableId 0
-        set Tables [dict create]
         set Bodies [dict create]
         set MatchLabels [list]
         set ToolLines [list]
@@ -144,6 +171,12 @@ oo::class create ::questlog::ui::Viewer {
         set QuoteBodies [list]
         set CurTs ""
         set Roles [dict create]
+        set Turns [list]
+        set CurTurn -1
+        set CopyLine ""
+        set CopyFirst 0
+        set CopyLast 0
+        set CopyFbTok ""
         set BandTab "matches"
         set BandOpen 0
         set OnToggle $on_toggle
@@ -167,6 +200,14 @@ oo::class create ::questlog::ui::Viewer {
         set RunPath ""
         set ErrBuf ""
         my build
+        # Streamdoc host wiring: the engine drives the transcript widget
+        # built above (the shared Text), keeps a tail reader latched across
+        # streamed appends, and its first reset seeds the region store.
+        my configure -autofollow 1
+        my reset
+        foreach v {Turns CurTurn} {
+            trace add variable [my varname $v] read [list [self] turns_surface]
+        }
     }
 
     # Load a session and anchor to a line (1-based; 0 means top). Replaces
@@ -182,6 +223,14 @@ oo::class create ::questlog::ui::Viewer {
         my prompt_hide
         my set_prompt_enabled 1
         my prompt_status ""
+        # The hover-copy cache is line numbers into the OLD session; a stale
+        # button would copy an arbitrary record of the new one. Today every
+        # show is a pointer click that already fired <Leave>, but the widget
+        # invariant must not lean on where the pointer happens to be.
+        my copy_hide
+        # Typed-but-unsent prompt text belongs to the session it was typed
+        # under, not the next one shown.
+        set PromptVar ""
         if {!$Shown} {
             grid remove $Empty
             grid $Text        -row 1 -column 0 -sticky nsew
@@ -209,6 +258,7 @@ oo::class create ::questlog::ui::Viewer {
         my index_matches $query
         my index_tool_calls
         my refresh_quote_control
+        my index_turns
         my add_endhint
         if {$scroll_to_line > 0} {
             my scroll_to_line $scroll_to_line
@@ -228,11 +278,16 @@ oo::class create ::questlog::ui::Viewer {
         # tab, a listbox+scrollbar, a count string). BandDesc is the ordered
         # key->descriptor dict that drives every per-tab loop below; the loops here
         # fill in each descriptor's widget paths (tab/btn/list/sb). Canonical order
-        # is matches, tools, quotes. tabtext is the header label; stem keeps the
-        # historical short widget names (matchlist/toolsb/...); unit is the
-        # {singular plural} count word; auto=1 (matches only) auto-opens the band on
-        # refresh; onselect is the <<ListboxSelect>> handler.
+        # is turns, matches, tools, quotes (Turns leftmost). tabtext is the header
+        # label; stem keeps the historical short widget names (matchlist/toolsb/...);
+        # unit is the {singular plural} count word; auto=1 (matches only) auto-opens
+        # the band on refresh, and the Turns tab is deliberately auto 0 so a session
+        # click never surfaces it - it is a reach-for index; onselect is the
+        # <<ListboxSelect>> handler.
         set BandDesc [dict create \
+            turns   [dict create tabtext "Turns" stem turn \
+                         unit {turn turns} auto 0 onselect turn_list_select \
+                         count ""] \
             matches [dict create tabtext "Matches" stem match \
                          unit {match matches} auto 1 onselect match_list_select \
                          count ""] \
@@ -352,7 +407,8 @@ oo::class create ::questlog::ui::Viewer {
         # gives every pixel back to the transcript, and full-width so the reading
         # column keeps its width (the win over a side column). Its listboxes
         # share the band's content cell; set_tab grids one and removes the rest.
-        # The header carries the Matches|Tools|Quotes tabs, the active count, and ✕.
+        # The header carries the Turns|Matches|Tools|Quotes tabs, the active count,
+        # the Turns-tab fold-all/expand-all affordance, and ✕.
         # A classic tk frame/label set tinted with the head strip's background,
         # not ttk (clam ignores -background on ttk frames), so the head strip and
         # band read as one contiguous chrome zone over the transcript.
@@ -383,15 +439,33 @@ oo::class create ::questlog::ui::Viewer {
         pack $Band.hdr.tabs  -side left -padx 8 -pady 2
         pack $BandCount      -side left -padx 6
         pack $Band.hdr.close -side right -padx 8
+        # Fold-all / expand-all affordance, a right-aligned pair shown only while
+        # the Turns tab is the front tab (set_tab packs it there and forgets it on
+        # every other tab). Faint mono labels in the tabs' key, subtler than a tab
+        # so they read as a control not a fourth heading; a click drives the fold
+        # primitives over every turn. Built here (unpacked, so it stays hidden until
+        # the Turns tab is chosen) and parked just left of the ✕.
+        set FoldBar $Band.hdr.foldbar
+        frame $FoldBar -background $strip
+        label $FoldBar.fold -text "fold all" -background $strip -cursor hand2 \
+            -font QLMono -foreground [::questlog::ui::theme::c faint]
+        label $FoldBar.expand -text "expand all" -background $strip -cursor hand2 \
+            -font QLMono -foreground [::questlog::ui::theme::c faint]
+        bind $FoldBar.fold   <Button-1> [list [self] fold_all]
+        bind $FoldBar.expand <Button-1> [list [self] expand_all]
+        pack $FoldBar.fold   -side left -padx {0 8}
+        pack $FoldBar.expand -side left
         # One listbox + scrollbar per band tab, all sharing the band's content
         # cell (set_tab grids the active one and removes the rest). Each tab's
-        # producer fills its rows: the match index "ROLE · …excerpt… · line N"
-        # coloured by role; the tool timeline (the did-versus-claimed audit, issue
-        # #15) "time · tool · path" in chronological order; the quote index "time ·
-        # first quoted line" -- a quick jump list to an assistant's quoted
-        # passages (their text is plain tagged text now, found by $Text search
-        # like any prose, so this is a convenience index, not the only way in). A
-        # row click jumps the reading view to its target. The
+        # producer fills its rows: the turn index "time · first prompt line"
+        # coloured like a user label, a jump list over the turn registry (the
+        # reading model's unit, foldable to a table of contents); the match index
+        # "ROLE · …excerpt… · line N" coloured by role; the tool timeline (the
+        # did-versus-claimed audit, issue #15) "time · tool · path" in chronological
+        # order; the quote index "time · first quoted line" -- a quick jump list to
+        # an assistant's quoted passages (their text is plain tagged text now, found
+        # by $Text search like any prose, so this is a convenience index, not the
+        # only way in). A row click jumps the reading view to its target. The
         # widget paths keep the historical stems ($Band.matchlist/$Band.matchsb ...).
         foreach key [dict keys $BandDesc] {
             set stem [dict get $BandDesc $key stem]
@@ -406,9 +480,10 @@ oo::class create ::questlog::ui::Viewer {
             dict set BandDesc $key list $lb
             dict set BandDesc $key sb $sb
         }
-        # Convenience aliases so methods that touch only one list (match_list_select,
-        # index_tool_calls, quote_list_select, render, insert_quote_text) need no
-        # descriptor lookup.
+        # Convenience aliases so methods that touch only one list (index_turns,
+        # turn_list_select, match_list_select, index_tool_calls, quote_list_select,
+        # render, insert_quote_text) need no descriptor lookup.
+        set TurnList  [dict get $BandDesc turns list]
         set MatchList [dict get $BandDesc matches list]
         set ToolList  [dict get $BandDesc tools list]
         set QuoteList [dict get $BandDesc quotes list]
@@ -451,22 +526,53 @@ oo::class create ::questlog::ui::Viewer {
         # render both in its TkFixedFont default.
         $Text tag configure body          -font QLBody -foreground [::questlog::ui::theme::c body] -lmargin1 10 -lmargin2 10 -spacing2 3 -spacing3 6
         $Text tag configure code          -font QLMono -foreground [::questlog::ui::theme::c body] -lmargin1 10 -lmargin2 10 -spacing2 3 -spacing3 6
+        # Detail-block faces, one per block kind insert_blocks renders: tool
+        # calls, tool results and the [image] placeholder in mono, thinking in
+        # the italic reading face, all muted so detail reads apart from prose;
+        # dk-chrome is the separately-inserted visual lead-in ([thinking] ).
+        # They share body/code's left margins so columns align, but carry no
+        # -spacing1/2/3. (Probed on Tk 9.0.3: a fully elided line contributes
+        # no spacing either way, so this is caution, not load-bearing - kept
+        # because a spacing-free detail line costs nothing and asks nothing of
+        # the elide renderer.)
+        foreach dk {dk-tool_use dk-tool_result dk-image dk-chrome} {
+            $Text tag configure $dk -font QLMono \
+                -foreground [::questlog::ui::theme::c muted] \
+                -lmargin1 10 -lmargin2 10
+        }
+        $Text tag configure dk-thinking -font QLBodyItalic \
+            -foreground [::questlog::ui::theme::c muted] -lmargin1 10 -lmargin2 10
+        # Turn chrome. foldglyph paints the ▾/▸ heading a turn's header line;
+        # it now holds the line's first character, so it must carry the label
+        # row's -spacing1 and margins or every header would lose them. turnhdr
+        # is the whole header line's click zone and deliberately sets no
+        # appearance: it overlays the lbl-* role colours and, configured later,
+        # would outrank them. stub is the faint one-line detail summary closing
+        # a turn ("▸ · 7 tool calls · 2 thinking"); it sits inside the fold
+        # range, so like the dk-* faces it carries no -spacing1/2/3 (spacing
+        # would seam at the elide boundary when its turn folds). The per-turn
+        # f#N/d#N elide tags are the engine's, configured at region_open in
+        # that order, so a detail char's d#N outranks its f#N.
+        $Text tag configure foldglyph -font QLMonoBold \
+            -foreground [::questlog::ui::theme::c muted] \
+            -lmargin1 10 -lmargin2 10 -spacing1 6
+        $Text tag configure stub -font QLMono \
+            -foreground [::questlog::ui::theme::c faint] -lmargin1 10 -lmargin2 10
         # Assistant blockquotes are plain tagged text, not embedded widgets:
         # `quote` is the inset block face (reading font, body ink, a deep left
-        # margin so the block reads set in from the prose). Configured before the
-        # i-* spans so inline emphasis inside a quote still wins on -font; its
-        # muted chrome tags (quotebar, qcopy) are configured just after them, so
+        # margin so the block reads set in from the prose). Configured before
+        # tkdown's faces so inline emphasis inside a quote still wins on -font;
+        # its muted chrome tags (quotebar, qcopy) are configured just after, so
         # their ink wins over the block's body ink where they stack.
         $Text tag configure quote -font QLBody \
             -foreground [::questlog::ui::theme::c body] -lmargin1 24 -lmargin2 24
-        # Inline-span tags carry only a -font; colour and margins keep coming
-        # from the body tag, which stays on every prose run (tags stack, and
-        # these later tags win on -font). i-code is kept separate from the
-        # block code tag so block-fence spacing and inline spans stay decoupled.
-        $Text tag configure i-bold       -font QLBodyBold
-        $Text tag configure i-italic     -font QLBodyItalic
-        $Text tag configure i-bolditalic -font QLBodyBoldItalic
-        $Text tag configure i-code       -font QLMono
+        # tkdown's td-* faces carry only a -font; colour and margins keep
+        # coming from the body tag, which stays on every prose run (tags stack,
+        # and the later tags win on -font). td-code is separate from the block
+        # code tag so block-fence spacing and inline spans stay decoupled.
+        ::tkdown::tags $Text [dict create \
+            body QLBody bold QLBodyBold italic QLBodyItalic \
+            bolditalic QLBodyBoldItalic mono QLMono]
         # The quote block's muted chrome: `quotebar` tints the per-line ▏ rule,
         # `qcopy` the ⧉ copy glyph heading the block. Configured after `quote` so
         # their muted ink outranks its body ink where they stack. qcopy also
@@ -480,10 +586,24 @@ oo::class create ::questlog::ui::Viewer {
         $Text tag bind qcopy <Enter> [list $Text configure -cursor hand2]
         $Text tag bind qcopy <Leave> [list $Text configure -cursor $qcursor]
         $Text tag bind qcopy <ButtonRelease-1> [list [self] quote_copy_at %x %y]
-        # Markdown table header cells: bold, so the header reads apart from the
-        # body without a drawn rule. Configured after the i-* tags so it wins on
-        # -font when it stacks over body in a header cell.
-        $Text tag configure tbl-head     -font QLBodyBold
+        # Turn header and stub clicks: fold toggle and detail toggle. Tag
+        # bindings fire on disabled text (the sessions list relies on the same
+        # fact), and the handlers resolve which turn from the click index, so
+        # these two global tags serve every turn - no per-turn bindings.
+        # ButtonRelease, guarded in the handlers against a live selection, so a
+        # drag-select that merely ends on a header cannot toggle it.
+        foreach zone {turnhdr stub} {
+            $Text tag bind $zone <Enter> [list $Text configure -cursor hand2]
+            $Text tag bind $zone <Leave> [list $Text configure -cursor $qcursor]
+        }
+        $Text tag bind turnhdr <ButtonRelease-1> [list [self] turnhdr_click %x %y]
+        $Text tag bind stub    <ButtonRelease-1> [list [self] stub_click %x %y]
+        # Ctrl-C copies what the reader can see: -displaychars drops elided
+        # detail from the selection, so a copy over a turn cannot smuggle its
+        # hidden tool output along. The break stops the Text class binding from
+        # then re-copying the raw characters. X11 PRIMARY (middle-click paste)
+        # stays unfiltered - accepted; the explicit copy is the contract.
+        bind $Text <<Copy>> "[list [self] copy_selection]; break"
         $Text tag configure recap     -background [::questlog::ui::theme::c recap]
         $Text tag configure find      -background [::questlog::ui::theme::c find]
         # End-of-session hint: a centred, deeply inset cue that the reader can
@@ -501,6 +621,63 @@ oo::class create ::questlog::ui::Viewer {
         my build_menu
         bind $Text <<ContextMenu>> [list [self] on_right %x %y %X %Y]
         bind $Text <Configure>     [list [self] on_resize]
+
+        # Hover copy button: one shared ⧉ affordance riding the top-right of the
+        # message under the pointer (copy_motion places it, copy_hide forgets
+        # it). A child of $Text but never `window create`d into it, so the text
+        # never treats it as an embedded window and it consumes no text index; it
+        # is positioned purely by `place`. -takefocus 0 keeps it out of the tab
+        # ring, and it stays narrow (a single glyph). Its face reads the theme
+        # palette (the colour SSOT) but the style is defined here, co-located with
+        # its sole user: a flat chip in the reading background so it sits over the
+        # transcript as a light affordance, its muted glyph brightening to ink
+        # under the pointer (clam honours -background on a borderless ttk::button,
+        # the LV.TButton precedent).
+        set cbg [$Text cget -background]
+        ttk::style configure Copy.TButton -background $cbg \
+            -foreground [::questlog::ui::theme::c muted] \
+            -borderwidth 0 -relief flat -shiftrelief 0 -padding {2 0}
+        ttk::style map Copy.TButton \
+            -background [list active $cbg pressed $cbg] \
+            -foreground [list active [::questlog::ui::theme::c ink] \
+                              pressed [::questlog::ui::theme::c ink]]
+        set CopyBtn $Text.copybtn
+        ttk::button $CopyBtn -style Copy.TButton -text "⧉" -width 2 \
+            -takefocus 0 -cursor hand2 -command [list [self] copy_hovered]
+        # Wheel forwarding (load-bearing): a `place`d button over $Text still eats
+        # wheel events like any widget, so scroll $Text's yview exactly as its
+        # Text-class binding would. Tk 9 delivers the wheel - on X11 too - as
+        # <MouseWheel> with %D, scaled by tk::ScaleNum and divided by -4.0 into
+        # pixels; text.tcl binds only <MouseWheel>/<TouchpadScroll> (no
+        # <Button-4/5>), so mirroring those two is what "as the Text class would"
+        # means here. The trailing break stops the button's own class bindings
+        # from also firing.
+        # Each forward starts by dropping the button itself: the scroll slides
+        # new text under the pointer, and a button left placed would sit over
+        # content it does not copy (the transcript-side wheel hide below cannot
+        # cover this path - the event never reaches $Text).
+        bind $CopyBtn <MouseWheel> \
+            "[list [self] copy_hide]; tk::MouseWheel $Text y \[tk::ScaleNum %D\] -4.0 pixels; break"
+        bind $CopyBtn <Shift-MouseWheel> \
+            "[list [self] copy_hide]; tk::MouseWheel $Text x \[tk::ScaleNum %D\] -4.0 pixels; break"
+        bind $CopyBtn <TouchpadScroll> \
+            "[list [self] copy_hide]; lassign \[tk::PreciseScrollDeltas %D\] cbdx cbdy;\
+             if {\$cbdy != 0} {$Text yview scroll \[tk::ScaleNum \[expr {-\$cbdy}\]\] pixels};\
+             break"
+        # Show/hide as the pointer crosses the transcript: Motion resolves the
+        # message under it and places the button; leaving $Text hides it unless
+        # the pointer landed on the button itself; a wheel or resize over the
+        # transcript would strand a placed button, so drop it (the next Motion
+        # re-places it). A scrollbar drag is covered by <Leave> (the pointer
+        # leaves $Text for the scrollbar). copy_motion carries no break, so the
+        # text's own motion handling still runs.
+        bind $Text <Motion>    [list [self] copy_motion %x %y]
+        bind $Text <Leave>     [list [self] copy_leave]
+        bind $Text <Configure> +[list [self] copy_hide]
+        foreach ev {<MouseWheel> <Shift-MouseWheel> <TouchpadScroll> \
+                    <Button-4> <Button-5>} {
+            bind $Text $ev +[list [self] copy_hide]
+        }
 
         # Find overlay (hidden initially).
         set Find $Top.find
@@ -637,6 +814,15 @@ oo::class create ::questlog::ui::Viewer {
         set idx [::questlog::ui::session_actions::populate $ActionMenu $ctx]
         ::questlog::ui::session_actions::apply_state \
             $ActionMenu $idx [dict get $ctx state]
+        # Fold-all / expand-all over the turn registry; the band-header pair on the
+        # Turns tab is their twin. Disabled when the session rendered no turns, so
+        # they read as unavailable rather than silently doing nothing.
+        $ActionMenu add separator
+        set tstate [expr {[my region_count] ? "normal" : "disabled"}]
+        $ActionMenu add command -label "Fold all turns" -state $tstate \
+            -command [list [self] fold_all]
+        $ActionMenu add command -label "Expand all turns" -state $tstate \
+            -command [list [self] expand_all]
         $ActionMenu add separator
         $ActionMenu add command -label "Continue with one prompt…" \
             -command [list [self] prompt_show]
@@ -692,7 +878,16 @@ oo::class create ::questlog::ui::Viewer {
             incr lineno
             if {$line eq ""} continue
             set rec [::questlog::jsonl::parse_line $line]
-            if {$rec eq ""} continue
+            if {$rec eq ""} {
+                # A newline-less final line that does not parse is the tail
+                # claude is mid-write on: uncount it so append_new re-reads
+                # it once the writer completes it (counted here, it would sit
+                # under LoadedLines and the finished record would be skipped
+                # forever - append_new never counts such a tail). A complete
+                # garbage line stays counted and skipped, as ever.
+                if {[chan eof $fh]} { incr lineno -1 }
+                continue
+            }
             dict set rec _line $lineno
             lappend Records $rec
         }
@@ -701,10 +896,13 @@ oo::class create ::questlog::ui::Viewer {
     }
 
     method render {} {
-        $Text configure -state normal
-        $Text delete 1.0 end
+        # The engine's reset wipes the buffer, every region's marks and the
+        # per-turn f#N/d#N elide tag families in one sweep; the app-side
+        # caches rebuild below. tkdown sweeps its own per-table tags.
+        my reset
         set Roles [dict create]
-        set Tables [dict create]
+        set Bodies [dict create]
+        ::tkdown::forget $Text
         # Quotes are captured during render (insert_quote_text), so a wholesale
         # re-render clears them here; a streamed turn appends without re-render.
         $QuoteList delete 0 end
@@ -712,10 +910,15 @@ oo::class create ::questlog::ui::Viewer {
         set QuoteBodies [list]
         set RenderTs 0
         set RenderInSection 0
+        $Text configure -state normal
         foreach rec $Records {
-            lassign [my render_record $rec $RenderTs $RenderInSection] \
+            lassign [my render_record_turned $rec $RenderTs $RenderInSection] \
                 RenderTs RenderInSection
         }
+        # The final turn stays open (a session can always grow); it still
+        # shows its detail summary, appended as the trailing content line
+        # where append_new's door knows to pop and recount it.
+        my summary_sync
         $Text configure -state disabled
     }
 
@@ -724,51 +927,63 @@ oo::class create ::questlog::ui::Viewer {
     # recent content turn (for idle-gap detection), in_section is 1 while a
     # section header is open. Pulled out of render so the wholesale fill and the
     # streamed append (append_new) make identical divider and header decisions.
-    # The caller holds $Text in -state normal.
+    # The per-record cues - compact boundary, empty-body clock advance, idle
+    # gap - come from ::questlog::jsonl::transcript_step, the one classifier
+    # this method and the markdown export both fold over (issue #31), so a
+    # divider rule can no longer land in one surface and miss the other. The
+    # step owns classification and the clock only: every glyph and tag, the
+    # in_section tracking, the section headers and the label/body rendering
+    # stay here. The caller holds $Text in -state normal.
     method render_record {rec last_ts in_section} {
         set t [dict getdef $rec type ""]
         # last-prompt records are repeated, truncated harness snapshots of the
         # most recent user prompt: the harness writes the same value many times,
         # and it echoes the real user turn already shown. Not part of the
-        # conversation, so omit it from the reading view.
+        # conversation, so this viewer-side pre-filter drops them upstream of
+        # the step - a deliberate fork from the markdown export, which renders
+        # them as SYSTEM turns and lets them advance the clock; converging the
+        # two is a separate decision nobody has made (the step's contract
+        # comment records the divergence).
         if {$t eq "last-prompt"} { return [list $last_ts $in_section] }
-        set ts_iso [::questlog::jsonl::record_timestamp $rec]
-        set ts_epoch [my parse_iso $ts_iso]
         set lineno [dict get $rec _line]
 
-        # Compact boundary primary divider.
-        if {[::questlog::jsonl::is_compact_boundary $rec]} {
-            $Text insert end "─── /compact ───\n" compact-divider
-            return [list 0 0]
+        # The step hands back this record's cues in render order; the switch
+        # owns their look. A compact boundary is the primary divider - the
+        # step's returned clock is 0, and the section closes so the next turn
+        # opens under a fresh header. An idle gap is the secondary divider,
+        # already ordered above its turn's body. The body event says THAT the
+        # record renders and supplies the flat extract_text copy (the
+        # Bodies($line) contract below); HOW it renders stays keyed off the
+        # record itself. A record yielding no body event draws nothing - the
+        # step advanced the clock over it, so a gap still spans quiet metadata
+        # records.
+        lassign [::questlog::jsonl::transcript_step $rec $last_ts $IdleGap] \
+            events last_ts
+        set body ""
+        foreach ev $events {
+            switch -- [lindex $ev 0] {
+                compact {
+                    $Text insert end "─── /compact ───\n" compact-divider
+                    set in_section 0
+                }
+                gap {
+                    $Text insert end \
+                        "─── [my fmt_gap [lindex $ev 1]] later ───\n" divider
+                    set in_section 0
+                }
+                body {
+                    set body [lindex $ev 1]
+                }
+            }
         }
-
-        # Records that carry no text body (permission-mode, file-history
-        # snapshots, attachments) head no section and draw no line; they only
-        # keep the clock moving for gap detection. Tested before the header so a
-        # leading metadata record never leaves a bare section glyph at the top of
-        # the transcript. Tool-only assistant turns now render (extract_text
-        # emits Tool(args), [thinking], [image] placeholders), so they pass
-        # through to the body path below.
-        set body [::questlog::jsonl::extract_text $rec]
         if {[::questlog::debug::enabled]} {
             ::questlog::debug::log render "line $lineno type=$t\
                 empty=[expr {$body eq ""}]\
                 tools=[llength [::questlog::jsonl::record_tool_uses $rec]]"
         }
-        if {$body eq ""} {
-            if {$ts_epoch > 0} { set last_ts $ts_epoch }
-            return [list $last_ts $in_section]
-        }
+        if {$body eq ""} { return [list $last_ts $in_section] }
 
-        # Idle-gap secondary divider, between content turns.
-        if {$last_ts > 0 && $ts_epoch > 0} {
-            set gap [expr {($ts_epoch - $last_ts) / 60}]
-            if {$gap >= $IdleGap} {
-                $Text insert end "─── [my fmt_gap $gap] later ───\n" divider
-                set in_section 0
-            }
-        }
-
+        set ts_iso [::questlog::jsonl::record_timestamp $rec]
         if {!$in_section} {
             $Text insert end "[my section_header $ts_iso]\n" section-header
             set in_section 1
@@ -783,10 +998,83 @@ oo::class create ::questlog::ui::Viewer {
         dict set Roles $lineno $label
         # Label -> tag: lowercased with spaces to underscores (TOOL RESULT ->
         # lbl-tool_result). The four lbl-* tags are configured in build.
+        # A turn-start record's label line is its turn's header, a region
+        # boundary: the engine region opens here, after the between-turn
+        # chrome above, so the divider and section header stay outside it
+        # (render_record_turned closed the previous region before this
+        # record). The payload carries what the app reads back per turn: the
+        # jsonl line, the prompt's first line, the stamp, and the detail
+        # tally the summary hook prints. The fold glyph heads the line
+        # (render_record_turned tags the completed line turnhdr after); the
+        # glyph rides in front of the label, so start_idx above still names
+        # the line and LineMap/Bodies/Roles keep their meaning untouched.
+        if {[::questlog::jsonl::is_turn_start $rec]} {
+            my region_open [dict create line $lineno \
+                label [lindex [split $body \n] 0] ts $ts_iso \
+                counts [dict create]]
+            $Text insert end "▾ " {foldglyph turnhdr}
+        }
         $Text insert end "$label  " "lbl-[string map {{ } _} [string tolower $label]]"
-        my insert_body $t $body
+        # Assistant and tool_result records render one content block at a time
+        # so each tool_use/thinking/image block is its own dk-* tagged region
+        # (a region detail-hiding can elide without touching the prose around
+        # it); prompts and system records keep the flat extract_text body.
+        # start_idx above is the record's whole extent either way, label line
+        # included, which is what a hidden tool_result record will cover.
+        if {$t eq "assistant" || [::questlog::jsonl::is_tool_result_record $rec]} {
+            my insert_blocks $rec
+        } else {
+            my insert_body $t $body
+        }
 
-        if {$ts_epoch > 0} { set last_ts $ts_epoch }
+        # The clock already advanced inside the step; last_ts is its return.
+        return [list $last_ts $in_section]
+    }
+
+    # Turn-aware wrapper around render_record, the one entry both the
+    # wholesale fill and the streamed append use, so the engine's region
+    # store is driven identically in both. A turn-start record
+    # (is_turn_start; the rollback-list notion of a turn, so queued/sdk
+    # prompts stay inside the running one) first closes the open region -
+    # the closing summary must land before render_record emits the new
+    # turn's gap divider or section header, keeping the summary inside the
+    # old turn and the between-turns chrome outside every region - then
+    # renders, opening its own region at the header line (inside
+    # render_record, past the chrome). Every other record renders into the
+    # running region: a tool_result record is detail in its entirety (label
+    # line and trailing separator included, so hiding it leaves no residue).
+    # A fold held mid-stream is the engine's concern, not the caller's:
+    # append_new's append_close re-covers the fresh lines. A compact boundary closes
+    # nothing: the conversation resumes mid-turn.
+    method render_record_turned {rec last_ts in_section} {
+        # A turn start is gated on a body: a typed record whose extract_text
+        # is empty would render no header line to open a turn at, and closing
+        # the running turn for it would orphan everything after into
+        # always-visible preamble. Such a record is treated as any other
+        # bodiless one - the clock advances, the open turn keeps owning what
+        # follows. (render_record's own empty-body return is the second half
+        # of the gate: a region only opens once a header line rendered.)
+        if {[::questlog::jsonl::is_turn_start $rec]
+                && [::questlog::jsonl::extract_text $rec] ne ""} {
+            my region_close
+            lassign [my render_record $rec $last_ts $in_section] \
+                last_ts in_section
+            # The header line is complete now; tag it as the fold-toggle
+            # click zone the turnhdr binding serves.
+            if {[my live] >= 0} {
+                set s [dict get [my region_info [my live]] start]
+                $Text tag add turnhdr $s "$s lineend"
+            }
+            return [list $last_ts $in_section]
+        }
+        lassign [my render_record $rec $last_ts $in_section] last_ts in_section
+        if {[my live] >= 0 && [::questlog::jsonl::is_tool_result_record $rec]} {
+            set lineno [dict get $rec _line]
+            if {[dict exists $LineMap $lineno]} {
+                $Text tag add [my detail_tag [my live]] \
+                    [dict get $LineMap $lineno] [$Text index "end-1l linestart"]
+            }
+        }
         return [list $last_ts $in_section]
     }
 
@@ -801,10 +1089,8 @@ oo::class create ::questlog::ui::Viewer {
         if {$Path eq "" || ![winfo exists $Text]} { return 0 }
         if {[catch {open $Path r} fh]} { return 0 }
         chan configure $fh -encoding utf-8 -profile replace
-        set at_bottom [expr {[lindex [$Text yview] 1] >= 0.999}]
-        $Text configure -state normal
         set lineno 0
-        set new 0
+        set recs [list]
         while {1} {
             if {[chan gets $fh line] < 0} break
             if {[chan eof $fh]} break
@@ -814,16 +1100,42 @@ oo::class create ::questlog::ui::Viewer {
             set rec [::questlog::jsonl::parse_line $line]
             if {$rec eq ""} continue
             dict set rec _line $lineno
-            lappend Records $rec
-            lassign [my render_record $rec $RenderTs $RenderInSection] \
-                RenderTs RenderInSection
-            incr new
+            lappend recs $rec
         }
         close $fh
         set LoadedLines $lineno
-        $Text configure -state disabled
-        if {$new > 0 && $at_bottom} { $Text see end }
-        return $new
+        # Records are read before the widget is touched, so the common empty
+        # tick (the 300 ms cadence outruns claude's writes) mutates nothing -
+        # in particular it does not churn the open turn's stub line.
+        if {![llength $recs]} { return 0 }
+        # The summary pop inside the door deletes a mid-document line, so
+        # every text line number at or under it shifts - including the
+        # hover-copy cache, whose stale window otherwise makes the ⧉ copy the
+        # message ABOVE the one under a parked pointer, every 300 ms tick.
+        # Invalidate it first; the next Motion re-resolves against the
+        # settled transcript.
+        my copy_hide
+        # New content makes any endhint stale; clearing it here (a no-op on
+        # the streaming path, where resume_submit already did) keeps the
+        # trailing-line invariant local: records append to the transcript
+        # itself, with the open turn's summary as the last content line the
+        # door knows to pop.
+        my clear_endhint
+        # One engine batch: it anchors the reader once (the autofollow latch
+        # keeps a tail reader at the tail), the door pops the open turn's
+        # summary so the records land inside the turn, and append_close
+        # re-covers a fold held during the stream and re-appends the summary
+        # with the caught-up counts.
+        my batch {
+            set m [my append_open]
+            foreach rec $recs {
+                lappend Records $rec
+                lassign [my render_record_turned $rec $RenderTs $RenderInSection] \
+                    RenderTs RenderInSection
+            }
+            my append_close $m
+        }
+        return [llength $recs]
     }
 
     # The boundary between session content and the trailing end-of-session
@@ -854,6 +1166,125 @@ oo::class create ::questlog::ui::Viewer {
         $Text configure -state normal
         $Text delete [lindex $r 0] [lindex $r end]
         $Text configure -state disabled
+    }
+
+    # ---- turn folding and detail hiding: the streamdoc host skin -----------
+    #
+    # The streamdoc engine owns the regions (one per turn), their boundary
+    # marks and both elide layers - f#N the fold, d#N the detail, in that
+    # priority order - so nothing in the viewer mutates a tag's -elide. The
+    # priority rule still binds the app's own tags: none laid over a turn
+    # (body/dk-*/find/sel/tbl) may set an explicit -elide, or it would
+    # override the fold; all of them leave it unset, which never does.
+    #
+    # What lives here is the app skin over the engine: the names the rest of
+    # the app and the tests call (thin delegates), hover-copy invalidation on
+    # the mass toggles and jumps, the click handlers behind the turnhdr/stub
+    # tag bindings, the summary hook that turns a payload's tally into the
+    # stub phrase, and the Turns/CurTurn read surface.
+
+    # Folding the open turn folds to its region's end mark, which the endhint
+    # sits inside while one stands: the hint elides with the body and returns
+    # on expand. Accepted; a streamed append clears the hint before content
+    # lands, so only the parked-with-hint case shows it.
+    method turn_fold {n} { my fold $n }
+    method turn_at {idx} { return [my region_at $idx] }
+    method details_show {n} { my detail_show $n }
+    method details_hide {n} { my detail_hide $n }
+
+    # Both mass toggles drop the hover-copy button: the relayout slides new
+    # text under the pointer, and a placed button would float over a message
+    # it does not copy until the next Motion.
+    method fold_all {} { my copy_hide; next }
+    method expand_all {} { my copy_hide; next }
+
+    # The one jump gate: every site that scrolls the transcript to an index
+    # routes here. The engine's reveal unfolds the target's turn, shows its
+    # detail only when the index itself sits inside it, and drains the line
+    # metrics before the see. The jump is layout churn like any other: the
+    # see slides new text under a pointer resting on the transcript (a
+    # find-entry Return jumps without moving the mouse), and a placed copy
+    # button would float over a message it does not name - so drop it first,
+    # the next Motion re-places it.
+    method reveal_index {idx} {
+        my copy_hide
+        my reveal $idx
+    }
+
+    # The engine's summary hook: the open turn's trailing stub phrase from
+    # the payload's per-kind detail tally. Nonzero kinds only, "· 7 tool
+    # calls · 2 thinking". Tool results are not a kind of their own - they
+    # shadow their calls - unless a turn somehow holds results with no calls,
+    # where they are the only honest label. "" when the turn has no detail at
+    # all: such a turn takes no stub line.
+    method summary_text {payload} {
+        set counts [dict get $payload counts]
+        set parts [list]
+        set tu [dict getdef $counts tool_use 0]
+        set th [dict getdef $counts thinking 0]
+        set im [dict getdef $counts image 0]
+        set tr [dict getdef $counts tool_result 0]
+        if {$tu} { lappend parts "$tu tool call[expr {$tu == 1 ? "" : "s"}]" }
+        if {$th} { lappend parts "$th thinking" }
+        if {$im} { lappend parts "$im image[expr {$im == 1 ? "" : "s"}]" }
+        if {$tr && !$tu} {
+            lappend parts "$tr tool result[expr {$tr == 1 ? "" : "s"}]"
+        }
+        if {![llength $parts]} { return "" }
+        return "· [join $parts " · "]"
+    }
+
+    # The styling tag on every engine-written summary line: `stub` carries
+    # the faint mono face and the detail-toggle click zone (build).
+    method region_tags {payload} { return [list stub] }
+
+    # Header/stub click handlers, shared by every turn through the two global
+    # tags; the click index says which turn. The sel guard is quote_copy_at's:
+    # a drag-select that merely releases over the line must not toggle it.
+    method turnhdr_click {x y} {
+        if {[$Text tag ranges sel] ne ""} return
+        set n [my region_at [$Text index @$x,$y]]
+        if {$n >= 0} { my toggle $n }
+    }
+
+    method stub_click {x y} {
+        if {[$Text tag ranges sel] ne ""} return
+        set n [my region_at [$Text index @$x,$y]]
+        if {$n >= 0} { my detail_toggle $n }
+    }
+
+    # Regenerate the Turns/CurTurn read surface from the engine's region
+    # store (the read trace target; see the variable comment). Writes fire
+    # no trace, so this cannot recurse.
+    method turns_surface {args} {
+        set out [list]
+        set cur -1
+        for {set n 0} {$n < [my region_count]} {incr n} {
+            set info [my region_info $n]
+            set p [dict get $info payload]
+            if {[dict get $info open]} { set cur $n }
+            lappend out [dict create id $n \
+                line [dict get $p line] \
+                hdr [dict get $info start] \
+                body [$Text index "[dict get $info start] +1line linestart"] \
+                end [expr {[dict get $info open] ? "" : [dict get $info end]}] \
+                label [dict get $p label] ts [dict get $p ts] \
+                folded [dict get $info folded] shown [dict get $info shown] \
+                counts [dict get $p counts] stub [dict get $info summary]]
+        }
+        set Turns $out
+        set CurTurn $cur
+    }
+
+    # The <<Copy>> filter: join the selection's *visible* characters
+    # (-displaychars drops elided detail) across however many sel ranges
+    # stand. What lands on the clipboard is what the reader saw.
+    method copy_selection {} {
+        set parts [list]
+        foreach {a b} [$Text tag ranges sel] {
+            lappend parts [$Text get -displaychars $a $b]
+        }
+        if {[llength $parts]} { my clipboard_set [join $parts "\n"] }
     }
 
     # ---- one-prompt resume (streamed) --------------------------------------
@@ -892,7 +1323,10 @@ oo::class create ::questlog::ui::Viewer {
     # the prompt is empty, or the session is live in an interactive resume
     # elsewhere (which would write the same jsonl underneath us).
     method resume_submit {} {
-        if {$Running} return
+        # One pipe at a time: a prior resume still draining (even detached, on
+        # a session navigated away from) blocks a new one until it exits. Say
+        # so - a Send that silently does nothing reads as a dead button.
+        if {$Running} { my prompt_status "still streaming a previous resume"; return }
         if {$Path eq "" || $Uuid eq ""} return
         set prompt [string trim $PromptVar]
         if {$prompt eq ""} return
@@ -974,6 +1408,7 @@ oo::class create ::questlog::ui::Viewer {
             my index_matches $Query
             my index_tool_calls
             my refresh_quote_control
+            my index_turns
             my add_endhint
             my set_prompt_enabled 1
             if {$status} {
@@ -984,189 +1419,125 @@ oo::class create ::questlog::ui::Viewer {
                 set PromptVar ""
             }
         }
-        if {$OnRefresh ne "" && $rpath ne ""} { {*}$OnRefresh $rpath }
+        if {$OnRefresh ne "" && $rpath ne ""} {
+            {*}$OnRefresh $rpath
+        }
+        # A detached finish frees the pipe for whichever session is shown now;
+        # a "still streaming a previous resume" refusal may be standing in its
+        # status, and leaving it there reads as a Send still refused.
+        if {$was_detached} { my prompt_status "" }
     }
 
-    # Insert inline-parsed runs into a text widget. The style->tag mapping lives
-    # here so the main pane and the quote boxes render emphasis identically; base
-    # is the tag stacked under every run (body in the main pane, none in a box,
-    # where the widget's default face already is QLBody).
-    method insert_runs {w text base} {
-        foreach run [::questlog::jsonl::parse_inline $text] {
-            lassign $run style chunk
-            set tags $base
-            switch -- $style {
-                code       { lappend tags i-code }
-                bold       { lappend tags i-bold }
-                italic     { lappend tags i-italic }
-                bolditalic { lappend tags i-bolditalic }
-            }
-            $w insert end $chunk $tags
-        }
-    }
-
-    # Insert a prose-or-table run into the main reading pane. A run with no GFM
-    # pipe table renders unchanged: inline markdown via insert_runs, each font
-    # tag stacking over body so colour and margins are inherited and only the
-    # face changes. A run carrying a table is split into normal and table parts
-    # by segment_tables and rendered piecewise. The trailing newline(s) are a
-    # rendering concern, passed as a suffix rather than parsed.
-    method insert_prose {text {suffix "\n\n"}} {
-        set segs [::questlog::jsonl::segment_tables $text]
-        set has_table 0
-        foreach s $segs { if {[lindex $s 0] eq "table"} { set has_table 1; break } }
-        if {!$has_table} {
-            my insert_runs $Text $text body
-            if {$suffix ne ""} { $Text insert end $suffix body }
-            return
-        }
-        foreach s $segs {
-            lassign $s kind payload
-            if {$kind eq "table"} {
-                my insert_table $payload
-            } else {
-                my insert_runs $Text $payload body
-            }
-        }
-        if {$suffix ne ""} { $Text insert end $suffix body }
-    }
-
-    # Render a parsed GFM table {align rows} as tab-aligned columns. Each table
-    # gets its own tag tbl$id carrying the computed -tabs (so two tables never
-    # share column geometry) plus -wrap none (a row wider than the pane clips at
-    # the right edge rather than wrapping and breaking the columns). Cells render
-    # through insert_runs so inline markdown inside a cell still styles; header
-    # cells also carry tbl-head for bold. The payload is kept in Tables so a font
-    # change can recompute the stops (fit_table, via on_resize).
-    method insert_table {payload} {
-        set id [incr NextTableId]
-        set tag tbl$id
-        set ncol [llength [dict get $payload align]]
-        $Text tag configure $tag -wrap none -lmargin1 10 -lmargin2 10 \
-            -spacing1 1 -spacing3 1 -tabs [my compute_table_tabs $payload]
-        set first 1
-        foreach row [dict get $payload rows] {
-            for {set j 0} {$j < $ncol} {incr j} {
-                if {$j > 0} { $Text insert end "\t" [list body $tag] }
-                set base [list body $tag]
-                if {$first} { lappend base tbl-head }
-                my insert_runs $Text [lindex $row $j] $base
-            }
-            $Text insert end "\n" [list body $tag]
-            set first 0
-        }
-        $Text insert end "\n" body
-        dict set Tables $id $payload
-    }
-
-    # The -tabs spec for a table: N-1 stops (column 0 anchors at the left margin,
-    # so a delimiter asking right/center on column 0 falls back to left). A
-    # column's stop sits at its content's left edge (left), right edge (right) or
-    # centre (center); column content widths are the per-column max over all rows,
-    # the header measured bold. The gutter and stops scale with the reading font,
-    # so the table re-fits when the font changes. Floored by sane_tabs because Tk
-    # rejects a non-increasing or non-positive stop.
-    method compute_table_tabs {payload} {
-        set align [dict get $payload align]
-        set ncol [llength $align]
-        set lm 10
-        set gut [font measure QLBody "00"]
-        set cw [lrepeat $ncol 0]
-        set first 1
-        foreach row [dict get $payload rows] {
-            for {set j 0} {$j < $ncol} {incr j} {
-                set w [my cell_width [lindex $row $j] $first]
-                if {$w > [lindex $cw $j]} { lset cw $j $w }
-            }
-            set first 0
-        }
-        set stops [list]
-        set x $lm
-        for {set j 0} {$j < $ncol} {incr j} {
-            if {$j > 0} {
-                set a [lindex $align $j]
-                switch -- $a {
-                    right  { set pos [expr {$x + [lindex $cw $j]}] }
-                    center { set pos [expr {$x + [lindex $cw $j] / 2}] }
-                    default { set pos $x }
-                }
-                lappend stops $pos $a
-            }
-            set x [expr {$x + [lindex $cw $j] + $gut}]
-        }
-        return [::streamtree::sane_tabs $stops]
-    }
-
-    # The rendered pixel width of one cell, summing each inline run in the font
-    # it will paint in (so a bold or `code` span is measured at its real width,
-    # not under-measured in the base face). bold widens the plain runs, for a
-    # header cell.
-    method cell_width {text bold} {
-        set w 0
-        foreach run [::questlog::jsonl::parse_inline $text] {
-            lassign $run style chunk
-            switch -- $style {
-                code       { set f QLMono }
-                bold       { set f QLBodyBold }
-                italic     { set f QLBodyItalic }
-                bolditalic { set f QLBodyBoldItalic }
-                default    { set f [expr {$bold ? "QLBodyBold" : "QLBody"}] }
-            }
-            incr w [font measure $f $chunk]
-        }
-        return $w
-    }
-
-    # Recompute one table's tab stops under the current fonts. Stops depend on
-    # the font, not the pane width, so a pane resize recomputes the same values;
-    # the live path is a reading-font change, which routes through on_resize.
-    method fit_table {id} {
-        if {![dict exists $Tables $id]} return
-        set tag tbl$id
-        if {![llength [$Text tag ranges $tag]]} return
-        $Text tag configure $tag -tabs [my compute_table_tabs [dict get $Tables $id]]
-    }
-
-    # Insert one turn's body. Plain prose goes through insert_prose, which renders
-    # inline `code`, *italic* and **bold** spans. A fenced body is split into
-    # prose and code runs (fenced code kept verbatim in monospace); a prose run
-    # that is an assistant blockquote becomes an inset tagged block.
+    # Insert one turn's body. A body with no blockquote goes wholesale to
+    # ::tkdown::body (fenced code under the block `code` tag, everything else
+    # markdown prose over `body`). An assistant body carrying blockquotes
+    # keeps the fence split here, because a quote run becomes an inset tagged
+    # block, app chrome tkdown knows nothing about.
     method insert_body {t body} {
-        set has_code  [regexp -line {^\s*```} $body]
         set has_quote [expr {$t eq "assistant" && [regexp -line {^>} $body]}]
-        if {!$has_code && !$has_quote} {
-            my insert_prose $body "\n\n"
+        if {!$has_quote} {
+            ::tkdown::body $Text end $body body code
             return
         }
-        if {!$has_code} {
+        if {![regexp -line {^\s*```} $body]} {
             my insert_segments $body
             return
         }
-        foreach seg [::questlog::jsonl::segment_code_fences $body] {
+        foreach seg [::tkdown::segment_code_fences $body] {
             lassign $seg kind text
             if {$kind eq "code"} {
                 $Text insert end "$text\n" code
-            } elseif {$has_quote && [regexp -line {^>} $text]} {
+            } elseif {[regexp -line {^>} $text]} {
                 my insert_segments $text
             } else {
-                my insert_prose $text "\n"
+                ::tkdown::prose $Text end $text body "\n"
             }
         }
         $Text insert end "\n" body
+    }
+
+    # Render an assistant or tool_result record body one content block at a
+    # time, per extract_blocks. Text blocks keep the whole markdown path
+    # (fences, tables, blockquotes) through insert_body; tool_use, thinking,
+    # tool_result and image blocks each become one dk-* tagged region, the
+    # regions detail-hiding elides per turn. Every block's content goes in
+    # verbatim as one contiguous run - lib/match.tcl indexes these exact
+    # strings, and search highlighting must keep landing on the same
+    # characters (issue #21) - so any visual lead-in is a separate dk-chrome
+    # insert that shifts no content offset.
+    method insert_blocks {rec} {
+        # Inside a turn every detail block also carries the region's detail
+        # elide tag (hidden by default, toggled by the turn's stub line) and
+        # bumps the per-kind tally the stub prints. Preamble records before
+        # the first turn carry neither: always visible.
+        set dtag [expr {[my live] >= 0 ? [my detail_tag [my live]] : ""}]
+        set last ""
+        set sawtext 0
+        foreach {btype content} [::questlog::jsonl::extract_blocks $rec] {
+            switch -- $btype {
+                assistant - user {
+                    my insert_body $btype $content
+                    set sawtext 1
+                }
+                thinking {
+                    # extract_blocks emits thinking bare, without the
+                    # "[thinking] " prefix extract_text carries; restore it as
+                    # chrome so the reading view is unchanged. The redacted
+                    # placeholder never carried the prefix, so it gets none.
+                    if {$dtag ne ""} { my count_detail thinking }
+                    if {$content ne "\[redacted thinking\]"} {
+                        $Text insert end "\[thinking\] " [concat dk-chrome $dtag]
+                    }
+                    $Text insert end "$content\n" [concat dk-thinking $dtag]
+                }
+                default {
+                    # tool_use / tool_result / image, one line per block.
+                    # tool_use content is format_tool_use_full, the very
+                    # string extract_text flattened, so the words on screen
+                    # do not change, only their tag.
+                    if {$dtag ne ""} { my count_detail $btype }
+                    $Text insert end "$content\n" [concat [list dk-$btype] $dtag]
+                }
+            }
+            set last $btype
+        }
+        # insert_body closes a text block with its own blank line; a record
+        # ending on a detail block still owes the record separator. The
+        # separator is itself detail only when a text block already ended the
+        # label's line: then hiding details leaves ordinary single-record
+        # spacing. Without one (a tool-only record) it must stay visible, or
+        # the bare label - whose own newline hides with its first block -
+        # would run into the next record's line.
+        if {$last ni {assistant user}} {
+            set sep body
+            if {$sawtext && $dtag ne ""} { set sep [list body $dtag] }
+            $Text insert end "\n" $sep
+        }
+    }
+
+    # Bump the open turn's tally of one detail kind; the summary line renders
+    # these numbers when the turn closes (or on summary_sync while it streams).
+    method count_detail {kind} {
+        set n [my live]
+        set p [my payload $n]
+        set c [dict get $p counts]
+        dict incr c $kind
+        dict set p counts $c
+        my payload_set $n $p
     }
 
     # Render an assistant body that contains at least one blockquote run:
     # normal text inline, each blockquote run as an inset tagged block.
     method insert_segments {body} {
         set atstart 0
-        foreach seg [::questlog::jsonl::segment_blockquotes $body] {
+        foreach seg [::tkdown::segment_blockquotes $body] {
             lassign $seg kind text
             if {$kind eq "quote"} {
                 if {!$atstart} { $Text insert end "\n" body }
                 my insert_quote_text $text
                 set atstart 1
             } else {
-                my insert_prose $text "\n"
+                ::tkdown::prose $Text end $text body "\n"
                 set atstart 1
             }
         }
@@ -1175,7 +1546,7 @@ oo::class create ::questlog::ui::Viewer {
 
     # Render a de-quoted blockquote run as an inset block of tagged text. Each
     # physical line gets a muted ▏ rule and the reading font (inline *emphasis*
-    # and `code` still style through insert_runs, base tag `quote`), and a ⧉
+    # and `code` still style through ::tkdown::runs, base tag `quote`), and a ⧉
     # copy glyph heads the block. Unlike the embedded text widget it replaced,
     # this scrolls with the transcript (that widget's own Text-class wheel
     # binding swallowed the wheel as the pointer crossed a quote) and its text
@@ -1194,7 +1565,7 @@ oo::class create ::questlog::ui::Viewer {
         $Text insert end "⧉ " {qcopy quote}
         foreach line [split $dequoted "\n"] {
             $Text insert end "▏ " {quotebar quote}
-            my insert_runs $Text $line quote
+            ::tkdown::runs $Text end $line quote
             $Text insert end "\n" quote
         }
     }
@@ -1212,7 +1583,7 @@ oo::class create ::questlog::ui::Viewer {
     }
 
     method on_resize {} {
-        dict for {id  p} $Tables { my fit_table $id }
+        ::tkdown::refit $Text
     }
 
     method build_menu {} {
@@ -1261,6 +1632,112 @@ oo::class create ::questlog::ui::Viewer {
         return $best
     }
 
+    # ---- hover copy button -------------------------------------------------
+    #
+    # The shared ⧉ button (built once in build) rides the top-right of whatever
+    # user/assistant message the pointer is over, the discoverable twin of the
+    # right-click "Copy message" and the quote glyph. It copies Bodies($line) -
+    # the record's raw extract_text, the whole message regardless of fold or
+    # detail state - deliberately unlike copy_selection, which is filtered to the
+    # reader's visible characters. Tool-result and system records get no button
+    # (the role gate below), matching neither being prose a reader means to lift.
+
+    # The pointer moved over the transcript at widget-local x,y. A cheap gate
+    # first: while the pointer stays within the cached message's text-line span
+    # the button is already in the right place, so do nothing (no re-place per
+    # pixel). Otherwise resolve the message under the pointer and place the
+    # button only over a user or assistant one. The end-of-session hint is chrome
+    # below the content (content_end), not a message, so it takes no button;
+    # neither does a spot that resolves to no bodied line (a section header or
+    # divider between turns, where line_at finds nothing at or above it).
+    method copy_motion {x y} {
+        set idx [$Text index @$x,$y]
+        set line [lindex [split $idx .] 0]
+        if {$CopyLine ne "" && $line >= $CopyFirst && $line < $CopyLast} return
+        set ce [my content_end]
+        if {$ce ne "end" && [$Text compare $idx >= $ce]} { my copy_hide; return }
+        set ml [my line_at $idx]
+        if {$ml eq ""} { my copy_hide; return }
+        if {[dict getdef $Roles $ml ""] ni {USER ASSISTANT}} { my copy_hide; return }
+        # The message spans from its own anchor to the next bodied record's
+        # anchor - its own detail blocks render in between, under the same
+        # record - or the content boundary for the last message. The span is
+        # cached in text-line numbers for the Motion gate above.
+        set start [dict get $LineMap $ml]
+        set end [my next_body_index $start]
+        set CopyLine $ml
+        set CopyFirst [lindex [split [$Text index $start] .] 0]
+        set CopyLast  [lindex [split [$Text index $end] .] 0]
+        my copy_place $start
+    }
+
+    # The text index of the message following the one anchored at $start: the
+    # nearest LineMap anchor strictly after it, else the content boundary (before
+    # the endhint, or the transcript end when no hint stands).
+    method next_body_index {start} {
+        set best ""
+        dict for {lineno pos} $LineMap {
+            if {[$Text compare $pos > $start]} {
+                if {$best eq "" || [$Text compare $pos < $best]} { set best $pos }
+            }
+        }
+        if {$best ne ""} { return $best }
+        set ce [my content_end]
+        return [expr {$ce eq "end" ? [$Text index end] : $ce}]
+    }
+
+    # Place the button with its north-east corner 8px in from the right edge,
+    # aligned to the top of the message's first line when that line is on screen.
+    # When the reader has scrolled past the head of a long message that line's
+    # bbox is empty, so ride the viewport's top edge instead - the button stays
+    # visible at the top of the message it copies.
+    method copy_place {start} {
+        set bb [$Text bbox $start]
+        set y [expr {$bb ne "" ? [lindex $bb 1] : 2}]
+        place $CopyBtn -in $Text -relx 1.0 -x -8 -y $y -anchor ne
+    }
+
+    method copy_hide {} {
+        if {$CopyLine eq ""} return
+        place forget $CopyBtn
+        set CopyLine ""
+        set CopyFirst 0
+        set CopyLast 0
+        # A hidden button holds no acknowledgement: cancel a pending ✓ restore
+        # and put the glyph back, or the next hover (a session switch away)
+        # opens on a stale check mark.
+        if {$CopyFbTok ne ""} { my forget $CopyFbTok; set CopyFbTok "" }
+        $CopyBtn configure -text "⧉"
+    }
+
+    # Leaving the transcript hides the button - but crossing onto the button
+    # itself also fires $Text <Leave> (a parent-to-child boundary crossing), so
+    # defer the decision to idle and keep the button when the pointer settled on
+    # it. A miniature of the overlay_check the quote boxes once carried.
+    method copy_leave {} { my later idle [list [self] copy_leave_check] }
+    method copy_leave_check {} {
+        if {$CopyLine eq "" || ![winfo exists $CopyBtn]} return
+        if {[winfo containing {*}[winfo pointerxy $CopyBtn]] eq $CopyBtn} return
+        my copy_hide
+    }
+
+    # The button's action: copy the cached message's whole body. Bodies is the
+    # record's raw extract_text - the full message, hidden detail included -
+    # unlike the visibility-filtered copy_selection. A brief ✓ acknowledges the
+    # copy, then the glyph returns; the button is a real widget, not text in the
+    # transcript, so this flip splices no bare index.
+    method copy_hovered {} {
+        if {$CopyLine eq "" || ![dict exists $Bodies $CopyLine]} return
+        my clipboard_set [dict get $Bodies $CopyLine]
+        if {$CopyFbTok ne ""} { my forget $CopyFbTok }
+        $CopyBtn configure -text "✓"
+        set CopyFbTok [my later 700 [list [self] copy_feedback_reset]]
+    }
+    method copy_feedback_reset {} {
+        set CopyFbTok ""
+        if {[winfo exists $CopyBtn]} { $CopyBtn configure -text "⧉" }
+    }
+
     method section_header {ts_iso} {
         set when [my fmt_iso $ts_iso]
         return "▼ $when"
@@ -1288,7 +1765,7 @@ oo::class create ::questlog::ui::Viewer {
     method scroll_to_line {lineno} {
         if {[dict exists $LineMap $lineno]} {
             ::questlog::debug::log scroll "want $lineno exact hit"
-            $Text see [dict get $LineMap $lineno]
+            my reveal_index [dict get $LineMap $lineno]
             return
         }
         set best ""
@@ -1301,7 +1778,7 @@ oo::class create ::questlog::ui::Viewer {
         }
         ::questlog::debug::log scroll \
             "want $lineno no exact entry, nearest preceding=$bestln found=[expr {$best ne ""}]"
-        if {$best ne ""} { $Text see $best }
+        if {$best ne ""} { my reveal_index $best }
     }
 
     method find_show {} {
@@ -1328,7 +1805,7 @@ oo::class create ::questlog::ui::Viewer {
             return
         }
         set idx [lindex $FindMatches $FindIdx]
-        $Text see $idx
+        my reveal_index $idx
         incr FindIdx
         if {$FindIdx >= [llength $FindMatches]} { set FindIdx 0 }
     }
@@ -1340,11 +1817,20 @@ oo::class create ::questlog::ui::Viewer {
         set start 1.0
         while {1} {
             set len 0
-            set m [$Text search -count len -nocase -- $pattern $start [my content_end]]
+            # -elide: without it `search` skips hidden text, and a hit inside
+            # an elided detail block must still be findable (it is what lets
+            # a jump reveal the block).
+            set m [$Text search -elide -count len -nocase -- $pattern $start [my content_end]]
             if {$m eq ""} break
+            set start "$m + ${len}c"
+            # A stub's own words ("7 tool calls") and a header's fold glyph
+            # are turn chrome, not transcript; a hit there would step the
+            # reader nowhere useful, and a glyph hit would go stale the moment
+            # swap_glyph flips it.
+            set mtags [$Text tag names $m]
+            if {"stub" in $mtags || "foldglyph" in $mtags} continue
             $Text tag add find $m "$m + ${len}c"
             lappend results $m
-            set start "$m + ${len}c"
         }
         return $results
     }
@@ -1383,16 +1869,21 @@ oo::class create ::questlog::ui::Viewer {
             set start 1.0
             while {1} {
                 set len 0
+                # -elide as in collect_matches: hits inside hidden detail
+                # blocks still index.
                 if {$nocase} {
-                    set m [$Text search -nocase -count len -- $term $start [my content_end]]
+                    set m [$Text search -elide -nocase -count len -- $term $start [my content_end]]
                 } else {
-                    set m [$Text search -count len -- $term $start [my content_end]]
+                    set m [$Text search -elide -count len -- $term $start [my content_end]]
                 }
                 if {$m eq ""} break
                 if {$len <= 0} { set len 1 }
+                set start "$m + ${len}c"
+                # Skip stub-line and fold-glyph hits, as in collect_matches.
+                set mtags [$Text tag names $m]
+                if {"stub" in $mtags || "foldglyph" in $mtags} continue
                 $Text tag add find $m "$m + ${len}c"
                 lappend positions $m
-                set start "$m + ${len}c"
             }
             if {[llength $positions] > 0} { lappend per_term $positions }
             if {[::questlog::debug::enabled]} {
@@ -1436,7 +1927,18 @@ oo::class create ::questlog::ui::Viewer {
     # A one-line, whitespace-collapsed excerpt of the match's line, for the
     # match index row.
     method match_context {idx} {
-        set line [regsub -all {\s+} [string trim [$Text get "$idx linestart" "$idx lineend"]] " "]
+        # A hit on a record's first line would excerpt the role label too, and
+        # the row already leads with the role - "ASSISTANT · ...ASSISTANT
+        # Write(" read twice. Start the excerpt where the content does: past
+        # the fold glyph and the label, when the line opens with them.
+        set s [$Text index "$idx linestart"]
+        foreach chrome {foldglyph lbl-user lbl-assistant lbl-system lbl-tool_result} {
+            set r [$Text tag nextrange $chrome $s "$s lineend"]
+            if {[llength $r] && [$Text compare [lindex $r 0] == $s]} {
+                set s [lindex $r 1]
+            }
+        }
+        set line [regsub -all {\s+} [string trim [$Text get $s "$s lineend"]] " "]
         if {[string length $line] > 60} { set line "[string range $line 0 59]…" }
         return $line
     }
@@ -1491,6 +1993,11 @@ oo::class create ::questlog::ui::Viewer {
         set d [dict get $BandDesc $tab]
         grid [dict get $d list] -row 1 -column 0 -sticky nsew
         grid [dict get $d sb]   -row 1 -column 1 -sticky ns
+        # The fold-all/expand-all pair belongs to the Turns tab alone; re-pack it
+        # left of the ✕ there (the close stays packed, so -side right lands the
+        # bar just inside it) and forget it on every other tab.
+        pack forget $FoldBar
+        if {$tab eq "turns"} { pack $FoldBar -side right -padx 8 }
         my update_band_tabs
         my update_band_glyphs
     }
@@ -1608,7 +2115,7 @@ oo::class create ::questlog::ui::Viewer {
 
     method jump_to_match {i} {
         if {$i < 0 || $i >= [llength $FindMatches]} return
-        $Text see [lindex $FindMatches $i]
+        my reveal_index [lindex $FindMatches $i]
         set FindIdx $i
     }
 
@@ -1660,11 +2167,25 @@ oo::class create ::questlog::ui::Viewer {
         my refresh_band_control tools [llength $ToolLines]
     }
 
-    # Jump the reading view to the clicked call's line.
+    # Jump the reading view to the clicked call's line, then open that turn's
+    # detail so the call itself is on screen. scroll_to_line routes through
+    # reveal_index, which unfolds the landing turn but shows hidden detail only
+    # when the jump index sits inside it; a tool_use renders after its record's
+    # visible label line, so a plain reveal lands on the label and leaves the
+    # call elided. The Tools tab is the one caller that explicitly asked for that
+    # hidden line, so it spills the whole turn's detail after landing. The other
+    # scroll_to_line callers (the session-list snippet deep links) keep the
+    # reveal-only-what-you-hit rule - which is exactly why this detail spill lives
+    # in the caller and not in scroll_to_line or reveal_index.
     method tool_list_select {} {
         set sel [$ToolList curselection]
         if {$sel eq ""} return
-        my scroll_to_line [lindex $ToolLines [lindex $sel 0]]
+        set lineno [lindex $ToolLines [lindex $sel 0]]
+        my scroll_to_line $lineno
+        if {[dict exists $LineMap $lineno]} {
+            set n [my turn_at [dict get $LineMap $lineno]]
+            if {$n >= 0} { my details_show $n }
+        }
     }
 
     # ---- quote index (jump to an assistant's quoted passage) --------------
@@ -1694,6 +2215,56 @@ oo::class create ::questlog::ui::Viewer {
     method quote_list_select {} {
         set sel [$QuoteList curselection]
         if {$sel eq ""} return
-        $Text see [lindex $QuoteIdx [lindex $sel 0]]
+        my reveal_index [lindex $QuoteIdx [lindex $sel 0]]
+    }
+
+    # ---- turns index (jump to a turn's header) ----------------------------
+
+    # Fill the Turns listbox from the engine's region store, one row per turn
+    # "time · first prompt line" coloured like a user label (a turn opens on
+    # a user prompt). The label was captured at region_open (the prompt's
+    # first line, in the payload); collapse its whitespace and clip it the
+    # way the match and quote rows clip, so a long or ragged opening still
+    # reads as one tidy row. Called from show and, after a streamed turn
+    # lands, from resume_finish - the store is the one source of truth, so a
+    # refill always tracks region_count. Unlike the quote rows (appended live
+    # during render) turn rows are not maintained incrementally, so this
+    # rebuilds them wholesale.
+    method index_turns {} {
+        $TurnList delete 0 end
+        for {set n 0} {$n < [my region_count]} {incr n} {
+            set p [my payload $n]
+            set label [regsub -all {\s+} [string trim [dict get $p label]] " "]
+            if {[string length $label] > 60} {
+                set label "[string range $label 0 59]…"
+            }
+            $TurnList insert end "[my tool_time [dict get $p ts]] · $label"
+            $TurnList itemconfigure end -foreground [::questlog::ui::theme::c user]
+        }
+        my refresh_turn_control
+    }
+
+    # Expose the head-strip Turns count from the region store (index_turns
+    # has filled the rows). Opt-in like the tool and quote audits (descriptor
+    # auto is 0): it makes the Turns tab and count available but never opens
+    # the band on its own - the Turns index is reached for, not surfaced by a
+    # session click. With no turns the count is hidden and a band already on
+    # Turns collapses; refresh_band_control does the work.
+    method refresh_turn_control {} {
+        my refresh_band_control turns [my region_count]
+    }
+
+    # Jump the reading view to a clicked turn's header. A header line is never
+    # elided (the fold hides from the body down, keeping the header as the
+    # fold's visible handle), so the reveal here only unfolds a folded target
+    # and scrolls - it spills no detail. The jump still routes through
+    # reveal_index rather than a bare `see`, because that one-gate rule is the
+    # whole discipline: every transcript jump lands through the primitive that
+    # knows how to make an elided target visible, even where this particular
+    # target can never be elided.
+    method turn_list_select {} {
+        set sel [$TurnList curselection]
+        if {$sel eq ""} return
+        my reveal_index [dict get [my region_info [lindex $sel 0]] start]
     }
 }
