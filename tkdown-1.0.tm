@@ -3,7 +3,7 @@ package provide tkdown 1.0
 
 namespace eval ::tkdown {
     namespace export parse_inline segment_tables segment_code_fences \
-        segment_blockquotes tags runs prose body refit forget
+        segment_blockquotes segment_lists tags runs prose body refit forget
     # Emit state, one entry per registered widget:
     # widget path -> {fonts <dict> tables <id -> payload> nextid <int>}
     variable widgets [dict create]
@@ -15,8 +15,8 @@ namespace eval ::tkdown {
 # runs, then paints those onto a text widget with the styling tags the emit
 # half owns. It is not a full CommonMark implementation: it covers the block
 # and inline forms a chat or transcript body actually carries - fenced code,
-# blockquotes, GFM pipe tables, ATX headings, code spans, and asterisk
-# emphasis - and leaves the rest as literal text.
+# blockquotes, GFM pipe tables, ATX headings, flat lists, code spans, and
+# asterisk emphasis - and leaves the rest as literal text.
 #
 # The parse half is pure Tcl, needs no Tk, and runs under a bare tclsh. The
 # block splitters are layered so each one sees a body the ones above it have
@@ -30,6 +30,12 @@ namespace eval ::tkdown {
 #   segment_tables       - {kind payload}, kind in {normal table}. A table
 #                          payload is {align <per-col> rows <header-then-body>},
 #                          the parsed GFM pipe table.
+#   segment_lists        - {kind payload}, kind in {normal list}. A list is a
+#                          maximal run of "- "/"* "/"N. " lines; the payload is
+#                          the ordered items, each {num text}, num empty for a
+#                          bullet or the literal digits for an ordered item.
+#                          Applied to a normal run inside the emit walk, not a
+#                          top-level body splitter.
 #
 # The inline model, one prose run in:
 #
@@ -48,9 +54,10 @@ namespace eval ::tkdown {
 #   refit   - recompute every rendered table's tab stops (font change).
 #   forget  - drop the widget's rendered tables before a full re-render.
 #
-# Every td-* tag is font-only: colour, margins and spacing come from the base
-# tags the host stacks underneath, so the module owns the faces and the host
-# owns the chrome.
+# Every td-* tag is font-only or geometry-only (td-tbl<N> carries tab stops
+# and table geometry, td-list the hanging indent); colour always comes from
+# the base tags the host stacks underneath, so the module owns faces and
+# layout and the host owns the ink.
 
 # Split a message body into ordered {kind text} segments, where kind is
 # "prose" or "code". A code segment is the content between a pair of triple
@@ -239,6 +246,43 @@ proc ::tkdown::norm_row {cells ncol} {
     return $cells
 }
 
+# Split a normal (table-free) run into ordered {kind payload} segments, where
+# kind is "normal" (payload is raw text) or "list" (payload is a flat list of
+# items). A list is a maximal run of lines each opening with "- ", "* ", or
+# "N. " (ASCII digits, one dot, one space) at the very start of the line; each
+# such line is one item. A list item's payload is {num text}: num is "" for a
+# bullet ("- "/"* ") or the item's own digits for an ordered ("N. ") item, and
+# text is the rest of the line, still markdown for the inline pass. Flat only:
+# a leading-space (indented) or nested marker matches nothing here and stays in
+# a normal segment, a documented limit. Pure function on a normal run.
+proc ::tkdown::segment_lists {text} {
+    set segs  [list]
+    set buf   [list]   ;# accumulating normal lines
+    set items [list]   ;# accumulating {num text} list items
+    foreach line [split $text "\n"] {
+        if {[regexp {^[-*] (.*)$} $line -> rest]} {
+            set num ""
+        } elseif {[regexp {^([0-9]+)\. (.*)$} $line -> num rest]} {
+            # num and rest set by the match
+        } else {
+            if {[llength $items]} {
+                lappend segs [list list $items]
+                set items [list]
+            }
+            lappend buf $line
+            continue
+        }
+        if {[llength $buf]} {
+            lappend segs [list normal [join $buf "\n"]]
+            set buf [list]
+        }
+        lappend items [list $num $rest]
+    }
+    if {[llength $buf]}   { lappend segs [list normal [join $buf "\n"]] }
+    if {[llength $items]} { lappend segs [list list $items] }
+    return $segs
+}
+
 # Parse one prose run into styled inline runs. Returns an ordered list of
 # {style chunk} pairs; style is one of plain, code, bold, italic, bolditalic,
 # and chunk is the text to display with the markdown markers removed. Adjacent
@@ -419,6 +463,11 @@ proc ::tkdown::tags {w fonts} {
     $w tag configure td-bolditalic -font [dict get $fonts bolditalic]
     $w tag configure td-code       -font [dict get $fonts mono]
     $w tag configure td-head       -font [dict get $fonts bold]
+    # td-list carries the list hanging indent and nothing else (geometry-only,
+    # colour stays the host's). lmargin1 10 is the table's own left margin;
+    # lmargin2 30 sets item text (and any wrapped continuation) a marker-width
+    # in from it, and the tab stop at 30 lands the text after the marker there.
+    $w tag configure td-list -lmargin1 10 -lmargin2 30 -tabs 30
     bind $w <Destroy> +[list ::tkdown::unregister $w]
 }
 
@@ -511,37 +560,64 @@ proc ::tkdown::forget {w} {
     }
 }
 
-# One normal (table-free) run: prose lines with any ATX heading line lifted
-# out as its own block under td-h1/h2/h3 (levels 4-6 render as h3), inline
-# spans parsed inside. A heading is a #{1,6} run plus a space opening a line.
-# Blocks re-join on the newlines the split consumed, so a run with no heading
-# emits byte-for-byte as one inline pass.
+# One normal (table-free) run, split into peer blocks that re-join on the
+# newlines the splits consumed: a list run (its own td-list hanging indent),
+# any ATX heading line lifted out under td-h1/h2/h3 (levels 4-6 render as h3),
+# and plain text, inline spans parsed inside each. A heading is a #{1,6} run
+# plus a space opening a line. A run with no list and no heading emits
+# byte-for-byte as one inline pass.
 proc ::tkdown::emit_normal {w idx text baseTags} {
     set blocks [list]
-    set buf [list]
-    foreach line [split $text "\n"] {
-        if {[regexp {^(#{1,6}) (.*)$} $line -> marks rest]} {
-            if {[llength $buf]} {
-                lappend blocks [list text [join $buf "\n"]]
-                set buf [list]
-            }
-            set lvl [string length $marks]
-            if {$lvl > 3} { set lvl 3 }
-            lappend blocks [list td-h$lvl $rest]
-        } else {
-            lappend buf $line
+    foreach seg [::tkdown::segment_lists $text] {
+        lassign $seg kind payload
+        if {$kind eq "list"} {
+            lappend blocks [list list $payload]
+            continue
         }
+        set buf [list]
+        foreach line [split $payload "\n"] {
+            if {[regexp {^(#{1,6}) (.*)$} $line -> marks rest]} {
+                if {[llength $buf]} {
+                    lappend blocks [list text [join $buf "\n"]]
+                    set buf [list]
+                }
+                set lvl [string length $marks]
+                if {$lvl > 3} { set lvl 3 }
+                lappend blocks [list td-h$lvl $rest]
+            } else {
+                lappend buf $line
+            }
+        }
+        if {[llength $buf]} { lappend blocks [list text [join $buf "\n"]] }
     }
-    if {[llength $buf]} { lappend blocks [list text [join $buf "\n"]] }
     set first 1
     foreach b $blocks {
         lassign $b kind chunk
         if {!$first} { $w insert $idx "\n" $baseTags }
-        if {$kind eq "text"} {
-            ::tkdown::runs $w $idx $chunk $baseTags
-        } else {
-            ::tkdown::runs $w $idx $chunk [concat $baseTags [list $kind]]
+        switch -- $kind {
+            list    { ::tkdown::emit_list_items $w $idx $chunk $baseTags }
+            text    { ::tkdown::runs $w $idx $chunk $baseTags }
+            default { ::tkdown::runs $w $idx $chunk [concat $baseTags [list $kind]] }
         }
+        set first 0
+    }
+}
+
+# Emit one parsed list as consecutive logical lines under td-list, its hanging
+# indent. Each item is a marker (a bullet glyph for an unordered item, the
+# item's own number and a dot for an ordered one) then a tab then the item
+# text through the inline-run path, so markdown inside an item still styles.
+# The tab lands the text at td-list's lmargin2, aligning it with the wrap.
+proc ::tkdown::emit_list_items {w idx items baseTags} {
+    set tags [concat $baseTags [list td-list]]
+    set first 1
+    foreach item $items {
+        lassign $item num text
+        if {!$first} { $w insert $idx "\n" $tags }
+        # A plain if, not expr's ?: - expr would coerce "3." to the float 3.0.
+        if {$num eq ""} { set marker "•" } else { set marker "$num." }
+        $w insert $idx "$marker\t" $tags
+        ::tkdown::runs $w $idx $text $tags
         set first 0
     }
 }

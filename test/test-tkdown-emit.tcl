@@ -175,5 +175,48 @@ check "tags on a fresh widget of the same path succeeds" \
 check "the re-registered widget configures its faces" \
     [.g tag cget td-bold -font] [dict get $FA bold]
 
+# ---- 8. lists: td-list ranges, hanging indent, ordered numbering -------------
+text .l
+::tkdown::tags .l $FA
+check "td-list has lmargin1 shallower than lmargin2 (hanging indent)" \
+    [expr {[.l tag cget td-list -lmargin1] < [.l tag cget td-list -lmargin2]}] 1
+check "the td-list tab stop matches lmargin2" \
+    [expr {[lindex [.l tag cget td-list -tabs] 0] == [.l tag cget td-list -lmargin2]}] 1
+
+::tkdown::prose .l end "- apples\n- pears" base ""
+check "an unordered list renders under td-list" \
+    [expr {[llength [.l tag ranges td-list]] > 0}] 1
+check "each bullet item carries the • marker then its text" \
+    [tagtext .l td-list] "•\tapples\n•\tpears"
+check "plain bullet text stacks the base tag under td-list" \
+    [expr {"base" in [.l tag names [lindex [.l tag ranges td-list] 0]]}] 1
+
+text .l2
+::tkdown::tags .l2 $FA
+::tkdown::prose .l2 end "3. gamma\n4. delta" base ""
+check "an ordered list preserves its own numbers and dots" \
+    [tagtext .l2 td-list] "3.\tgamma\n4.\tdelta"
+
+# Inline markdown inside an item still styles through the run path.
+text .l3
+::tkdown::tags .l3 $FA
+::tkdown::prose .l3 end "- see **bold** now" base ""
+check "emphasis inside a list item still styles" [tagtext .l3 td-bold] "bold"
+
+# Prose above and below a list; the list band is its own td-list range.
+text .l4
+::tkdown::tags .l4 $FA
+::tkdown::prose .l4 end "intro line\n- a\n- b\noutro line" base ""
+check "prose around a list stays outside td-list" [tagtext .l4 td-list] "•\ta\n•\tb"
+check "the surrounding prose is present in the widget" \
+    [expr {[string match {*intro line*outro line*} [.l4 get 1.0 end-1c]]}] 1
+
+# A marker-like line that is not a flat list marker stays literal (no td-list).
+text .l5
+::tkdown::tags .l5 $FA
+::tkdown::prose .l5 end "compute 3 * 4 then done" base ""
+check "marker-like mid-line text carries no td-list" \
+    [expr {[llength [.l5 tag ranges td-list]]}] 0
+
 puts [expr {$fails ? "FAILED ($fails)" : "PASS"}]
 exit $fails

@@ -112,6 +112,40 @@ check tbl_interleave \
     [::tkdown::segment_tables \
         "intro\n\n| H1 | H2 |\n| - | - |\n| a | b |\n\noutro"]
 
+# ---- segment_lists: split a normal run into {normal text} / {list items}
+# segments; each item is {num text}, num "" for a bullet or the digits for an
+# ordered item, flat only (an indented or nested marker stays literal).
+check list_bullet \
+    [list [list list {{{} apples} {{} pears}}]] \
+    [::tkdown::segment_lists "- apples\n- pears"]
+check list_star \
+    [list [list list {{{} one} {{} two}}]] \
+    [::tkdown::segment_lists "* one\n* two"]
+check list_numbered \
+    [list [list list {{1 first} {2 second} {3 third}}]] \
+    [::tkdown::segment_lists "1. first\n2. second\n3. third"]
+check list_numbering_kept \
+    [list [list list {{2 two} {3 three}}]] \
+    [::tkdown::segment_lists "2. two\n3. three"]
+check list_mixed_markers \
+    [list [list list {{{} bul} {1 ord}}]] \
+    [::tkdown::segment_lists "- bul\n1. ord"]
+check list_prose_around \
+    [list [list normal intro] [list list {{{} a} {{} b}}] [list normal outro]] \
+    [::tkdown::segment_lists "intro\n- a\n- b\noutro"]
+check list_midline_literal \
+    [list [list normal "use the - dash key\nrun 3 * 4 now"]] \
+    [::tkdown::segment_lists "use the - dash key\nrun 3 * 4 now"]
+check list_indented_literal \
+    [list [list normal "  - nested\n    * deeper"]] \
+    [::tkdown::segment_lists "  - nested\n    * deeper"]
+check list_version_literal \
+    [list [list normal "tcl 9.0 and 1.2.3 stay text"]] \
+    [::tkdown::segment_lists "tcl 9.0 and 1.2.3 stay text"]
+check list_none \
+    [list [list normal "just a paragraph\nof two lines"]] \
+    [::tkdown::segment_lists "just a paragraph\nof two lines"]
+
 if {$fails > 0} {
     puts "$fails failures"
     exit 1
