@@ -1043,8 +1043,8 @@ oo::class create ::questlog::ui::Viewer {
     # render_record, past the chrome). Every other record renders into the
     # running region: a tool_result record is detail in its entirety (label
     # line and trailing separator included, so hiding it leaves no residue).
-    # A fold held mid-stream is the engine's problem: append_new's
-    # append_close re-covers the fresh lines. A compact boundary closes
+    # A fold held mid-stream is the engine's concern, not the caller's:
+    # append_new's append_close re-covers the fresh lines. A compact boundary closes
     # nothing: the conversation resumes mid-turn.
     method render_record_turned {rec last_ts in_section} {
         # A turn start is gated on a body: a typed record whose extract_text
@@ -1183,6 +1183,10 @@ oo::class create ::questlog::ui::Viewer {
     # tag bindings, the summary hook that turns a payload's tally into the
     # stub phrase, and the Turns/CurTurn read surface.
 
+    # Folding the open turn folds to its region's end mark, which the endhint
+    # sits inside while one stands: the hint elides with the body and returns
+    # on expand. Accepted; a streamed append clears the hint before content
+    # lands, so only the parked-with-hint case shows it.
     method turn_fold {n} { my fold $n }
     method turn_at {idx} { return [my region_at $idx] }
     method details_show {n} { my detail_show $n }

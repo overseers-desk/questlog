@@ -92,7 +92,10 @@ proc vischars {term} {
 }
 
 # A turn's fold-range end for measuring: the sealed end, or for the open turn
-# the live content end (before the endhint), the same bound turn_fold uses.
+# the live content end (before the endhint). The engine folds an open region
+# to its own end mark, which sits at the content end whenever no hint stands;
+# a hint folded away with the open turn reappears on expand (accepted, the
+# hint never coexists with a streamed append).
 proc turnend {n} {
     set e [dict get [turn $n] end]
     if {$e ne ""} { return $e }
