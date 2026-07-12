@@ -393,13 +393,14 @@ proc ::tkdown::inline_unescape {s} {
 }
 
 # Register a text widget for emission and configure the td-* faces on it.
-# fonts is a dict of Tk font names: body bold italic bolditalic mono monobold
-# are required; h1 h2 h3 are optional heading faces falling back to bold.
+# fonts is a dict of Tk font names: body bold italic bolditalic mono are
+# required; h1 h2 h3 are optional heading faces falling back to bold. Extra
+# keys are kept but nothing draws with them.
 # Registration opens the widget's table registry (the parsed payloads behind
 # refit); the registry entry dies with the widget.
 proc ::tkdown::tags {w fonts} {
     variable widgets
-    foreach k {body bold italic bolditalic mono monobold} {
+    foreach k {body bold italic bolditalic mono} {
         if {![dict exists $fonts $k]} {
             error "tkdown: fonts dict missing \"$k\""
         }
@@ -589,6 +590,9 @@ proc ::tkdown::table_tabs {w payload} {
     set fonts [dict get $widgets $w fonts]
     set align [dict get $payload align]
     set ncol [llength $align]
+    # Readable defaults, no deeper constraint: a 10 px left margin and a
+    # gutter two body-font digits wide, which scales the column gap with
+    # the font where a fixed pixel count would not.
     set lm 10
     set gut [font measure [dict get $fonts body] "00"]
     set cw [lrepeat $ncol 0]

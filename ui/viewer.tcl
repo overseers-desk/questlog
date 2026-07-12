@@ -562,7 +562,7 @@ oo::class create ::questlog::ui::Viewer {
         # code tag so block-fence spacing and inline spans stay decoupled.
         ::tkdown::tags $Text [dict create \
             body QLBody bold QLBodyBold italic QLBodyItalic \
-            bolditalic QLBodyBoldItalic mono QLMono monobold QLMonoBold]
+            bolditalic QLBodyBoldItalic mono QLMono]
         # The quote block's muted chrome: `quotebar` tints the per-line ▏ rule,
         # `qcopy` the ⧉ copy glyph heading the block. Configured after `quote` so
         # their muted ink outranks its body ink where they stack. qcopy also

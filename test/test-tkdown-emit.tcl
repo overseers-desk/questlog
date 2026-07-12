@@ -37,10 +37,9 @@ proc mkfonts {prefix size} {
     font create ${prefix}italic     -family Courier -size $size -slant italic
     font create ${prefix}bolditalic -family Courier -size $size -weight bold -slant italic
     font create ${prefix}mono       -family Courier -size $size
-    font create ${prefix}monobold   -family Courier -size $size -weight bold
     return [dict create body ${prefix}body bold ${prefix}bold \
         italic ${prefix}italic bolditalic ${prefix}bolditalic \
-        mono ${prefix}mono monobold ${prefix}monobold]
+        mono ${prefix}mono]
 }
 set FA [mkfonts fa- 10]   ;# default set
 set FB [mkfonts fb- 22]   ;# a second, larger set for the crosstalk widget
