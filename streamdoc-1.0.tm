@@ -279,14 +279,23 @@ oo::class create ::streamdoc::StreamDoc {
     # definitive add that subsumes any incremental fold-during-stream adds,
     # and seal the end mark's gravity so the next insert at the tail cannot
     # drag it along.
+    # Lay f#N over region n's whole body, [header +1line linestart, end).
+    # The one writer of the fold range: close, streamed append, and fold all
+    # cover through here, so a range fix lands once.
+    method cover_fold {n} {
+        set R [lindex $Regions $n]
+        set body [$Text index "[dict get $R start] +1line linestart"]
+        set e [dict get $R end]
+        if {[$Text compare $body < $e]} { $Text tag add f#$n $body $e }
+    }
+
     method region_close {} {
         if {$Cur < 0} return
         set n $Cur
         my summary_sync
         set R [lindex $Regions $n]
-        set body [$Text index "[dict get $R start] +1line linestart"]
+        my cover_fold $n
         set e [dict get $R end]
-        if {[$Text compare $body < $e]} { $Text tag add f#$n $body $e }
         $Text mark gravity $e left
         dict set R open 0
         lset Regions $n $R
@@ -356,9 +365,7 @@ oo::class create ::streamdoc::StreamDoc {
             if {[dict get $R folded]} {
                 # A region folded mid-stream: the fresh lines landed past the
                 # fold tag's range, so re-cover the body up to the new end.
-                set body [$Text index "[dict get $R start] +1line linestart"]
-                set e [dict get $R end]
-                if {[$Text compare $body < $e]} { $Text tag add f#$n $body $e }
+                my cover_fold $n
             }
             my summary_sync
         }
@@ -448,9 +455,7 @@ oo::class create ::streamdoc::StreamDoc {
         # An open region's fold range is unsealed; cover what stands now, and
         # append_close re-covers as more streams in. Closed regions re-add
         # their fixed range - idempotent over region_close's add.
-        set body [$Text index "[dict get $R start] +1line linestart"]
-        set e [dict get $R end]
-        if {[$Text compare $body < $e]} { $Text tag add f#$n $body $e }
+        my cover_fold $n
         $Text tag configure f#$n -elide 1
         $Text tag configure d#$n -elide 1   ;# re-folding re-hides detail
         dict set R folded 1

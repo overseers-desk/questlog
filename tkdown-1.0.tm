@@ -629,12 +629,18 @@ proc ::tkdown::cell_width {fonts text bold} {
     set w 0
     foreach run [::tkdown::parse_inline $text] {
         lassign $run style chunk
-        switch -- $style {
-            code       { set f [dict get $fonts mono] }
-            bold       { set f [dict get $fonts bold] }
-            italic     { set f [dict get $fonts italic] }
-            bolditalic { set f [dict get $fonts bolditalic] }
-            default    { set f [dict get $fonts [expr {$bold ? "bold" : "body"}]] }
+        if {$bold} {
+            # A header cell paints bold throughout: td-head outranks every
+            # span face where they stack, so measuring must too.
+            set f [dict get $fonts bold]
+        } else {
+            switch -- $style {
+                code       { set f [dict get $fonts mono] }
+                bold       { set f [dict get $fonts bold] }
+                italic     { set f [dict get $fonts italic] }
+                bolditalic { set f [dict get $fonts bolditalic] }
+                default    { set f [dict get $fonts body] }
+            }
         }
         incr w [font measure $f $chunk]
     }
