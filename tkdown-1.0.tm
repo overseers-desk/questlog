@@ -59,7 +59,7 @@ namespace eval ::tkdown {
 # the base tags the host stacks underneath, so the module owns faces and
 # layout and the host owns the ink.
 
-# Split a message body into ordered {kind text} segments, where kind is
+# Split a body into ordered {kind text} segments, where kind is
 # "prose" or "code". A code segment is the content between a pair of triple
 # backtick fence lines (```), captured verbatim with the fence markers and any
 # language tag dropped. An unterminated fence renders its captured run as code.
@@ -87,7 +87,7 @@ proc ::tkdown::segment_code_fences {body} {
     return $segs
 }
 
-# Split a message body into ordered {kind text} segments, where kind is
+# Split a body into ordered {kind text} segments, where kind is
 # "normal" or "quote". A quote segment is a maximal run of markdown
 # blockquote lines (each starting with ">"); its text is de-quoted, one
 # leading "> " or ">" stripped per line. A bare blank line (no ">") ends a
