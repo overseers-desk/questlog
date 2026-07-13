@@ -63,7 +63,10 @@ oo::class create ::questlog::ui::Viewer {
     variable Find             ;# find overlay frame
     variable FindVar
     variable FindMatches      ;# list of indices of all current matches
-    variable FindIdx
+    variable FindCur          ;# 0-based hit last shown (-1 = none shown yet); the
+                              ;# readout and the band highlight both read it, and
+                              ;# find_next steps it (the sole find/step cursor)
+    variable FindPos          ;# find-bar "N of M" readout text ("" while cleared)
     variable IdleGap          ;# minutes
     variable LineMap          ;# dict: jsonl line offset (1-based) -> text index
     variable Menu             ;# right-click context menu
@@ -72,6 +75,9 @@ oo::class create ::questlog::ui::Viewer {
     variable TurnList         ;# listbox of per-turn rows (alias of BandDesc turns list)
     variable MatchList        ;# listbox of per-match rows (alias of BandDesc matches list)
     variable MatchLabels      ;# per-match one-line excerpt, parallel to FindMatches
+    variable BandMatchSet     ;# the FindMatches the match listbox was last filled
+                              ;# from; select_band_row compares against it so a
+                              ;# Ctrl-F recollect that left the band stale is skipped
     variable ToolList         ;# listbox of per-call rows (alias of BandDesc tools list)
     variable ToolLines        ;# jsonl line of each call, parallel to the ToolList rows
     variable QuoteList        ;# listbox of per-quote rows (alias of BandDesc quotes list)
@@ -159,13 +165,15 @@ oo::class create ::questlog::ui::Viewer {
         set IdleGap [::questlog::config::get viewer_idle_gap_min]
         set FindVar ""
         set FindMatches [list]
-        set FindIdx 0
+        set FindCur -1
+        set FindPos ""
         set Records [list]
         set Sections [list]
         set LineMap [dict create]
         set MenuTarget [dict create]
         set Bodies [dict create]
         set MatchLabels [list]
+        set BandMatchSet [list]
         set ToolLines [list]
         set QuoteIdx [list]
         set QuoteBodies [list]
@@ -684,10 +692,17 @@ oo::class create ::questlog::ui::Viewer {
         ttk::frame $Find
         ttk::label $Find.lbl -text "Find:"
         ttk::entry $Find.e -textvariable [my varname FindVar] -width 30
+        # Position readout "N of M" (design screens.jsx FindBar): which hit of the
+        # shared match set the last step landed on. It reads FindMatches/FindCur;
+        # it does not collect its own matches (the band, the Ctrl-F overlay and the
+        # head-strip count all read the one set).
+        ttk::label $Find.pos -textvariable [my varname FindPos] \
+            -foreground [::questlog::ui::theme::c muted]
         ttk::button $Find.next -text "Next" -command [list [self] find_next]
         ttk::button $Find.close -text "✕" -command [list [self] find_hide]
         pack $Find.lbl -side left -padx 4
         pack $Find.e   -side left -fill x -expand 1
+        pack $Find.pos -side left -padx 4
         pack $Find.next  -side left -padx 2
         pack $Find.close -side left -padx 2
 
@@ -701,6 +716,11 @@ oo::class create ::questlog::ui::Viewer {
         bind $Text <Escape>     [list [self] find_hide]
         bind $Find.e <Escape>   [list [self] find_hide]
         bind $Find.e <Return>   [list [self] find_next]
+        # Editing the term strands the old readout (it counts the prior set), so
+        # blank it until the next search re-establishes the tally. A KeyRelease
+        # from Return also lands here, but find_next already marked the term, so
+        # find_typing sees no drift and leaves the fresh readout alone.
+        bind $Find.e <KeyRelease> [list [self] find_typing]
 
         # Resume prompt bar (hidden until summoned). Two stacked rows: the
         # permission chips above the entry, every choice one click with no menu
@@ -1791,23 +1811,67 @@ oo::class create ::questlog::ui::Viewer {
         pack forget $Find
         $Text tag remove find 1.0 end
         set FindMatches [list]
-        set FindIdx 0
+        set FindCur -1
+        set FindPos ""
     }
 
     method find_next {} {
         if {[llength $FindMatches] == 0 || $FindVar ne [my last_find_var]} {
             set FindMatches [my collect_matches $FindVar]
-            set FindIdx 0
+            set FindCur -1
             my mark_find_var $FindVar
         }
         if {[llength $FindMatches] == 0} {
+            set FindCur -1
+            # A search ran and found nothing: state the empty tally so "no
+            # matches" reads apart from "no search yet" (which blanks it).
+            set FindPos "0 of 0"
             bell
             return
         }
-        set idx [lindex $FindMatches $FindIdx]
-        my reveal_index $idx
-        incr FindIdx
-        if {$FindIdx >= [llength $FindMatches]} { set FindIdx 0 }
+        # Advance to the next hit, wrapping. FindCur -1 (a freshly collected set,
+        # or an index just built, with nothing shown yet) steps to the first, so
+        # the first Next still surfaces hit 0 as it always has. FindCur then names
+        # the hit we are on, which the readout and the band highlight both read.
+        set FindCur [expr {$FindCur < 0 ? 0 : $FindCur + 1}]
+        if {$FindCur >= [llength $FindMatches]} { set FindCur 0 }
+        my reveal_index [lindex $FindMatches $FindCur]
+        my select_band_row $FindCur
+        my update_find_readout
+    }
+
+    # The find bar's "N of M" readout. Reads the shared match set (FindMatches)
+    # and the active-hit cursor (FindCur); it collects nothing of its own. An
+    # empty set blanks the readout; find_next's own no-result path shows the
+    # explicit "0 of 0".
+    method update_find_readout {} {
+        set total [llength $FindMatches]
+        if {$total == 0} { set FindPos ""; return }
+        set cur [expr {$FindCur < 0 ? 1 : $FindCur + 1}]
+        set FindPos "$cur of $total"
+    }
+
+    # The entry text drifted from what was last collected: the readout counts the
+    # old set, so blank it until the next search re-establishes the tally.
+    method find_typing {} {
+        if {$FindVar ne [my last_find_var]} { set FindPos "" }
+    }
+
+    # Move the docked match band's highlight to the hit we stepped to. Act only
+    # when the band's rows are the very set we are stepping: the Ctrl-F overlay
+    # can collect a different population into FindMatches without refilling the
+    # band (its rows come from index_matches through refresh_match_control, which
+    # records the set it filled from in BandMatchSet), and moving the selection
+    # then would land the highlight on an unrelated row. The selection is set
+    # programmatically, which does not fire <<ListboxSelect>>, so a band click
+    # still drives one jump and stepping still moves the highlight once, with no
+    # feedback loop between the two.
+    method select_band_row {i} {
+        if {$FindMatches ne $BandMatchSet} return
+        if {$i < 0 || $i >= [llength $FindMatches]} return
+        $MatchList selection clear 0 end
+        $MatchList selection set $i
+        $MatchList see $i
     }
 
     method collect_matches {pattern} {
@@ -1848,11 +1912,11 @@ oo::class create ::questlog::ui::Viewer {
     # regex; the toolbar's pattern row is the separate regex restriction and is
     # not highlighted here). An empty query (a session opened while browsing)
     # clears the highlight and hides the index. Shares the `find` tag and
-    # FindMatches/FindIdx with the Ctrl-F overlay, so stepping is unified.
+    # FindMatches/FindCur with the Ctrl-F overlay, so stepping is unified.
     method index_matches {query} {
         $Text tag remove find 1.0 end
         set FindMatches [list]
-        set FindIdx 0
+        set FindCur -1
         set MatchLabels [list]
         set terms [expr {[dict exists $query terms] ? [dict get $query terms] : {}}]
         set nocase [expr {[dict exists $query nocase] ? [dict get $query nocase] : 0}]
@@ -1905,7 +1969,12 @@ oo::class create ::questlog::ui::Viewer {
             ::questlog::debug::log index "terms=[llength $terms]\
                 matched_terms=[llength $per_term] total_matches=[llength $FindMatches]"
         }
+        # The set was just (re)built: nothing is shown yet, so FindCur stays at
+        # its reset -1. refresh_match_control (through refresh_band_control)
+        # pre-selects band row 0 and the readout anticipates "1 of M"; the first
+        # Next then surfaces hit 0 to match.
         my refresh_match_control
+        my update_find_readout
     }
 
     # lsort comparator over per-term position lists: fewer occurrences first,
@@ -1951,6 +2020,10 @@ oo::class create ::questlog::ui::Viewer {
     # session click on the index when a search is active, with no second gesture.
     method refresh_match_control {} {
         $MatchList delete 0 end
+        # Record exactly which match set these rows were built from, so
+        # select_band_row can tell when a later Ctrl-F recollect has left the band
+        # showing a stale population and skip moving the highlight then.
+        set BandMatchSet $FindMatches
         set i 0
         foreach m $FindMatches lab $MatchLabels {
             set ln [my line_at $m]
@@ -2116,7 +2189,13 @@ oo::class create ::questlog::ui::Viewer {
     method jump_to_match {i} {
         if {$i < 0 || $i >= [llength $FindMatches]} return
         my reveal_index [lindex $FindMatches $i]
-        set FindIdx $i
+        # A band click (or a direct jump) lands ON hit i: mark it current, keep
+        # the band highlight on it, and refresh the readout. Setting the selection
+        # programmatically does not re-fire <<ListboxSelect>>, so this does not
+        # loop back through match_list_select.
+        set FindCur $i
+        my select_band_row $i
+        my update_find_readout
     }
 
     # ---- tool-call timeline (the did-versus-claimed audit, issue #15) ----

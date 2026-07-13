@@ -536,6 +536,83 @@ $V show $JP2 0 {}
 update idletasks
 check "show clears the unsent prompt text" [set ${NS}::PromptVar] ""
 
+# ---- 23. find-bar "N of M" readout and band highlight tracking ------------------
+# The find machinery shares one match set across the docked band, the Ctrl-F
+# overlay and the head-strip count. The find bar states the stepped position
+# ("N of M", design screens.jsx FindBar); stepping and jumping move the band's
+# highlight to the active hit, not leave it stranded on row 0.
+set ML [set ${NS}::MatchList]
+check "the readout label exists in the find bar" [winfo exists .v.find.pos] 1
+$V show $JP 0 {}
+update idletasks
+# A term with several hits so stepping has somewhere to go.
+$V index_matches [dict create terms [list sigil] nocase 0]
+update idletasks
+set M [llength [set ${NS}::FindMatches]]
+check "the sigil query found more than one hit" [expr {$M > 1}] 1
+# A freshly built index shows nothing yet (FindCur -1) but the readout
+# anticipates "1 of M" and the band pre-selects row 0 (the design resting state).
+check "a fresh index has shown no hit yet" [set ${NS}::FindCur] -1
+check "readout anticipates 1 of M after indexing" [set ${NS}::FindPos] "1 of $M"
+check "band pre-selects the first row" [$ML curselection] 0
+
+# First Next surfaces hit 0 (unchanged navigation), landing the readout and the
+# band highlight on it.
+$V find_next
+update idletasks
+check "first Next surfaces hit 0" [set ${NS}::FindCur] 0
+check "readout reads 1 of M on hit 0" [set ${NS}::FindPos] "1 of $M"
+check "band highlight sits on row 0" [$ML curselection] 0
+
+# The next Next advances the readout and the band highlight together.
+$V find_next
+update idletasks
+check "second Next is on hit 1" [set ${NS}::FindCur] 1
+check "readout reads 2 of M after two Next" [set ${NS}::FindPos] "2 of $M"
+check "band highlight followed to row 1" [$ML curselection] 1
+
+# A jump (the band-click twin) moves the active hit, readout and highlight to it.
+$V jump_to_match [expr {$M - 1}]
+update idletasks
+check "jump sets the active hit to the last" [set ${NS}::FindCur] [expr {$M - 1}]
+check "readout reads M of M after jumping last" [set ${NS}::FindPos] "$M of $M"
+check "band highlight followed the jump" [$ML curselection] [expr {$M - 1}]
+
+# Next past the last wraps to the first.
+$V find_next
+update idletasks
+check "Next past the end wraps to hit 0" [set ${NS}::FindCur] 0
+check "readout wraps to 1 of M" [set ${NS}::FindPos] "1 of $M"
+
+# Closing the find bar clears the readout and the active hit.
+$V find_hide
+check "find_hide blanks the readout" [set ${NS}::FindPos] ""
+check "find_hide drops the active hit" [set ${NS}::FindCur] -1
+
+# A fresh Ctrl-F term collects its own hits into the shared set; the readout
+# counts them. The band still holds the sigil rows (Ctrl-F does not refill it),
+# so select_band_row's exact-set guard must decline to move the highlight.
+set ${NS}::FindVar "frobnicate"
+$V find_next
+update idletasks
+set MC [llength [set ${NS}::FindMatches]]
+check "Ctrl-F collected its own hits" [expr {$MC >= 1}] 1
+check "readout counts the Ctrl-F set" [set ${NS}::FindPos] "1 of $MC"
+# The band still holds the sigil rows with row 0 last selected (the wrap above);
+# select_band_row's exact-set guard must leave that untouched, not chase the
+# frobnicate index onto an unrelated row.
+check "stale band declines the step (guard holds)" [$ML curselection] 0
+
+# Editing the term (drift from the last collected) blanks the stale readout.
+set ${NS}::FindVar "frobnicate-XYZ"
+$V find_typing
+check "typing a new term blanks the stale readout" [set ${NS}::FindPos] ""
+
+# A search that finds nothing states the empty tally rather than blanking it.
+$V find_next
+update idletasks
+check "a fruitless search shows 0 of 0" [set ${NS}::FindPos] "0 of 0"
+
 # ---- clean up -------------------------------------------------------------------
 ::questlog::path::_real_file delete -force $TMP
 puts [expr {$fails ? "FAILED ($fails)" : "PASS"}]
