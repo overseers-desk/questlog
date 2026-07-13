@@ -196,10 +196,12 @@ update
 check "session within the cap has no overflow row" \
     [expr {[llength [regexp -all -inline "more match" [widget_text]]]}] 1
 
-# ---- B1: plain click opens at the start; snippet click deep-links ---------
-# The search seeded first_lineno with the first match's line; the plain click
-# must ignore it and land at 0.
-check "first_lineno seeded from the first match" [$SL sget $S1 first_lineno] 2
+# ---- B1: every general open lands at the start; only a deep link names a line
+# The search's first match sits at line 2; opening without naming a line (the
+# menu's Open in viewer takes this path) reads from the top regardless.
+set ::opened "(never)"
+$SL open_session $S1
+check "an open that names no line lands at the start" $::opened [list $S1 0]
 set ::opened "(never)"
 $SL on_snippet_release $S1 2
 check "snippet click deep-links to its line" $::opened [list $S1 2]

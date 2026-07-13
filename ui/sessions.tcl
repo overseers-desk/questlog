@@ -696,7 +696,7 @@ oo::class create ::questlog::ui::SessionList {
             # A streamed result obeys the view toggles from its first paint (the
             # hidden flag is settled inside model_add_session) - not two seconds
             # later when the running-reconcile tick recomputes visibility.
-            my model_add_session $path $row [dict get $first lineoff]
+            my model_add_session $path $row
         }
         # Search folders are expanded, so render the session if it is visible
         # and not yet drawn. A result a lens hides leaves its folder a heading
@@ -740,7 +740,7 @@ oo::class create ::questlog::ui::SessionList {
     # Record a session in the model without drawing it. A collapsed folder
     # holds its sessions here only; they are drawn lazily on expand. This is
     # what keeps a folded list cheap and free of hidden (elided) lines.
-    method model_add_session {path row {first_lineno 0}} {
+    method model_add_session {path row} {
         set folder [dict get $row folder]
         my ensure_folder $folder
         set label [my session_label $path $row]
@@ -765,7 +765,7 @@ oo::class create ::questlog::ui::SessionList {
             turns $turns duration_secs $dsecs human_secs $hsecs model $model \
             own_cost $cost own_turns $turns own_duration_secs $dsecs \
             own_human_secs $hsecs own_model $model \
-            count 0 first_lineno $first_lineno snippets [list] \
+            count 0 snippets [list] \
             has_subagents [dict getdef $row has_subagents 0] \
             sub_total 0 children_listed 0 all_child_paths [list]]]
         dict set PathNode $path $sid
@@ -2215,13 +2215,10 @@ oo::class create ::questlog::ui::SessionList {
         set SelectAnchor ""
     }
 
-    method open_session {path {lineno -1}} {
-        if {$lineno < 0} {
-            set lineno 0
-            if {[my has_session $path]} {
-                set lineno [my sget $path first_lineno]
-            }
-        }
+    # Opening a session lands at its start unless the caller names a line: the
+    # deep links that know a match (a snippet click, the menu's Open at this
+    # match) pass its lineoff, and every general "open" verb reads from the top.
+    method open_session {path {lineno 0}} {
         {*}$OnOpen $path $lineno
     }
 
