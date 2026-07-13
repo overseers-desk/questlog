@@ -140,10 +140,10 @@ settle
 check "A hidden (not running)"             [$SL sflag $Ap rendered] 0
 check "the lens itself loaded nothing"     [$SL has_session $Bp] 0
 check "the strip counts the cut" \
-    [strip] "Running · showing 0 of 1 · 1 outside your search"
+    [strip] "Running · showing 0 of 1 · 1 outside your criteria"
 check "the banner names it and why" \
     [banner] \
-    "1 running session outside your search: $OUTSIDE. The folder scope excluded it."
+    "1 running session outside your criteria: $OUTSIDE. The folder scope excluded it."
 check "the banner offers to load it"       [.s.cut.show cget -text] "Show it"
 check "the banner offers to widen"         [.s.cut.widen cget -text] "Clear the folder scope"
 
@@ -189,10 +189,10 @@ $SL set_lens_members $MEMBERS
 settle
 check "the search did not load the running session" [$SL has_session $Bp] 0
 check "the strip counts the search's cut" \
-    [strip] "Running · showing 0 of 1 · 1 outside your search"
+    [strip] "Running · showing 0 of 1 · 1 outside your criteria"
 check "the banner blames the search" \
     [banner] \
-    "1 running session outside your search: $OUTSIDE. Your search terms excluded it."
+    "1 running session outside your criteria: $OUTSIDE. Your search terms excluded it."
 check "and offers to clear it"              [.s.cut.widen cget -text] "Clear the search"
 .s.cut.widen invoke
 check "widen names the search"              $::widened search
@@ -217,7 +217,7 @@ settle
 check "the bookmarked session was not loaded" [$SL has_session $Cp] 0
 check "the banner blames no criterion, and does not deny the file" \
     [banner] \
-    "1 bookmarked session outside your search: cccc. The search did not load it."
+    "1 bookmarked session outside your criteria: cccc. The search did not load it."
 check "and still offers to load it"        [.s.cut.show cget -text] "Show it"
 check "with nothing to widen"              [winfo manager .s.cut.widen] ""
 .s.cut.show invoke

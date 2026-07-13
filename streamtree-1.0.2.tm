@@ -345,9 +345,9 @@ oo::class create ::streamtree::StreamTree {
             lassign $col id label sample
             # A column must be wide enough for both its widest cell (the sample)
             # and its header label with the sort arrow, so a short-sampled column
-            # like Turns never has its "Turns ▾" heading spill into the neighbour.
+            # like Turns never has its "Turns ▼" heading spill into the neighbour.
             set ws [font measure [my opt listfont] $sample]
-            set wl [font measure [my opt headfont] "$label ▾"]
+            set wl [font measure [my opt headfont] "$label ▼"]
             lappend ColWMeasured [expr {$ws > $wl ? $ws : $wl}]
         }
         set ColW [my effective_col_widths]
@@ -636,7 +636,7 @@ oo::class create ::streamtree::StreamTree {
         set act_len 0
         set subj_id [my subject_sort_id]
         if {$subj_id ne "" && $SortKey eq $subj_id} {
-            append line [expr {$SortDir eq "desc" ? " ▾" : " ▴"}]
+            append line [expr {$SortDir eq "desc" ? " ▼" : " ▲"}]
             set act_off 0
             set act_len [string length $line]
         }
@@ -645,7 +645,7 @@ oo::class create ::streamtree::StreamTree {
             append line "\t"
             set lbl $label
             if {$id eq $SortKey} {
-                append lbl [expr {$SortDir eq "desc" ? " ▾" : " ▴"}]
+                append lbl [expr {$SortDir eq "desc" ? " ▼" : " ▲"}]
                 set act_off [string length $line]
                 set act_len [string length $lbl]
             }
@@ -1304,6 +1304,21 @@ oo::class create ::streamtree::StreamTree {
         }
         $Text mark unset $mark
         my check_invariant append_close
+    }
+    # Lift a run of loose content (a snippet, a badge, a note the host appended
+    # inside a node's region) by its tag. Loose content owns no node marks, so the
+    # tag is its only handle; the containing node's end mark rides Tk's own gravity
+    # as the deleted text collapses, and the host redraws whatever it dropped.
+    # Returns 1 if a run was removed, 0 if the tag had none.
+    method drop_loose {tag} {
+        set r [$Text tag ranges $tag]
+        if {[llength $r] < 2} { return 0 }
+        set st [$Text cget -state]
+        $Text configure -state normal
+        $Text delete [lindex $r 0] [lindex $r end]
+        $Text configure -state $st
+        my check_invariant drop_loose
+        return 1
     }
 
     # ---- drag hit-testing ---------------------------------------------

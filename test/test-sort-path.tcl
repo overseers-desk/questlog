@@ -58,17 +58,23 @@ set ::CWD [dict create \
     proj-3 [file join $SAND work mango]]
 proc resolvef {f} { return [dict getdef $::CWD $f ""] }
 
-# {folder newer-day older-day}; newer day is the folder's stream position.
-set SPECS {{proj-1 17 16} {proj-2 15 14} {proj-3 13 12}}
+# {folder newer-days-ago older-days-ago}; the newer session is the folder's
+# stream position. Ages are relative to now so the fixtures always sit inside
+# the 30d window below: a calendar date would age out of it as the suite gets
+# older and folders would silently stop rendering.
+set SPECS {{proj-1 2 3} {proj-2 4 5} {proj-3 6 7}}
 set P1PATHS [list]   ;# proj-1's two session paths, newest first
+set NOW [clock seconds]
 foreach spec $SPECS {
     lassign $spec folder d1 d2
     set dir [file join $SAND .claude projects $folder]
     ::questlog::path::_real_file mkdir $dir
-    foreach day [list $d1 $d2] {
-        set p [file join $dir s$day.jsonl]
-        write_session $p [list a-$day b-$day] "2026-06-${day}T10:00"
-        file mtime $p [clock scan "2026-06-${day} 10:00:00" -gmt 1]
+    foreach ago [list $d1 $d2] {
+        set p [file join $dir s$ago.jsonl]
+        set ts [expr {$NOW - $ago*86400}]
+        write_session $p [list a-$ago b-$ago] \
+            [clock format $ts -format "%Y-%m-%dT%H:%M" -gmt 1]
+        file mtime $p $ts
         if {$folder eq "proj-1"} { lappend P1PATHS $p }
     }
 }
@@ -159,7 +165,7 @@ update
 set HDR [set ${ns}::Top].body.hdr
 set hline [$HDR get 1.0 "1.0 lineend"]
 check "the Session header carries the ascending arrow" \
-    [string range $hline 0 8] "Session ▴"
+    [string range $hline 0 8] "Session ▲"
 check "the Session label is the active (highlighted) header" \
     [$HDR tag ranges colactive] {1.0 1.9}
 

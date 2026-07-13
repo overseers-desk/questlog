@@ -21,7 +21,7 @@
 # come from the lenses that DO have one: with Running pressed and a model picked,
 # the strip and the banner name Running alone and count Running's membership. A
 # phrase built from every lens that is on would read "1 running and model session
-# outside your search" over a number that only ever counted running ones, and claim
+# outside your criteria" over a number that only ever counted running ones, and claim
 # the model was checked against the disk. It cannot be.
 #
 # Under test, on a real SessionList over a sandbox corpus:
@@ -198,7 +198,7 @@ check "Running: A hidden"    [$SL sflag $Ap rendered] 0
 check "Running: B shown"     [$SL sflag $Bp rendered] 1
 check "Running: C shown"     [$SL sflag $Cp rendered] 1
 check "Running: the strip counts every running session" \
-    [strip] "Running · showing 2 of 4 · 2 outside your search"
+    [strip] "Running · showing 2 of 4 · 2 outside your criteria"
 
 # --- 3. Bookmarked joins Running. Only C is both, so only C shows - and the
 #        membership is now the INTERSECTION: D is running and bookmarked, E is
@@ -213,10 +213,10 @@ check "both: B hidden (not bookmarked)"  [$SL sflag $Bp rendered] 0
 check "both: C shown (running and bookmarked)" [$SL sflag $Cp rendered] 1
 check "both: one row shows"              [$SL folder_visible_count $FOLDER] 1
 check "both: the strip counts the intersection, not either lens" \
-    [strip] "Running and Bookmarked · showing 1 of 2 · 1 outside your search"
+    [strip] "Running and Bookmarked · showing 1 of 2 · 1 outside your criteria"
 check "both: the banner names the cut member and says both lenses" \
     [banner] \
-    "1 running and bookmarked session outside your search: $OUTSIDE.\
+    "1 running and bookmarked session outside your criteria: $OUTSIDE.\
      The folder scope excluded it."
 check "both: the lenses loaded nothing" \
     [llength [$SL all_session_paths]] $loaded_before
@@ -244,7 +244,7 @@ push [snap 1 0]
 settle
 check "Running alone again: B shows"  [$SL sflag $Bp rendered] 1
 check "Running alone again: the strip counts running sessions" \
-    [strip] "Running · showing 3 of 4 · 1 outside your search"
+    [strip] "Running · showing 3 of 4 · 1 outside your criteria"
 
 # --- 6. A model picked while Running is pressed. Two lenses are on, and the rows
 #        on screen answer to both - but only one of them can say what the search
@@ -278,10 +278,10 @@ settle
 check "model beside Running: the rows the model admits still show" \
     [$SL sflag $Bp rendered] 1
 check "model beside Running: the strip names Running alone" \
-    [strip] "Running · showing 3 of 4 · 1 outside your search"
+    [strip] "Running · showing 3 of 4 · 1 outside your criteria"
 check "model beside Running: the banner names Running alone" \
     [banner] \
-    "1 running session outside your search: $ELSEWHERE.\
+    "1 running session outside your criteria: $ELSEWHERE.\
      The folder scope excluded it."
 
 # Now a model no loaded row carries, so the model lens hides every row the
@@ -297,10 +297,10 @@ check "another model: it hides the rows Running admits" \
 check "another model: no row is left showing" \
     [$SL folder_visible_count $FOLDER] 0
 check "another model: the strip still names Running, and counts Running's members" \
-    [strip] "Running · showing 0 of 4 · 1 outside your search"
+    [strip] "Running · showing 0 of 4 · 1 outside your criteria"
 check "another model: the cut is Running's, and the banner says only running" \
     [banner] \
-    "1 running session outside your search: $ELSEWHERE.\
+    "1 running session outside your criteria: $ELSEWHERE.\
      The folder scope excluded it."
 check "the model lens loaded nothing" \
     [llength [$SL all_session_paths]] [expr {$loaded_before + 1}]

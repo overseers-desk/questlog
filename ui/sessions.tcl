@@ -27,7 +27,7 @@ namespace eval ::questlog::ui {
 proc ::questlog::ui::session_columns {} {
     return {
         {date     Date     {Wed 30 May 12:30} right 1}
-        {size     Size     {999.9 M}          right 1}
+        {size     Size     {999.9 MB}         right 1}
         {cost     Cost     {$9999.99}         right 1}
         {turns    Turns    {9999}             right 1}
         {duration Duration {0:00:00}          right 1}
@@ -134,6 +134,7 @@ oo::class create ::questlog::ui::SessionList {
     variable MenuIndices      ;# entry indices returned by session_actions::populate
     variable TotalCost        ;# running sum of per-session cost in the model
     variable StatusBase       ;# last text set by set_progress/set_done
+    variable Busy             ;# 1 while a search is in flight (set_progress..set_done/cancel)
     variable OnSubagents      ;# cb: parent path -> list of child row dicts
     variable OnSubagentCost   ;# cb: child path -> start the cost pass for it
     variable OnStatusPeek     ;# cb: text -> reveal it on the app's bottom strip, or ""
@@ -168,6 +169,7 @@ oo::class create ::questlog::ui::SessionList {
         set PeekByTag [dict create]
         set StatusVar "Idle"
         set StatusBase ""
+        set Busy 0
         set TotalCost 0.0
         set Snapshot [dict create]
         set CriteriaActive 0
@@ -313,7 +315,11 @@ oo::class create ::questlog::ui::SessionList {
         pack $Top.bar -side top -fill x
         ttk::label $Top.bar.status -textvariable [my varname StatusVar]
         pack $Top.bar.status -side left -padx 4 -pady 2
-        ttk::button $Top.bar.cancel -text "Cancel" -command [list [self] cancel]
+        # Cancel is live only while there is a search to cancel; it rests disabled
+        # so the button never invites a click that would stamp "Cancelled." over an
+        # idle list. sync_cancel follows the Busy flag at each search boundary.
+        ttk::button $Top.bar.cancel -text "Cancel" -state disabled \
+            -command [list [self] cancel]
         pack $Top.bar.cancel -side right -padx 4 -pady 2
 
         my build_cut_banner
@@ -416,10 +422,12 @@ oo::class create ::questlog::ui::SessionList {
         $Text tag configure meta -foreground [::questlog::ui::theme::c meta]
         # Cost tiers draw the eye to the sessions that ate the budget: amber
         # from 10c, brick red from $1. Below 10c the cell keeps the muted meta
-        # grey, so only elevated costs stand out. Configured after meta so the
-        # tier foreground wins over it on the cost cell.
-        $Text tag configure cost-mid     -foreground [::questlog::ui::theme::c cost_mid]
-        $Text tag configure cost-outlier -foreground [::questlog::ui::theme::c cost_outlier]
+        # grey, so only elevated costs stand out. An elevated cell carries both
+        # the tier colour and a bolder weight (QLBold), so the money reads at a
+        # glance even where colour is hard to tell apart. Configured after meta so
+        # the tier foreground and font win over it on the cost cell.
+        $Text tag configure cost-mid     -foreground [::questlog::ui::theme::c cost_mid] -font QLBold
+        $Text tag configure cost-outlier -foreground [::questlog::ui::theme::c cost_outlier] -font QLBold
         # The per-row actions control ("⋯") in the rightmost column. It rests at
         # the faded meta grey with the rest of the metadata and brightens to ink
         # while its row is hovered or selected, so the menu it opens advertises
@@ -431,6 +439,22 @@ oo::class create ::questlog::ui::SessionList {
         # Folder size/cost aggregates are bold (a sum, not a row value); they
         # overlay meta or a cost tier for colour, so this only sets the weight.
         $Text tag configure foldagg -font QLBold
+        # A list italic face for the muted secondary lines (the "N more matches"
+        # overflow row and the case-B subagent note), matched to the list font's
+        # family and size. Created once; a second SessionList reuses it.
+        if {"QLListItalic" ni [font names]} {
+            font create QLListItalic {*}[font actual QLList] -slant italic
+        }
+        # The title run dims to the muted grey when only a session's subagents
+        # matched (session_subject), so the parent reads as context for the hits
+        # below. Configured after sessionhead/slug so its foreground wins there.
+        $Text tag configure dimmed -foreground [::questlog::ui::theme::c muted]
+        # The overflow row ("+N ... N more matches ...") and the case-B note read
+        # as a quiet aside beneath the matched lines: muted and italic. Overlays
+        # the snippet/childsnip indent, so it is configured after them to win the
+        # font and colour on that run.
+        $Text tag configure snippetmore \
+            -foreground [::questlog::ui::theme::c muted] -font QLListItalic
 
         set HitTags [list]
         set hues [::questlog::ui::theme::hues]
@@ -698,7 +722,14 @@ oo::class create ::questlog::ui::SessionList {
                 }
             }
         }
-        if {[my sflag $path rendered]} { my redraw_header $path }
+        if {[my sflag $path rendered]} {
+            # After the capped snippets, name the rest: a session with more matches
+            # than the shown snippets gets a "N more matches" overflow row.
+            set shown [llength [my sget $path snippets]]
+            set total [my sget $path count]
+            if {$total > $shown} { my render_overflow $path [expr {$total - $shown}] }
+            my redraw_header $path
+        }
     }
 
     method folder_expanded {folder} {
@@ -822,10 +853,30 @@ oo::class create ::questlog::ui::SessionList {
             lassign $snip btype content lineoff
             my render_snippet $path $btype $content $lineoff
         }
+        # Replay the two below-snippet lines the streaming pass drew: the "N more
+        # matches" overflow (count over the snippet cap) and the case-B note (only
+        # subagents matched). Both sit above the subagents. render_subhint no-ops
+        # unless case B holds; the overflow no-ops unless the cap was exceeded.
+        set shown [llength [my sget $path snippets]]
+        set total [my sget $path count]
+        if {$total > $shown} { my render_overflow $path [expr {$total - $shown}] }
+        my render_subhint $path
         if {[my node_field $id expanded]} { my render_children $path }
         if {[my is_selected $path]} {
             $Text tag add selected $sm "$sm lineend"
         }
+    }
+
+    # The badge word for a block type, in the reader's vocabulary: a user turn
+    # reads "user text" and a tool call "tool call", so the badge names the source
+    # line the way the reader thinks of it, not by its raw record type. The other
+    # types keep their name with the underscore opened to a space (tool_result ->
+    # "tool result"). The caller uppercases it for the pill.
+    method badge_label {bt} {
+        return [dict getdef {
+            user     {user text}
+            tool_use {tool call}
+        } $bt [string map {_ { }} $bt]]
     }
 
     method render_snippet {path btype content lineoff} {
@@ -858,7 +909,7 @@ oo::class create ::questlog::ui::SessionList {
         # screenful.
         set wr [my emit_window $m -align center -pady 1 -padx 3 \
             -create [list [self] make_badge $bt $fgrole \
-                [string toupper [string map {_ { }} $bt]] $path $lineoff $ntag]]
+                [string toupper [my badge_label $bt]] $path $lineoff $ntag]]
         set wstart [lindex $wr 0]
         # The window segment must carry the snippet tag too, or its untagged
         # -wrap (the widget default `word`) lets the row wrap to a second line.
@@ -925,6 +976,68 @@ oo::class create ::questlog::ui::SessionList {
         # "former name") and carries the whole worn title.
         my peek_wire $ntag [string tolower $label] $content
         my append_close $sid $m
+    }
+
+    # The "N more matches" overflow row under a capped parent snippet block: past
+    # the first snippets_per_session hits shown, this muted italic line names how
+    # many more the session holds and points at the viewer, where the whole match
+    # index sits. Loose content (an n# tag, swept on detach), appended after the
+    # shown snippets; a click opens the session at its start (like a plain row
+    # click), landing the reader in the full index.
+    method render_overflow {path more} {
+        set sid [my sid $path]
+        set ntag "n#[incr NextId]"
+        set m [my append_open $sid]
+        my emit $m "▏" [list snippet snippetbar $ntag]
+        my emit $m "  +$more" [list snippet snippetmore $ntag]
+        my emit $m "\t" [list snippet $ntag]
+        my emit $m "$more more [expr {$more == 1 ? {match} : {matches}}]\
+            in this session - open to see all" [list snippet snippetmore $ntag]
+        my emit $m "\n" [list snippet $ntag]
+        $Text tag bind $ntag <ButtonRelease-1> \
+            [list [self] on_snippet_release [my pctsafe $path] 0]
+        my append_close $sid $m
+    }
+
+    # 1 iff only a session's subagents matched (case B): it carries no hit of its
+    # own but its subagents do, so it surfaces on theirs.
+    method session_onlyinsubs {path} {
+        return [expr {[my sget $path count] == 0 && [my sget $path sub_total] > 0}]
+    }
+
+    # The case-B note beneath a session header: only its subagents matched, so a
+    # muted italic line says how many matches sit in how many subagents, and the
+    # subagents auto-expand below to carry them. Loose content whose tag is kept on
+    # the session so clear_subhint can lift it before a redraw.
+    method render_subhint {path} {
+        if {![my session_onlyinsubs $path]} return
+        set sid [my sid $path]
+        set subt [my sget $path sub_total]
+        set nsub [llength [my session_child_paths $path]]
+        set ntag "n#[incr NextId]"
+        set m [my append_open $sid]
+        my emit $m "▏" [list snippet snippetbar $ntag]
+        my emit $m "\t" [list snippet $ntag]
+        my emit $m "no match in this session - $subt\
+            [expr {$subt == 1 ? {match} : {matches}}] below in\
+            [expr {$nsub == 1 ? {a subagent} : {subagents}}]" \
+            [list snippet snippetmore $ntag]
+        my emit $m "\n" [list snippet $ntag]
+        my sset $path subhint_tag $ntag
+        my append_close $sid $m
+    }
+
+    # Remove a session's case-B note line, if one is drawn, so a redraw can lay a
+    # fresh one from the current totals with no stale copy left behind.
+    method clear_subhint {path} {
+        set tag [my sget $path subhint_tag]
+        if {$tag eq ""} return
+        # The engine owns the text delete (mark bookkeeping); the host clears its
+        # own registry entry and the per-session handle.
+        my drop_loose $tag
+        $Text tag delete $tag
+        dict unset PeekByTag $tag
+        my sset $path subhint_tag ""
     }
 
     # Build one snippet badge on demand (the text widget's -create callback when
@@ -1066,7 +1179,7 @@ oo::class create ::questlog::ui::SessionList {
             cost "" turns "" duration_secs "" human_secs "" model "" \
             agent_type [dict getdef $crow agent_type ""] \
             agent_id [dict getdef $crow agent_id [file rootname [file tail $cp]]] \
-            label $label hits [list] open_lineoff 0]]
+            label $label hits [list] count 0 open_lineoff 0]]
         dict set PathNode $cp $cid
         # Trigger the cost pass for the subagent immediately.
         {*}$OnSubagentCost $cp
@@ -1119,6 +1232,13 @@ oo::class create ::questlog::ui::SessionList {
             lassign $h btype content lineoff
             my render_child_snippet $path $cp $btype $content $lineoff
         }
+        # A subagent capped at snippets_per_subagent gets the same "N more matches"
+        # overflow row as a parent, one level deeper, opening the subagent itself.
+        set shown [llength [dict get $c hits]]
+        set total [dict getdef $c count $shown]
+        if {$total > $shown} {
+            my render_child_overflow $path $cp [expr {$total - $shown}]
+        }
         set lineoff 0
         if {[llength [dict get $c hits]] > 0} {
             set lineoff [lindex [lindex [dict get $c hits] 0] 2]
@@ -1163,6 +1283,22 @@ oo::class create ::questlog::ui::SessionList {
         # Same reveal as a parent snippet, one level deeper: the whole matched
         # line on the strip, led by its block type.
         my peek_wire $ntag $btype $content
+        my append_close $cid $m
+    }
+
+    # The "N more matches" overflow row under a capped subagent block: names the
+    # hits past the shown snippets and opens the subagent's own transcript, where
+    # they all sit. A childsnip-depth line, muted and italic like the parent's.
+    method render_child_overflow {path cp more} {
+        set cid [my sid $cp]
+        set ntag "c#[incr NextId]"
+        set m [my append_open $cid]
+        my emit $m "▏  " [list childsnip childbar $ntag]
+        my emit $m "+$more more [expr {$more == 1 ? {match} : {matches}}]\
+            in this session - open to see all" [list childsnip snippetmore $ntag]
+        my emit $m "\n" [list childsnip $ntag]
+        $Text tag bind $ntag <ButtonRelease-1> \
+            [list [self] on_child_release [my pctsafe $cp]]
         my append_close $cid $m
     }
 
@@ -1294,6 +1430,9 @@ oo::class create ::questlog::ui::SessionList {
         set hits [my cget_field $cp hits]
         foreach m $matches {
             my sset $parent sub_total [expr {[my sget $parent sub_total] + 1}]
+            # The child's own total (for its "N more matches" overflow line); its
+            # shown snippets are capped at $cap, its count is not.
+            my cset $cp count [expr {[my cget_field $cp count 0] + 1}]
             if {[llength $hits] < $cap} {
                 lappend hits [list [dict get $m btype] \
                     [dict get $m content] [dict get $m lineoff]]
@@ -1306,11 +1445,28 @@ oo::class create ::questlog::ui::SessionList {
         if {[my sget $parent count] == 0} {
             my node_set [my sid $parent] expanded 1
         }
-        if {[my node_field [my sid $parent] expanded] \
-            && [my sflag $parent rendered]} {
-            my render_child $parent $cp
+        # Reseat the below-header block from the current totals: the case-B note
+        # then the matched subagents, in that order. A whole-block redraw (not an
+        # incremental child append) keeps the note above the children and lets its
+        # "N matches in a subagent/subagents" wording track each arriving child.
+        if {[my sflag $parent rendered]} {
+            if {[my node_field [my sid $parent] expanded]} {
+                my redraw_sub_block $parent
+            }
+            my redraw_header $parent
         }
-        if {[my sflag $parent rendered]} { my redraw_header $parent }
+    }
+
+    # Redraw a session's below-header content that depends on subagent totals: the
+    # case-B "no direct match" note and the matched subagent rows, under the
+    # header and above nothing else. Cheap - a session has few subagents. The
+    # parent's own match snippets (case C) sit above this block and are untouched.
+    method redraw_sub_block {path} {
+        if {![my sflag $path rendered]} return
+        my detach_session_children $path
+        my clear_subhint $path
+        my render_subhint $path
+        my render_children $path
     }
 
     method session_label {path row} {
@@ -1498,16 +1654,22 @@ oo::class create ::questlog::ui::SessionList {
         set slug [dict get $s slug]
         set count [dict get $s count]
         set subt  [dict get $s sub_total]
-        # Match-count tail: direct matches, plus a "+N in subagents" pip when the
-        # session's subagents also matched (case C); or the case-B line when only
-        # subagents matched, so the parent surfaces with no hit of its own.
+        # Match-count tail: direct matches, plus a "+N in subagent(s)" pip when the
+        # session's subagents also matched (case C). The case-B "no direct match"
+        # note is not a tail here: with no hit of its own the parent surfaces on
+        # its subagents alone, and the note is its own line below the row
+        # (render_subhint), so it does not eat the preview's room.
         set count_str ""
         if {$count > 0} {
             set count_str "   ·   $count [expr {$count == 1 ? {match} : {matches}}]"
-            if {$subt > 0} { append count_str "   ·   +$subt in subagents" }
-        } elseif {$subt > 0} {
-            set count_str "   ·   no match in this session · $subt in subagents below"
+            if {$subt > 0} {
+                append count_str "   ·   +$subt in\
+                    [expr {$subt == 1 ? {subagent} : {subagents}}]"
+            }
         }
+        # Only its subagents matched: the row still carries the session, dimmed, so
+        # the eye reads it as context for the hits below rather than a hit itself.
+        set only_in_subs [expr {$count == 0 && $subt > 0}]
 
         set tags [list]
         set subj ""
@@ -1533,6 +1695,7 @@ oo::class create ::questlog::ui::SessionList {
             append subj $::questlog::ui::GLYPH_BOOKMARK
         }
         append subj "\t"
+        set title_off [string length $subj]
         if {$slug ne ""} {
             lappend tags [list slug [string length $subj] [string length $slug]]
             append subj $slug
@@ -1549,6 +1712,11 @@ oo::class create ::questlog::ui::SessionList {
         append subj [my truncate_px [dict get $s label] \
                          [expr {$max - $fixed}] QLList]
         append subj $count_str
+        # Dim the title run (slug and preview, past the marker gutter) when only
+        # the subagents matched; the running/bookmark glyphs keep their own colour.
+        if {$only_in_subs} {
+            lappend tags [list dimmed $title_off [expr {[string length $subj] - $title_off}]]
+        }
         return [dict create subject $subj tags $tags meta_run 1]
     }
 
@@ -2077,7 +2245,11 @@ oo::class create ::questlog::ui::SessionList {
         if {$was_drag} return
         # A plain click collapses any multi-selection back to this one row.
         my selection_set $path
-        my open_session $path
+        # A plain click on a search result lands at the session start, not at its
+        # first match; the matches are reached through the snippet rows and the
+        # viewer index. Anchoring to a hit is reserved for the two deliberate
+        # deep-link gestures (a snippet click, the menu's "Open at this match").
+        my open_session $path 0
     }
 
     # Control release: toggle this row in the selection, across folders. No open.
@@ -2691,7 +2863,10 @@ oo::class create ::questlog::ui::SessionList {
         }
         set CutReason ""
         if {[llength $CutMembers]} {
-            append LensNote " · [llength $CutMembers] outside your search"
+            # "criteria", not "search": the time window, the folder scope or the
+            # min-turns floor can be what cut a member, and the banner's next
+            # sentence names which one - so the clause must not claim the search did.
+            append LensNote " · [llength $CutMembers] outside your criteria"
             set CutReason [my cut_reason [lindex $CutMembers 0]]
         }
         my refresh_status
@@ -2867,7 +3042,7 @@ oo::class create ::questlog::ui::SessionList {
             append who " and [expr {$n - [llength $names]}] more"
         }
         $b.msg configure -text "$n $noun session[expr {$n == 1 ? {} : {s}}]\
-            outside your search: $who. [my reason_phrase $CutReason $it]"
+            outside your criteria: $who. [my reason_phrase $CutReason $it]"
         # Show it reads the named transcripts - a disk read, which is the whole
         # point: the reader asked for exactly these files. Nothing to read, no
         # button.
@@ -2980,10 +3155,14 @@ oo::class create ::questlog::ui::SessionList {
     # ---- status ------------------------------------------------------
 
     method set_progress {done total matches} {
+        set Busy 1
+        my sync_cancel
         set StatusBase "Searching … $done / $total sessions   matches: $matches"
         my refresh_status
     }
     method set_done {total matches} {
+        set Busy 0
+        my sync_cancel
         if {$matches == 0} {
             set StatusBase "Done. $total sessions, no matches."
         } else {
@@ -2994,9 +3173,23 @@ oo::class create ::questlog::ui::SessionList {
         my refresh_lens_note
     }
     method cancel {} {
+        # Nothing in flight, nothing to cancel: leave the standing line alone. The
+        # button rests disabled off Busy, so this is the belt to that suspenders.
+        if {!$Busy} return
+        set Busy 0
+        my sync_cancel
         if {$CancelCb ne ""} { {*}$CancelCb }
         set StatusBase "Cancelled."
         my refresh_status
+    }
+
+    # Follow the Busy flag onto the Cancel button: live while a search runs, greyed
+    # otherwise. Guarded so it is safe before build (a test may drive the status
+    # methods without the widgets).
+    method sync_cancel {} {
+        set b $Top.bar.cancel
+        if {![winfo exists $b]} return
+        $b configure -state [expr {$Busy ? "normal" : "disabled"}]
     }
 
     # Recompute the visible status string: what the list is doing, what the active
@@ -3008,7 +3201,14 @@ oo::class create ::questlog::ui::SessionList {
         set parts [list]
         if {$StatusBase ne ""} { lappend parts $StatusBase }
         if {$LensNote ne ""}   { lappend parts $LensNote }
-        if {$TotalCost > 0}    { lappend parts [::questlog::cost::format_usd $TotalCost] }
+        if {$TotalCost > 0} {
+            # While a search is still landing, the total is provisional: mark it
+            # "and counting…" so a mid-flight figure does not read as the final
+            # tally. Cleared the moment set_done/cancel drops Busy.
+            set cost [::questlog::cost::format_usd $TotalCost]
+            if {$Busy} { append cost " and counting…" }
+            lappend parts $cost
+        }
         set StatusVar [join $parts " · "]
     }
 
@@ -3022,8 +3222,8 @@ oo::class create ::questlog::ui::SessionList {
     method fmt_size {bytes} {
         if {$bytes eq "" || $bytes == 0} { return "" }
         if {$bytes < 1024}        { return "${bytes} B" }
-        if {$bytes < 1048576}     { return "[expr {$bytes / 1024}] K" }
-        if {$bytes < 1073741824}  { return "[format %.1f [expr {$bytes / 1048576.0}]] M" }
-        return "[format %.1f [expr {$bytes / 1073741824.0}]] G"
+        if {$bytes < 1048576}     { return "[expr {$bytes / 1024}] KB" }
+        if {$bytes < 1073741824}  { return "[format %.1f [expr {$bytes / 1048576.0}]] MB" }
+        return "[format %.1f [expr {$bytes / 1073741824.0}]] GB"
     }
 }

@@ -71,13 +71,16 @@ proc ::questlog::ui::session_actions::populate {menu ctx} {
         -command [list [namespace current]::act_copy_uuid $ctx]
     $menu add command -label "Copy session path" \
         -command [list [namespace current]::act_copy_path $ctx]
-    $menu add command -label "Copy last assistant output" \
-        -command [list [namespace current]::act_copy_last_assistant $ctx]
-    # The matched snippet itself, present only on a hit right-click. The text is
-    # the model's full stored match, already resolved into the ctx.
+    # One copy slot for a message body: on a hit right-click it copies the matched
+    # snippet (the model's full stored match, already resolved into the ctx); with
+    # no hit it copies the session's last assistant output. The two never both
+    # show - a hit's evidence is the snippet, not the tail of the session.
     if {[dict exists $ctx hit]} {
         $menu add command -label "Copy this snippet" \
             -command [list [namespace current]::act_copy_snippet $ctx]
+    } else {
+        $menu add command -label "Copy last assistant output" \
+            -command [list [namespace current]::act_copy_last_assistant $ctx]
     }
     $menu add command -label "Copy session as Markdown" \
         -command [list [namespace current]::act_copy_markdown $ctx]
