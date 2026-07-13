@@ -1,5 +1,6 @@
 #!/usr/bin/env wish9.0
-# Design-audit fixes for the session list (B1, B3, B6, C3, C4, C6, C7, C9, C10a).
+# Design-audit fixes for the session list (B1, B3, B6, C3, C4, C6, C7, C8, C9,
+# C10a).
 #
 # Drives a SessionList over a small sandbox and asserts each fixed behaviour:
 #   B1   a plain click on a search result opens at the session start, not the
@@ -11,6 +12,8 @@
 #   B3   the Cancel button rests disabled and is live only during a search.
 #   C6   fmt_size emits KB/MB/GB.
 #   C7   the snippet badge names the source in the reader's words.
+#   C8   on a hit the menu offers Copy this snippet in the slot Copy last
+#        assistant output holds otherwise.
 #   C9   only-subagents-matched shows an indented note below the row (subject
 #        dimmed), with the match/subagent counts singularised.
 #   C10a the "+N in subagents" pip singularises to "+1 in subagent".
@@ -151,7 +154,7 @@ check "badge label assistant unchanged"     [$SL badge_label assistant]   "assis
 check "cost-mid is bold"     [$TX tag cget cost-mid -font]     QLBold
 check "cost-outlier is bold" [$TX tag cget cost-outlier -font] QLBold
 
-# ---- B3/C2: Cancel rests disabled, live only during a search --------------
+# ---- B3/C4: Cancel rests disabled, live only during a search --------------
 check "cancel disabled at rest" [.s.bar.cancel cget -state] disabled
 set ${NS}::TotalCost 1.50
 $SL set_progress 2 10 1
@@ -253,6 +256,36 @@ check "case-C pip is not pluralised" \
     [string match "*+1 in subagents*" $headline] 0
 check "case-C header keeps its own direct match count" \
     [string match "*1 match*" $headline] 1
+
+# ---- case B -> case C: the subagent's match lands before the parent's own --
+# The note case B drew must lift when direct matches arrive, and the children
+# it rendered re-lay below the parent's own content.
+set PD [file join $DIRA parentd.jsonl]
+write_session $PD {parent-d work} "2026-05-24T13:00"
+set PDSUB [file join $DIRA parentd subagents]
+::questlog::path::_real_file mkdir $PDSUB
+write_session [file join $PDSUB agent-1.jsonl] {subwork} "2026-05-24T13:00"
+$SL add_session_matches [list \
+    [dict create is_child 1 path [file join $PDSUB agent-1.jsonl] \
+        parent_path $PD folder $FA agent_id agent-1 \
+        btype tool_use content "pd sub hit work" lineoff 4]]
+update
+check "reversed order: case-B note stands while only the subagent matched" \
+    [has_line "*no match in this session - 1 match below in a subagent*"] 1
+$SL add_session_matches [list \
+    [dict create path $PD folder $FA btype user content "pd own hit work" lineoff 1]]
+update
+check "reversed order: the note lifts once a direct match arrives" \
+    [has_line "*no match in this session - 1 match below in a subagent*"] 0
+set pdm [$SL node_field [$SL sid $PD] start]
+check "reversed order: the subject is no longer dimmed" \
+    [expr {"dimmed" in [$TX tag names "$pdm +6c"]}] 0
+set pdend [$SL node_field [$SL sid $PD] end]
+set snip [$TX search "pd own hit work" $pdm $pdend]
+set sub  [$TX search "pd sub hit work" $pdm $pdend]
+check "reversed order: the parent's own snippet is drawn" [expr {$snip ne ""}] 1
+check "reversed order: the subagent block sits below the parent's snippet" \
+    [$TX compare $snip < $sub] 1
 
 ::questlog::path::_real_file delete -force $SAND
 puts [expr {$fails ? "FAILED ($fails)" : "PASS"}]

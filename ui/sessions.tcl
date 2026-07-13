@@ -723,6 +723,13 @@ oo::class create ::questlog::ui::SessionList {
             }
         }
         if {[my sflag $path rendered]} {
+            # A subagent's match can land before the parent's own. The case-B
+            # note that arrival drew no longer holds now direct matches exist,
+            # and the children it rendered sit above the snippets this call just
+            # laid, so reseat the sub block: the note lifts (render_subhint
+            # no-ops once count is nonzero) and the children re-lay below the
+            # parent's own content.
+            if {[my sget $path subhint_tag] ne ""} { my redraw_sub_block $path }
             # After the capped snippets, name the rest: a session with more matches
             # than the shown snippets gets a "N more matches" overflow row.
             set shown [llength [my sget $path snippets]]

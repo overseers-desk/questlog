@@ -34,9 +34,10 @@ namespace eval ::streamtree {}
 #
 # The engine owns every text-mark mutation behind a treeview-style primitive
 # ensemble - insert/delete/detach/item/expand/collapse/hide/unhide/move/rebuild,
-# plus reset and a content door (append_open/emit/emit_window/append_close) for
-# loose in-row content that is not itself a node. A subclass drives the widget
-# only through these and never touches the text widget.
+# plus reset and a content door (append_open/emit/emit_window/append_close, and
+# drop_loose to lift a tagged run of it back out) for loose in-row content that
+# is not itself a node. A subclass drives the widget only through these and
+# never touches the text widget.
 #
 # Hooks the subclass overrides (Template Method). Every hook has a working
 # default, so a minimal subclass overrides nothing and gets a plain tree whose
