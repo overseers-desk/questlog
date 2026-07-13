@@ -206,7 +206,7 @@ oo::class create ::questlog::ui::Toolbar {
         pack $Top.view.label -side left -padx {0 6}
         my build_view_toggles $Top.view.lens
         pack $Top.view.lens -side left
-        ttk::label $Top.view.mlbl -text "model"
+        ttk::label $Top.view.mlbl -text "Model:"
         pack $Top.view.mlbl -side left -padx {12 2}
         my build_model_menu $Top.view.model
         pack $Top.view.model -side left
@@ -248,10 +248,16 @@ oo::class create ::questlog::ui::Toolbar {
         # tracks the font like the rest of the chrome instead of holding the
         # module's raw pixels under text that has doubled. theme::crit_gaps says
         # what the numbers are.
+        # The heading count is what the user has added, so it sums only the four
+        # content criteria. since and min_turns carry a standing default that
+        # restricts the corpus from the first frame; a count that tallied them
+        # would read "2 active" on a bare launch where the user has chosen nothing.
+        # Named out of -countables, they still hold their value and raise no count.
         $Bar configure -heading "Restrict to sessions that…" \
             -raillabel "Add filter" -changecb [list [self] on_criteria] \
             -delside left \
             -gaps [::questlog::ui::theme::crit_gaps] \
+            -countables {subtree file pattern tool} \
             -styles {heading  FacetHeading.TLabel
                      toggle   FacetToggle.TButton
                      conn     FacetConn.TLabel
@@ -270,6 +276,11 @@ oo::class create ::questlog::ui::Toolbar {
         $Bar set_model [list since     [my since_vals $WindowVar] \
                              min_turns [my turns_vals $MinTurnsVar]]
         $Bar setup $Restrict
+        # The resting face is the chip summary: the bar opens collapsed, showing
+        # the seeded criteria as chips under the disclosure, and expands when the
+        # user goes to edit one. A host-side call, so the module keeps its own
+        # expanded default that every other host relies on.
+        $Bar collapse
         # The box's height, whenever it changes: a chip added, a row revealed, the
         # disclosure folded, a chip wrapping to a second line at a narrower pane.
         # %h, from the event, and no path spliced into the script: bind runs its %
@@ -783,7 +794,7 @@ oo::class create ::questlog::ui::Toolbar {
             [list id min_turns label "min turns" mode control max 1 \
                  editor [list [self] turns_editor] \
                  tagstyle Pill_turns.TLabel chipstyle Crit_turns.TFrame] \
-            [list id subtree label "under" conn "ran under" \
+            [list id subtree label "folder" conn "ran under" \
                  format [list [self] path_chip] \
                  editor [list [self] chip_editor] \
                  tagstyle Pill_subtree.TLabel chipstyle Crit_subtree.TFrame] \

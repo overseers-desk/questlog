@@ -171,9 +171,34 @@ check "chips render one per value, in model order" {red blue} \
 check "the connector joins them" or [$ROWS.ed_colour.or1 cget -text]
 check "an applied facet's add affordance reads as one more, joined" "+ or" \
     [$ROWS.ed_colour.add cget -text]
-check "the heading counts the applied facets" "Restrict to items that…   1 active" \
-    [.f.head.hd cget -text]
 check "set_model fires no change event: the owner already knows" 0 [llength $::events]
+
+# ---- the count sums the values across the countable facets ----------------
+#
+# By default every facet counts, and the count is the number of values applied,
+# not the number of facets holding one: colour alone, with its two values, reads
+# two. A -countables subset counts only the facets it names, so a facet left out
+# of it adds nothing however many values it holds. An id no descriptor declares
+# is refused where it is named, and the whole configure with it: the count is
+# still summed over the facets it had.
+check "the count sums the values across every facet by default" \
+    "Restrict to items that…   2 active" [.f.head.hd cget -text]
+$bar configure -countables {size weight}
+update
+check "a -countables subset counts only the facets it names, and colour is not one" \
+    "Restrict to items that…" [.f.head.hd cget -text]
+$bar configure -countables {colour}
+update
+check "and it sums the values of a facet it does name" \
+    "Restrict to items that…   2 active" [.f.head.hd cget -text]
+refused "a -countables naming a facet no descriptor declares is refused" \
+    {$bar configure -countables {colour nosuch}} "*no facet declares*"
+check "the refusal keeps the -countables it had, all or nothing like every configure" \
+    colour [$bar cget -countables]
+$bar configure -countables {}
+update
+check "the empty default counts every facet again" \
+    "Restrict to items that…   2 active" [.f.head.hd cget -text]
 
 update idletasks
 check "the delete sits at the chip's trailing edge, where a chip control is looked for" \
@@ -681,7 +706,7 @@ set A .opts.body.rows.ed_a
 check "-orword is the word drawn between two chips" plus [$A.or1 cget -text]
 check "-deltext is the chip's delete affordance" Remove [$A.c0.x cget -text]
 check "-ortext is the affordance on a facet that holds a value" another [$A.add cget -text]
-check "-countfmt counts the applied facets into the heading" "H   (2)" \
+check "-countfmt sums the applied values into the heading" "H   (4)" \
     [.opts.head.hd cget -text]
 check "-collapsetext is the disclosure while the bar is expanded" less \
     [.opts.head.tog cget -text]

@@ -240,8 +240,14 @@ proc ::facetbar::getdef {d key dflt} {
 #                 the bar can hold, which the owner is making, and not a change to the
 #                 criteria the user applied.
 #   -heading      the heading on the head line ("" draws none)
-#   -countfmt     appended to the heading while at least one facet is applied: a
-#                 format taking one count ("%d active"; "" suppresses it)
+#   -countfmt     appended to the heading while the count is above zero: a format
+#                 taking one count ("%d active"; "" suppresses it). The count is
+#                 the number of values the countable facets hold.
+#   -countables   the facets the count sums over: a list of facet ids, or ""
+#                 (default) for every facet. A bar that counts only some of its
+#                 facets names them here; one that counts all of them leaves it
+#                 empty. An id no descriptor declares is refused, as it is at
+#                 every door that names a facet.
 #   -orword       the connector drawn between one facet's chips ("or"), the default
 #                 for the per-facet key of the same name
 #   -addtext      the inline add affordance on a facet with no values ("+")
@@ -397,6 +403,7 @@ oo::class create ::facetbar::FacetBar {
             facets       {} \
             heading      "" \
             countfmt     "%d active" \
+            countables   "" \
             orword       "or" \
             addtext      "+" \
             ortext       "+ or" \
@@ -474,6 +481,7 @@ oo::class create ::facetbar::FacetBar {
     }
 
     method apply_opts {} {
+        my validate_countables
         my dress_styles
         my sync_state
         my refresh
@@ -521,6 +529,26 @@ oo::class create ::facetbar::FacetBar {
         if {$fmt eq ""} return
         if {[catch {format $fmt 0} err]} {
             error "facetbar: countfmt '$fmt' is not a format taking one count: $err"
+        }
+    }
+
+    # The countable facets are named by id, so a name no descriptor declares would
+    # sum a facet that is not there, or fall out of the tally the moment the facet
+    # list moved under it. It is checked against the facets in force - the ones a
+    # redraw would draw - so it travels the configure's rollback like any option
+    # whose badness only shows when the bar is drawn. "" counts every facet and
+    # names none, so it needs no check.
+    method validate_countables {} {
+        set c [my opt countables]
+        if {[catch {llength $c}]} {
+            error "facetbar: -countables is not a list of facet ids"
+        }
+        if {$c eq ""} return
+        set ids [my ids]
+        foreach id $c {
+            if {$id ni $ids} {
+                error "facetbar: -countables names '$id', which no facet declares"
+            }
         }
     }
 
@@ -1071,11 +1099,15 @@ oo::class create ::facetbar::FacetBar {
         my flow_schedule
     }
 
+    # The count the heading carries: the number of values the countable facets
+    # hold, summed. A facet left out of -countables adds nothing however many
+    # values it holds, and a bar holding no countable value counts zero, where
+    # render_head drops the count clause. "" counts every facet.
     method active_count {} {
+        set c [my opt countables]
+        if {$c eq ""} { set c [my ids] }
         set n 0
-        foreach id [my ids] {
-            if {[llength [my values $id]] > 0} { incr n }
-        }
+        foreach id $c { incr n [llength [my values $id]] }
         return $n
     }
 
@@ -1381,7 +1413,7 @@ oo::class create ::facetbar::FacetBar {
     # Everything under the public contract is the bar's own business: a host binds to
     # what the header documents, and the rest stays free to change.
     unexport default_opts apply_opts opt style gap facet_style merge_roles \
-        validate_countfmt validate_facets dress_styles ids desc dget tail_hidden \
+        validate_countfmt validate_countables validate_facets dress_styles ids desc dget tail_hidden \
         present addable can_take_more check_max check_index same_values \
         sync_state save_state restore_state after_change draw_change publish \
         build drawable refresh active_count render_head render_rows render_editor \

@@ -49,6 +49,11 @@ update
 set ::Published {}
 $TB subscribe [list apply {{snap} {set ::Published $snap}}]
 
+# The bar rests collapsed; the editor rows exist only while it is expanded, so
+# open the min-turns editor the way a user would before reaching into it.
+$TB begin_edit min_turns
+update
+
 # The spinbox, at the path the facetbar module documents for a control facet's
 # editor area: <bar>.body.rows.ed_<id>.
 set SB .tb.crit.bar.body.rows.ed_min_turns.sb
