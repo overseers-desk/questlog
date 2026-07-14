@@ -73,6 +73,10 @@ Row lifecycle (per node kind): `start_gravity`, `row_tags`, `on_node_created` (r
 
 Rebuild: `sort_siblings` (reorder a sibling set for display, keeping every node), `render_skip` (leave a node out of the view while keeping it in the store), `rebuild_restore` (re-pin the viewport to a captured top node).
 
+## THE SUBCLASS SURFACE
+
+A hook body works with its nodes through the store accessors, part of the subclassing contract: `node_exists id`, `node_get id` (the whole node dict), `node_field id field` / `node_set id field value` (one generic field), `node_payload id` (the opaque host dict) and `node_pget id key ?default?` / `node_pset id key value` (one payload key), and `roots` (the ordered root ids). Beside them sit the helpers a subclass reaches for while rendering and sorting: `colour role` (a `-colours` entry), `truncate_px text px font` (ellipsize to a pixel width), `all_rendered_nodes` (ids with a row in the view, document order), `set_sort id` (adopt a column as the active sort) and `schedule_resort` (debounced re-sort after streamed edits, `-resortdelay`). The demos use exactly this surface and nothing deeper; a subclass that finds itself wanting more than these and the hooks is reading the engine's own internals.
+
 ## OPTIONS
 
 The engine takes its host-specific look and services as options, set through `configure` before the body is built, so its body holds no host references:
