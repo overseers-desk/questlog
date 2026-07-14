@@ -22,7 +22,8 @@ package provide ocmdline 1.0
 #   set cl [ocmdline new grep 2.1]
 #   $cl section pattern {pattern selection:}
 #   $cl option --regexp -section pattern -arg pattern -repeat \
-#       -help {Match lines against this pattern.}
+#       -fold {lappend patterns $value} \
+#       -help {{Match lines against this pattern.}}
 #   set r [$cl parse $argv]      ;# {mode <name> occurrences {{name .. suffix .. value ..} ..}}
 #
 # A mode is a way of answering that changes which options make sense. One mode
@@ -194,11 +195,7 @@ oo::class create ocmdline {
         return ""
     }
 
-    # What an occurrence of this option means, for the caller to run in its own
-    # scope. Empty for an option whose whole effect is choosing a mode.
     method fold_of {name} { return [dict get $Options $name fold] }
-
-    # The caller's own label for this option, or "".
     method tag_of {name} { return [dict get $Options $name tag] }
 
     # The subcommand argv asks for, or "" when it asks for the option grammar.

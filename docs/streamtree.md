@@ -1,8 +1,10 @@
 # streamtree
 
-A tree drawn into a single Tk `text` widget: abstract nodes nested to any depth, each rendered as one row, with a right-pinned metadata strip whose sortable, resizable columns line up across every row. It is the engine behind the questlog session list (`ui/sessions.tcl`), but it carries no questlog code and runs on its own. `examples/streamtree-demo.tcl` drives it under bare `wish` with a toy file tree.
+## NAME
 
-The engine is a Tcl module, the `streamtree-<version>.tm` file at the repository root. It requires only Tcl 9 and Tk. A host adds the file's directory to the module path, requires the package, and builds the widget into a frame it owns; every hook has a working default, so the base class runs as-is and a subclass overrides only what its content needs:
+streamtree - a tree with sortable columns drawn in one Tk text widget
+
+## SYNOPSIS
 
 ```tcl
 ::tcl::tm::path add $dir
@@ -13,17 +15,19 @@ $t setup .host                       ;# a frame you created and packed
 $t insert "" row a [dict create label "first row"]
 ```
 
-`setup` runs the whole construction ritual: it seeds the engine state, builds the header and list into the frame, and lays out the columns. A host with bespoke assembly needs may instead do what `setup` does step by step, as questlog's session list does. Content beyond a flat labelled list comes from subclassing and overriding hooks (columns, rich subjects, sorts, per-kind row styles).
+## DESCRIPTION
 
-## Why a text widget, not ttk::treeview
+`ttk::treeview` cannot draw multi-line rows, embed per-row widgets (match snippets, badge pills), anchor the viewport against a streaming insert, or roll child aggregates up into a parent heading. A canvas rewrite that can is a project of its own.
 
-`ttk::treeview` cannot draw multi-line rows, embed per-row widgets (the session list's match snippets and badge pills), anchor the viewport against a streaming insert, or roll child aggregates up into a parent heading. StreamTree renders into a `text` widget to get all of that, and reuses treeview's *vocabulary* so the API reads as familiar.
+streamtree renders a tree of abstract nodes into a single `text` widget: nodes nested to any depth, each rendered as one row, with a right-pinned metadata strip whose sortable, resizable columns line up across every row. It reuses treeview's *vocabulary* so the API reads as familiar. Each node carries the position marks and tag that locate it in the widget plus an opaque domain payload; the subclass supplies content and ordering through hooks (Template Method), and the engine never looks inside a payload.
 
-## Vocabulary mapped to ttk::treeview
+`setup` runs the whole construction ritual: it seeds the engine state, builds the header and list into the frame, and lays out the columns. A host that wants to assemble things differently can do what `setup` does, step by step. Content beyond a flat labelled list comes from subclassing and overriding hooks (columns, rich subjects, sorts, per-kind row styles).
 
-| StreamTree | ttk::treeview | Notes |
+## PRIMITIVES MAPPED TO ttk::treeview
+
+| streamtree | ttk::treeview | Notes |
 |---|---|---|
-| `insert parent kind key payload` | `insert parent end -id ...` | returns a node id; renders now if the parent is open |
+| `insert parent kind key payload` | `insert parent end -id ...` | `kind` selects the row's per-node-type hooks (`start_gravity`, `row_tags`, ...); returns a node id; renders now if the parent is open and the node is not hidden |
 | `delete id` | `delete id` | removes the node and its subtree from view and store |
 | `detach id` | `detach id` | removes the row from view, keeps the node (and its open state) in the store |
 | `item id` | `item id -values ...` | rewrites the node's own row in place |
@@ -31,7 +35,7 @@ $t insert "" row a [dict create label "first row"]
 | `hide id` / `unhide id` | `detach` + `move` | a reversible per-node filter (treeview has no first-class hide) |
 | `move id newparent` | `move id newparent end` | reparents, then rebuilds |
 | `column id -width N -minwidth M` | `column id -width N -minwidth M` | per-column width override and clamp |
-| `rebuild` | (none) | re-render the whole tree from the durable store under the active sort; no treeview counterpart |
+| `rebuild` | (none) | re-render the whole tree from the durable store under the active sort |
 | `reset` | `delete [children {}]` | empty the whole widget |
 
 Every primitive owns its text-mark mutation and ends in `check_invariant`; a host never touches the underlying text widget.
@@ -42,7 +46,7 @@ Every primitive owns its text-mark mutation and ends in `check_invariant`; a hos
 $t batch { lmap id [$t roots] { $t expand $id } }
 ```
 
-### Content door
+## THE CONTENT DOOR
 
 Match snippets and badge windows are loose row content, not nodes. They go through a small door that appends inside a node's region and carries that node's end mark forward, along with every ancestor end coincident with it:
 
@@ -50,7 +54,7 @@ Match snippets and badge windows are loose row content, not nodes. They go throu
 - `emit mark text tags` / `emit_window mark args` → insert text or an embedded window
 - `append_close id mark` → advance the marks past what was emitted
 
-## The streaming contract
+## THE STREAMING CONTRACT
 
 The widget's defining behaviour: content arriving while the user reads never moves what they are reading.
 
@@ -59,7 +63,7 @@ The widget's defining behaviour: content arriving while the user reads never mov
 - `follow` jumps to the tail and re-latches.
 - `<<AtBottom>>` and `<<LeftBottom>>` fire on the host frame when the view reaches or leaves the last line, so a host can show a "jump to latest" affordance the way chat clients do.
 
-## Hooks a subclass overrides
+## HOOKS
 
 Every hook has a working default: the base class renders each node's payload `label` (falling back to the node key) as a plain tree with no metadata columns.
 
@@ -69,7 +73,7 @@ Row lifecycle (per node kind): `start_gravity`, `row_tags`, `on_node_created` (r
 
 Rebuild: `sort_siblings` (reorder a sibling set for display, keeping every node), `render_skip` (leave a node out of the view while keeping it in the store), `rebuild_restore` (re-pin the viewport to a captured top node).
 
-## Options
+## OPTIONS
 
 The engine takes its host-specific look and services as options, set through `configure` before the body is built, so its body holds no host references:
 
@@ -82,13 +86,13 @@ The engine takes its host-specific look and services as options, set through `co
 | `-autofollow` | `0` | keep the view latched to the tail while the reader is there |
 | `-motioncb` | empty | a `<B1-Motion>` script the drag-to-move host wires in |
 
-## The audit gate
+## THE AUDIT GATE
 
-Set the `STREAMTREE_AUDIT` environment variable and every primitive checks the per-node mark contract after it runs: each node's `[start,end]` region is well-formed and the roots are ordered and disjoint down the buffer. The first violation latches `::STREAMTREE_AUDIT_TRIPPED` and writes an `INVARIANT @ <primitive>` line to stderr naming the operation that broke the contract. Production leaves the variable unset and pays nothing. `test/run-audit.sh` runs the whole test suite with the gate on; `test/test-soak.tcl` interleaves the four concurrent drivers under it.
+Set the `STREAMTREE_AUDIT` environment variable and every primitive checks the per-node mark contract after it runs: each node's `[start,end]` region is well-formed and the roots are ordered and disjoint down the buffer. The first violation latches `::STREAMTREE_AUDIT_TRIPPED` and writes an `INVARIANT @ <primitive>` line to stderr naming the operation that broke the contract. Production leaves the variable unset and pays nothing.
 
-## Performance
+## PERFORMANCE
 
-Measured July 2026 with `test/bench-streamtree.tcl` (medians of 3, min-max in parentheses) on an AMD Ryzen 7 5800X under Xvfb software rendering, Tcl/Tk 9.0.1. The numbers are for the base engine (one text string per row, no columns, no per-row bindings); a subclass with metadata columns and wired rows pays more per row. Reproduce with `DISPLAY=:99 wish9.0 test/bench-streamtree.tcl`.
+Measured July 2026 (medians of 3, min-max in parentheses) on an AMD Ryzen 7 5800X under Xvfb software rendering, Tcl/Tk 9.0.1. The numbers are for the base engine (one text string per row, no columns, no per-row bindings); a subclass with metadata columns and wired rows pays more per row.
 
 | scenario | N | median (min-max) | per row | notes |
 |---|---|---|---|---|
@@ -99,10 +103,18 @@ Measured July 2026 with `test/bench-streamtree.tcl` (medians of 3, min-max in pa
 | full rebuild | 10,000 | 1,210 ms (1,194-1,286) | 121 µs | the debounced resort's cost |
 | memory, marginal row | 10k→50k | | 4.36 kB/row | includes the retained payload dict, per-row tag, two marks |
 
-For calibration, ttk::treeview on the same machine bulk-loads 10k display-text-only rows in 28 ms (2.8 µs/row, a native C widget's floor), streams 1,846 inserts/s into a 10k flat list (its scroll shifts on every insert, and that repaint is in its number where streamtree's number carries the anchor work that prevents the shift), and holds 0.53 kB/row. The workloads differ in what a row retains: streamtree keeps the payload dict, which doubles as the host's data model.
+For calibration, ttk::treeview on the same machine bulk-loads 10k display-text-only rows in 28 ms (2.8 µs/row, a native C widget's floor) and holds 0.53 kB/row. It streams 1,846 inserts/s into a 10k flat list, but its scroll shifts on every insert; that repaint is baked into its number, where streamtree's number pays for the anchor work that prevents the shift. The workloads differ in what a row retains: streamtree keeps the payload dict, which doubles as the host's data model.
 
 The engine renders every visible row into the text widget (no virtualization); collapsed subtrees stay unrendered, which is the intended posture for large trees. Practical ceiling: tens of thousands of rendered rows load in seconds and stream comfortably; memory is the binding constraint at roughly 4.4 kB per rendered row.
 
-## Limits
+## LIMITS
 
 To a screen reader the widget presents as one text area, not a tree of rows and columns; assistive-technology structure (row navigation, expansion state) is not exposed. Cell editing, checkbox columns, and type-ahead are not built in; a host can assemble them from embedded windows, row tags, and key bindings.
+
+## REQUIREMENTS
+
+Tcl 9 and Tk. The sibling of [streamdoc](streamdoc.md): a tree of rows here, a document of regions there, the same architecture.
+
+## KEYWORDS
+
+treeview, text widget, tree, columns, sort, streaming, virtual list

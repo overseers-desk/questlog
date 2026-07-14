@@ -1,8 +1,10 @@
 # streamdoc
 
-A streaming document drawn into a single Tk `text` widget: free text (chrome) interleaved with foldable regions, each a header line, a body, and an optional trailing summary line. Content streams in at the tail while the reader's position holds; regions fold to their header, and each region's noisy detail hides behind its summary line. `examples/streamdoc-demo.tcl` drives it under bare `wish` with a toy build feed.
+## NAME
 
-The engine is a Tcl module, the `streamdoc-<version>.tm` file at the repository root, the sibling of `streamtree` (a tree of rows there, a document of regions here; the same architecture: the engine owns the marks and the streaming contract, the host owns content). It requires only Tcl 9 and Tk. A host adds the file's directory to the module path, requires the package, and builds the widget into a frame it owns; the hooks have working defaults, so the base class runs as-is and a host overrides only what its content needs:
+streamdoc - a streaming document of foldable regions in one Tk text widget
+
+## SYNOPSIS
 
 ```tcl
 ::tcl::tm::path add $dir
@@ -19,18 +21,20 @@ $d batch {
 }
 ```
 
-## The model
+## DESCRIPTION
 
-The document is append-only. Chrome and region content alike enter through the content door; a region owns everything from its header line (the first line emitted after `region_open`) down to where `region_close` seals it. Region boundaries are real Tk marks - a left-gravity start, a right-gravity end that rides the tail while the region is open and is sealed on close - so streamed inserts carry the bookkeeping by gravity, not by index arithmetic.
+A transcript or log viewer wants three things at once: content streaming in at the tail while the user reads, finished sections folding to one line, and the reader's scroll position holding still through both. Doing this with raw text-widget indices breaks the first time an insert lands above the viewport; doing it with one text widget per section forfeits search, selection, and the single scrollbar.
+
+streamdoc owns an append-only document rendered into a single read-only `text` widget: free text (chrome) interleaved with foldable regions, each a header line, a body, and an optional trailing summary line. Region boundaries are real Tk marks, a left-gravity start and a right-gravity end that rides the tail while the region is open and is sealed on close, so streamed inserts carry the bookkeeping by gravity, not by index arithmetic. The host supplies every character through the content door and the hooks (Template Method); the engine owns the marks, the elide layers, and the streaming contract, and never looks inside a payload.
 
 Each region has exactly two elide layers, both engine-owned (no host tag may set an explicit `-elide`):
 
 - **fold** - the whole body and summary collapse to the header line. The layer covers whole logical lines and never the header's own newline, so folding everything leaves one header per line, a table of contents.
 - **detail** - lines the host tags with `detail_tag $n` as it emits, hidden by default behind the summary line. The detail layer outranks the fold layer, so unfolding a region does not spill its hidden detail, and re-folding re-hides whatever was revealed.
 
-The first character of a header line and of a summary line is a state glyph from the `-glyphs` pair; the engine swaps it in place with a same-length replace, so downstream indices stay true. A header that does not start with a glyph is left alone.
+The first character of a header line and of a summary line is a state glyph from the `-glyphs` pair, but the two track different state: the header glyph mirrors the region's fold state, the summary glyph mirrors its detail-shown state. The engine swaps each in place with a same-length replace, so downstream indices stay true. A header or summary line that does not start with a glyph is left alone.
 
-## Vocabulary
+## PRIMITIVES
 
 | Primitive | Role |
 |---|---|
@@ -58,13 +62,13 @@ The first character of a header line and of a summary line is a state glyph from
 
 Every mutating primitive ends in `check_invariant`; a host never touches the underlying text widget.
 
-### The content door and rewind
+## THE CONTENT DOOR AND REWIND
 
 All content, chrome and region alike, goes through the door inside a `batch`, in whole newline-terminated lines. While a region is open the door feeds it: `append_open` pops any standing summary line so new content lands inside the region, not under its summary, and `append_close` re-appends the summary from the current payload - the one legal rewrite window a mid-document line gets. Between regions the door appends chrome.
 
 `rewind` is the door's undo: take a `savepoint` before emitting a provisional tail, then rewind to it and re-emit. The mark survives the cut (left gravity holds it at the boundary), so a feed can rewind to the same point repeatedly - the shape a wet-tail streaming renderer needs, and the mechanism the engine's own summary pop is built on.
 
-## The streaming contract
+## THE STREAMING CONTRACT
 
 The widget's defining behaviour: content arriving while the user reads never moves what they are reading.
 
@@ -73,7 +77,7 @@ The widget's defining behaviour: content arriving while the user reads never mov
 - `follow` jumps to the tail and re-latches.
 - `<<AtBottom>>` and `<<LeftBottom>>` fire on the host frame when the view reaches or leaves the last line, so a host can show a "jump to latest" affordance the way chat clients do.
 
-## Hooks a host overrides
+## HOOKS
 
 - `summary_text payload` - the summary phrase for a region's payload; the empty string takes no summary line. Default: always empty.
 - `region_tags payload` - the tags laid on the engine-written summary line, so the host can style and bind it. Default: `summary`.
@@ -81,7 +85,7 @@ The widget's defining behaviour: content arriving while the user reads never mov
 
 Everything else a host adds - header styling, click-to-fold, detail styling - is ordinary tag configuration and tag bindings on tags the host emits itself, resolved back to a region through `region_at`.
 
-## Options
+## OPTIONS
 
 Set through `configure` before `setup`:
 
@@ -91,10 +95,18 @@ Set through `configure` before `setup`:
 | `-glyphs` | `{▸ ▾}` | the closed/open state glyph pair, one char each |
 | `-autofollow` | `0` | keep the view latched to the tail while the reader is there |
 
-## The audit gate
+## THE AUDIT GATE
 
-Set the `STREAMDOC_AUDIT` environment variable and every primitive checks the mark contract after it runs: each region's `[start,end)` is well-formed and starts on a line start, regions are ordered and disjoint down the buffer, a standing summary mark sits inside its region, and the open region's end rides the buffer tail. The first violation latches `::STREAMDOC_AUDIT_TRIPPED` and writes an `INVARIANT @ <primitive>` line to stderr naming the operation that broke the contract. Production leaves the variable unset and pays nothing. `test/test-streamdoc.tcl` runs its whole scenario under the gate.
+Set the `STREAMDOC_AUDIT` environment variable and every primitive checks the mark contract after it runs: each region's `[start,end)` is well-formed and starts on a line start, regions are ordered and disjoint down the buffer, a standing summary mark sits inside its region, and the open region's end rides the buffer tail. The first violation latches `::STREAMDOC_AUDIT_TRIPPED` and writes an `INVARIANT @ <primitive>` line to stderr naming the operation that broke the contract. Production leaves the variable unset and pays nothing.
 
-## Limits
+## LIMITS
 
 One region may be open at a time, and the document is append-only: closed regions are immutable except for their 1-char state glyphs, and `rewind` reaches only the open region's tail. A region's header is exactly one line. Emitted content must arrive in whole newline-terminated lines, or the next region's header lands mid-line (the audit names it). To a screen reader the widget presents as one text area; region structure and fold state are not exposed.
+
+## REQUIREMENTS
+
+Tcl 9 and Tk. The sibling of [streamtree](streamtree.md): a document of regions here, a tree of rows there, the same architecture.
+
+## KEYWORDS
+
+text widget, streaming, fold, elide, transcript, log viewer, tail -f

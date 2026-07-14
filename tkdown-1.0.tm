@@ -18,46 +18,16 @@ namespace eval ::tkdown {
 # blockquotes, GFM pipe tables, ATX headings, flat lists, code spans, and
 # asterisk emphasis - and leaves the rest as literal text.
 #
-# The parse half is pure Tcl, needs no Tk, and runs under a bare tclsh. The
-# block splitters are layered so each one sees a body the ones above it have
-# already peeled:
-#
-#   segment_code_fences  - {kind text}, kind in {prose code}. Splits on ```
-#                          fence lines; a code segment is the verbatim run
-#                          between a fence pair, markers and language tag gone.
-#   segment_blockquotes  - {kind text}, kind in {normal quote}. A quote is a
-#                          maximal run of "> " lines, de-quoted one marker deep.
-#   segment_tables       - {kind payload}, kind in {normal table}. A table
-#                          payload is {align <per-col> rows <header-then-body>},
-#                          the parsed GFM pipe table.
-#   segment_lists        - {kind payload}, kind in {normal list}. A list is a
-#                          maximal run of "- "/"* "/"N. " lines; the payload is
-#                          the ordered items, each {num text}, num empty for a
-#                          bullet or the literal digits for an ordered item.
-#                          Applied to a normal run inside the emit walk, not a
-#                          top-level body splitter.
-#
-# The inline model, one prose run in:
-#
-#   parse_inline         - an ordered list of {style chunk} pairs; style is one
-#                          of plain, code, bold, italic, bolditalic, and chunk
-#                          is the display text with the markers stripped.
-#                          Adjacent plain runs are coalesced.
-#
-# The emit half paints parsed text onto a text widget registered with `tags`:
-#
-#   tags    - register a widget: configure the td-* faces on it from a fonts
-#             dict and open its table registry.
-#   runs    - one prose run's inline spans, inserted at an index.
-#   prose   - prose plus pipe tables and ATX headings, closed by a suffix.
-#   body    - code fences plus prose; code goes in under the host's own tags.
-#   refit   - recompute every rendered table's tab stops (font change).
-#   forget  - drop the widget's rendered tables before a full re-render.
-#
-# Every td-* tag is font-only or geometry-only (td-tbl<N> carries tab stops
-# and table geometry, td-list the hanging indent); colour always comes from
-# the base tags the host stacks underneath, so the module owns faces and
-# layout and the host owns the ink.
+# The parse half (the segment_* splitters and parse_inline) is pure Tcl,
+# needs no Tk, and runs under a bare tclsh. The splitters are layered: each
+# sees a body the ones above it have already peeled, fences first, then
+# quotes, then tables; lists split inside the emit walk. segment_blockquotes
+# is parse-half only - the emit walk never calls it, and a host that wants
+# quotes styled splits with it and paints each de-quoted run itself, the way
+# it owns a code block's chrome. The emit half paints onto a widget
+# registered with `tags`, and every td-* tag it configures is font-only or
+# geometry-only. Colour always comes from the base tags the host stacks
+# underneath, so the module owns faces and layout and the host owns the ink.
 
 # Split a body into ordered {kind text} segments, where kind is
 # "prose" or "code". A code segment is the content between a pair of triple
@@ -91,7 +61,7 @@ proc ::tkdown::segment_code_fences {body} {
 # "normal" or "quote". A quote segment is a maximal run of markdown
 # blockquote lines (each starting with ">"); its text is de-quoted, one
 # leading "> " or ">" stripped per line. A bare blank line (no ">") ends a
-# quote run, the strict markdown split. Pure function on the raw body.
+# quote run, the strict markdown split.
 proc ::tkdown::segment_blockquotes {body} {
     set segs [list]
     set buf  [list]   ;# accumulating normal lines
@@ -127,7 +97,7 @@ proc ::tkdown::segment_blockquotes {body} {
 # ("Heading" / "---") or a thematic break is never mistaken for a one-column
 # table; single-column tables therefore need the explicit "| h |" / "| - |"
 # form, as in cmark-gfm. Callers strip code fences first, so a fenced "|---|"
-# never reaches here. Pure; unit-tested.
+# never reaches here.
 #
 # A table payload is {align <list> rows <list-of-rows>}: align is one of
 # left/right/center per column, rows[0] is the header, and every row is
@@ -239,7 +209,6 @@ proc ::tkdown::split_row {line} {
     return $out
 }
 
-# Pad a row out to ncol cells, or truncate the overflow, per GFM.
 proc ::tkdown::norm_row {cells ncol} {
     while {[llength $cells] < $ncol} { lappend cells "" }
     if {[llength $cells] > $ncol} { set cells [lrange $cells 0 [expr {$ncol - 1}]] }
@@ -254,7 +223,7 @@ proc ::tkdown::norm_row {cells ncol} {
 # bullet ("- "/"* ") or the item's own digits for an ordered ("N. ") item, and
 # text is the rest of the line, still markdown for the inline pass. Flat only:
 # a leading-space (indented) or nested marker matches nothing here and stays in
-# a normal segment, a documented limit. Pure function on a normal run.
+# a normal segment, a documented limit.
 proc ::tkdown::segment_lists {text} {
     set segs  [list]
     set buf   [list]   ;# accumulating normal lines
@@ -286,9 +255,8 @@ proc ::tkdown::segment_lists {text} {
 # Parse one prose run into styled inline runs. Returns an ordered list of
 # {style chunk} pairs; style is one of plain, code, bold, italic, bolditalic,
 # and chunk is the text to display with the markdown markers removed. Adjacent
-# plain runs are coalesced. A pure function on a single prose run: callers strip
-# fenced code and blockquotes first, so this never sees a ``` fence. Pragmatic,
-# not full CommonMark:
+# plain runs are coalesced. Callers strip fenced code and blockquotes first,
+# so this never sees a ``` fence. The rules:
 #   - code spans (one or two backticks) win over emphasis, so asterisks inside
 #     `code` are never styled;
 #   - emphasis is asterisks only (*, **, ***): underscores stay literal, so
@@ -431,7 +399,6 @@ proc ::tkdown::inline_close_emph {s from runlen} {
     return -1
 }
 
-# Restore the escape sentinels to their literal characters.
 proc ::tkdown::inline_unescape {s} {
     return [string map [list \uE000 "`" \uE001 "*" \uE002 "\\"] $s]
 }
@@ -471,7 +438,6 @@ proc ::tkdown::tags {w fonts} {
     bind $w <Destroy> +[list ::tkdown::unregister $w]
 }
 
-# Drop a destroyed widget's registry entry; its tags died with it.
 proc ::tkdown::unregister {w} {
     variable widgets
     dict unset widgets $w

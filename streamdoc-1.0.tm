@@ -18,12 +18,12 @@ namespace eval ::streamdoc {}
 # A region tracks its position with two real marks:
 #   r#Ns  left gravity, at the header line's first char. Left gravity keeps
 #         it put when the header is inserted at it.
-#   r#Ne  right gravity while the region is open, so content emitted at the
-#         append point carries it forward on its own; sealed to left gravity
-#         by region_close, so the next region's header, inserted at the same
-#         spot, cannot drag it along.
+#   r#Ne  right gravity while the region is open: content emitted at the
+#         append point carries it forward on its own. region_close seals it
+#         to left gravity; the next region's header, inserted at the same
+#         spot, would otherwise drag it along.
 # Plus r#Nm at the summary line's first char while one stands. Gravity does
-# the bookkeeping, so the document streams without index arithmetic.
+# the bookkeeping; the document streams without index arithmetic.
 #
 # Two elide layers per region, engine-owned - no other code may mutate a
 # tag's -elide:
@@ -31,8 +31,8 @@ namespace eval ::streamdoc {}
 #        only, never the header's own newline - eliding it would visually
 #        join adjacent headers when everything is folded.
 #   d#N  the region's detail content (lines the host tags with detail_tag),
-#        hidden by default. Configured after f#N, so it holds the higher tag
-#        priority: where both cover a char, the detail elide wins, and
+#        hidden by default. Configured after f#N, which gives it the higher
+#        tag priority: where both cover a char, the detail elide wins, and
 #        unfolding a region does not spill its hidden detail. fold forces
 #        d#N back to hidden, the same rule from the other side. No host tag
 #        laid over a region may set an explicit -elide of its own, or it
@@ -48,8 +48,8 @@ namespace eval ::streamdoc {}
 #
 # Glyphs: the first char of a header line and of a summary line is a state
 # glyph from the -glyphs pair. fold/unfold and detail_show/hide swap it with
-# a same-length replace, so every index downstream stays true; a first char
-# that is not one of the pair is left alone, so glyphless headers work.
+# a same-length replace, so every index downstream stays true. A first char
+# that is not one of the pair is left alone; glyphless headers work.
 #
 # Anti-self-scroll: `batch` brackets a streamed mutation with anchor_save /
 # anchor_restore, so content landing below a parked reader never moves the
@@ -135,10 +135,11 @@ oo::class create ::streamdoc::StreamDoc {
 
     # ---- widget options ----------------------------------------------
     #
-    # The engine takes its host-specific look as options so its body holds no
-    # host references: the document font, the closed/open glyph pair, and the
-    # tail latch. Defaults are a plain Tk look so the widget runs standalone;
-    # a host overrides them through `configure` before the body is built.
+    # The engine takes its host-specific look as options; its body holds no
+    # host references. The lot: the document font, the closed/open glyph
+    # pair, and the tail latch. Defaults are a plain Tk look so the widget
+    # runs standalone; a host overrides them through `configure` before the
+    # body is built.
     method engine_default_opts {} {
         return [dict create \
             font TkTextFont \
@@ -202,7 +203,7 @@ oo::class create ::streamdoc::StreamDoc {
         }
     }
 
-    # Jump to the tail and latch there, so with -autofollow on the view keeps
+    # Jump to the tail and latch there. With -autofollow on the view keeps
     # following streamed appends until the reader scrolls away.
     method follow {} {
         $Text yview moveto 1
@@ -274,11 +275,6 @@ oo::class create ::streamdoc::StreamDoc {
         return $n
     }
 
-    # Close the open region: write its summary (summary_sync, so close and
-    # stream share one appender), lay the fold tag over the whole body in one
-    # definitive add that subsumes any incremental fold-during-stream adds,
-    # and seal the end mark's gravity so the next insert at the tail cannot
-    # drag it along.
     # Lay f#N over region n's whole body, [header +1line linestart, end).
     # The one writer of the fold range: close, streamed append, and fold all
     # cover through here, so a range fix lands once.
@@ -289,6 +285,11 @@ oo::class create ::streamdoc::StreamDoc {
         if {[$Text compare $body < $e]} { $Text tag add f#$n $body $e }
     }
 
+    # Close the open region. The summary is written through summary_sync,
+    # the same appender the streaming path uses. The fold tag then goes over
+    # the whole body in one definitive add, which subsumes any incremental
+    # fold-during-stream adds. Last the end mark's gravity is sealed; the
+    # next insert at the tail would otherwise drag the mark along.
     method region_close {} {
         if {$Cur < 0} return
         set n $Cur
@@ -306,7 +307,7 @@ oo::class create ::streamdoc::StreamDoc {
 
     # reset: empty the document - drop every region's marks and elide tags,
     # wipe the buffer and clear the store. The base of a fresh feed. The
-    # first call also seeds the engine state, so a host with bespoke widget
+    # first call also seeds the engine state; a host with bespoke widget
     # assembly (its own text widget in Text) starts here instead of setup.
     method reset {} {
         if {![info exists Regions]} {
@@ -331,13 +332,14 @@ oo::class create ::streamdoc::StreamDoc {
 
     # ---- content door ---------------------------------------------------
     #
-    # Every character the host writes goes through here, inside `batch`. With
-    # a region open the door feeds it: any standing summary line is popped
-    # first (rewind to its mark) so content lands inside the region, not under
-    # its summary, and append_close re-appends it with the current payload -
-    # the one legal rewrite window a mid-document summary gets. With no region
-    # open the door appends chrome at the tail. Emitted text is expected in
-    # whole newline-terminated lines; the audit names the region whose header
+    # Every character the host writes goes through here, inside `batch`.
+    # With a region open the door feeds it. Any standing summary line is
+    # popped first, a rewind to its mark, and append_close re-appends it
+    # with the current payload; that is the one legal rewrite window a
+    # mid-document summary gets. The pop keeps streamed content inside the
+    # region instead of under its summary. With no region open the door
+    # appends chrome at the tail. Emitted text is expected in whole
+    # newline-terminated lines; the audit names the region whose header
     # lands mid-line when it is not.
     method append_open {} {
         if {$Cur >= 0 && [dict get [lindex $Regions $Cur] summary]} {
@@ -373,7 +375,7 @@ oo::class create ::streamdoc::StreamDoc {
     }
 
     # A left-gravity mark at the append point, for a later rewind. Left
-    # gravity keeps it at the boundary while emits push past it, so the mark
+    # gravity keeps it at the boundary while emits push past it; the mark
     # names where the provisional content began.
     method savepoint {} {
         set m "sd#[incr NextSave]"
@@ -383,9 +385,9 @@ oo::class create ::streamdoc::StreamDoc {
     }
 
     # Delete from a saved mark to the open region's end, so the caller can
-    # re-emit that tail. The mark survives (left gravity holds it at the cut),
-    # so a feed can rewind to the same point again; `discard` releases it when
-    # the caller is done. A summary line standing past the mark goes with the
+    # re-emit that tail. The mark survives (left gravity holds it at the cut)
+    # and a feed can rewind to the same point again; `discard` releases it
+    # when the caller is done. A summary line standing past the mark goes with the
     # cut, and its bookkeeping with it - the summary pop is this primitive
     # applied to the summary's own mark.
     method rewind {mark} {
@@ -595,12 +597,12 @@ oo::class create ::streamdoc::StreamDoc {
     # The one jump gate: `see` cannot land on an elided char, so unfold the
     # target's region first, and show its detail only when the index itself
     # sits in the detail layer - jumping to a visible line must not spill the
-    # region's hidden blocks. The see must wait for the reshaped line metrics:
-    # an un-elide moves thousands of display lines, its relayout registers
-    # through an idle handler, and a bare `see` in the same callback scrolls
-    # to where the target used to be. Neither a targeted `count -update` nor
-    # a bare `sync` runs early enough on its own - both fire before the idle
-    # relayout has invalidated the metrics - so drain idletasks first, then
+    # region's hidden blocks. The see must wait for the reshaped line
+    # metrics. An un-elide moves thousands of display lines and the relayout
+    # registers through an idle handler; a bare `see` in the same callback
+    # scrolls to where the target used to be. A targeted `count -update`
+    # fires too early, and so does a bare `sync`, both ahead of the idle
+    # relayout that invalidates the metrics. Hence: drain idletasks, then
     # sync, then see. Click-latency price, paid only on a jump.
     method reveal {idx} {
         set n [my region_at $idx]
