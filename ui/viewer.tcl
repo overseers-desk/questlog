@@ -142,6 +142,7 @@ oo::class create ::questlog::ui::Viewer {
     variable LoadedLines      ;# count of physical jsonl lines consumed, so a streamed turn tails only the new ones
     variable RenderTs         ;# trailing render state: epoch of the last content turn, carried into append_new
     variable RenderInSection  ;# trailing render state: 1 while a section header is open
+    variable RenderModel      ;# trailing render state: model id of the last chipped assistant record, reset per turn; drives the per-turn model chip
     # Resume prompt bar: a one-shot `claude -p --resume` for the loaded session,
     # summoned like Find, its turn streamed back into the transcript.
     variable Prompt           ;# the bar frame, packed at the viewer bottom on demand
@@ -199,6 +200,7 @@ oo::class create ::questlog::ui::Viewer {
         set LoadedLines 0
         set RenderTs 0
         set RenderInSection 0
+        set RenderModel ""
         set PromptVar ""
         set PermVar readonly
         set Pipe ""
@@ -528,6 +530,20 @@ oo::class create ::questlog::ui::Viewer {
         $Text tag configure lbl-assistant -foreground [::questlog::ui::theme::c assistant] -font QLMonoBold -lmargin1 10 -lmargin2 10 -spacing1 6
         $Text tag configure lbl-system    -foreground [::questlog::ui::theme::c tool]      -font QLMonoBold -lmargin1 10 -lmargin2 10 -spacing1 6
         $Text tag configure lbl-tool_result -foreground [::questlog::ui::theme::c tool_result] -font QLMonoBold -lmargin1 10 -lmargin2 10 -spacing1 6
+        # Per-turn model chip: a small tinted run (coloured dot + short label over
+        # a pale tint) on the assistant header line, one per family plus a neutral
+        # `other`. model-<fam> carries the label/tint, modeldot-<fam> the dot's own
+        # ink over the same tint. The shared `modelchip` marker tag (applied at
+        # insert_model_chip, carrying no appearance and no -elide, per the turn-tag
+        # rule below) exists only so search skips the chip run.
+        foreach suf {opus sonnet haiku fable other} {
+            $Text tag configure model-$suf -font QLMonoBold \
+                -background [::questlog::ui::theme::c model_${suf}_bg] \
+                -foreground [::questlog::ui::theme::c model_$suf]
+            $Text tag configure modeldot-$suf -font QLMonoBold \
+                -background [::questlog::ui::theme::c model_${suf}_bg] \
+                -foreground [::questlog::ui::theme::c model_${suf}_dot]
+        }
         # Body prose follows QLBody, the proportional reading font switched at
         # runtime; fenced code keeps QLMono so it stays aligned regardless of
         # the reading font. Without an explicit -font the text widget would
@@ -930,6 +946,7 @@ oo::class create ::questlog::ui::Viewer {
         set QuoteBodies [list]
         set RenderTs 0
         set RenderInSection 0
+        set RenderModel ""
         $Text configure -state normal
         foreach rec $Records {
             lassign [my render_record_turned $rec $RenderTs $RenderInSection] \
@@ -1035,6 +1052,18 @@ oo::class create ::questlog::ui::Viewer {
             $Text insert end "▾ " {foldglyph turnhdr}
         }
         $Text insert end "$label  " "lbl-[string map {{ } _} [string tolower $label]]"
+        # Model chip on the assistant header line, right after the role label and
+        # before the body: the first assistant of each turn always chips (the
+        # turn boundary reset RenderModel to ""), a later assistant chips again
+        # only when its model differs (a mid-turn /model change). RenderModel is
+        # unset for a bodiless assistant record (guarded above), so it takes none.
+        if {$t eq "assistant"} {
+            set mdl [::questlog::jsonl::record_model $rec]
+            if {$mdl ne "" && $mdl ne $RenderModel} {
+                my insert_model_chip $mdl
+                set RenderModel $mdl
+            }
+        }
         # Assistant and tool_result records render one content block at a time
         # so each tool_use/thinking/image block is its own dk-* tagged region
         # (a region detail-hiding can elide without touching the prose around
@@ -1077,6 +1106,10 @@ oo::class create ::questlog::ui::Viewer {
         if {[::questlog::jsonl::is_turn_start $rec]
                 && [::questlog::jsonl::extract_text $rec] ne ""} {
             my region_close
+            # Reset the chip's model at the turn boundary so the first assistant
+            # of every turn re-chips even when unchanged from the prior turn; a
+            # same-model streamed continuation inside a turn is not re-chipped.
+            set RenderModel ""
             lassign [my render_record $rec $last_ts $in_section] \
                 last_ts in_section
             # The header line is complete now; tag it as the fold-toggle
@@ -1474,6 +1507,23 @@ oo::class create ::questlog::ui::Viewer {
             }
         }
         $Text insert end "\n" body
+    }
+
+    # Insert the model chip on the current header line: a tinted run of a coloured
+    # dot and a short "Family Ver" label. The family maps to a model-<fam>/
+    # modeldot-<fam> tint pair (unknown/local ids fall to `other`); the label is
+    # fmt_model's reading, or model_label's id fallback when fmt_model blanks a
+    # local id. Every piece also carries the shared `modelchip` marker tag (no
+    # appearance, no -elide) so index_matches/match_context can skip the chip run.
+    method insert_model_chip {model} {
+        set fam [::questlog::cost::model_family $model]
+        set suf [expr {$fam ne "" ? $fam : "other"}]
+        set label [::questlog::cost::fmt_model $model]
+        if {$label eq ""} { set label [::questlog::cost::model_label $model] }
+        $Text insert end " "        [list modelchip model-$suf]
+        $Text insert end "●"   [list modelchip modeldot-$suf]
+        $Text insert end " $label " [list modelchip model-$suf]
+        $Text insert end "  "        modelchip
     }
 
     # Render an assistant or tool_result record body one content block at a
@@ -1943,9 +1993,13 @@ oo::class create ::questlog::ui::Viewer {
                 if {$m eq ""} break
                 if {$len <= 0} { set len 1 }
                 set start "$m + ${len}c"
-                # Skip stub-line and fold-glyph hits, as in collect_matches.
+                # Skip stub-line, fold-glyph and model-chip hits, as in
+                # collect_matches: the chip's words ("Opus", "Sonnet", version
+                # digits) are chrome, not transcript, so a search for a family
+                # word or version number must never light every chip.
                 set mtags [$Text tag names $m]
-                if {"stub" in $mtags || "foldglyph" in $mtags} continue
+                if {"stub" in $mtags || "foldglyph" in $mtags \
+                        || "modelchip" in $mtags} continue
                 $Text tag add find $m "$m + ${len}c"
                 lappend positions $m
             }
@@ -2001,7 +2055,10 @@ oo::class create ::questlog::ui::Viewer {
         # Write(" read twice. Start the excerpt where the content does: past
         # the fold glyph and the label, when the line opens with them.
         set s [$Text index "$idx linestart"]
-        foreach chrome {foldglyph lbl-user lbl-assistant lbl-system lbl-tool_result} {
+        # modelchip trails the role label on an assistant header line, so it is
+        # skipped after the lbl-* tags: each pass advances $s past a chrome run
+        # that starts exactly where the previous one left off.
+        foreach chrome {foldglyph lbl-user lbl-assistant lbl-system lbl-tool_result modelchip} {
             set r [$Text tag nextrange $chrome $s "$s lineend"]
             if {[llength $r] && [$Text compare [lindex $r 0] == $s]} {
                 set s [lindex $r 1]

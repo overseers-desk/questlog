@@ -89,6 +89,21 @@ namespace eval ::questlog::ui::theme {
         op_read_fg      #1e4b80
         op_wrote_bg     #dff0d6
         op_wrote_fg     #2a5e1e
+        model_opus      #5a3eb8
+        model_opus_bg   #efe7ff
+        model_opus_dot  #7c5cd6
+        model_sonnet    #1f5aa8
+        model_sonnet_bg #e3eefc
+        model_sonnet_dot #3b82e0
+        model_haiku     #1c7a4d
+        model_haiku_bg  #e2f4ea
+        model_haiku_dot #2fa66b
+        model_fable     #a5316f
+        model_fable_bg  #fbe3ef
+        model_fable_dot #d1589e
+        model_other     #5a5f66
+        model_other_bg  #edeef0
+        model_other_dot #9a9a9a
     }
     # Hit highlight: the design marks a match with one pale yellow and no bold.
     # The list snippet mark is #fff59c; the viewer `find` mark is #ffec70.
