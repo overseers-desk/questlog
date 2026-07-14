@@ -5,7 +5,7 @@ namespace eval ::questlog::jsonl {
     namespace export extract_text extract_blocks record_tool_uses \
         is_compact_boundary record_timestamp parse_iso fmt_gap first_cwd \
         is_user_turn \
-        is_turn_start record_role_label context_window transcript_step
+        is_turn_start record_role_label record_model context_window transcript_step
 }
 
 # Parse one JSONL line into a Tcl dict. Returns "" on parse failure.
@@ -349,6 +349,19 @@ proc ::questlog::jsonl::is_compact_boundary {rec} {
 # ISO timestamp string from a record (.timestamp). Empty if absent.
 proc ::questlog::jsonl::record_timestamp {rec} {
     return [dict getdef $rec timestamp ""]
+}
+
+# The model id an assistant record was produced by, or "" when there is none to
+# chip. Only an assistant record carries a model; a sidechain (subagent) record
+# and a harness-written <synthetic> filler are excluded, mirroring the cost
+# pass's last_model guard, so neither ever chips in the viewer.
+proc ::questlog::jsonl::record_model {rec} {
+    if {[dict getdef $rec type ""] ne "assistant"} { return "" }
+    if {[dict getdef $rec isSidechain 0]}          { return "" }
+    if {![dict exists $rec message]}               { return "" }
+    set m [dict getdef [dict get $rec message] model ""]
+    if {$m eq "" || $m eq "<synthetic>"}           { return "" }
+    return $m
 }
 
 # Epoch seconds from a Claude ISO timestamp, 0 on an empty or unparseable

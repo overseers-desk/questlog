@@ -160,6 +160,19 @@ proc ::questlog::cost::model_label {id} {
     return $id
 }
 
+# The opus/sonnet/haiku/fable family token of a model id, lowercased, or "" for
+# an id fmt_model does not recognise (an old-scheme claude-3-5-sonnet-... or a
+# local model). Reuses fmt_model's exact anchored family/version regexp, so
+# "known family" here means the same thing as "gets a Family Ver label" there;
+# the viewer's per-turn chip maps "" to its neutral model_other role.
+proc ::questlog::cost::model_family {id} {
+    regsub -- {-\d{6,}$} $id "" id
+    if {[regexp {(opus|sonnet|haiku|fable)-(\d+)(?:-(\d+))?$} $id -> fam]} {
+        return [string tolower $fam]
+    }
+    return ""
+}
+
 # ISO-8601 UTC timestamp (e.g. 2026-04-25T10:00:00.000Z) to epoch seconds.
 # Tolerates a missing fractional part; empty on any parse failure.
 proc ::questlog::cost::iso_to_epoch {ts} {
