@@ -23,7 +23,7 @@ package require streamtree
 # and the Tk-free libs it reads, the theme (named fonts + palette), then the
 # class itself.
 foreach f {config.tcl lib/debug.tcl lib/path.tcl lib/jsonl.tcl lib/match.tcl \
-           ui/theme.tcl ui/viewer.tcl} {
+           lib/cost.tcl ui/theme.tcl ui/viewer.tcl} {
     source [file join $ROOT $f]
 }
 ::questlog::ui::theme::init

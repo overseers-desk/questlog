@@ -22,7 +22,7 @@ set ROOT [file dirname [file dirname [file normalize [info script]]]]
 package require leash
 package require streamtree
 foreach f {config.tcl lib/debug.tcl lib/path.tcl lib/jsonl.tcl lib/match.tcl \
-           ui/theme.tcl ui/viewer.tcl} {
+           lib/cost.tcl ui/theme.tcl ui/viewer.tcl} {
     source [file join $ROOT $f]
 }
 # The match procs read display caps injected once per interp (the launcher

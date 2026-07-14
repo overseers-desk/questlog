@@ -213,6 +213,23 @@ check label_system "SYSTEM" [::questlog::jsonl::record_role_label \
     [::questlog::jsonl::parse_line \
     {{"type":"system","content":"Conversation compacted"}}]]
 
+# ---- record_model: the model id an assistant record chips with -------------
+# An assistant record returns its message.model; a <synthetic> filler, a
+# sidechain (subagent) record and any non-assistant record return "", so none
+# of them chips in the viewer. Takes a parsed record, so route through parse_line.
+check model_assistant "claude-opus-4-8" [::questlog::jsonl::record_model \
+    [::questlog::jsonl::parse_line \
+    {{"type":"assistant","message":{"role":"assistant","model":"claude-opus-4-8","content":[{"type":"text","text":"hi"}]}}}]]
+check model_synthetic "" [::questlog::jsonl::record_model \
+    [::questlog::jsonl::parse_line \
+    {{"type":"assistant","message":{"model":"<synthetic>","content":[{"type":"text","text":"No response requested."}]}}}]]
+check model_sidechain "" [::questlog::jsonl::record_model \
+    [::questlog::jsonl::parse_line \
+    {{"type":"assistant","isSidechain":true,"message":{"model":"claude-haiku-4-5","content":[{"type":"text","text":"sub"}]}}}]]
+check model_user "" [::questlog::jsonl::record_model \
+    [::questlog::jsonl::parse_line \
+    {{"type":"user","message":{"role":"user","content":"do the thing"}}}]]
+
 if {$fails > 0} {
     puts "$fails failures"
     exit 1

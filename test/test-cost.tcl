@@ -72,6 +72,17 @@ check "model_label local model"  [::questlog::cost::model_label qwen3-coder] "qw
 check "model_label local dated"  [::questlog::cost::model_label devstral-20260101] "devstral"
 check "model_label empty on empty" [::questlog::cost::model_label ""] ""
 
+# model_family is the opus/sonnet/haiku/fable token, lowercased, that fmt_model
+# recognises, or "" for an old-scheme or local id: it drives the viewer's
+# per-turn chip, so "known family" must agree with fmt_model's Family Ver label.
+check "model_family opus"        [::questlog::cost::model_family claude-opus-4-8] "opus"
+check "model_family sonnet"      [::questlog::cost::model_family claude-sonnet-5] "sonnet"
+check "model_family haiku dated" [::questlog::cost::model_family claude-haiku-4-5-20251001] "haiku"
+check "model_family fable"       [::questlog::cost::model_family claude-fable-5] "fable"
+check "model_family local model" [::questlog::cost::model_family qwen3-coder] ""
+check "model_family old scheme"  [::questlog::cost::model_family claude-3-5-sonnet-20241022] ""
+check "model_family empty"       [::questlog::cost::model_family ""] ""
+
 # ---- compute_cost: turns + timestamps over a fixture ---------------------
 
 # Three typed prompts ("role":"user","content":"…"), one tool-result user
