@@ -1937,12 +1937,14 @@ oo::class create ::questlog::ui::Viewer {
             set m [$Text search -elide -count len -nocase -- $pattern $start [my content_end]]
             if {$m eq ""} break
             set start "$m + ${len}c"
-            # A stub's own words ("7 tool calls") and a header's fold glyph
-            # are turn chrome, not transcript; a hit there would step the
-            # reader nowhere useful, and a glyph hit would go stale the moment
-            # swap_glyph flips it.
+            # A stub's own words ("7 tool calls"), a header's fold glyph and a
+            # model chip's words ("Opus", "Sonnet", version digits) are turn
+            # chrome, not transcript; a hit there would step the reader nowhere
+            # useful, and a glyph hit would go stale the moment swap_glyph flips
+            # it.
             set mtags [$Text tag names $m]
-            if {"stub" in $mtags || "foldglyph" in $mtags} continue
+            if {"stub" in $mtags || "foldglyph" in $mtags \
+                    || "modelchip" in $mtags} continue
             $Text tag add find $m "$m + ${len}c"
             lappend results $m
         }
