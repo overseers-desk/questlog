@@ -1583,6 +1583,19 @@ oo::class create ::questlog::ui::Viewer {
             if {$sawtext && $dtag ne ""} { set sep [list body $dtag] }
             $Text insert end "\n" $sep
         }
+        # A tool-only assistant record (no text block) is detail in its
+        # entirety, like a tool_result record: otherwise its bare label line
+        # stands visible with every block hidden, stacking empty "ASSISTANT"
+        # headers down a tool-heavy turn. Fold the whole record - label line
+        # and trailing separator included - into the turn's detail tag so it
+        # collapses with its tool_use blocks (already counted in the tally).
+        if {!$sawtext && $dtag ne ""} {
+            set lineno [dict get $rec _line]
+            if {[dict exists $LineMap $lineno]} {
+                $Text tag add $dtag [dict get $LineMap $lineno] \
+                    [$Text index "end-1l linestart"]
+            }
+        }
     }
 
     # Bump the open turn's tally of one detail kind; the summary line renders
