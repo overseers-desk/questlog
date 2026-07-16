@@ -270,9 +270,12 @@ set ToolLB [dict get [set ${NS}::BandDesc] tools list]
 # ---- 10. the Turns tab is a jump list over the registry ------------------------
 check "turns listbox row count equals the registry after show" \
     [$TurnLB size] [llength [set ${NS}::Turns]]
-check "a turn row reads its stamp and the prompt's first line" \
+check "a turn row reads its 1-based number, stamp and the prompt's first line" \
     [$TurnLB get 0] \
-    "[$V tool_time [dict get [turn 0] ts]] · [dict get [turn 0] label]"
+    "1 · [$V tool_time [dict get [turn 0] ts]] · [dict get [turn 0] label]"
+check "turn rows carry 1-based numbers that increment down the list" \
+    [$TurnLB get 1] \
+    "2 · [$V tool_time [dict get [turn 1] ts]] · [dict get [turn 1] label]"
 
 # ---- 11. a Turns-tab jump scrolls the view to the target header ------------------
 # The old bbox-only check was vacuous: folded, the whole ToC fits the viewport

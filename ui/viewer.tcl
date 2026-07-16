@@ -2372,15 +2372,17 @@ oo::class create ::questlog::ui::Viewer {
     # ---- turns index (jump to a turn's header) ----------------------------
 
     # Fill the Turns listbox from the engine's region store, one row per turn
-    # "time · first prompt line" coloured like a user label (a turn opens on
-    # a user prompt). The label was captured at region_open (the prompt's
-    # first line, in the payload); collapse its whitespace and clip it the
-    # way the match and quote rows clip, so a long or ragged opening still
-    # reads as one tidy row. Called from show and, after a streamed turn
-    # lands, from resume_finish - the store is the one source of truth, so a
-    # refill always tracks region_count. Unlike the quote rows (appended live
-    # during render) turn rows are not maintained incrementally, so this
-    # rebuilds them wholesale.
+    # "N · time · first prompt line" coloured like a user label (a turn opens
+    # on a user prompt). N is the turn's 1-based number, so a reader can jump
+    # to "turn 12" by the number they'd say aloud. The label was captured at
+    # region_open (the prompt's first line, in the payload); collapse its
+    # whitespace and clip it the way the
+    # match and quote rows clip, so a long or ragged opening still reads as one
+    # tidy row. Called from show and, after a streamed turn lands, from
+    # resume_finish - the store is the one source of truth, so a refill always
+    # tracks region_count. Unlike the quote rows (appended live during render)
+    # turn rows are not maintained incrementally, so this rebuilds them
+    # wholesale.
     method index_turns {} {
         $TurnList delete 0 end
         for {set n 0} {$n < [my region_count]} {incr n} {
@@ -2389,7 +2391,8 @@ oo::class create ::questlog::ui::Viewer {
             if {[string length $label] > 60} {
                 set label "[string range $label 0 59]…"
             }
-            $TurnList insert end "[my tool_time [dict get $p ts]] · $label"
+            $TurnList insert end \
+                "[expr {$n + 1}] · [my tool_time [dict get $p ts]] · $label"
             $TurnList itemconfigure end -foreground [::questlog::ui::theme::c user]
         }
         my refresh_turn_control
