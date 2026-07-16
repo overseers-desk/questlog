@@ -1,5 +1,9 @@
 # questlog: agent notes
 
+## Invariants
+
+- Shared Tk widget modules vendored from ../teatotal (streamtree, streamdoc, tkdown, ocmdline, leash, and any later ones) are copies, not forks: keep each synced to ../teatotal's latest, and land any widget-level change there first so this copy stays a pure copy (facetbar is questlog-local, not from teatotal).
+
 ## Verifying GUI changes
 
 questlog is a Tcl/Tk app launched with `./questlog` (it runs under `tclsh9.0`). Verify visual or behavioural changes on a headless Xvfb display, never the user's real `DISPLAY=:0`: launching on :0 puts windows over the user's work where they may click or close them, and ImageMagick `import`'s X11 grab is unreliable under this machine's XWayland :0 (it returns an empty image and fails with "missing an image filename"). On a private Xvfb server `import` works.
