@@ -616,6 +616,32 @@ $V find_next
 update idletasks
 check "a fruitless search shows 0 of 0" [set ${NS}::FindPos] "0 of 0"
 
+# ---- 24. the band is a paned split; the sash survives close/reopen --------------
+# band_show docks the band as the top pane of the body split (the sash under it
+# is the divider the user drags); band_hide forgets the pane and remembers the
+# band's pixel height, and a reopen restores it - an absolute height, so the
+# round trip holds even though the test root resizes around the forgotten pane.
+# The placement runs deferred at idle (band_place_sash), so pump idle events
+# between steps. This section runs last: the first sashpos set latches the
+# paned window's size request (ttk::panedwindow stops tracking its panes'
+# content requests), and a latched, shrunken root would squeeze any section
+# after it that assumes a content-sized window.
+set Body .v.body
+set Band [set ${NS}::Band]
+$V band_show turns
+update idletasks
+check "band_show docks the band as the top pane" [lindex [$Body panes] 0] $Band
+$Body sashpos 0 120
+set want [$Body sashpos 0]
+$V band_hide
+update idletasks
+check "band_hide forgets the pane" [lsearch [$Body panes] $Band] -1
+check "the closed band's height was remembered" [set ${NS}::BandSash] $want
+$V band_show turns
+update idletasks
+check "a reopen restores the dragged sash (within 2px)" \
+    [expr {abs([$Body sashpos 0] - $want) <= 2}] 1
+
 # ---- clean up -------------------------------------------------------------------
 ::questlog::path::_real_file delete -force $TMP
 puts [expr {$fails ? "FAILED ($fails)" : "PASS"}]

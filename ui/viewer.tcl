@@ -54,6 +54,7 @@ oo::class create ::questlog::ui::Viewer {
     variable Records
     variable Sections        ;# list of dicts: {kind label start_idx end_idx}
     variable Text             ;# the text widget
+    variable Sb               ;# the transcript's scrollbar (alias, like Text)
     variable PathLabel        ;# header label showing the loaded session's cwd
     variable IdLabel          ;# header label showing the abbreviated session id
     variable ActionMenu       ;# the "⋯" head-strip menu (Font, and Stage 2 actions)
@@ -114,9 +115,12 @@ oo::class create ::questlog::ui::Viewer {
     # Docked index band above the transcript: one collapsible pane whose content
     # switches between the match index and the tool-call timeline. It replaces the
     # two floating panels that used to cover the reading view.
-    variable Band             ;# the band frame, gridded in the body's row 0
-    variable BandTab          ;# "matches"|"tools"|"quotes": which list the band shows
-    variable BandOpen         ;# 1 while the band is gridded (taking transcript height)
+    variable Band             ;# the band frame, the body split's top pane while open
+    variable BandTab          ;# "turns"|"matches"|"tools"|"quotes": which list the band shows
+    variable BandOpen         ;# 1 while the band pane is present (taking transcript height)
+    variable BandSash         ;# band pixel height remembered at band_hide and
+                              ;# restored on reopen ("" until the first close of
+                              ;# the run)
     variable BandCount        ;# band-header count label
     variable FoldBar          ;# band-header fold-all/expand-all affordance, shown only on the Turns tab
     # BandDesc: ordered dict key -> per-tab descriptor, one entry per band tab in
@@ -188,6 +192,7 @@ oo::class create ::questlog::ui::Viewer {
         set CopyFbTok ""
         set BandTab "matches"
         set BandOpen 0
+        set BandSash ""
         set OnToggle $on_toggle
         set OnMove $on_move
         set OnBookmark $on_bookmark
@@ -243,8 +248,8 @@ oo::class create ::questlog::ui::Viewer {
         set PromptVar ""
         if {!$Shown} {
             grid remove $Empty
-            grid $Text        -row 1 -column 0 -sticky nsew
-            grid $Top.body.sb -row 1 -column 1 -sticky ns
+            grid $Text -row 0 -column 0 -sticky nsew
+            grid $Sb   -row 0 -column 1 -sticky ns
             set Shown 1
         }
         set Path $jsonl_path
@@ -373,50 +378,55 @@ oo::class create ::questlog::ui::Viewer {
         pack $CollapseBtn -side left -padx {6 2} -before $Top.head.path
         bind $CollapseBtn <Button-1> [list [self] do_toggle]
 
-        ttk::frame $Top.body
+        # Body: a vertical paned split. The docked index band is its top pane
+        # (weight 0, inserted only while open) above the transcript frame
+        # (weight 1). Forgetting the band pane gives every pixel back to the
+        # transcript; while open, the sash between them is the visible divider
+        # the user drags to re-split the height.
+        ttk::panedwindow $Top.body -orient vertical
         pack $Top.body -side top -fill both -expand 1
-        # Two body rows: the docked index band (row 0, natural height, gridded
-        # only while open) sits above the transcript (row 1, absorbs all height).
-        # Row 0 carries no weight and no minsize, so `grid remove`-ing the band
-        # collapses its row to nothing and the transcript reclaims the space.
+        set main $Top.body.main
+        ttk::frame $main
+        $Top.body add $main -weight 1
         # text widget - no ttk equivalent.
-        text $Top.body.t -wrap word -yscrollcommand [list $Top.body.sb set] \
+        text $main.t -wrap word -yscrollcommand [list $main.sb set] \
             -state disabled -padx 10 -pady 6 -borderwidth 0 -highlightthickness 0
-        ttk::scrollbar $Top.body.sb -orient vertical -command [list $Top.body.t yview]
-        grid $Top.body.t  -row 1 -column 0 -sticky nsew
-        grid $Top.body.sb -row 1 -column 1 -sticky ns
-        grid columnconfigure $Top.body 0 -weight 1
-        grid rowconfigure    $Top.body 0 -weight 0
-        grid rowconfigure    $Top.body 1 -weight 1
-        set Text $Top.body.t
+        ttk::scrollbar $main.sb -orient vertical -command [list $main.t yview]
+        grid $main.t  -row 0 -column 0 -sticky nsew
+        grid $main.sb -row 0 -column 1 -sticky ns
+        grid columnconfigure $main 0 -weight 1
+        grid rowconfigure    $main 0 -weight 1
+        set Text $main.t
+        set Sb $main.sb
 
         # Empty state: a centered prompt for the open gesture, gridded into the
-        # same body cell as the text so the head+body silhouette is identical
+        # same cell as the text so the head+body silhouette is identical
         # whether empty or loaded. Shown at launch (the text and its scrollbar
         # start grid-removed); the first `show` swaps them in.
-        ttk::frame $Top.body.empty
-        grid $Top.body.empty -row 1 -column 0 -columnspan 2 -sticky nsew
-        grid rowconfigure    $Top.body.empty {0 2} -weight 1
-        grid columnconfigure $Top.body.empty {0 2} -weight 1
-        ttk::frame $Top.body.empty.box
-        ttk::label $Top.body.empty.box.msg -justify center -font QLBold \
+        ttk::frame $main.empty
+        grid $main.empty -row 0 -column 0 -columnspan 2 -sticky nsew
+        grid rowconfigure    $main.empty {0 2} -weight 1
+        grid columnconfigure $main.empty {0 2} -weight 1
+        ttk::frame $main.empty.box
+        ttk::label $main.empty.box.msg -justify center -font QLBold \
             -foreground [::questlog::ui::theme::c section] \
             -text "Click a session to show it here"
-        ttk::label $Top.body.empty.box.sub -justify center -wraplength 340 \
+        ttk::label $main.empty.box.sub -justify center -wraplength 340 \
             -foreground [::questlog::ui::theme::c muted] \
             -text "A single click loads the transcript here. After a search, the match index up top jumps to each hit."
-        pack $Top.body.empty.box.msg -side top -pady {0 6}
-        pack $Top.body.empty.box.sub -side top
-        grid $Top.body.empty.box -row 1 -column 1
-        set Empty $Top.body.empty
-        grid remove $Top.body.t $Top.body.sb
+        pack $main.empty.box.msg -side top -pady {0 6}
+        pack $main.empty.box.sub -side top
+        grid $main.empty.box -row 1 -column 1
+        set Empty $main.empty
+        grid remove $main.t $main.sb
 
         # Docked index band. One collapsible pane above the transcript whose
         # content switches between the match index and the tool-call timeline.
-        # Gridded into the body's row 0 (no weight, no minsize) so collapsing it
-        # gives every pixel back to the transcript, and full-width so the reading
-        # column keeps its width (the win over a side column). Its listboxes
-        # share the band's content cell; set_tab grids one and removes the rest.
+        # The body split's top pane while open (band_show inserts it, band_hide
+        # forgets it, giving every pixel back to the transcript), and full-width
+        # so the reading column keeps its width (the win over a side column).
+        # Its listboxes share the band's content cell; set_tab grids one and
+        # removes the rest.
         # The header carries the Turns|Matches|Tools|Quotes tabs, the active count,
         # the Turns-tab fold-all/expand-all affordance, and ✕.
         # A classic tk frame/label set tinted with the head strip's background,
@@ -500,10 +510,7 @@ oo::class create ::questlog::ui::Viewer {
         grid $Band.hdr -row 0 -column 0 -columnspan 2 -sticky ew
         grid columnconfigure $Band 0 -weight 1
         grid rowconfigure    $Band 1 -weight 1
-        # Dock the band in the body's top row, then collapse it: ew (not nsew) so
-        # it hugs its content height rather than stretching over the transcript.
-        grid $Band -row 0 -column 0 -columnspan 2 -sticky ew
-        grid remove $Band
+        # The band starts collapsed: it joins the body split only in band_show.
 
         # A read-only reading view that supports drag-select and copy. The one
         # Text class gesture it suppresses is <B1-Leave>, the sole entry into
@@ -2125,8 +2132,9 @@ oo::class create ::questlog::ui::Viewer {
     # ---- docked band: open/collapse and tab switching --------------------
 
     # Switch the band's content without changing its open/collapsed state: grid
-    # the chosen list into the content cell and remove the rest, so only the
-    # active list's height drives the band. Re-derives the tab styling and the
+    # the chosen list into the content cell and remove the rest; the active
+    # list's rows set the band's requested height, the first-open sash
+    # position. Re-derives the tab styling and the
     # head-strip glyphs. Loop-driven off BandDesc: every tab is one dict entry
     # carrying its {tab btn list sb count unit auto onselect} descriptor, so a new
     # tab needs no new branch here (nor in update_band_tabs/update_band_glyphs).
@@ -2147,18 +2155,47 @@ oo::class create ::questlog::ui::Viewer {
         my update_band_glyphs
     }
 
-    # Open the band (re-grids its body row) on the given tab.
+    # Open the band on the given tab: insert it as the pane above the
+    # transcript. The sash placement is deferred to idle (the pane has no
+    # laid-out height inside this call); a band already open only switches
+    # tabs, so a search refresh never moves a sash the user has dragged.
     method band_show {tab} {
-        set BandOpen 1
-        grid $Band
+        if {!$BandOpen} {
+            set BandOpen 1
+            $Top.body insert 0 $Band -weight 0
+            my later idle [list [self] band_place_sash]
+        }
         my set_tab $tab
     }
 
-    # Collapse the band: grid-remove gives row 0 back to the transcript.
+    # Collapse the band: forgetting the pane gives every pixel back to the
+    # transcript. The band's pixel height is remembered for the reopen - an
+    # absolute height, unlike the sidebar fold's fraction (app.tcl), because
+    # the body's own height moves as the band pane comes and goes (the
+    # toplevel re-requests around it), and a fraction captured and restored
+    # against those two different heights drifts the sash.
     method band_hide {} {
+        if {$BandOpen && [$Top.body sashpos 0] > 0} {
+            set BandSash [$Top.body sashpos 0]
+        }
         set BandOpen 0
-        grid remove $Band
+        $Top.body forget $Band
         my update_band_glyphs
+    }
+
+    # Place the band/transcript sash once the paned window has laid the band
+    # out (deferred from band_show): back at the remembered height, or at
+    # the band's requested height (header + list rows) on the run's first
+    # open. Guarded like app.tcl's restore_sash, so a hide that lands before
+    # the idle fires leaves it a no-op.
+    method band_place_sash {} {
+        if {!$BandOpen} return
+        if {[winfo height $Top.body] <= 1} return
+        if {$BandSash ne ""} {
+            $Top.body sashpos 0 $BandSash
+        } else {
+            $Top.body sashpos 0 [winfo reqheight $Band]
+        }
     }
 
     # The head-strip counts route here. Clicking the count of the tab already
