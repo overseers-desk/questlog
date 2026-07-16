@@ -190,7 +190,8 @@ proc ::questlog::ui::app::start {root {seed {}}} {
         [namespace code on_subagent_cost] \
         [namespace code on_widen] \
         [namespace code status_peek] \
-        [namespace code status_unpeek]]
+        [namespace code status_unpeek] \
+        [namespace code on_scope_folder]]
     pack $list_frame.s -side top -fill both -expand 1
     # The toolbar's model lens offers the models the loaded rows carry, so it
     # reads them off the list. The Toolbar is built first (it heads the pane), so
@@ -462,6 +463,18 @@ proc ::questlog::ui::app::bookmarked_members {} {
 proc ::questlog::ui::app::on_widen {criterion} {
     variable Toolbar
     $Toolbar widen $criterion
+}
+
+# Scope the search to one folder (the list's folder right-click): push the
+# folder's project cwd into the toolbar's subtree facet and publish. subtree is
+# one of the keys scope_equal reads, so the new snapshot forces the full rebuild
+# in on_filter rather than the view-only fast path. A folder whose directory is
+# gone resolves to "" and scopes nothing.
+proc ::questlog::ui::app::on_scope_folder {folder} {
+    variable Toolbar
+    set cwd [folder_cwd $folder]
+    if {$cwd eq ""} return
+    $Toolbar add_value subtree [::questlog::path::canon_dir $cwd]
 }
 
 # ---- toolbar callback --------------------------------------------------

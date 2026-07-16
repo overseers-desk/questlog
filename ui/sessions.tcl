@@ -107,6 +107,7 @@ oo::class create ::questlog::ui::SessionList {
     variable OnRename         ;# cb: path -> app rename router (dialog + apply + refresh)
     variable OnScanPath       ;# cb: path -> row (synchronous single-file scan)
     variable OnWiden          ;# cb: criterion -> relax it in the toolbar and republish
+    variable OnScopeFolder    ;# cb: folder -> scope the toolbar search to that folder, or ""
     variable Snapshot
     variable CriteriaActive
     variable RunningSet       ;# dict uuid -> 1, replaced wholesale each tick
@@ -126,6 +127,8 @@ oo::class create ::questlog::ui::SessionList {
     variable TagNode          ;# folder node.tag -> node id, for drop hit-testing
     variable SelectedSet      ;# ordered set (dict path->1) of selected sessions
     variable SelectAnchor     ;# path a Shift-range extends from, or ""
+    variable SelectedFolder   ;# folder name whose heading is highlighted, or ""
+    variable FMenu            ;# the folder-heading right-click menu
     variable Menu
     variable MenuPath
     variable MenuTarget
@@ -149,7 +152,8 @@ oo::class create ::questlog::ui::SessionList {
                  on_drop_move on_bookmark_toggle on_bookmark_set on_rename \
                  on_scan_path cancel_cb \
                  on_subagents on_subagent_cost \
-                 {on_widen ""} {on_status_peek ""} {on_status_unpeek ""}} {
+                 {on_widen ""} {on_status_peek ""} {on_status_unpeek ""} \
+                 {on_scope_folder ""}} {
         set Top $parent
         set ResolveFolder $resolve_cb
         set LookupSession $lookup_cb
@@ -166,6 +170,7 @@ oo::class create ::questlog::ui::SessionList {
         set OnWiden $on_widen
         set OnStatusPeek $on_status_peek
         set OnStatusUnpeek $on_status_unpeek
+        set OnScopeFolder $on_scope_folder
         set PeekByTag [dict create]
         set StatusVar "Idle"
         set StatusBase ""
@@ -184,6 +189,7 @@ oo::class create ::questlog::ui::SessionList {
         set Query [dict create terms [list] nocase 0]
         set SelectedSet [dict create]
         set SelectAnchor ""
+        set SelectedFolder ""
         set NextId 0
         # Default sort reproduces the streaming order (mtime descending), so a
         # fresh list looks exactly as before any header is clicked.
@@ -289,8 +295,21 @@ oo::class create ::questlog::ui::SessionList {
                 set htag [my node_field $id tag]
                 set folder [my node_field $id key]
                 dict set TagNode $htag $id
+                set bfolder [my pctsafe $folder]
+                # A click on the marker toggles expand/collapse; a click on the
+                # rest of the heading selects the folder (on_folder_click routes
+                # by hit-testing the foldchevron range). Double-click also toggles,
+                # and the right button raises the folder menu.
                 $Text tag bind $htag <Button-1> \
-                    [list [self] toggle_folder [my pctsafe $folder]]
+                    [list [self] on_folder_click $bfolder %X %Y]
+                $Text tag bind $htag <Double-Button-1> \
+                    [list [self] toggle_folder $bfolder]
+                $Text tag bind $htag <<ContextMenu>> \
+                    [list [self] on_folder_right $bfolder %X %Y]
+                if {[my is_folder_selected $folder]} {
+                    set fm [my node_field $id start]
+                    $Text tag add selected $fm "$fm lineend"
+                }
             }
             session { my wire_session_row $id }
             subagent { my wire_subagent_row $id }
@@ -344,6 +363,7 @@ oo::class create ::questlog::ui::SessionList {
         my build_header
         my build_menu
         my build_child_menu
+        my build_folder_menu
     }
 
     method configure_tags {} {
@@ -549,6 +569,7 @@ oo::class create ::questlog::ui::SessionList {
         # is empty now, and a later rebuild repaints from it).
         set SelectedSet [dict create]
         set SelectAnchor ""
+        set SelectedFolder ""
         set TotalCost 0.0
         set StatusBase ""
         # The pinned sessions were pulled in past the old search; the new one has
@@ -1770,7 +1791,9 @@ oo::class create ::questlog::ui::SessionList {
     # bare "(N)" session count. The folder's size and cost aggregates are laid by
     # the engine as cells (cell_values) under the rows' size/cost columns, with an
     # empty date cell so the double tab opens straight into the size column; their
-    # bold/tier tags come from cell_tag. The subject carries no tags of its own.
+    # bold/tier tags come from cell_tag. The subject tags only its leading marker
+    # (the foldchevron range), so a Button-1 on the marker can be told from one on
+    # the label: the marker toggles expand/collapse, the label selects the folder.
     method folder_subject {node} {
         set f [my node_payload $node]
         set marker [expr {[my node_field $node expanded] ? "▾" : "▸"}]
@@ -1782,7 +1805,8 @@ oo::class create ::questlog::ui::SessionList {
                          + [font measure QLList $count_str]}]
         set label [my truncate_px [dict get $f label] \
                        [expr {$FolderLabelMax - $fixed}] QLList]
-        return [dict create subject "$marker $label$count_str" tags {} meta_run 0]
+        return [dict create subject "$marker $label$count_str" \
+                    tags [list [list foldchevron 0 1]] meta_run 0]
     }
 
     method redraw_folder_heading {folder} {
@@ -1790,6 +1814,96 @@ oo::class create ::questlog::ui::SessionList {
         # item rewrites the heading line in place; a detached folder is unrendered,
         # so item no-ops, which is the old folder_attached guard.
         my item [my fid $folder]
+        # item drops every tag on the re-laid line, including the folder selection
+        # highlight; re-add it from membership, the way redraw_header does.
+        if {[my is_folder_selected $folder]} {
+            set fm [my node_field [my fid $folder] start]
+            $Text tag add selected $fm "$fm lineend"
+        }
+    }
+
+    # ---- folder click, selection and menu ----------------------------
+    #
+    # A folder heading is selectable like a session row, but its state lives
+    # apart from the path-keyed session selection: a folder is name-keyed, so it
+    # cannot join SelectedSet. There is one highlighted folder at a time, held in
+    # SelectedFolder, and it and the session selection are mutually exclusive (one
+    # selection model). The highlight reuses the session `selected` tag over the
+    # heading line; re-lays reapply it from membership (on_row_rendered and
+    # redraw_folder_heading above).
+
+    method on_folder_click {folder X Y} {
+        if {[my click_on_tag $X $Y foldchevron]} {
+            my toggle_folder $folder
+            return
+        }
+        my folder_select $folder
+    }
+
+    method is_folder_selected {folder} { return [expr {$SelectedFolder eq $folder}] }
+
+    method folder_select {folder} {
+        if {![my has_folder $folder]} return
+        # Drop any session selection first; set_selection also clears a prior
+        # folder highlight (clear_folder_selection), so SelectedFolder is empty
+        # before this folder claims it.
+        my set_selection [list]
+        set SelectAnchor ""
+        set SelectedFolder $folder
+        set fid [my fid $folder]
+        if {[my node_field $fid rendered]} {
+            set fm [my node_field $fid start]
+            $Text tag add selected $fm "$fm lineend"
+        }
+    }
+
+    method clear_folder_selection {} {
+        if {$SelectedFolder eq ""} return
+        if {[my has_folder $SelectedFolder]} {
+            set fid [my fid $SelectedFolder]
+            if {[my node_field $fid rendered]} {
+                set fm [my node_field $fid start]
+                catch {$Text tag remove selected $fm "$fm lineend"}
+            }
+        }
+        set SelectedFolder ""
+    }
+
+    # The folder heading's right-click menu. Kept small and folder-shaped (a
+    # scope action and a reveal), not the session action set, which is built for
+    # a session target. Reveal opens the project's real working directory; a
+    # folder whose directory is gone resolves to "" and the entry greys out.
+    method build_folder_menu {} {
+        set FMenu $Top.fmenu
+        menu $FMenu -tearoff 0
+    }
+
+    method on_folder_right {folder X Y} {
+        if {![my has_folder $folder]} return
+        my folder_select $folder
+        set cwd [{*}$ResolveFolder $folder]
+        $FMenu delete 0 end
+        $FMenu add command -label "Search within this folder" \
+            -command [list [self] folder_scope $folder] \
+            -state [expr {$OnScopeFolder eq "" ? "disabled" : "normal"}]
+        $FMenu add command -label "Reveal folder" \
+            -command [list [self] folder_reveal $folder] \
+            -state [expr {$cwd eq "" ? "disabled" : "normal"}]
+        tk_popup $FMenu $X $Y
+    }
+
+    method folder_scope {folder} {
+        if {$OnScopeFolder eq ""} return
+        {*}$OnScopeFolder $folder
+    }
+
+    method folder_reveal {folder} {
+        set cwd [{*}$ResolveFolder $folder]
+        if {$cwd eq ""} return
+        set opener [expr {$::tcl_platform(os) eq "Darwin" ? "open" : "xdg-open"}]
+        if {[catch {exec $opener $cwd &} err]} {
+            puts stderr "questlog: $opener failed: $err"
+        }
     }
 
     method toggle_folder {folder} {
@@ -2165,6 +2279,9 @@ oo::class create ::questlog::ui::SessionList {
     # Replace the selection with the new set (a path list), repainting only the
     # rows that entered or left it. Shared by every gesture.
     method set_selection {paths} {
+        # A session selection and a folder selection are mutually exclusive; any
+        # gesture that sets the session selection drops the folder highlight.
+        my clear_folder_selection
         set new [dict create]
         foreach p $paths { dict set new $p 1 }
         foreach p [dict keys $SelectedSet] {

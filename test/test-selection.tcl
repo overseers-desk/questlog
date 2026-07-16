@@ -74,9 +74,10 @@ proc lookup {path}   { return [$::Scan lookup $path] }
 proc scanpath {path} { return [$::Scan scan_path $path] }
 proc resolvef {f}    { return "/tmp/proj" }
 proc subagentsf {path} { return [$::Scan subagents_for $path] }
+proc scopef {f} { set ::scoped $f }
 
 set SL [::questlog::ui::SessionList new .s resolvef lookup noop noop noop noop noop \
-            noop scanpath noop subagentsf noop]
+            noop scanpath noop subagentsf noop noop noop noop scopef]
 pack .s -fill both -expand 1
 
 set fails 0
@@ -107,6 +108,22 @@ check "both folders streamed in" \
     {3 2}
 check "folder_visible_paths is date-descending order" \
     [$SL folder_visible_paths $FA] [list $a01 $a02 $a03]
+
+# ---- folder selection: name-keyed, exclusive with session selection ------
+# A folder heading is selectable too, but held apart from the path-keyed session
+# set (a folder is name-keyed). The two selections are mutually exclusive.
+$SL selection_set $a02
+$SL folder_select $FA
+check "folder_select highlights the folder" [$SL is_folder_selected $FA] 1
+check "folder_select clears the session selection" [$SL selection_count] 0
+$SL selection_set $a01
+check "a session gesture clears the folder highlight" [$SL is_folder_selected $FA] 0
+check "the session selection stands after clearing the folder" [sel] [list $a01]
+
+# ---- scope-to-folder invokes the owner callback --------------------------
+set ::scoped ""
+$SL folder_scope $FB
+check "folder_scope calls OnScopeFolder with the folder" $::scoped $FB
 
 # ---- plain select --------------------------------------------------------
 $SL selection_set $a02
