@@ -1,3 +1,16 @@
+questlog (1.2.0) unstable; urgency=medium
+
+  * Sessions list: the view filters leave the toolbar for the list's own strip as lenses - Running and Bookmarked latch independently (both on means the rows that are both), and a Model checklist excludes models rather than choosing one; a count says what an active lens hides from the search's cut; an expand-all button heads the strip.
+  * Sessions list: an A/H multiplier column replaces H% (how many times the machine outworked the human), and a Ctx% column shows how full a session's context sits if resumed.
+  * Sessions list: startup paints the first rows in under a second on a busy host (was ~10s); the window maps before the corpus scan runs, and each scan chunk paints what it added.
+  * Sessions list: a hit on a former name renders as a breadcrumb; a session-names search region matches a session's title history; hovering a clipped snippet reveals its whole stored line; a folder heading selects, carries a menu, and can scope the search to itself.
+  * Session viewer: the transcript becomes a streaming document of foldable regions - turns fold, tool noise hides behind a per-turn stub, and fold-all reads the Turns tab as a table of contents; a Quotes tab lists the session's quoted passages and jumps to them; each assistant turn is chipped with its model; tool results read as TOOL RESULT, not USER; a hovering ⧉ copies the message under the pointer; the index band and transcript trade height across a draggable sash.
+  * Toolbar: the Restrict box folds to a chip summary that keeps its chips; the find bar says where you are and the index band points at the same hit.
+  * CLI: the command line is declared once through ocmdline, so the help and the parser agree; a --markdown output mode joins --json and --shortstat; context flags -A/-B/-C return whole messages around each hit, in json and markdown; the installed claude command teaches the same flags.
+  * Modules: the widget and harness layers publish as root-level Tcl modules (streamtree, streamdoc, tkdown, facetbar, leash, steward, tallyman, ocmdline, deadman), installed by every package.
+
+ -- Weiwu Zhang <a@colourful.land>  Thu, 17 Jul 2026 00:00:00 +0000
+
 questlog (1.1.5) unstable; urgency=medium
 
   * GUI: questlog runs on a host without the Tcl Thread package, searching on the single-threaded coroutine path and computing the cost pass on the main thread; a notice banner reports the mode, silenced by QUESTLOG_THREADS=0.

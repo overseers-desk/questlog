@@ -10,7 +10,7 @@
 
 package require Tcl 9
 
-set QUESTLOG_VERSION 1.1.5
+set QUESTLOG_VERSION 1.2.0
 set ROOT [file dirname [file normalize [info script]]]
 ::tcl::tm::path add [file join $ROOT modules]
 ::tcl::tm::path add [file join $ROOT vendor]

@@ -1,5 +1,5 @@
 Name:           questlog
-Version:        1.1.5
+Version:        1.2.0
 Release:        1%{?dist}
 Summary:        GUI for finding, reading, and reopening past Claude Code sessions
 License:        MIT
@@ -61,6 +61,12 @@ install -D -m 0644 assets/questlog-512.png \
 %{_datadir}/icons/hicolor/512x512/apps/questlog.png
 
 %changelog
+* Thu Jul 17 2026 Weiwu Zhang <a@colourful.land> - 1.2.0-1
+- Sessions list: the view filters move from the toolbar to the list's own strip as lenses (Running, Bookmarked, and a model checklist that excludes rather than chooses); an A/H multiplier column replaces H%; a Ctx% column shows how full a session sits if resumed; the first rows paint in under a second on a busy host
+- Session viewer: the transcript is a streaming document of foldable regions with Turns and Quotes index tabs; each assistant turn chipped with its model; tool results read as TOOL RESULT
+- CLI: the command line is declared once through ocmdline; a --markdown output mode joins --json and --shortstat; context flags -A/-B/-C return whole messages around each hit
+- Packaging: authored modules live under modules/, vendored copies under vendor/, installed by every package
+
 * Thu Jul 02 2026 Weiwu Zhang <a@colourful.land> - 1.1.5-1
 - GUI: questlog runs on a host without the Tcl Thread package, searching on the single-threaded coroutine path and computing the cost pass on the main thread; a notice banner reports the mode, silenced by QUESTLOG_THREADS=0
 
