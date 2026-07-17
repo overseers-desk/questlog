@@ -6,12 +6,13 @@ package require Tcl 9
 # recency bounds, the subtree scope, and the min-turns floor - is one
 # question with one answer, asked by both the model (Scan, when it decides
 # which memoised rows the snapshot admits) and the view (SessionList, when it
-# reconciles which rows stay shown). The cutoff computation and the subtree-scope predicate used to live in
-# both, so the model logic was mirrored into the view. These procs are that one
-# answer; Scan and SessionList call them rather than each carrying a copy. The
-# session-list view toggles (running_only, bookmarked_only) are a separate
-# question with a separate home, ::questlog::sessionlist: they shape which
-# in-scope rows the list shows, not which rows are in scope at all.
+# reconciles which rows stay shown). The cutoff computation and the
+# subtree-scope predicate used to live in both, so the model logic was mirrored
+# into the view. These procs are that one answer; Scan and SessionList call
+# them rather than each carrying a copy. The view filters (running, bookmarked,
+# model) are a separate question with a separate home, the list engine's
+# attribute filters: they shape which in-scope rows the list shows, not which
+# rows are in scope at all.
 #
 # A namespace of pure predicates, not a class: the snapshot is an immutable
 # dict the toolbar publishes and the row is a dict passed in, so there is no
@@ -63,7 +64,7 @@ proc ::questlog::scope::parse_since {spec} {
 
 # Epoch cutoff for a snapshot's since bound. 0 means no bound ("all", or the
 # default when the key is absent); since on-disk mtimes are always positive a 0
-# cutoff filters nothing. The one cutoff computation, consumed by row_matches
+# cutoff excludes nothing. The one cutoff computation, consumed by row_matches
 # here and by Scan's list_paths_for; both exclude a row when mtime <= cutoff, so
 # the abs/absdt branch returns epoch-1 to keep a session at exactly the chosen
 # instant (local midnight for a bare date, the named second for a datetime: mtime
@@ -81,14 +82,14 @@ proc ::questlog::scope::cutoff_for {snapshot} {
 }
 
 # Epoch ceiling for a snapshot's until (upper) bound, the mirror of cutoff_for.
-# "" means no ceiling - the until key absent, or "all" - so a "" return filters
+# "" means no ceiling - the until key absent, or "all" - so a "" return excludes
 # nothing. A row is excluded when its mtime is past the ceiling (mtime > ceiling),
 # so the ceiling is the last instant kept. A relative until is that instant ago; a
 # bare-date until covers the whole named day, so the abs branch returns the second
 # before the next local midnight (clock add ... 1 day is DST-safe, unlike a flat
 # +86400). A datetime until is the exact named instant, kept whole - no day
 # expansion - which is what brackets a precise window. Unlike cutoff_for there is no
-# config default: the upper bound is a CLI-only filter, absent by default rather
+# config default: the upper bound is a CLI-only scope bound, absent by default rather
 # than falling back to a configured one.
 proc ::questlog::scope::ceiling_for {snapshot} {
     set until [dict getdef $snapshot until ""]
@@ -205,11 +206,11 @@ proc ::questlog::scope::in_subtree_of {path subtree_list} {
 # a since/until window means exactly what it says, bookmarked or not, so a
 # CLI cost audit over a window is exact. The
 # min-turns floor drops a session whose recorded nturns is below the threshold
-# (default 1 = no filter). Both row builders record nturns - scan_one (browse,
+# (default 1 = no floor). Both row builders record nturns - scan_one (browse,
 # capped at turn_count_cap) and scan_file (search, the full count) - so the floor
 # scopes browse and search alike; a row that somehow lacks nturns defaults to the
-# threshold and passes. The session-list view toggles are applied separately, by
-# ::questlog::sessionlist::row_visible.
+# threshold and passes. The view filters are applied separately, by the list
+# engine's attribute filters.
 proc ::questlog::scope::row_matches {snapshot row} {
     if {[dict get $row mtime] <= [cutoff_for $snapshot]} { return 0 }
     set ceiling [ceiling_for $snapshot]

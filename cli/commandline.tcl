@@ -261,7 +261,7 @@ proc ::questlog::cli::commandline::check_count {flag value allow_all} {
     return ""
 }
 
-# Canonicalise (tilde-expanded, absolute) so the filter predicates compare
+# Canonicalise (tilde-expanded, absolute) so the scope predicates compare
 # against the form Claude records as a cwd; an inexpandible ~user fails loud
 # instead of matching nothing.
 proc ::questlog::cli::commandline::check_subtree {value} {

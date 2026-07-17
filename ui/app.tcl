@@ -49,7 +49,7 @@ namespace eval ::questlog::ui::app {
     variable SearchActive     ;# 1 while a search is in flight
     variable CostOutstanding  ;# cost jobs posted but not yet returned (the cost pass is live when > 0)
     variable PrevSnapshot     ;# the last published snapshot, to skip a rebuild on a no-op republish
-    variable LensSnapshot     ;# the strip's lens state, as the list last mirrored it back; the poll gathers membership for these lenses
+    variable FilterState      ;# the strip's filter state, as the list last handed it back; the poll gathers membership for these filters
 }
 
 proc ::questlog::ui::app::start {root {seed {}}} {
@@ -85,7 +85,7 @@ proc ::questlog::ui::app::start {root {seed {}}} {
     variable SearchActive
     variable CostOutstanding
     variable PrevSnapshot
-    variable LensSnapshot
+    variable FilterState
 
     set Root $root
     set StatusMode browse
@@ -99,9 +99,9 @@ proc ::questlog::ui::app::start {root {seed {}}} {
     set CostOutstanding 0
     # The first publish has nothing to diff against, so it always takes the heavy path.
     set PrevSnapshot {}
-    # No lens is on until the reader flips one on the strip, so the poll gathers
-    # no membership until the list mirrors a lens change back through on_lens_change.
-    set LensSnapshot {}
+    # No filter is on until the reader flips one on the strip, so the poll gathers
+    # no membership until the list hands a filter change back through on_filter_change.
+    set FilterState {}
     set StatusVar [scope_status]
     set Running [dict create]
     set CurrentQuery {}
@@ -197,7 +197,7 @@ proc ::questlog::ui::app::start {root {seed {}}} {
         [namespace code status_peek] \
         [namespace code status_unpeek] \
         [namespace code on_scope_folder] \
-        [namespace code on_lens_change]]
+        [namespace code on_filter_change]]
     pack $list_frame.s -side top -fill both -expand 1
     $PW add $list_frame -weight 58
 
@@ -397,65 +397,65 @@ proc ::questlog::ui::app::run_tick {} {
     variable RunTimer
     set Running [::questlog::ui::live::running_uuids]
     $SessionList reconcile_running $Running
-    # The same tick refreshes the membership the active lenses claim, so a session
+    # The same tick refreshes the membership the active filters claim, so a session
     # that starts running outside the search's window is counted (and named) within
     # one poll of starting, rather than staying silently absent.
-    refresh_lens_members
+    refresh_filter_members
     # Heartbeat backstop: if a done-signal is ever missed, the next tick settles
     # the spinner once the liveness flags have all cleared.
     update_spinner
     set RunTimer [after [::questlog::config::get running_poll_ms] [namespace code run_tick]]
 }
 
-# ---- what the active lenses hold, beyond what the search loaded ----------
+# ---- what the active filters hold, beyond what the search loaded ----------
 
-# The membership the active lenses claim, gathered outside the search and handed
+# The membership the active filters claim, gathered outside the search and handed
 # to the list, which counts it against the rows it did load and says the cut (see
-# the lens-cut section of ui/sessions.tcl). Running is free: the live registry
+# the filter-cut section of ui/sessions.tcl). Running is free: the live registry
 # knows every session running on this machine, whatever window the search ran
 # with. Bookmarked is the file's +x bit, so its membership is a stat sweep of the
-# corpus - cheap, but never on the lens's own path: it runs here, on the poll and
-# on a filter change, so toggling a lens stays an instant in-place re-filter and
-# the count lands a moment behind it. The model lens has no membership outside the
+# corpus - cheap, but never on the filter's own path: it runs here, on the poll and
+# on a filter change, so toggling a filter stays an instant in-place re-filter and
+# the count lands a moment behind it. The model filter has no membership outside the
 # loaded rows (a row's model is known only once its transcript is parsed), so
-# member_lenses leaves it out and the strip claims nothing for it.
+# member_filters leaves it out and the strip claims nothing for it.
 #
-# Each lens gathers its own set; lens_members reduces them to the membership the
-# lenses jointly claim, which with both on is the intersection - the sessions the
+# Each filter gathers its own set; filter_members reduces them to the membership the
+# filters jointly claim, which with both on is the intersection - the sessions the
 # list would show if the search had loaded them, and nothing else.
 #
-# Which lenses are on comes from LensSnapshot, the strip state the list mirrors
-# back through on_lens_change: the lenses are the strip's now, not the toolbar's,
+# Which filters are on comes from FilterState, the strip state the list hands
+# back through on_filter_change: the filters are the strip's now, not the toolbar's,
 # so the toolbar's published snapshot carries none of them.
-proc ::questlog::ui::app::refresh_lens_members {} {
+proc ::questlog::ui::app::refresh_filter_members {} {
     variable SessionList
-    variable LensSnapshot
+    variable FilterState
     set sets [list]
-    foreach lens [::questlog::sessionlist::member_lenses $LensSnapshot] {
-        switch -- $lens {
+    foreach f [::questlog::sessionlist::member_filters $FilterState] {
+        switch -- $f {
             running    { lappend sets [::questlog::ui::live::running_sessions] }
             bookmarked { lappend sets [bookmarked_members] }
         }
     }
-    $SessionList set_lens_members [::questlog::sessionlist::lens_members $sets]
+    $SessionList set_filter_members [::questlog::sessionlist::filter_members $sets]
 }
 
-# A strip lens moved. The list has already re-derived the view in place and
-# mirrored the new lens state into the snapshot it hands back here; remember it
-# so the poll gathers membership for the same lenses, then gather now so the
-# count lands with the toggle. No scope or search changed, so nothing re-scans.
-proc ::questlog::ui::app::on_lens_change {snapshot} {
-    variable LensSnapshot
-    set LensSnapshot $snapshot
-    refresh_lens_members
+# A strip filter moved. The list has already re-derived the view in place and
+# handed the new filter state back here; remember it so the poll gathers
+# membership for the same filters, then gather now so the count lands with the
+# toggle. No scope or search changed, so nothing re-scans.
+proc ::questlog::ui::app::on_filter_change {state} {
+    variable FilterState
+    set FilterState $state
+    refresh_filter_members
 }
 
 # Every bookmarked session on disk, uuid -> {path}: one glob per project folder
 # and one stat per session file. The +x bit is the bookmark, so this is the
-# Bookmarked lens's whole membership, window or no window.
+# Bookmarked filter's whole membership, window or no window.
 #
 # It opens nothing and resolves no folder. This runs on the filter fast path and
-# again on every poll tick while the lens is on, and a filter may not read a
+# again on every poll tick while the filter is on, and a filter may not read a
 # transcript - so no cwd is stamped here. The one or two members the banner
 # NAMES get their project out of the no-read resolver, and only then (member_name
 # in ui/sessions.tcl).
@@ -523,8 +523,8 @@ proc ::questlog::ui::app::on_filter {snapshot} {
     # A republish whose scope and search keys all match the last one changed
     # nothing that decides which sessions load, so the rebuild below would only
     # reproduce what is already shown. Skip it, keeping the list and its selection.
-    # The list-view lenses no longer come this way: they live on the list strip
-    # and re-filter the loaded rows in place, telling the app through on_lens_change.
+    # The list-view filters no longer come this way: they live on the list strip
+    # and re-filter the loaded rows in place, telling the app through on_filter_change.
     if {$PrevSnapshot ne {} && [scope_equal $PrevSnapshot $snapshot]} {
         set PrevSnapshot $snapshot
         return
@@ -547,8 +547,8 @@ proc ::questlog::ui::app::on_filter {snapshot} {
     # skips memoised paths, so without this the list stays empty whenever the
     # snapshot was previously seen (e.g. 24h to 7d) - then extend for
     # newly-windowed files. Model membership is the scope's question alone;
-    # the list-view toggles only decide which in-model rows paint
-    # (session_shown), so a scope change under running-only repopulates like
+    # the list-view filters only decide which in-model rows paint (the engine's
+    # attr_admits), so a scope change under running-only repopulates like
     # any other and untoggling shows the full corpus instantly. With criteria
     # active the list is built from matches, but the scan still runs so
     # Search has a corpus and lookup_session resolves rows.
@@ -587,9 +587,9 @@ proc ::questlog::ui::app::on_filter {snapshot} {
     refresh_status
     update_spinner
     set PrevSnapshot $snapshot
-    # A new scope or search loads a different set of rows, so what the lens is
-    # missing has changed even though the lens has not.
-    refresh_lens_members
+    # A new scope or search loads a different set of rows, so what the filter is
+    # missing has changed even though the filter has not.
+    refresh_filter_members
 }
 
 # ---- scan callbacks ----------------------------------------------------
@@ -778,9 +778,9 @@ proc ::questlog::ui::app::on_scan_done {scanned} {
     if {!$CriteriaActive} { set StatusMode browse }
     refresh_status
     update_spinner
-    # The loaded set is final, so recount what the lens is missing from it now,
+    # The loaded set is final, so recount what the filter is missing from it now,
     # rather than leave a mid-scan count standing until the next poll tick.
-    $SessionList refresh_lens_note
+    $SessionList refresh_filter_note
 }
 
 # ---- search callbacks --------------------------------------------------

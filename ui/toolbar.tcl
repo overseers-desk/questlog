@@ -29,7 +29,7 @@ package require facetbar
 #                    the corpus, not just the view - see lib/scope.tcl.
 #   cwd              launch cwd, constant after startup
 #
-# The session-list lenses (running, bookmarked, model) are not here: they live
+# The view filters (running, bookmarked, model) are not here: they live
 # on the list's own strip and re-filter the loaded rows in place, so no toolbar
 # key carries them - see ui/sessions.tcl.
 
@@ -216,7 +216,7 @@ oo::class create ::questlog::ui::Toolbar {
         # would read "2 active" on a bare launch where the user has chosen nothing.
         # Named out of -countables, they still hold their value and raise no count.
         $Bar configure -heading "Restrict to sessions that…" \
-            -raillabel "Add filter" -changecb [list [self] on_criteria] \
+            -raillabel "Add criterion" -changecb [list [self] on_criteria] \
             -delside left \
             -gaps [::questlog::ui::theme::crit_gaps] \
             -countables {subtree file pattern tool} \
@@ -250,7 +250,7 @@ oo::class create ::questlog::ui::Toolbar {
         bind $Restrict <Configure> [list [self] fit_now %h]
     }
 
-    # Relax one criterion, for the list's cut banner: the lens member it names was
+    # Relax one criterion, for the list's cut banner: the filter member it names was
     # left on disk by exactly this criterion, so dropping it is what brings the
     # session into the next load. `search` drops every content criterion, not the
     # search box alone - a file, tool or regex clause decides what loads just as

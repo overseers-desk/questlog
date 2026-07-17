@@ -1,9 +1,9 @@
 package require Tcl 9
 package require Tk
 
-# Glyphs for the status markers, and the model lens at rest. The single home
+# Glyphs for the status markers, and the model filter at rest. The single home
 # for each: the glyphs mark running and bookmarked rows in the list, and
-# MODEL_ANY is the word the model lens carries when no model is chosen (read by
+# MODEL_ANY is the word the model filter carries when no model is chosen (read by
 # the strip's model control below for its rest label).
 namespace eval ::questlog::ui {
     variable GLYPH_RUNNING  ●
@@ -114,13 +114,13 @@ oo::class create ::questlog::ui::SessionList {
     variable OnScanPath       ;# cb: path -> row (synchronous single-file scan)
     variable OnWiden          ;# cb: criterion -> relax it in the toolbar and republish
     variable OnScopeFolder    ;# cb: folder -> scope the toolbar search to that folder, or ""
-    variable OnLensChange     ;# cb: snapshot -> the app learns a strip lens changed, or ""
+    variable OnFilterChange   ;# cb: state -> the app learns a strip filter changed, or ""
     variable Snapshot
     variable CriteriaActive
     variable RunningSet       ;# dict uuid -> 1, replaced wholesale each tick
     variable PrevRunning      ;# the prior tick's running set, to redraw only the rows that flipped
-    variable LensMembers      ;# dict uuid -> {path ?cwd?}: what the active lenses jointly claim
-    variable LensNote         ;# the status line's lens clause, "" when no lens or no membership
+    variable FilterMembers    ;# dict uuid -> {path ?cwd?}: what the active filters jointly claim
+    variable FilterNote       ;# the status line's filter clause, "" when no filter or no membership
     variable CutMembers       ;# the members with no loaded row, as {path ?cwd? resolved} dicts
     variable CutReason        ;# the criterion that cut them: subtree|search|since|min_turns|""
     variable Pinned           ;# dict path -> 1: sessions the reader pulled in past the search
@@ -160,7 +160,7 @@ oo::class create ::questlog::ui::SessionList {
                  on_scan_path cancel_cb \
                  on_subagents on_subagent_cost \
                  {on_widen ""} {on_status_peek ""} {on_status_unpeek ""} \
-                 {on_scope_folder ""} {on_lens_change ""}} {
+                 {on_scope_folder ""} {on_filter_change ""}} {
         set Top $parent
         set ResolveFolder $resolve_cb
         set LookupSession $lookup_cb
@@ -178,7 +178,7 @@ oo::class create ::questlog::ui::SessionList {
         set OnStatusPeek $on_status_peek
         set OnStatusUnpeek $on_status_unpeek
         set OnScopeFolder $on_scope_folder
-        set OnLensChange $on_lens_change
+        set OnFilterChange $on_filter_change
         set PeekByTag [dict create]
         set StatusVar "Idle"
         set StatusBase ""
@@ -188,8 +188,8 @@ oo::class create ::questlog::ui::SessionList {
         set CriteriaActive 0
         set RunningSet [dict create]
         set PrevRunning [dict create]
-        set LensMembers [dict create]
-        set LensNote ""
+        set FilterMembers [dict create]
+        set FilterNote ""
         set CutMembers [list]
         set CutReason ""
         set Pinned [dict create]
@@ -218,13 +218,13 @@ oo::class create ::questlog::ui::SessionList {
                 ink   [::questlog::ui::theme::c ink]] \
             -resortdelay [::questlog::config::get resort_debounce_ms] \
             -motioncb {::questlog::ui::drag::motion %X %Y}
-        # The three list-view lenses declared to the engine, which renders the
+        # The three list-view filters declared to the engine, which renders the
         # running/bookmarked glyphs (subject-prefix, per-attribute tag attr-<id>)
         # and builds the strip filter controls. attr_value below answers running
         # from the live set, bookmarked from the row, model from the row label;
         # loaded_models provides the enum roster (hidden rows included). The
         # controls' colours ride LV.* styles so they sit on the strip band; the
-        # popover keeps the stock look off the strip. A change fires on_attr_filter.
+        # popover keeps the stock look off the strip. A change fires on_filter_change.
         my configure \
             -attrs [list \
                 [dict create id running label "running only" kind bool \
@@ -235,7 +235,7 @@ oo::class create ::questlog::ui::SessionList {
                     filterable 1 values [list [self] loaded_models]]] \
             -attrstyles [dict create \
                 check LV.TCheckbutton menu LV.TMenubutton popcheck "" popbtn ""] \
-            -attrfiltercb [list [self] on_attr_filter]
+            -attrfiltercb [list [self] on_filter_change]
         my reset_nodes
         my build
     }
@@ -372,8 +372,8 @@ oo::class create ::questlog::ui::SessionList {
         # The list strip: it sits between the status line and the body's
         # column-header strip, taking that strip's #ececec colour so it reads as
         # the top of the list. Packed before build_body so it lands above the
-        # header band. Expand-all acts on the list (packed left); the lenses that
-        # filter it (running, bookmarked, model) are the engine's own filter
+        # header band. Expand-all acts on the list (packed left); the filters
+        # (running, bookmarked, model) are the engine's own filter
         # controls, packed right. During the interim the toolbar still carries a
         # duplicate View row; a later stage removes it.
         ttk::frame $Top.lvt -style LVStrip.TFrame -padding {8 4}
@@ -607,33 +607,31 @@ oo::class create ::questlog::ui::SessionList {
         set TotalCost 0.0
         set StatusBase ""
         # The pinned sessions were pulled in past the old search; the new one has
-        # its own answer. The lens membership survives (it is gathered outside the
+        # its own answer. The filter membership survives (it is gathered outside the
         # search), but its cut cannot be recounted against a list that has not
         # been filled yet - the reconcile that follows the fill recounts it, so the
         # banner never flashes a cut that the new search does load.
         set Pinned [dict create]
-        my drop_lens_note
+        my drop_filter_note
         my refresh_status
     }
 
     method apply_filter {snapshot} {
         set Snapshot $snapshot
-        # The arriving snapshot is search and scope; the lenses are the engine's
-        # and ride along by mirror. Without the re-graft, a scope change would
-        # wipe the lens keys while the strip controls stayed pressed, and the
-        # rows the new scan inserts would ignore a lens the reader can see is on.
-        dict set Snapshot listview [my lens_mirror]
+        # The arriving snapshot is search and scope only; the engine owns the
+        # filters and holds them across the change, so a refill honours a filter
+        # still pressed on the strip with nothing here to re-graft.
         set CriteriaActive [::questlog::ui::any_criteria $snapshot]
         my clear
     }
 
     # The models the loaded rows carry: every distinct, non-empty model label in
-    # the list, hidden rows included, sorted so the lens does not reorder itself
-    # with the scan. Hidden rows count because a row the model lens is hiding is
-    # exactly the row whose entry must stay in the menu for the lens to be widened
+    # the list, hidden rows included, sorted so the filter does not reorder itself
+    # with the scan. Hidden rows count because a row the model filter is hiding is
+    # exactly the row whose entry must stay in the menu for the filter to be widened
     # back off it. A row whose cost pass has not landed yet has no label and is
-    # simply not named; row_visible keeps such a row visible under any lens, so it
-    # never disappears for want of an entry.
+    # simply not named; the model filter admits such a row (its value is absent),
+    # so it never disappears for want of an entry.
     method loaded_models {} {
         set seen [dict create]
         foreach path [my all_session_paths] {
@@ -650,13 +648,13 @@ oo::class create ::questlog::ui::SessionList {
     # ---- declarative-attribute hooks (the engine's filter and glyph facility) --
 
     # The value of a declared attribute on a node (engine hook). The engine reads
-    # every attribute only through here, so it filters and glyphs the three lenses
+    # every attribute only through here, so it filters and glyphs the three filters
     # without ever looking inside a payload. Only a session answers: a folder or a
     # subagent returns "" for all three, so a container is never glyphed and never
     # filtered (a bool absent shows and draws no mark, an enum empty always shows),
-    # exactly as the lenses only ever touch session rows.
+    # exactly as the filters only ever touch session rows.
     #   running    live iff the row's uuid is in the poll-derived running set.
-    #   bookmarked the row's +x bit (session_bookmarked), the same the lens reads.
+    #   bookmarked the row's +x bit (session_bookmarked), the same the filter reads.
     #   model      the row's model label, "" until the cost pass fills it.
     method attr_value {node id} {
         if {[my node_field $node kind] ne "session"} { return "" }
@@ -681,11 +679,6 @@ oo::class create ::questlog::ui::SessionList {
     # is never filtered. This is what the strip controls drive, and what
     # reconcile_running re-applies when the running set changes.
     method apply_attr_filters {} {
-        # Mirror the engine state before the rebuild, not after: render_skip
-        # reads the snapshot's lens keys to decide whether an emptied folder
-        # keeps its heading, and a rebuild over yesterday's mirror would leave a
-        # heading standing over rows this very change hides.
-        dict set Snapshot listview [my lens_mirror]
         set st [$Text cget -state]
         $Text configure -state normal
         foreach path [my all_session_paths] {
@@ -695,27 +688,14 @@ oo::class create ::questlog::ui::SessionList {
         my rebuild
     }
 
-    # The snapshot's listview sub-dict, read off the engine's filter state: the
-    # engine owns the lenses, and every holder of them derives from it. The
-    # snapshot carries this mirror so the list's view predicate, the lens counts
-    # and the lens note read the same lenses the strip controls show.
-    method lens_mirror {} {
-        set state [my attr_filter_all]
-        return [dict create \
-            running_only    [expr {[dict getdef $state running 0] ? 1 : 0}] \
-            bookmarked_only [expr {[dict getdef $state bookmarked 0] ? 1 : 0}] \
-            model_excluded  [dict getdef $state model {}]]
-    }
-
-    # A strip lens moved (engine hook -attrfiltercb): apply_attr_filters (fired from
-    # attr_filter_set just before this) has already re-derived the view and rebuilt.
-    # Re-mirror the engine's filter state into the snapshot, recount the lens note,
-    # and tell the app so it can gather the lens memberships. No disk: the loaded
+    # A strip filter moved (engine hook -attrfiltercb): apply_attr_filters (fired
+    # from attr_filter_set just before this) has already re-derived the view and
+    # rebuilt. Recount the filter note off the fresh engine state, and hand the
+    # state to the app so it can gather the filter memberships. No disk: the loaded
     # rows come from the cache and nothing here scans or searches.
-    method on_attr_filter {state} {
-        dict set Snapshot listview [my lens_mirror]
-        my refresh_lens_note
-        if {$OnLensChange ne ""} { {*}$OnLensChange $Snapshot }
+    method on_filter_change {state} {
+        my refresh_filter_note
+        if {$OnFilterChange ne ""} { {*}$OnFilterChange $state }
     }
 
     # ---- snapshot membership -----------------------------------------
@@ -727,23 +707,12 @@ oo::class create ::questlog::ui::SessionList {
         return [::questlog::scope::row_matches $Snapshot $row]
     }
 
-    # 1 iff a session is shown under the current snapshot: the view toggles
-    # decide (row_visible), with the running set passed through so
-    # running_only can keep live rows - never as a bypass around
-    # bookmarked_only, whose label promises bookmarks and nothing else. row
-    # may be "" (no cached row yet) -> treat as shown until the scan catches
-    # up.
-    method session_shown {path row} {
-        if {$row eq ""} { return 1 }
-        return [::questlog::sessionlist::row_visible $Snapshot $row $RunningSet]
-    }
-
     # ---- streaming inserts -------------------------------------------
 
     # Browse-mode row from Scan. Skipped when criteria are active (the result
-    # index is built from matches, not the scan stream). The view toggles do
-    # not gate the stream: every in-scope row enters the model with its
-    # hidden flag from session_shown, so a toggle only chooses what paints.
+    # index is built from matches, not the scan stream). The view filters do
+    # not gate the stream: every in-scope row enters the model, and the engine's
+    # attr_admits settles its hidden flag, so a filter only chooses what paints.
     method on_scan_row {row} {
         if {$CriteriaActive} return
         if {![my row_matches_snapshot $row]} return   ;# scope = model membership
@@ -752,11 +721,11 @@ oo::class create ::questlog::ui::SessionList {
         $Text configure -state normal
         my anchor_save
         my model_add_session $path $row
-        # The model holds every in-scope session; the toggles decide only whether it is
-        # drawn (model_add_session flagged it), so a later toggle hides/shows it in
+        # The model holds every in-scope session; the filters decide only whether it is
+        # drawn (model_add_session flagged it), so a later filter hides/shows it in
         # place without a re-scan.
         if {[my sflag $path hidden]} {
-            # It landed hidden under a lens, so its folder may now be a heading
+            # It landed hidden under a filter, so its folder may now be a heading
             # over nothing; the debounced rebuild settles that.
             my schedule_view_rebuild
         } elseif {[my folder_expanded [dict get $row folder]]} {
@@ -816,7 +785,7 @@ oo::class create ::questlog::ui::SessionList {
             my model_add_session $path $row
         }
         # Search folders are expanded, so render the session if it is visible
-        # and not yet drawn. A result a lens hides leaves its folder a heading
+        # and not yet drawn. A result a filter hides leaves its folder a heading
         # over nothing until the debounced rebuild re-derives the view.
         if {[my sflag $path hidden]} {
             my schedule_view_rebuild
@@ -896,12 +865,14 @@ oo::class create ::questlog::ui::SessionList {
             sub_total 0 children_listed 0 all_child_paths [list]]]
         dict set PathNode $path $sid
         my node_set $fid children [linsert [my node_field $fid children] end $sid]
-        # Whether the lenses admit this row is settled here, before the folder
-        # heading below is redrawn from it: a row added hidden and flagged after
-        # the fact is counted into a heading that then shows nothing under it, and
-        # the heading reads "(1)" over an empty folder. The model holds every
-        # in-scope session either way; the flag only decides what paints.
-        my node_set $sid hidden [expr {![my session_shown $path $row]}]
+        # Whether the filters admit this row is settled here by the engine, before
+        # the folder heading below is redrawn from it: a row added hidden and
+        # flagged after the fact is counted into a heading that then shows nothing
+        # under it, and the heading reads "(1)" over an empty folder. The model
+        # holds every in-scope session either way; the flag only decides what
+        # paints. attr_admits reads the node just created above, so the node is
+        # asked, never the scanner's cache.
+        my node_set $sid hidden [expr {![my attr_admits $sid]}]
 
         # Enumerate and trigger subagents' cost if there are any
         if {[dict getdef $row has_subagents 0]} {
@@ -2081,16 +2052,16 @@ oo::class create ::questlog::ui::SessionList {
         return $src
     }
 
-    # True while a lens is narrowing the view, so some loaded sessions may be
+    # True while a filter is narrowing the view, so some loaded sessions may be
     # hidden. When none is, the model count is exact and the per-session walk
-    # below is skipped. Every lens counts, the model lens included: it hides
+    # below is skipped. Every filter counts, the model filter included: it hides
     # loaded rows exactly as the other two do, and a folder whose rows it all
     # hides must not go on reporting them.
     method any_view_toggle {} {
-        return [expr {[llength [::questlog::sessionlist::active_lenses $Snapshot]] > 0}]
+        return [expr {[llength [::questlog::sessionlist::active_filters [my attr_filter_all]]] > 0}]
     }
 
-    # A row that arrives while a lens is on lands hidden, and the folder created
+    # A row that arrives while a filter is on lands hidden, and the folder created
     # for it draws a heading with nothing under it: rows stream in one at a time
     # (the scan, the search) and no step in that path re-derives the view, so the
     # heading stands over an empty folder claiming a size and a cost. rebuild is
@@ -2108,7 +2079,7 @@ oo::class create ::questlog::ui::SessionList {
         set ViewRebuildTimer ""
         if {![my any_view_toggle]} return
         my rebuild
-        my refresh_lens_note
+        my refresh_filter_note
     }
 
     # The number of a folder's sessions that are currently shown (not hidden by
@@ -2744,7 +2715,6 @@ oo::class create ::questlog::ui::SessionList {
     # missed tick self-corrects on the next.
     method reconcile_running {running} {
         set RunningSet $running
-        set running_only [::questlog::sessionlist::toggle $Snapshot running_only 0]
         # The subtree scope is hard, even for a running session: a live session in
         # another project must not surface under a folder scope. The recency bound
         # is the only thing a running session bypasses, not the folder scope.
@@ -2819,7 +2789,7 @@ oo::class create ::questlog::ui::SessionList {
                     && (($row ne "" && [my row_matches_snapshot $row]) || $is_running))}]
             }
             if {!$retained} { my forget_session $path; continue }
-            set now_hidden [expr {![my session_shown $path $row]}]
+            set now_hidden [expr {![my attr_admits [my sid $path]]}]
             if {$now_hidden != [my sflag $path hidden]} {
                 my sflagset $path hidden $now_hidden
                 dict set dirty [my sget $path folder] 1
@@ -2852,7 +2822,7 @@ oo::class create ::questlog::ui::SessionList {
             if {[my session_count] != $before} { my schedule_resort }
         }
         # A change in the running set changes the `running` attribute's value on
-        # the rows that flipped, so when the engine's running lens is on its
+        # the rows that flipped, so when the engine's running filter is on its
         # picture of the rows has gone stale: re-apply the attribute filters
         # against the fresh set, which re-lays the list. A session that stopped
         # while "running only" is on drops out; one that started shows. Gated on
@@ -2863,9 +2833,9 @@ oo::class create ::questlog::ui::SessionList {
             my apply_attr_filters
         }
         # The loaded set and the running set have both just settled, so this is
-        # where the lens's cut is recounted: every tick, and every filter change
+        # where the filter's cut is recounted: every tick, and every filter change
         # that routes through here.
-        my refresh_lens_note
+        my refresh_filter_note
         my check_invariant reconcile_running
     }
 
@@ -3049,52 +3019,61 @@ oo::class create ::questlog::ui::SessionList {
         if {$m eq ""} { $Text yview moveto 0 } else { catch {$Text yview $m} }
     }
 
-    # ---- the lens cut ------------------------------------------------
+    # ---- the filter cut ----------------------------------------------
     #
-    # A lens shows a subset of the rows the SEARCH loaded, so a session that
-    # genuinely belongs to the lens but that the search never read is invisible.
+    # A filter shows a subset of the rows the SEARCH loaded, so a session that
+    # genuinely belongs to the filter but that the search never read is invisible.
     # Running is the case that bites: a session burning tokens right now, outside
     # the time window, is not in the list, and an unqualified "1 session" tells
-    # the reader nothing else is running. The cure is not to let the lens read
+    # the reader nothing else is running. The cure is not to let the filter read
     # disk (that would make it a search, and a search drops the selection): it is
-    # to count what the lens is missing and say so, and to let the reader ask for
+    # to count what the filter is missing and say so, and to let the reader ask for
     # the missing session by name.
     #
     # The membership comes from outside the search and is pushed in by the poll
-    # (set_lens_members): the live registry for Running, which knows every session
+    # (set_filter_members): the live registry for Running, which knows every session
     # running on this machine whatever the window was, and a bookmark sweep for
-    # Bookmarked. lens_counts does the arithmetic; the status line says the cut, and the
-    # banner names it and offers the two escapes.
+    # Bookmarked. filter_cut in lib/sessionlist.tcl does the arithmetic; the status
+    # line says the cut, and the banner names it and offers the two escapes.
 
-    # The membership the active lenses claim, uuid -> {path ?cwd?}, as the caller
-    # gathered it outside the search: with both lenses on it is the intersection of
+    # The membership the active filters claim, uuid -> {path ?cwd?}, as the caller
+    # gathered it outside the search: with both filters on it is the intersection of
     # the two sets, so every uuid here is a session the list would show. A running
     # member carries the cwd its process runs in, which the registry knows for
     # free; a bookmarked one carries none, because finding it would mean reading a
     # transcript on a path that must not (member_name resolves what it needs, when
-    # it needs it). Recounts the cut; the lenses themselves are not touched, so
+    # it needs it). Recounts the cut; the filters themselves are not touched, so
     # this can arrive on any tick without disturbing the view.
-    method set_lens_members {members} {
-        set LensMembers $members
-        my refresh_lens_note
+    method set_filter_members {members} {
+        set FilterMembers $members
+        my refresh_filter_note
     }
 
-    # Recount the active lenses against their membership: the status line's clause, the
-    # cut members the banner names, and the criterion it offers to relax. With no
-    # lens on, or none that has a membership (the model lens has none: a row's
-    # model is known only once its transcript is parsed), nothing is claimed.
-    method refresh_lens_note {} {
-        set lenses [::questlog::sessionlist::member_lenses $Snapshot]
-        if {![llength $lenses] || ![dict size $LensMembers]} { my drop_lens_note; return }
-        set rows [my loaded_rows]
-        set c [::questlog::sessionlist::lens_counts \
-                   $Snapshot $rows $LensMembers $RunningSet]
-        set LensNote "[my lens_phrase $lenses] · showing [dict get $c shown]\
-            of [dict get $c total]"
+    # Recount the active filters against their membership: the status line's clause,
+    # the cut members the banner names, and the criterion it offers to relax. With
+    # no filter on, or none that has a membership (the model filter has none: a
+    # row's model is known only once its transcript is parsed), nothing is claimed.
+    #
+    # `shown` is the loaded session nodes the engine admits, counted through the one
+    # evaluator (attr_admits) over the node store - what the list is holding and the
+    # filters admit, which is not the rows on screen (a folded folder's rows count
+    # and are not painted, and folding is the reader's own business). `total` is the
+    # membership size; the cut (filter_cut) is the members no loaded node carries.
+    method refresh_filter_note {} {
+        set state [my attr_filter_all]
+        set filters [::questlog::sessionlist::member_filters $state]
+        if {![llength $filters] || ![dict size $FilterMembers]} { my drop_filter_note; return }
+        set shown 0
+        set loaded [dict create]
+        foreach path [my all_session_paths] {
+            dict set loaded [my sget $path uuid] 1
+            if {[my attr_admits [my sid $path]]} { incr shown }
+        }
+        set FilterNote "[my filter_phrase $filters] · showing $shown\
+            of [dict size $FilterMembers]"
         set CutMembers [list]
-        foreach uuid [::questlog::sessionlist::lens_excluded \
-                          $Snapshot $rows $LensMembers] {
-            set m [dict get $LensMembers $uuid]
+        foreach uuid [::questlog::sessionlist::filter_cut $state $loaded $FilterMembers] {
+            set m [dict get $FilterMembers $uuid]
             dict set m resolved [my member_file $m]
             lappend CutMembers $m
         }
@@ -3103,57 +3082,32 @@ oo::class create ::questlog::ui::SessionList {
             # "criteria", not "search": the time window, the folder scope or the
             # min-turns floor can be what cut a member, and the banner's next
             # sentence names which one - so the clause must not claim the search did.
-            append LensNote " · [llength $CutMembers] outside your criteria"
+            append FilterNote " · [llength $CutMembers] outside your criteria"
             set CutReason [my cut_reason [lindex $CutMembers 0]]
         }
         my refresh_status
         my refresh_cut_banner
     }
 
-    method drop_lens_note {} {
-        set LensNote ""
+    method drop_filter_note {} {
+        set FilterNote ""
         set CutMembers [list]
         set CutReason ""
         my refresh_status
         my refresh_cut_banner
     }
 
-    # The lenses in words: "Running", "Bookmarked", or "Running and Bookmarked"
+    # The filters in words: "Running", "Bookmarked", or "Running and Bookmarked"
     # when both are on. The conjunction is the honest word for what is on screen -
-    # a row must be running AND bookmarked to pass both lenses - and it is what the
+    # a row must be running AND bookmarked to pass both filters - and it is what the
     # counts beside it are measured against: the membership is the intersection of
     # the two sets, so a running session that carries no bookmark is neither shown
-    # nor counted as something the search withheld. Naming one lens and dropping
+    # nor counted as something the search withheld. Naming one filter and dropping
     # the other would put a count from one sentence under the heading of another.
     # The status line takes the phrase as it stands and the banner lowercases it
-    # into the adjective on "session", so the two lines cannot name different lenses.
-    method lens_phrase {lenses} {
-        return [join [lmap lens $lenses {string totitle $lens}] " and "]
-    }
-
-    # The loaded rows as the lens predicate reads them. Built from the node store,
-    # not from the scanner's cache, so what is counted is what the list is holding:
-    # the status line's number is the rows the list holds and the lenses admit, not
-    # the rows on screen (lens_counts in lib/sessionlist.tcl says why, and a folded
-    # folder is the plain case - its rows count and are not painted).
-    #
-    # The paint asks the same predicate over a different row: session_shown reads
-    # the scanner's cached row, this reads the node. They hold the same answer
-    # except while a cost result is landing, because on_cost_result writes the
-    # model into the scanner's cache at once and into the node on the coalesced
-    # flush (ui/app.tcl; cost_coalesce_ms, 80ms by default). Inside that window a
-    # model lens hides a row the count still counts, the row carrying the label on
-    # one side and no label on the other. It closes on the flush, and the next
-    # recount agrees again.
-    method loaded_rows {} {
-        set rows [list]
-        foreach path [my all_session_paths] {
-            lappend rows [dict create \
-                uuid       [my sget $path uuid] \
-                model      [my sget $path model] \
-                bookmarked [my session_bookmarked $path]]
-        }
-        return $rows
+    # into the adjective on "session", so the two lines cannot name different filters.
+    method filter_phrase {filters} {
+        return [join [lmap f $filters {string totitle $f}] " and "]
     }
 
     # Which criterion left this member on disk, as the key the banner words and
@@ -3215,7 +3169,7 @@ oo::class create ::questlog::ui::SessionList {
 
     # A missing member's name for the banner. The registry carries the cwd of a
     # running session, so the project it runs in names it; a member the model
-    # happens to know (a bookmarked row loaded under another lens) is named by its
+    # happens to know (a bookmarked row loaded under another filter) is named by its
     # title; a member with neither - every member of the bookmark sweep, which
     # stamps no cwd - has its project folder resolved here. That resolution reads
     # no transcript (ResolveFolder is Scan's no-read resolver), and it happens for
@@ -3270,7 +3224,7 @@ oo::class create ::questlog::ui::SessionList {
         set n [llength $CutMembers]
         if {$n == 0} { pack forget $b; return }
         set noun [string tolower \
-            [my lens_phrase [::questlog::sessionlist::member_lenses $Snapshot]]]
+            [my filter_phrase [::questlog::sessionlist::member_filters [my attr_filter_all]]]]
         set it [expr {$n == 1 ? "it" : "them"}]
         set names [list]
         foreach m [lrange $CutMembers 0 1] { lappend names [my member_name $m] }
@@ -3347,9 +3301,9 @@ oo::class create ::questlog::ui::SessionList {
     # The escape that reads disk, and the only one here that does: load exactly the
     # sessions the search left behind, because the reader asked for them by name.
     # Each is scanned in (a single-file read), pinned so the next reconcile does
-    # not put it back out of scope, and drawn in its folder. The lens is not
+    # not put it back out of scope, and drawn in its folder. The filter is not
     # touched and needs no exemption: a running session admitted under the Running
-    # lens passes row_visible on its own.
+    # filter passes attr_admits on its own.
     method show_excluded {} {
         set added 0
         foreach m [my loadable_members] {
@@ -3367,10 +3321,10 @@ oo::class create ::questlog::ui::SessionList {
             set added 1
         }
         # rebuild is hidden-aware and owns its own widget state: it reseats every
-        # folder from the store, so the new row lands in its place under the lens
+        # folder from the store, so the new row lands in its place under the filter
         # rather than being appended past the list's end.
         if {$added} { my rebuild }
-        my refresh_lens_note
+        my refresh_filter_note
     }
 
     # Mark a folder open in the store without drawing it; the rebuild that follows
@@ -3405,9 +3359,9 @@ oo::class create ::questlog::ui::SessionList {
         } else {
             set StatusBase "Done. $total sessions, $matches matches."
         }
-        # The result set is final, so the lens's shown count is too: recount it
+        # The result set is final, so the filter's shown count is too: recount it
         # here rather than leave the status line a poll tick behind the answer.
-        my refresh_lens_note
+        my refresh_filter_note
     }
     method cancel {} {
         # Nothing in flight, nothing to cancel: leave the standing line alone. The
@@ -3430,14 +3384,14 @@ oo::class create ::questlog::ui::SessionList {
     }
 
     # Recompute the visible status string: what the list is doing, what the active
-    # lens is showing out of what it holds, and what it all cost. Each clause is
+    # filter is showing out of what it holds, and what it all cost. Each clause is
     # omitted when it has nothing to say - a zero total would read as a misleading
-    # "$0.00" aggregate, and a list under no lens is showing everything it loaded -
+    # "$0.00" aggregate, and a list under no filter is showing everything it loaded -
     # so the bullets only ever separate clauses that are there.
     method refresh_status {} {
         set parts [list]
         if {$StatusBase ne ""} { lappend parts $StatusBase }
-        if {$LensNote ne ""}   { lappend parts $LensNote }
+        if {$FilterNote ne ""} { lappend parts $FilterNote }
         if {$TotalCost > 0} {
             # While a search is still landing, the total is provisional: mark it
             # "and counting…" so a mid-flight figure does not read as the final

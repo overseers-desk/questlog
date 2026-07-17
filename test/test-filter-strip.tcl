@@ -1,21 +1,21 @@
 #!/usr/bin/env wish9.0
-# The list-view lenses as the engine's own filter controls, packed onto the list
+# The list-view filters as the engine's own filter controls, packed onto the list
 # strip beside "expand all". Running and bookmarked are glyphed bools, model is an
 # excluded-set enum; each is a control the StreamTree attribute facility builds
 # into the strip and drives through attr_filter_set / -attrfiltercb. Toggling one
-# hides or shows rows in place - no scan, no search, the selection preserved - and
-# the change mirrors into the snapshot's listview sub-dict so the lens note and the
-# folder counts read the same lenses.
+# hides or shows rows in place - no scan, no search, the selection preserved. The
+# engine owns the one filter state, and the filter note and the folder counts read
+# it back through attr_filter_all, not a copy.
 #
-# Invariant under test: a lens click reaches no disk (the scan sees no new
-# scan_path), hides/shows loaded rows by the excluded-set rules row_visible uses,
-# and keeps a path-keyed selection across the hide and the show.
+# Invariant under test: a filter click reaches no disk (the scan sees no new
+# scan_path), hides/shows loaded rows by the engine's excluded-set rules
+# (attr_admits), and keeps a path-keyed selection across the hide and the show.
 
 package require Tcl 9
 package require Tk
 
-set SAND [file join [pwd] _lensstrip_sandbox]
-set FOLDER "-tmp-lensstrip-proj"
+set SAND [file join [pwd] _filterstrip_sandbox]
+set FOLDER "-tmp-filterstrip-proj"
 
 set ROOT [file dirname [file dirname [file normalize [info script]]]]
 ::tcl::tm::path add $ROOT
@@ -58,7 +58,7 @@ file mtime $Cp [clock scan "2026-05-22 09:01:00" -gmt 1]
 # Bookmark B (the +x bit is what scan reads as `bookmarked`).
 ::questlog::path::set_bookmark $Bp
 
-# Count scan_path calls: a lens click must add none.
+# Count scan_path calls: a filter click must add none.
 set ::scan_path_calls 0
 set SL ""
 set ::Scan [::questlog::Scan new [list apply {{r} { $::SL on_scan_row $r }}] noop]
@@ -84,9 +84,9 @@ proc check {name got want} {
 }
 
 # --- 1. Load all three; expand the folder.
-$SL apply_filter [dict create since all min_turns 2 listview [dict create]]
+$SL apply_filter [dict create since all min_turns 2]
 set ::scan_done 0
-$::Scan extend [dict create since all min_turns 2 listview [dict create]]
+$::Scan extend [dict create since all min_turns 2]
 after 300 [list set ::scan_done 1]
 vwait ::scan_done
 $SL toggle_folder $FOLDER
@@ -94,13 +94,13 @@ update
 
 # The cost second pass is not wired in this harness; land the model labels the way
 # it would, on both the node (refresh_cost) and the scanner cache (update_cost),
-# so the model lens has a roster and row_visible can read each row's model.
+# so the model filter has a roster and the engine can read each row's model.
 foreach {p m} [list $Ap {Sonnet} $Bp {Opus} $Cp {Sonnet}] {
     $SL refresh_cost $p [dict create cost_usd 0.01 model $m]
     $::Scan update_cost $p [dict create cost_usd 0.01 model $m]
 }
 update
-check "all three rendered before any lens" \
+check "all three rendered before any filter" \
     [list [$SL sflag $Ap rendered] [$SL sflag $Bp rendered] [$SL sflag $Cp rendered]] {1 1 1}
 
 # --- 1b. The status glyphs are engine-rendered attribute prefixes now (the
@@ -130,9 +130,9 @@ check "model control exists on the strip"       1 [winfo exists .s.lvt.attr_mode
 check "running control is right-aligned"    right [dict get [pack info .s.lvt.attr_running] -side]
 check "bookmarked control is right-aligned"  right [dict get [pack info .s.lvt.attr_bookmarked] -side]
 check "model control is right-aligned"       right [dict get [pack info .s.lvt.attr_model] -side]
-check "the two bool lenses are checkbuttons" {TCheckbutton TCheckbutton} \
+check "the two bool filters are checkbuttons" {TCheckbutton TCheckbutton} \
     [list [winfo class .s.lvt.attr_running] [winfo class .s.lvt.attr_bookmarked]]
-check "the model lens is a menubutton" TMenubutton [winfo class .s.lvt.attr_model]
+check "the model filter is a menubutton" TMenubutton [winfo class .s.lvt.attr_model]
 
 set base_scans $::scan_path_calls
 
@@ -140,37 +140,37 @@ set base_scans $::scan_path_calls
 $SL selection_set $Ap
 check "A is selected" [$SL is_selected $Ap] 1
 
-# --- 4. Running lens. Mark B running, then flip "running only": B stays, A and C
+# --- 4. Running filter. Mark B running, then flip "running only": B stays, A and C
 #        hide in place. The selection on the hidden A is retained (path-keyed).
 set Buuid [$SL sget $Bp uuid]
 $SL reconcile_running [dict create $Buuid $Bp]
 $SL attr_filter_set running 1
 update
-check "running lens keeps live B"      [$SL sflag $Bp rendered] 1
-check "running lens hides idle A"      [$SL sflag $Ap rendered] 0
-check "running lens hides idle C"      [$SL sflag $Cp rendered] 0
+check "running filter keeps live B"    [$SL sflag $Bp rendered] 1
+check "running filter hides idle A"    [$SL sflag $Ap rendered] 0
+check "running filter hides idle C"    [$SL sflag $Cp rendered] 0
 check "A stays in the model (hidden)"  [$SL has_session $Ap] 1
 check "A selection survives the hide"  [$SL is_selected $Ap] 1
-# The engine filter mirrored into the snapshot: any_view_toggle reads the snapshot
-# (not the engine), so it only reports a lens when the mirror landed.
-check "the lens mirrored into the snapshot" 1 [$SL any_view_toggle]
+# any_view_toggle reads the engine's filter state directly, so it reports a filter
+# the moment the strip sets one - no copy to land first.
+check "a filter is active" 1 [$SL any_view_toggle]
 $SL attr_filter_set running 0
 update
-check "clearing the lens clears the snapshot mirror" 0 [$SL any_view_toggle]
+check "clearing the filter reports none active" 0 [$SL any_view_toggle]
 check "clearing running brings A and C back" \
     [list [$SL sflag $Ap rendered] [$SL sflag $Cp rendered]] {1 1}
 check "A still selected after the show" [$SL is_selected $Ap] 1
 
-# --- 5. Bookmarked lens: only B (its +x bit is set) shows.
+# --- 5. Bookmarked filter: only B (its +x bit is set) shows.
 $SL attr_filter_set bookmarked 1
 update
-check "bookmarked lens keeps B"  [$SL sflag $Bp rendered] 1
-check "bookmarked lens hides A"  [$SL sflag $Ap rendered] 0
-check "bookmarked lens hides C"  [$SL sflag $Cp rendered] 0
+check "bookmarked filter keeps B"  [$SL sflag $Bp rendered] 1
+check "bookmarked filter hides A"  [$SL sflag $Ap rendered] 0
+check "bookmarked filter hides C"  [$SL sflag $Cp rendered] 0
 $SL attr_filter_set bookmarked 0
 update
 
-# --- 6. Model lens (excluded-set): shutting off Sonnet hides A and C, keeps Opus B.
+# --- 6. Model filter (excluded-set): shutting off Sonnet hides A and C, keeps Opus B.
 $SL attr_filter_set model [list Sonnet]
 update
 check "excluding Sonnet hides A"  [$SL sflag $Ap rendered] 0
@@ -197,18 +197,18 @@ check "select-all brings every row back" \
     [list [$SL sflag $Ap rendered] [$SL sflag $Bp rendered] [$SL sflag $Cp rendered]] {1 1 1}
 $SL close_enum_popover
 
-# --- 7. Not one lens click touched disk: the scan saw no new scan_path.
-check "no lens click ran a scan_path" $::scan_path_calls $base_scans
-check "A survived the whole lens sequence selected" [$SL is_selected $Ap] 1
+# --- 7. Not one filter click touched disk: the scan saw no new scan_path.
+check "no filter click ran a scan_path" $::scan_path_calls $base_scans
+check "A survived the whole filter sequence selected" [$SL is_selected $Ap] 1
 
-# --- 8. A lens survives a scope change. The toolbar's snapshot carries search
-#        and scope only; the lenses are the engine's and ride along by mirror.
-#        With bookmarked pressed, a scope change (apply_filter, clear, refill)
-#        must re-insert rows that still honour the lens, and the strip control
-#        must still read as pressed.
+# --- 8. A filter survives a scope change. The toolbar's snapshot carries search
+#        and scope only; the engine owns the filter and holds it across the change,
+#        with no copy to wipe. With bookmarked pressed, a scope change (apply_filter,
+#        clear, refill) must re-insert rows that still honour the filter, and the
+#        strip control must still read as pressed.
 $SL attr_filter_set bookmarked 1
 update
-check "bookmarked lens on: only B shows" \
+check "bookmarked filter on: only B shows" \
     [list [$SL sflag $Ap rendered] [$SL sflag $Bp rendered] [$SL sflag $Cp rendered]] {0 1 0}
 # Mirror the app's scope-switch sequence: replay the memoised rows the new
 # snapshot admits (the scan coroutine skips already-scanned paths), then extend
@@ -222,13 +222,10 @@ after 300 [list set ::scan_done 1]
 vwait ::scan_done
 $SL toggle_folder $FOLDER
 update
-check "the engine still holds the lens across the scope change" \
+check "the engine still holds the filter across the scope change" \
     [$SL attr_filter_get bookmarked] 1
-check "the refilled list still honours the lens" \
+check "the refilled list still honours the filter" \
     [list [$SL sflag $Ap rendered] [$SL sflag $Bp rendered] [$SL sflag $Cp rendered]] {0 1 0}
-set snapmirror [set [info object namespace $SL]::Snapshot]
-check "the snapshot mirror carries the lens the strip shows" \
-    [::questlog::sessionlist::toggle $snapmirror bookmarked_only 0] 1
 $SL attr_filter_set bookmarked 0
 update
 

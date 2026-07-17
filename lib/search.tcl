@@ -121,7 +121,7 @@ proc ::questlog::search::parse_regions {spec} {
 # scope's region set, ANDed together; the regex patterns, the {op path} file
 # values and the {name key} tool values each become a leaf, ORed within their
 # kind, and those OR-groups AND with the terms. This is the GUI's existing
-# meaning - all terms, and one of each filled-in filter - expressed as one tree.
+# meaning - all terms, and one of each filled-in clause - expressed as one tree.
 # File pairs keep only a non-empty path, tool pairs a non-empty name; empty
 # entries are stripped.
 proc ::questlog::search::build_clauses {snapshot} {
@@ -196,7 +196,7 @@ proc ::questlog::search::tool_selector {selector} {
 }
 
 # clauses_any clauses - 1 iff there is at least one leaf clause. Used by the
-# matcher to early-exit when the user clears every filter. A region set rides on
+# matcher to early-exit when the user clears every clause. A region set rides on
 # each keyword leaf and is never a clause of its own.
 proc ::questlog::search::clauses_any {clauses} {
     return [expr {[llength [dict get $clauses leaves]] > 0}]
@@ -253,7 +253,7 @@ set ::questlog::search::WorkerScript {
 # value matches a use of the named tool whose invocation text contains the key
 # (empty key = any use).
 #
-# Per file: pre-filter each raw line by any leaf's literal (the needle for a
+# Per file: pre-gate each raw line by any leaf's literal (the needle for a
 # keyword, the pattern run for regex, the path/key/name for a tool leaf) so the
 # JSON parse is skipped on lines that cannot contribute; on a candidate line,
 # parse once and score each leaf via leaf_record_hit, marking leaves satisfied
@@ -298,9 +298,9 @@ oo::class create ::questlog::Search {
     }
 
     # 1 iff a matched row passes the snapshot's row-level SCOPE - the full
-    # filter::row_matches predicate (subtree scope plus the min-turns floor;
+    # scope::row_matches predicate (subtree scope plus the min-turns floor;
     # since/until are already pruned by list_paths_for, and row_matches re-checks
-    # them harmlessly). subtree is the scope filter
+    # them harmlessly). subtree is the scope bound
     # list_paths_for cannot fully pre-prune: since/until are mtime bounds it
     # already applies, but subtree membership is a per-row question. The GUI
     # search corpus once skipped this, so a subtree-scoped search
@@ -402,7 +402,7 @@ oo::class create ::questlog::Search {
         foreach path $paths {
             if {$my_epoch != $Epoch} return
             # The shared per-file scanner; the tick yields mid-file so a cancel
-            # (a fresh Enter or filter change) lands without finishing a big log.
+            # (a fresh Enter or criteria change) lands without finishing a big log.
             # An error inside (one hostile file) is confined to that file: it
             # logs, counts as unmatched, and the search still completes.
             if {[catch {::questlog::match::scan_file $path $clauses $tick $yl} r]} {

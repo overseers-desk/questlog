@@ -1,11 +1,11 @@
 #!/usr/bin/env wish9.0
-# The lens cut: what an active lens contains that the search never loaded.
+# The filter cut: what an active filter contains that the search never loaded.
 #
-# A lens filters loaded rows, so a session that belongs to the lens but that the
-# search left on disk is invisible - and a session RUNNING RIGHT NOW that the
+# A filter filters loaded rows, so a session that belongs to the filter but that
+# the search left on disk is invisible - and a session RUNNING RIGHT NOW that the
 # list does not show is the worst of it, because an unqualified "1 session" then
 # reads as "nothing else is running" while a process burns tokens. The cure is
-# not to let the lens read disk (that would make it a search and cost the
+# not to let the filter read disk (that would make it a search and cost the
 # selection): it is to count the omission, say it, and offer the way out.
 #
 # Two searches genuinely cut a running session, and both are exercised here:
@@ -16,24 +16,24 @@
 #
 # Under test, on a real SessionList over a sandbox corpus:
 #   1. the strip narrates the cut, from the membership the poll pushes in;
-#   2. an EMPTY list under a lens says the cut rather than nothing at all;
+#   2. an EMPTY list under a filter says the cut rather than nothing at all;
 #   3. the banner names the missing session and the criterion that excluded it;
 #   4. "show it" reads that one session in, pins it, and the cut closes;
 #   5. the pin survives the next reconcile, which would otherwise drop a row the
 #      scope does not admit;
 #   6. "widen" hands the blamed criterion back to the caller;
-#   7. the lens stays a pure UI operation: toggling it loads nothing;
+#   7. the filter stays a pure UI operation: toggling it loads nothing;
 #   8. a member no criterion excluded is worded as one, and not as a session with
 #      no file - the banner cannot deny a transcript it is offering to load.
 
 package require Tcl 9
 package require Tk
 
-set SAND [file join [pwd] _lenscut_sandbox]
-set FOLDER "-tmp-lenscut-proj"
-set OTHER  "-tmp-lenscut-other"
-set INSIDE  /tmp/lenscut/proj
-set OUTSIDE /tmp/lenscut/other
+set SAND [file join [pwd] _filtercut_sandbox]
+set FOLDER "-tmp-filtercut-proj"
+set OTHER  "-tmp-filtercut-other"
+set INSIDE  /tmp/filtercut/proj
+set OUTSIDE /tmp/filtercut/other
 
 set ROOT [file dirname [file dirname [file normalize [info script]]]]
 ::tcl::tm::path add $ROOT
@@ -127,16 +127,16 @@ $SL reconcile_running $LIVE
 update
 check "A loaded (inside the scope)"        [$SL has_session $Ap] 1
 check "B not loaded (outside the scope)"   [$SL has_session $Bp] 0
-check "no lens on: the strip claims nothing about one" [strip] ""
+check "no filter on: the strip claims nothing about one" [strip] ""
 
-# --- 2. The Running lens goes on and the poll pushes in the membership. The list
+# --- 2. The Running filter goes on and the poll pushes in the membership. The list
 #        is now EMPTY - A is not running, B was never loaded - and it must not
 #        stand there in silence.
 $SL attr_filter_set running 1
-$SL set_lens_members $MEMBERS
+$SL set_filter_members $MEMBERS
 settle
 check "A hidden (not running)"             [$SL sflag $Ap rendered] 0
-check "the lens itself loaded nothing"     [$SL has_session $Bp] 0
+check "the filter itself loaded nothing"   [$SL has_session $Bp] 0
 check "the strip counts the cut" \
     [strip] "Running · showing 0 of 1 · 1 outside your criteria"
 check "the banner names it and why" \
@@ -150,8 +150,8 @@ check "the banner offers to widen"         [.s.cut.widen cget -text] "Clear the 
 check "widen names the criterion that cut it" $::widened subtree
 
 # --- 4. Show it: the one disk read, because the reader asked for this session by
-#        name. It loads, and the Running lens paints it - it IS running - so the
-#        cut closes without the lens being touched.
+#        name. It loads, and the Running filter paints it - it IS running - so the
+#        cut closes without the filter being touched.
 .s.cut.show invoke
 settle
 check "show it loaded the session"         [$SL has_session $Bp] 1
@@ -166,13 +166,13 @@ settle
 check "the pinned session survives the reconcile" [$SL has_session $Bp] 1
 check "and is still painted"                      [$SL sflag $Bp rendered] 1
 
-# --- 6. A pure lens: switching it off loads nothing and drops nothing.
+# --- 6. A pure filter: switching it off loads nothing and drops nothing.
 set before [llength [$SL all_session_paths]]
 $SL attr_filter_set running 0
 settle
-check "toggling the lens off loads nothing" \
+check "toggling the filter off loads nothing" \
     [llength [$SL all_session_paths]] $before
-check "and the strip drops the lens clause"  [strip] ""
+check "and the strip drops the filter clause"  [strip] ""
 
 # --- 7. A content search cuts a running session too: with criteria active the
 #        matches decide what loads, and a live session with no hit is not among
@@ -183,7 +183,7 @@ $SL attr_filter_set running 1
 $SL add_session_matches [list [dict create path $Ap folder $FOLDER \
     btype user content a-first lineoff 0]]
 $SL reconcile_running $LIVE
-$SL set_lens_members $MEMBERS
+$SL set_filter_members $MEMBERS
 settle
 check "the search did not load the running session" [$SL has_session $Bp] 0
 check "the strip counts the search's cut" \
@@ -212,7 +212,7 @@ $SL apply_filter $OPEN
 $SL attr_filter_set running 0
 $SL attr_filter_set bookmarked 1
 $SL reconcile_running [dict create]
-$SL set_lens_members [dict create cccc [dict create path $Cp]]
+$SL set_filter_members [dict create cccc [dict create path $Cp]]
 settle
 check "the bookmarked session was not loaded" [$SL has_session $Cp] 0
 check "the banner blames no criterion, and does not deny the file" \

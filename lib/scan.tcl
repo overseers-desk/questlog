@@ -6,7 +6,7 @@ package require TclOO
 # Replaces the previous sqlite-cached design. Each launch builds the row
 # table fresh by line-streaming each jsonl with Tcl regex (no jq, no
 # subprocess). Within one process the table is memoised across recency-bound
-# changes: tightening the since bound filters in O(rows), widening it scans
+# changes: tightening the since bound narrows in O(rows), widening it scans
 # only the delta.
 #
 # Single-instance by current convention, not by structural constraint.
@@ -76,7 +76,7 @@ oo::class create ::questlog::Scan {
     variable Active       ;# 1 while a coroutine is running
     variable IsTyping     ;# cb -> 1 while the user is typing, or {} for never
     variable Kind         ;# dict: path -> {mtime kind}; memoised session origin
-                          ;# (cli|sdk), so the search corpus filter pays one head
+                          ;# (cli|sdk), so the search corpus gate pays one head
                           ;# read per file once, not on every query
 
     constructor {on_row on_done {on_progress {}} {is_typing {}}} {
@@ -218,7 +218,7 @@ oo::class create ::questlog::Scan {
         if {![file isdirectory $root]} { return [list] }
         set cutoff [::questlog::scope::cutoff_for $snapshot]
         set ceiling [::questlog::scope::ceiling_for $snapshot]
-        # `subtree` is the scan's root, not a post-filter: when it is set, walk
+        # `subtree` is the scan's root, not an after-the-fact cut: when it is set, walk
         # only the folders whose encoded name places them at or below a subtree
         # directory, so sessions outside the scope are never enumerated or opened.
         # The name test can over-include a hyphenated sibling (encode_cwd is
@@ -484,7 +484,7 @@ oo::class create ::questlog::Scan {
         if {$OnRow ne ""} { {*}$OnRow $row }
     }
 
-    # Filter rows by a snapshot. Used by the session list and Search to read
+    # Select the rows a snapshot admits. Used by the session list and Search to read
     # the current memoised view. The snapshot row-level predicate (the since
     # cutoff, the until ceiling, the subtree scope, the min-turns floor)
     # lives in ::questlog::scope, shared with SessionList. Returns a list of
@@ -611,7 +611,7 @@ oo::class create ::questlog::Scan {
 
     # Re-derive a row's bookmarked flag from disk truth after a toggle.
     # The +x bit is authoritative; this only refreshes the cached field so
-    # query/filter see it. The visible glyph is refreshed separately by
+    # the scope query and the view filter see it. The visible glyph is refreshed separately by
     # the session list (reconcile_one). Routed through Scan to keep Rows
     # mutation in one place (no caller pokes Rows directly).
     method set_bookmark_field {path} {

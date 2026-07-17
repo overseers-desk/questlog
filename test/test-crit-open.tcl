@@ -72,7 +72,7 @@ check "and the heading counts them, and only them, as three" \
 check "the standing window is still in force" 7d [dict get [$TB snapshot] since]
 check "and the turn floor is too" 2 [dict get [$TB snapshot] min_turns]
 
-# ---- the design's words on the folder row and the model lens ----------------
+# ---- the design's words on the folder row and the model filter ---------------
 
 $BAR expand
 update

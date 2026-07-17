@@ -27,7 +27,7 @@ namespace eval ::questlog::ui::live {
 # names a live session for a reader (the list's cut banner) without
 # opening its transcript.
 #
-# This is the Running lens's whole membership, and it owes nothing to the
+# This is the Running filter's whole membership, and it owes nothing to the
 # search: a session running right now is here whether or not the search's
 # window would have loaded its file.
 proc ::questlog::ui::live::running_sessions {} {

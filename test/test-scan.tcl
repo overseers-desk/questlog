@@ -101,8 +101,8 @@ check resolve_absent_dir "" [$s resolve_folder "-no-such-folder-xyz"]
 # ---- folder_cwd: the resolver that opens nothing ---------------------
 #
 # The UI is wired to folder_cwd, not to resolve_folder, and the whole line
-# between a filter and a search runs through the difference: a lens re-filters
-# rows already loaded, and the Bookmarked lens's sweep and the cut banner's names
+# between a filter and a search runs through the difference: a filter re-filters
+# rows already loaded, and the Bookmarked filter's sweep and the cut banner's names
 # ride on that path, so neither may open a transcript. resolve_folder does open
 # one (peek_folder_cwd), which is fine on the scan path and fatal on the filter
 # path.
@@ -245,13 +245,15 @@ set lp [$s2 list_paths_for [dict create since 7d]]
 check enum_bookmark_obeys_window 0 [expr {$bbb in $lp}]
 check enum_old_plain_dropped 0 [expr {$ccc in $lp}]
 
-# bookmarked_only is a view toggle, not a query filter: the scope query returns
-# every in-window row; row_visible keeps only the bookmarked one (bbb).
-set snapb [dict create since all listview [dict create bookmarked_only 1]]
-set qb [$s2 query $snapb]
-set visb 0
-foreach r $qb { if {[::questlog::sessionlist::row_visible $snapb $r]} { incr visb } }
-check row_visible_bookmarked_only 1 $visb
+# The Bookmarked filter is a view filter, not a query filter: the scope query
+# returns every in-window row regardless of the bookmark, and the +x bit the
+# filter reads rides on the row, not in the query. Exactly one in-window row (bbb)
+# carries it, so a bookmark-agnostic scope query still hands the filter what it
+# needs to keep just that one.
+set qb [$s2 query [dict create since all]]
+set bookmarked 0
+foreach r $qb { if {[dict getdef $r bookmarked 0]} { incr bookmarked } }
+check scope_query_is_bookmark_agnostic 1 $bookmarked
 
 $s2 destroy
 

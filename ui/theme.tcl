@@ -308,10 +308,10 @@ proc ::questlog::ui::theme::build_chrome {} {
     ttk::style map FacetToggle.TButton \
         -background [list active $panel pressed $panel] \
         -foreground [list active [c ink]]
-    # ---- the toolbar's view lenses ----------------------------------------
+    # ---- the toolbar's view filters ---------------------------------------
     # Running and Bookmarked: two latching toggles, drawn as abutting plates so
     # the pair reads as one control, and either or both can be down. A pressed
-    # lens is filled with the same blue the list paints a selected row with, so it
+    # filter is filled with the same blue the list paints a selected row with, so it
     # says what it is showing in the list's own colour. clam is a pure-Tk drawing
     # theme, so a Toolbutton honours the -background/-relief set here, unlike a
     # native theme.
@@ -335,7 +335,7 @@ proc ::questlog::ui::theme::build_chrome {} {
     ttk::style map LV.TButton \
         -background [list active [c strip] pressed [c strip]] \
         -foreground [list active [c ink] pressed [c ink]]
-    # The list-view lens controls share the strip surface with expand-all: the
+    # The list-view filter controls share the strip surface with expand-all: the
     # running / bookmarked checkbuttons and the model menubutton sit flat on the
     # #ececec band in the muted heading ink, brightening to full ink under the
     # pointer, so the strip reads as one row of controls rather than raised widgets.
@@ -356,7 +356,7 @@ proc ::questlog::ui::theme::build_chrome {} {
     ttk::style configure Notice.TLabel -background [c recap] \
         -foreground [c cost_mid] -padding {10 4}
     # ---- the list's cut banner ---------------------------------------------
-    # The strip above the list that names what the active lenses contain and the
+    # The strip above the list that names what the active filters contain and the
     # search never loaded (a session running right now, outside the window). It
     # takes the notice strip's cream and amber, because it says the same kind of
     # thing: the view is not the whole truth, and here is the remedy. The two

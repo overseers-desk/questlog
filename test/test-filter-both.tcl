@@ -1,52 +1,52 @@
 #!/usr/bin/env wish9.0
-# Both lenses at once: Running AND Bookmarked.
+# Both filters at once: Running AND Bookmarked.
 #
-# The two lenses latch independently, so a reader can press both, and the list
+# The two filters latch independently, so a reader can press both, and the list
 # then shows the rows that are running AND bookmarked - one set, the intersection
-# of two, not the union and not whichever lens was pressed last.
+# of two, not the union and not whichever filter was pressed last.
 #
-# The arithmetic behind the words has to move with it. A lens says what the
+# The arithmetic behind the words has to move with it. A filter says what the
 # SEARCH left on disk by counting its membership against the rows it loaded, and
-# the membership of two lenses is the intersection of their sets: a session that
+# the membership of two filters is the intersection of their sets: a session that
 # is running but carries no bookmark is not a session this view would show, so
 # the search did not withhold it and the banner may not count it. Over-counting
 # there is invisible - the strip reads plausibly either way - which is why the
 # corpus below holds one running session that is not bookmarked and one bookmark
 # that is not running, both outside the search, and neither may be counted.
 #
-# The model lens is here for what it may NOT say. It hides loaded rows like the
+# The model filter is here for what it may NOT say. It hides loaded rows like the
 # other two, but it has no membership outside the search - a row's model is known
 # only once its transcript is parsed, and a filter parses nothing - so it can name
 # no session the search left on disk. The words and the number must therefore both
-# come from the lenses that DO have one: with Running pressed and a model picked,
+# come from the filters that DO have one: with Running pressed and a model picked,
 # the strip and the banner name Running alone and count Running's membership. A
-# phrase built from every lens that is on would read "1 running and model session
+# phrase built from every filter that is on would read "1 running and model session
 # outside your criteria" over a number that only ever counted running ones, and claim
 # the model was checked against the disk. It cannot be.
 #
 # Under test, on a real SessionList over a sandbox corpus:
-#   1. the lenses compose: only the row that is both shows;
+#   1. the filters compose: only the row that is both shows;
 #   2. the membership is the intersection, so the cut is the intersection's;
-#   3. the strip and the banner say both lenses, not one of them;
-#   4. "show it" loads the cut member, which passes both lenses, and the cut
+#   3. the strip and the banner say both filters, not one of them;
+#   4. "show it" loads the cut member, which passes both filters, and the cut
 #      closes;
 #   5. a label shut off beside Running is named by neither line, and the count is
 #      Running's membership whether the exclusion spares the rows or hides them all;
-#   6. the model lens alone claims no cut, though it is hiding every row;
-#   7. a lens is a filter: pressing both and releasing them loads nothing, drops
-#      nothing and keeps the selection - even the selection of a row the lenses
-#      hide while they are on.
+#   6. the model filter alone claims no cut, though it is hiding every row;
+#   7. a filter is a pure view op: pressing both and releasing them loads nothing,
+#      drops nothing and keeps the selection - even the selection of a row the
+#      filters hide while they are on.
 
 package require Tcl 9
 package require Tk
 
-set SAND [file join [pwd] _lensboth_sandbox]
-set FOLDER "-tmp-lensboth-proj"
-set OTHER  "-tmp-lensboth-other"
-set THIRD  "-tmp-lensboth-third"
-set INSIDE  /tmp/lensboth/proj
-set OUTSIDE /tmp/lensboth/other
-set ELSEWHERE /tmp/lensboth/third
+set SAND [file join [pwd] _filterboth_sandbox]
+set FOLDER "-tmp-filterboth-proj"
+set OTHER  "-tmp-filterboth-other"
+set THIRD  "-tmp-filterboth-third"
+set INSIDE  /tmp/filterboth/proj
+set OUTSIDE /tmp/filterboth/other
+set ELSEWHERE /tmp/filterboth/third
 
 set ROOT [file dirname [file dirname [file normalize [info script]]]]
 ::tcl::tm::path add $ROOT
@@ -85,10 +85,10 @@ proc write_session {path cwd prompts ts} {
 # The corpus, and what each session is:
 #   A  bookmarked, not running     inside the scope, loaded
 #   B  running, not bookmarked     inside the scope, loaded
-#   C  running AND bookmarked      inside the scope, loaded - the row both lenses admit
+#   C  running AND bookmarked      inside the scope, loaded - the row both filters admit
 #   D  running AND bookmarked      another project: the folder scope cuts it
 #   E  running, not bookmarked     a third project: cut too, but no member of the
-#                                  pair of lenses, and so no part of what they claim
+#                                  pair of filters, and so no part of what they claim
 set Ap [file join $PROJDIR  aaaa.jsonl]
 set Bp [file join $PROJDIR  bbbb.jsonl]
 set Cp [file join $PROJDIR  cccc.jsonl]
@@ -127,7 +127,7 @@ proc banner {} {
 }
 proc settle {} { update; after 400; update }
 
-# What each lens knows outside the search: the live registry reports every session
+# What each filter knows outside the search: the live registry reports every session
 # running on this machine (uuid -> {path cwd}), the bookmark sweep every +x file
 # on disk (uuid -> {path}). Neither owes anything to the search's window.
 set RUN [dict create \
@@ -141,26 +141,26 @@ set BM [dict create \
     dddd [dict create path $Dp]]
 set LIVE [dict create bbbb $Bp cccc $Cp dddd $Dp eeee $Ep]
 
-# The poll's job, as app.tcl does it: gather a set for each lens that has one and
-# hand the list what they jointly claim. The lenses live in the engine, so read
-# which ones are on from the snapshot the engine mirrors, not from a snapshot the
-# caller builds. With both lenses on that is the intersection, which is the only
+# The poll's job, as app.tcl does it: gather a set for each filter that has one and
+# hand the list what they jointly claim. The filters live in the engine, so read
+# which ones are on from the engine's own filter state, not from a snapshot the
+# caller builds. With both filters on that is the intersection, which is the only
 # membership the counts may be measured against.
 proc push {} {
-    set snap [set [info object namespace $::SL]::Snapshot]
+    set state [$::SL attr_filter_all]
     set sets [list]
-    foreach lens [::questlog::sessionlist::member_lenses $snap] {
-        switch -- $lens {
+    foreach f [::questlog::sessionlist::member_filters $state] {
+        switch -- $f {
             running    { lappend sets $::RUN }
             bookmarked { lappend sets $::BM }
         }
     }
-    $::SL set_lens_members [::questlog::sessionlist::lens_members $sets]
+    $::SL set_filter_members [::questlog::sessionlist::filter_members $sets]
 }
 
-# The model lens excludes LABELS a loaded row carries, which is what the lens
+# The model filter excludes LABELS a loaded row carries, which is what the filter
 # checklist offers: every session in the corpus is written by one model, so
-# shutting off MODEL hides every row the other lenses admit, and shutting off
+# shutting off MODEL hides every row the other filters admit, and shutting off
 # OTHER_MODEL (a label no row here carries) hides none of them.
 set MODEL [::questlog::cost::model_label claude-3-5-sonnet-20241022]
 set OTHER_MODEL "Opus 4.8"
@@ -183,10 +183,10 @@ check "B loaded" [$SL has_session $Bp] 1
 check "C loaded" [$SL has_session $Cp] 1
 check "D not loaded (another project)" [$SL has_session $Dp] 0
 check "E not loaded (another project)" [$SL has_session $Ep] 0
-check "no lens on: the strip claims nothing about one" [strip] ""
+check "no filter on: the strip claims nothing about one" [strip] ""
 
 # The selection a filter must not cost the reader. A is bookmarked and not
-# running, so both lenses below will hide it: the hardest row to keep.
+# running, so both filters below will hide it: the hardest row to keep.
 $SL selection_set $Ap
 update
 check "A is selected" [$SL is_selected $Ap] 1
@@ -215,24 +215,24 @@ check "both: A hidden (not running)"     [$SL sflag $Ap rendered] 0
 check "both: B hidden (not bookmarked)"  [$SL sflag $Bp rendered] 0
 check "both: C shown (running and bookmarked)" [$SL sflag $Cp rendered] 1
 check "both: one row shows"              [$SL folder_visible_count $FOLDER] 1
-check "both: the strip counts the intersection, not either lens" \
+check "both: the strip counts the intersection, not either filter" \
     [strip] "Running and Bookmarked · showing 1 of 2 · 1 outside your criteria"
-check "both: the banner names the cut member and says both lenses" \
+check "both: the banner names the cut member and says both filters" \
     [banner] \
     "1 running and bookmarked session outside your criteria: $OUTSIDE.\
      The folder scope excluded it."
-check "both: the lenses loaded nothing" \
+check "both: the filters loaded nothing" \
     [llength [$SL all_session_paths]] $loaded_before
-check "both: the selection survives a lens that hides its row" \
+check "both: the selection survives a filter that hides its row" \
     [$SL is_selected $Ap] 1
 
 # --- 4. Show it: the reader asked for the cut member by name, so it is read in.
-#        It is running and bookmarked, so both lenses paint it and the cut closes
-#        without either lens being touched.
+#        It is running and bookmarked, so both filters paint it and the cut closes
+#        without either filter being touched.
 .s.cut.show invoke
 settle
 check "show it loaded the cut member"  [$SL has_session $Dp] 1
-check "and both lenses paint it"       [$SL sflag $Dp rendered] 1
+check "and both filters paint it"       [$SL sflag $Dp rendered] 1
 check "the strip has nothing left to report" \
     [strip] "Running and Bookmarked · showing 2 of 2"
 check "the banner is gone"             [winfo manager .s.cut] ""
@@ -240,7 +240,7 @@ check "and the running session that carries no bookmark was never pulled in" \
     [$SL has_session $Ep] 0
 
 # --- 5. Releasing Bookmarked leaves Running pressed, and the count returns to the
-#        running membership alone: the two lenses are independent, and the strip
+#        running membership alone: the two filters are independent, and the strip
 #        re-derives what it is speaking for rather than remembering it.
 $SL attr_filter_set bookmarked 0
 push
@@ -249,13 +249,13 @@ check "Running alone again: B shows"  [$SL sflag $Bp rendered] 1
 check "Running alone again: the strip counts running sessions" \
     [strip] "Running · showing 3 of 4 · 1 outside your criteria"
 
-# --- 6. A model shut off while Running is pressed. Two lenses are on, and the
+# --- 6. A model shut off while Running is pressed. Two filters are on, and the
 #        rows on screen answer to both - but only one of them can say what the
 #        search left on disk, so only one of them may be named beside a number.
-#        The model lens is not it: E is a running session the search never read,
+#        The model filter is not it: E is a running session the search never read,
 #        and nothing knows what model E ran without opening it.
 #
-#        First shut off a label no loaded row carries, so the lens is on and
+#        First shut off a label no loaded row carries, so the filter is on and
 #        hides nothing: the lines must read exactly as with Running alone, above.
 #
 #        A row's model is the label the COST PASS put there: the worker parses the
@@ -265,7 +265,7 @@ check "Running alone again: the strip counts running sessions" \
 #        it for the count, which reads it with sget. ui/app.tcl makes both landings
 #        on a cost result - update_cost always, refresh_cost either in the same turn
 #        (cost_render immediate) or in the next coalesced flush. That is the only way
-#        a model ever reaches a row, and it is why the lens can claim no member it
+#        a model ever reaches a row, and it is why the filter can claim no member it
 #        has not already loaded. Run the pass over the loaded rows so they carry
 #        what the app's rows carry.
 foreach path [$SL all_session_paths] {
@@ -287,11 +287,11 @@ check "exclusion beside Running: the banner names Running alone" \
     "1 running session outside your criteria: $ELSEWHERE.\
      The folder scope excluded it."
 
-# Now shut off the label every loaded row carries, so the model lens hides every
-# row the Running lens admits. Only `showing` may move: it is the rows on
-# screen. The membership and the cut are Running's, and the model lens neither
+# Now shut off the label every loaded row carries, so the model filter hides every
+# row the Running filter admits. Only `showing` may move: it is the rows on
+# screen. The membership and the cut are Running's, and the model filter neither
 # adds a member nor takes one away - it never looked. A phrase drawn from every
-# active lens would now put "and model" over a 4 and a 1 that counted running
+# active filter would now put "and model" over a 4 and a 1 that counted running
 # sessions.
 $SL attr_filter_set model [list $MODEL]
 push
@@ -306,30 +306,30 @@ check "the carried label shut off: the cut is Running's, the banner says only ru
     [banner] \
     "1 running session outside your criteria: $ELSEWHERE.\
      The folder scope excluded it."
-check "the model lens loaded nothing" \
+check "the model filter loaded nothing" \
     [llength [$SL all_session_paths]] [expr {$loaded_before + 1}]
 
-# --- 7. The model lens alone. It is hiding every row in the list, so it is plainly
+# --- 7. The model filter alone. It is hiding every row in the list, so it is plainly
 #        working - and it still claims nothing: there is no set of "sessions that
-#        ran this model" to count the loaded rows against, and a lens with no
+#        ran this model" to count the loaded rows against, and a filter with no
 #        membership may not tell the reader the search cut one. No clause, no
 #        banner, no offer to load anything.
 $SL attr_filter_set running 0
 push
 settle
-check "the model lens alone hides every row" [$SL folder_visible_count $FOLDER] 0
-check "the model lens alone says nothing in the strip" [strip] ""
-check "the model lens alone raises no cut banner"      [banner] ""
+check "the model filter alone hides every row" [$SL folder_visible_count $FOLDER] 0
+check "the model filter alone says nothing in the strip" [strip] ""
+check "the model filter alone raises no cut banner"      [banner] ""
 
-# --- 8. Releasing both: every loaded row paints again, the strip drops the lens
+# --- 8. Releasing both: every loaded row paints again, the strip drops the filter
 #        clause, and the selection the reader made before any of this is still
-#        theirs. Nothing was loaded and nothing dropped by a lens the whole way.
+#        theirs. Nothing was loaded and nothing dropped by a filter the whole way.
 $SL attr_filter_set model [list]
 push
 settle
-check "no lens: A renders again"   [$SL sflag $Ap rendered] 1
-check "no lens: A still selected"  [$SL is_selected $Ap] 1
-check "no lens: the strip drops the lens clause" [strip] ""
+check "no filter: A renders again"   [$SL sflag $Ap rendered] 1
+check "no filter: A still selected"  [$SL is_selected $Ap] 1
+check "no filter: the strip drops the filter clause" [strip] ""
 check "the only session any of this loaded is the one the reader named" \
     [llength [$SL all_session_paths]] [expr {$loaded_before + 1}]
 

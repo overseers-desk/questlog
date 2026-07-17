@@ -89,9 +89,9 @@ proc rendered_order {} {
 }
 
 # --- 1. Stream the three folders in (running-only off). All three attached.
-$SL apply_filter [dict create since all listview [dict create running_only 0]]
+$SL apply_filter [dict create since all]
 set ::scan_done 0
-$::Scan extend [dict create since all listview [dict create running_only 0]]
+$::Scan extend [dict create since all]
 after 200 [list set ::scan_done 1]
 vwait ::scan_done
 update
@@ -99,7 +99,7 @@ check "three folders, in arrival order" [rendered_order] {-tmp-fd-p1 -tmp-fd-p2 
 check "P1 count = 1 viewable" [$SL folder_visible_count -tmp-fd-p1] 1
 check "P2 count = 1 viewable" [$SL folder_visible_count -tmp-fd-p2] 1
 
-# --- 2. Turn running-only ON. The engine holds the lens; the running poll settles
+# --- 2. Turn running-only ON. The engine holds the filter; the running poll settles
 #        the view each tick, so mark only P2's session running and let a poll pass:
 #        P1 and P3 have no running row and detach, P2 stays.
 $SL attr_filter_set running 1
@@ -119,10 +119,11 @@ check "all three drawn again"             [$SL folder_attached -tmp-fd-p1] 1
 check "order preserved across mass re-attach" [rendered_order] {-tmp-fd-p1 -tmp-fd-p2 -tmp-fd-p3}
 check "P2 count back to 1"                 [$SL folder_visible_count -tmp-fd-p2] 1
 
-# --- 4. A lens with no poll behind it detaches folders on the toggle alone.
+# --- 4. A filter with no poll behind it detaches folders on the toggle alone.
 #        Running rides the liveness reconcile; bookmarked has no such follow-up,
 #        so the toggle itself is the only chance to drop an emptied heading. The
-#        rebuild inside the toggle must therefore already see the new lens state.
+#        rebuild inside the toggle reads the engine's filter state directly, which
+#        attr_filter_set has already updated, so it sees the new state at once.
 $SL attr_filter_set bookmarked 1
 update
 check "bookmarked toggle alone detaches P1" [$SL folder_attached -tmp-fd-p1] 0
@@ -130,7 +131,7 @@ check "bookmarked toggle alone detaches P3" [$SL folder_attached -tmp-fd-p3] 0
 check "the bookmarked folder stays"         [$SL folder_attached -tmp-fd-p2] 1
 $SL attr_filter_set bookmarked 0
 update
-check "releasing the lens re-attaches all"  [rendered_order] {-tmp-fd-p1 -tmp-fd-p2 -tmp-fd-p3}
+check "releasing the filter re-attaches all"  [rendered_order] {-tmp-fd-p1 -tmp-fd-p2 -tmp-fd-p3}
 
 ::questlog::path::_real_file delete -force $SAND
 puts [expr {$fails ? "FAILED ($fails)" : "PASS"}]

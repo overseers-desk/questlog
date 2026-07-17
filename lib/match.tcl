@@ -243,7 +243,7 @@ proc ::questlog::match::eval_tree {node effsat} {
 # leaf_record_hit leaf rec nocase - the evidence one parsed record gives for one
 # leaf clause. Returns {sat hits}: sat is 1 iff the leaf matches somewhere in
 # this record, and hits is the list of {btype content} snippets it would
-# contribute. A keyword or regex leaf walks the record's content blocks filtered
+# contribute. A keyword or regex leaf walks the record's content blocks narrowed
 # by its region set (empty = anywhere); a tool leaf walks the record's tool_uses
 # - a file leaf by the op's tool set and a path tail, a tool leaf by name with
 # an empty or substring key. nocase governs keyword matching only; a regex
@@ -380,7 +380,7 @@ proc ::questlog::match::scan_file {path clauses {tick ""} {yield_lines 0}} {
     set tree   [dict get $clauses tree]
     set nocase [dict get $clauses nocase]
 
-    # Per-line pre-filter: a record is parsed only when its raw text could
+    # Per-line pre-gate: a record is parsed only when its raw text could
     # satisfy at least one leaf. The raw line is JSON-encoded, so only a
     # needle the encoder never alters - printable ASCII minus `"` and `\` -
     # can be soundly tested against it. A needle outside that class (a quote,
@@ -568,7 +568,7 @@ proc ::questlog::match::scan_file {path clauses {tick ""} {yield_lines 0}} {
     # The session qualifies when the boolean tree holds over the per-leaf
     # satisfaction, each leaf's raw sat XORed with its neg. A satisfied tree with
     # no buffered snippet (a purely negative query, no positive leaf to show)
-    # yields no matches, the same as a filter with no positive evidence today.
+    # yields no matches, the same as a clause with no positive evidence today.
     set effsat [dict create]
     for {set lid 0} {$lid < $nleaves} {incr lid} {
         dict set effsat $lid \

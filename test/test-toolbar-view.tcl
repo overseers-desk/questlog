@@ -1,10 +1,10 @@
 #!/usr/bin/env wish9.0
-# What the toolbar publishes now that the view lenses have moved to the list
+# What the toolbar publishes now that the view filters have moved to the list
 # strip. The toolbar owns the search and the scope (the Restrict box) and nothing
 # else: every control change publishes the whole snapshot, and that snapshot
-# carries the search and scope keys and no view-lens key at all. The lenses are
+# carries the search and scope keys and no view-filter key at all. The filters are
 # the list strip's, driven through the streamtree attribute controls and covered
-# in test-lens-strip; the toolbar never sees them.
+# in test-filter-strip; the toolbar never sees them.
 
 package require Tcl 9
 package require Tk
@@ -38,13 +38,13 @@ pack .tb -fill x
 set ::Published {}
 $TB subscribe [list apply {{snap} {set ::Published $snap}}]
 
-# ---- the publish contract: the search and scope keys, and no view-lens key -----
+# ---- the publish contract: the search and scope keys, and no view-filter key ----
 
 # The snapshot carries exactly the search and scope keys - what the toolbar owns.
-# The lenses (running/bookmarked/model) are the list strip's, so no listview key
+# The filters (running/bookmarked/model) are the list strip's, so no listview key
 # rides here for a reader to mistake for a scope or a search.
 set snap [$TB snapshot]
-check "the snapshot has no view-lens key" 0 [dict exists $snap listview]
+check "the snapshot has no view-filter key" 0 [dict exists $snap listview]
 check "it publishes the search key" 1 [dict exists $snap search]
 check "it publishes the scope keys" {1 1 1 1} \
     [list [dict exists $snap subtree] [dict exists $snap file] \
@@ -53,10 +53,10 @@ check "it publishes the scope keys" {1 1 1 1} \
 # ---- search and scope controls publish -----------------------------------------
 
 # The Aa toggle publishes with the case bit flipped; nothing else moves, and still
-# no view-lens key rides the publish.
+# no view-filter key rides the publish.
 .tb.search.aa invoke
 check "Aa toggle publishes search_case set" 1 [dict get $::Published search_case]
-check "and the publish still carries no view-lens key" 0 [dict exists $::Published listview]
+check "and the publish still carries no view-filter key" 0 [dict exists $::Published listview]
 .tb.search.aa invoke
 check "releasing Aa publishes search_case clear" 0 [dict get $::Published search_case]
 

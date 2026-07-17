@@ -76,9 +76,9 @@ proc check {name got want} {
 
 # --- 1. Load A and B only (running_only off); expand the folder. Both render.
 #        C is left on disk, deliberately not scanned in.
-$SL apply_filter [dict create since all min_turns 2 listview [dict create running_only 0]]
+$SL apply_filter [dict create since all min_turns 2]
 set ::scan_done 0
-$::Scan extend [dict create since all min_turns 2 listview [dict create running_only 0]]
+$::Scan extend [dict create since all min_turns 2]
 after 200 [list set ::scan_done 1]
 vwait ::scan_done
 $SL toggle_folder $FOLDER

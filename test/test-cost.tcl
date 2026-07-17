@@ -63,8 +63,8 @@ check "fmt_model single ver dated" [::questlog::cost::fmt_model claude-sonnet-5-
 check "fmt_model blank on empty" [::questlog::cost::fmt_model ""] ""
 check "fmt_model blank on unknown" [::questlog::cost::fmt_model unknown] ""
 
-# model_label is what the row (and so the Model column and the toolbar's model
-# lens) is keyed by: the fmt_model reading where there is one, the id itself
+# model_label is what the row (and so the Model column and the model
+# filter) is keyed by: the fmt_model reading where there is one, the id itself
 # where there is not, so a model questlog cannot price is still named and still
 # selectable. Only an empty id yields an empty label.
 check "model_label known id"     [::questlog::cost::model_label claude-opus-4-8] "Opus 4.8"

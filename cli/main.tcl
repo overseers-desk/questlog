@@ -221,7 +221,7 @@ proc ::questlog::cli::main::format_markdown {folders_dict} {
     return [join $out "\n"]
 }
 
-# Filter and cap a session's or subagent's matches, and under grep-style
+# Trim and cap a session's or subagent's matches, and under grep-style
 # context (before/after > 0) attach each match's window: the whole messages
 # around the hit, read back from the session file by physical line. A match
 # already carries its file path and physical line, so the window is read here at
@@ -339,7 +339,7 @@ proc ::questlog::cli::main::resolve_session {arg} {
 # until ceiling cleared, so a session revived after the ceiling (yet holding
 # pre-ceiling, in-window messages) is not pruned. The since floor and subtree scope
 # stay - a file with mtime <= floor holds no in-window message, so it is a safe,
-# tight prefilter. Pure, so a test can drive it.
+# tight pre-gate. Pure, so a test can drive it.
 proc ::questlog::cli::main::selection_snapshot_for {snapshot} {
     dict set snapshot until ""
     return $snapshot
@@ -355,7 +355,7 @@ proc ::questlog::cli::main::has_window_spend {cost_info} {
 
 # Answer the query on stdout. q is the neutral dict cli/commandline.tcl parsed
 # from the command line; its clause groups become the matcher's boolean tree and
-# its bounds ride outside as global filters.
+# its bounds ride outside as global scope bounds.
 proc ::questlog::cli::main::run {q} {
     variable ::ROOT
     if {![info exists ROOT]} {
@@ -383,8 +383,8 @@ proc ::questlog::cli::main::run {q} {
     }
 
     # 2. The row-level scope snapshot: since, until, subtree. These ride outside
-    # the boolean algebra as global filters. The CLI has no session-list view, so
-    # it carries none of the list-view toggles; row_matches applies scope only.
+    # the boolean algebra as global scope bounds. The CLI has no session-list view, so
+    # it carries no view filters; row_matches applies scope only.
     set snapshot [dict create \
         subtree [expr {$subtree eq "" ? {} : [list $subtree]}] \
         since $since \
@@ -392,7 +392,7 @@ proc ::questlog::cli::main::run {q} {
 
     # In accrued mode, cost is windowed by each message's timestamp, so file/row
     # SELECTION must not apply the until ceiling (a session revived after it can
-    # still hold in-window messages); the since floor is kept as a safe prefilter.
+    # still hold in-window messages); the since floor is kept as a safe pre-gate.
     # The window edges [acc_lo, acc_hi] come from the original bounds.
     if {$accrued} {
         set acc_lo [::questlog::scope::cutoff_for $snapshot]
@@ -439,7 +439,7 @@ proc ::questlog::cli::main::run {q} {
         lassign [::questlog::match::scan_file $path $clauses] row matches
         if {$row eq ""} continue
         
-        # Apply snapshot-level row filters (recency bound and subtree scope).
+        # Apply the snapshot's row scope (recency bound and subtree).
         # Stamp residence first: scan_file rows carry no folder_cwd, and the
         # subtree predicate reads it as the authority. A subagent's corpus
         # membership is its parent's (list_paths_for admits children with
@@ -452,7 +452,7 @@ proc ::questlog::cli::main::run {q} {
             continue
         }
 
-        # If filters are active, and no matches were found, this file doesn't pass
+        # If clauses are active, and no matches were found, this file does not pass
         if {[llength $matches] == 0 && [::questlog::search::clauses_any $clauses]} {
             continue
         }
@@ -489,7 +489,7 @@ proc ::questlog::cli::main::run {q} {
     dict for {parent_path group_data} $session_groups {
         set parent_row [dict get $group_data parent_row]
         if {$parent_row eq ""} {
-            # Parent session itself didn't match filters but subagent did; scan parent row
+            # Parent session itself matched no clause but a subagent did; scan parent row
             set parent_row [$scan scan_path $parent_path]
             if {$parent_row eq ""} continue
         }
