@@ -270,19 +270,23 @@ oo::class create steward::Harness {
         return $meta
     }
 
-    # call - first or standalone claude call. Returns a terminal code:
-    # 0 success, 1 hard failure, 2 external kill / stall / incomplete, 3
-    # deliberate budget kill (cost cap). The usage-window block (code 4) is
-    # consumed inside _with_recovery and never reaches here. Captures session_id
-    # from the stream; subsequent calls on the same harness reuse it via
-    # `resume`.
+    # call - run a fresh claude session. Returns a terminal code: 0 success,
+    # 1 hard failure, 2 external kill / stall / incomplete, 3 deliberate budget
+    # kill (cost cap). The usage-window block (code 4) is consumed inside
+    # _with_recovery and never reaches here. The session it started becomes the
+    # one `resume` continues.
     method call {stage log_file prompt args} {
         set rc [my _with_recovery call $stage $log_file $prompt {*}$args]
         # Capture session_id whenever the stream produced one (including an
         # incomplete or budget-killed run) so an interrupted call can still
-        # be resumed and the cost meter can find the transcript.
-        if {$SessionId eq ""} {
-            set SessionId [my _extract_session_id "${log_file}.json"]
+        # be resumed and the cost meter can find the transcript. Re-read it on
+        # every call: each call starts its own session, so a harness driven
+        # through a second call must resume THAT session, not the first. An
+        # extraction that finds nothing leaves the previous id standing, which
+        # is all a killed turn with no init event can offer.
+        set sid [my _extract_session_id "${log_file}.json"]
+        if {$sid ne ""} {
+            set SessionId $sid
         }
         return $rc
     }
