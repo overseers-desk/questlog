@@ -2,7 +2,7 @@
 
 ## Invariants
 
-- Shared Tk widget modules vendored from ../teatotal (streamtree, streamdoc, tkdown, ocmdline, leash, and any later ones) are copies, not forks: keep each synced to ../teatotal's latest, and land any widget-level change there first so this copy stays a pure copy (facetbar is questlog-local, not from teatotal).
+- A root-level .tm is either a copy vendored from ../teatotal or a module authored here, and the two carry opposite rules: a vendored copy is a pure copy, so keep it synced to ../teatotal's latest and land any change there first; an authored module has its home here, so changes land here, and where another project vendors it, re-vendor it there in the same act so the copies never diverge. Each module's header names its home; read it before editing.
 
 ## Verifying GUI changes
 
