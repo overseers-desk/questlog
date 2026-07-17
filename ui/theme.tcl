@@ -335,6 +335,20 @@ proc ::questlog::ui::theme::build_chrome {} {
     ttk::style map LV.TButton \
         -background [list active [c strip] pressed [c strip]] \
         -foreground [list active [c ink] pressed [c ink]]
+    # The list-view lens controls share the strip surface with expand-all: the
+    # running / bookmarked checkbuttons and the model menubutton sit flat on the
+    # #ececec band in the muted heading ink, brightening to full ink under the
+    # pointer, so the strip reads as one row of controls rather than raised widgets.
+    ttk::style configure LV.TCheckbutton -background [c strip] -foreground [c muted] \
+        -borderwidth 0 -padding {6 0} -focuscolor [c strip]
+    ttk::style map LV.TCheckbutton \
+        -background [list active [c strip] pressed [c strip]] \
+        -foreground [list active [c ink] pressed [c ink]]
+    ttk::style configure LV.TMenubutton -background [c strip] -foreground [c muted] \
+        -borderwidth 0 -padding {6 0} -relief flat
+    ttk::style map LV.TMenubutton \
+        -background [list active [c strip] pressed [c strip]] \
+        -foreground [list active [c ink] pressed [c ink]]
     # ---- notice banner ------------------------------------------------------
     # The top-of-window notice strip (e.g. running without the Thread package):
     # the warm recap cream with the amber ink already used for mid-range cost,

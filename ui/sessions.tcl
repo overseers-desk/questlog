@@ -111,6 +111,7 @@ oo::class create ::questlog::ui::SessionList {
     variable OnScanPath       ;# cb: path -> row (synchronous single-file scan)
     variable OnWiden          ;# cb: criterion -> relax it in the toolbar and republish
     variable OnScopeFolder    ;# cb: folder -> scope the toolbar search to that folder, or ""
+    variable OnLensChange     ;# cb: snapshot -> the app learns a strip lens changed, or ""
     variable Snapshot
     variable CriteriaActive
     variable RunningSet       ;# dict uuid -> 1, replaced wholesale each tick
@@ -156,7 +157,7 @@ oo::class create ::questlog::ui::SessionList {
                  on_scan_path cancel_cb \
                  on_subagents on_subagent_cost \
                  {on_widen ""} {on_status_peek ""} {on_status_unpeek ""} \
-                 {on_scope_folder ""}} {
+                 {on_scope_folder ""} {on_lens_change ""}} {
         set Top $parent
         set ResolveFolder $resolve_cb
         set LookupSession $lookup_cb
@@ -174,6 +175,7 @@ oo::class create ::questlog::ui::SessionList {
         set OnStatusPeek $on_status_peek
         set OnStatusUnpeek $on_status_unpeek
         set OnScopeFolder $on_scope_folder
+        set OnLensChange $on_lens_change
         set PeekByTag [dict create]
         set StatusVar "Idle"
         set StatusBase ""
@@ -213,6 +215,24 @@ oo::class create ::questlog::ui::SessionList {
                 ink   [::questlog::ui::theme::c ink]] \
             -resortdelay [::questlog::config::get resort_debounce_ms] \
             -motioncb {::questlog::ui::drag::motion %X %Y}
+        # The three list-view lenses declared to the engine, which renders the
+        # running/bookmarked glyphs (subject-prefix, per-attribute tag attr-<id>)
+        # and builds the strip filter controls. attr_value below answers running
+        # from the live set, bookmarked from the row, model from the row label;
+        # loaded_models provides the enum roster (hidden rows included). The
+        # controls' colours ride LV.* styles so they sit on the strip band; the
+        # popover keeps the stock look off the strip. A change fires on_attr_filter.
+        my configure \
+            -attrs [list \
+                [dict create id running label "running only" kind bool \
+                    glyph $::questlog::ui::GLYPH_RUNNING filterable 1] \
+                [dict create id bookmarked label "bookmarked only" kind bool \
+                    glyph $::questlog::ui::GLYPH_BOOKMARK filterable 1] \
+                [dict create id model label $::questlog::ui::MODEL_ANY kind enum \
+                    filterable 1 values [list [self] loaded_models]]] \
+            -attrstyles [dict create \
+                check LV.TCheckbutton menu LV.TMenubutton popcheck "" popbtn ""] \
+            -attrfiltercb [list [self] on_attr_filter]
         my reset_nodes
         my build
     }
@@ -349,14 +369,18 @@ oo::class create ::questlog::ui::SessionList {
         # The list strip: it sits between the status line and the body's
         # column-header strip, taking that strip's #ececec colour so it reads as
         # the top of the list. Packed before build_body so it lands above the
-        # header band. It carries the expand-all button, which acts on the list
-        # rather than filtering it; the lenses that do filter (running,
-        # bookmarked, model) are the toolbar's View row.
+        # header band. Expand-all acts on the list (packed left); the lenses that
+        # filter it (running, bookmarked, model) are the engine's own filter
+        # controls, packed right. During the interim the toolbar still carries a
+        # duplicate View row; a later stage removes it.
         ttk::frame $Top.lvt -style LVStrip.TFrame -padding {8 4}
         pack $Top.lvt -side top -fill x
         ttk::button $Top.lvt.expandall -text "expand all" -style LV.TButton \
             -takefocus 0 -command [list [self] expand_all_folders]
         pack $Top.lvt.expandall -side left
+        # The engine fills the strip with a control per filterable attribute,
+        # packed toward the right so they sit opposite expand-all.
+        my build_filters $Top.lvt right
 
         # The engine assembles the body (header text, list text, scrollbar, the
         # <Configure> relayout hook, the selection suppression and TailMark);
@@ -378,8 +402,12 @@ oo::class create ::questlog::ui::SessionList {
         $Text tag configure folderhead \
             -font QLList -foreground [::questlog::ui::theme::c folder] \
             -spacing1 14 -spacing3 3 -wrap none
-        $Text tag configure glyph-running  -foreground [::questlog::ui::theme::c glyph_running]
-        $Text tag configure glyph-bookmark -foreground [::questlog::ui::theme::c glyph_bookmark]
+        # The status glyphs are engine-rendered attribute prefixes now (running,
+        # bookmarked declared as glyphed bools); the engine tags each glyph
+        # attr-<id>, so these dress attr-running / attr-bookmarked in the same
+        # colours the hand-rolled glyph-running / glyph-bookmark tags used to.
+        $Text tag configure attr-running    -foreground [::questlog::ui::theme::c glyph_running]
+        $Text tag configure attr-bookmarked -foreground [::questlog::ui::theme::c glyph_bookmark]
         # Session header: one line, the block's "title" (like a search result
         # heading), indented under its folder. Rows are separated by the gap
         # above each and the bold title colour; no background band. The
@@ -623,6 +651,68 @@ oo::class create ::questlog::ui::SessionList {
 
     method set_query {terms nocase} {
         set Query [dict create terms $terms nocase $nocase]
+    }
+
+    # ---- declarative-attribute hooks (the engine's filter and glyph facility) --
+
+    # The value of a declared attribute on a node (engine hook). The engine reads
+    # every attribute only through here, so it filters and glyphs the three lenses
+    # without ever looking inside a payload. Only a session answers: a folder or a
+    # subagent returns "" for all three, so a container is never glyphed and never
+    # filtered (a bool absent shows and draws no mark, an enum empty always shows),
+    # exactly as the lenses only ever touch session rows.
+    #   running    live iff the row's uuid is in the poll-derived running set.
+    #   bookmarked the row's +x bit (session_bookmarked), the same the lens reads.
+    #   model      the row's model label, "" until the cost pass fills it.
+    method attr_value {node id} {
+        if {[my node_field $node kind] ne "session"} { return "" }
+        switch -- $id {
+            running    { return [expr {[dict exists $RunningSet [my node_pget $node uuid]] ? 1 : 0}] }
+            bookmarked { return [my session_bookmarked [my node_field $node key]] }
+            model      { return [my node_pget $node model ""] }
+            default    { return [my node_pget $node $id] }
+        }
+    }
+
+    # Apply the engine's active attribute filters to the list (engine method,
+    # overridden). The base walks each node through the hide/unhide primitives and
+    # keeps its own ledger; that cannot compose with this list's folder-drop
+    # rebuild, whose render_skip takes an emptied folder out of the view, because
+    # the base unhide would try to render a row back into a folder heading that is
+    # no longer drawn. So derive each session's hidden flag from attr_admits (the
+    # engine's live filter state) and rebuild instead: the rebuild is hidden-aware,
+    # drops and restores folders by their viewable count, and keeps the selection
+    # (path-keyed, re-applied on paint) and the scroll. Only sessions carry the
+    # attributes (attr_value answers "" for folders and subagents), so a container
+    # is never filtered. This is what the strip controls drive, and what
+    # reconcile_running re-applies when the running set changes.
+    method apply_attr_filters {} {
+        set st [$Text cget -state]
+        $Text configure -state normal
+        foreach path [my all_session_paths] {
+            my sflagset $path hidden [expr {![my attr_admits [my sid $path]]}]
+        }
+        $Text configure -state $st
+        my rebuild
+    }
+
+    # A strip lens moved (engine hook -attrfiltercb): apply_attr_filters (fired from
+    # attr_filter_set just before this) has already re-derived the view and rebuilt.
+    # Mirror the engine's filter state into the snapshot's listview sub-dict so the
+    # list's own view predicate, the lens counts and the lens note read the same
+    # lenses, then recount the lens note. No disk: the loaded rows come from the
+    # cache and nothing here scans or searches.
+    method on_attr_filter {state} {
+        set lv [dict getdef $Snapshot listview {}]
+        dict set lv running_only    [expr {[dict getdef $state running 0] ? 1 : 0}]
+        dict set lv bookmarked_only [expr {[dict getdef $state bookmarked 0] ? 1 : 0}]
+        dict set lv model_excluded  [dict getdef $state model {}]
+        dict set Snapshot listview $lv
+        my refresh_lens_note
+        # The app still learns of a lens change through the toolbar's publish while
+        # its View row stands; this fires only once a later stage wires the list's
+        # own lens-change callback, so it does not double-apply in the interim.
+        if {$OnLensChange ne ""} { {*}$OnLensChange $Snapshot }
     }
 
     # ---- snapshot membership -----------------------------------------
@@ -1698,8 +1788,6 @@ oo::class create ::questlog::ui::SessionList {
     method session_subject {node max} {
         set s [my node_payload $node]
         set path [my node_field $node key]
-        set running [dict exists $RunningSet [dict get $s uuid]]
-        set bk [my session_bookmarked $path]
         set slug [dict get $s slug]
         set count [dict get $s count]
         set subt  [dict get $s sub_total]
@@ -1722,26 +1810,20 @@ oo::class create ::questlog::ui::SessionList {
 
         set tags [list]
         set subj ""
-        # Every session title starts at the same x. The chevron and status
-        # glyphs (running circle, bookmark star) sit in a fixed left gutter, then
-        # a tab sends the slug to the title stop apply_column_tabs adds to the
-        # sessionhead tabs - the same column-tab mechanism the right-pinned
-        # metadata uses. Only present markers are drawn, so an empty gutter shows
-        # nothing and the title still lands on the stop. The chevron is the only
-        # marker click_on_chevron tests, so a plain gutter has no chevron tag and
-        # a click in it just opens the session.
+        # Every session title starts at the same x. The chevron sits in a fixed
+        # left gutter, then a tab sends the slug to the title stop apply_column_tabs
+        # adds to the sessionhead tabs - the same column-tab mechanism the
+        # right-pinned metadata uses. The running/bookmark status glyphs are no
+        # longer laid here: the engine prefixes them ahead of this subject (its
+        # attr-running / attr-bookmarked tags), so this method draws only the
+        # chevron and the title. Only a present chevron is drawn, so a plain gutter
+        # shows nothing and the title still lands on the stop. The chevron is the
+        # only marker click_on_chevron tests, so a plain gutter has no chevron tag
+        # and a click in it just opens the session.
         if {[dict get $s has_subagents]} {
             lappend tags [list chevron [string length $subj] 1]
             append subj [expr {[my node_field $node expanded] ? "▾" : "▸"}]
             append subj " "
-        }
-        if {$running} {
-            lappend tags [list glyph-running [string length $subj] 1]
-            append subj $::questlog::ui::GLYPH_RUNNING
-        }
-        if {$bk} {
-            lappend tags [list glyph-bookmark [string length $subj] 1]
-            append subj $::questlog::ui::GLYPH_BOOKMARK
         }
         append subj "\t"
         set title_off [string length $subj]
@@ -2236,13 +2318,6 @@ oo::class create ::questlog::ui::SessionList {
         # its subagents'.
         my sset $path model [dict getdef $s own_model ""]
         my sset $path context_pct [dict getdef $s own_context_pct ""]
-    }
-
-    method glyph_cell {running bookmarked} {
-        set s ""
-        if {$running}    { append s $::questlog::ui::GLYPH_RUNNING }
-        if {$bookmarked} { append s $::questlog::ui::GLYPH_BOOKMARK }
-        return $s
     }
 
     method tag_hits_in_range {start end snippet} {
@@ -2771,6 +2846,15 @@ oo::class create ::questlog::ui::SessionList {
             # non-default sort needs a re-render to reseat them.
             if {[my session_count] != $before} { my schedule_resort }
         }
+        # A change in the running set changes the `running` attribute's value on
+        # the rows that flipped, so when the engine's running lens is on its own
+        # hide ledger has gone stale: re-apply the attribute filters against the
+        # fresh set. The session_shown re-derivation above already settled the
+        # view; this keeps the engine's filter state authoritative for the next
+        # strip toggle (a session that stopped while "running only" is on stays
+        # gone, one that started shows). It is a near no-op when the flags already
+        # agree, and skipped entirely when the running lens is off.
+        if {[my attr_filter_get running]} { my apply_attr_filters }
         # The loaded set and the running set have both just settled, so this is
         # where the lens's cut is recounted: every tick, and every filter change
         # that routes through here.
