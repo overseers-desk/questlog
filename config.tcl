@@ -34,10 +34,10 @@ namespace eval ::questlog::config {
     # ---- browse scan -------------------------------------------------------
     # Files scanned per chunk before the coroutine yields to the event loop.
     # Larger = faster scan, coarser yielding (longer the UI can stall per chunk).
-    # A chunk is also the first-paint latency: rows stream into the list between
-    # chunks, so at ~13ms of scan_one per file, 20 puts the first rows on screen
-    # a quarter-second after the scan starts and bounds mid-scan input stalls
-    # near that. 200 held the window frozen and empty for the whole pass.
+    # Chunk size sets the first-paint latency too: rows stream into the list
+    # between chunks, so at the ~13ms of scan_one per file measured here, 20
+    # puts the first rows on screen a quarter-second after the scan starts and
+    # bounds mid-scan input stalls near that. 200 held the window frozen and empty for the whole pass.
     dict set Config scan_yield_files   20
     # Resume policy for the browse scan between chunks. timer = resume after
     # scan_resume_ms (steady progress); idle = resume only when the event loop
