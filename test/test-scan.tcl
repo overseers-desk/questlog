@@ -235,7 +235,7 @@ check bbb_bookmarked_flag 1 [dict get $bbb_row bookmarked]
 
 set q7 [$s2 query [dict create since 7d]]
 set paths7 [lmap r $q7 {dict get $r path}]
-# A bookmark is a session attribute (the bookmarked_only toggle reads it),
+# A bookmark is a session attribute (the bookmarked view filter reads it),
 # never a window exemption: an out-of-window bookmarked session leaves the
 # window's result exactly like a plain one.
 check query_bookmark_obeys_window 0 [expr {$bbb in $paths7}]

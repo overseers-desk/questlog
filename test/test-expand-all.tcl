@@ -77,9 +77,9 @@ proc check {name got want} {
 }
 
 # --- 1. Stream all rows in; folders arrive collapsed.
-$SL apply_filter [dict create since all listview [dict create]]
+$SL apply_filter [dict create since all]
 set ::scan_done 0
-$::Scan extend [dict create since all listview [dict create]]
+$::Scan extend [dict create since all]
 after 200 [list set ::scan_done 1]
 vwait ::scan_done
 update

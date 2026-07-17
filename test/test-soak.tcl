@@ -78,7 +78,7 @@ proc live_marks {} {
     return $n
 }
 
-set FILTER [dict create since all min_turns 2 listview [dict create running_only 0]]
+set FILTER [dict create since all min_turns 2]
 
 # Driver 1: streaming scan brings every session in.
 $SL apply_filter $FILTER

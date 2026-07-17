@@ -94,7 +94,7 @@ proc scan_now {snap} {
 }
 
 # --- 1. Seven-day scope: the folder streams in with session A only.
-set snap7 [dict create since 7d listview [dict create running_only 0]]
+set snap7 [dict create since 7d]
 $SL apply_filter $snap7
 scan_now $snap7
 check "folder present after 7-day scan" [$SL has_folder -tmp-rc-p1] 1
@@ -103,7 +103,7 @@ check "session B outside 7-day window" [$SL has_session $Bp] 0
 
 # --- 2. Switch to 30-day: clear + rescan. The clear must drop the folder index
 # alongside the node store, or extend's discovery of B crashes the coroutine.
-set snap30 [dict create since 30d listview [dict create running_only 0]]
+set snap30 [dict create since 30d]
 $SL apply_filter $snap30
 check "folder index reset on scope switch" [$SL has_folder -tmp-rc-p1] 0
 scan_now $snap30

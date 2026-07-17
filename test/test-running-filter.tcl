@@ -1,11 +1,11 @@
 #!/usr/bin/env wish9.0
-# running_only is a pure local filter: of the sessions already loaded in the
+# The running filter is purely local: of the sessions already loaded in the
 # view it shows the running ones and hides the rest, and it imports nothing
 # from the live registry. A running session that is NOT already in the model
 # must stay out of the list while the toggle is on - the toggle chooses what to
 # show, it does not pull sessions in from other projects.
 #
-# Invariant under test: under running_only, reconcile_running's add-loop does
+# Invariant under test: with it on, reconcile_running's add-loop does
 # not run, so a uuid in the running set whose session was never scanned is not
 # imported (and so no cost task is queued for it); a session already loaded is
 # shown iff it is running.

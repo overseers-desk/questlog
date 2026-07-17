@@ -2755,7 +2755,7 @@ oo::class create ::questlog::ui::SessionList {
                 my model_add_session $path $row
                 # Drawing is the dirty pass's job below: rebuild is
                 # hidden-aware and creates the folder heading, which this
-                # import cannot assume exists (under running_only a folder
+                # import cannot assume exists (under the running filter a folder
                 # whose every row is hidden has no heading in the buffer, and
                 # rendering into it dies on a bad text index).
                 if {![my sflag $path hidden]} {

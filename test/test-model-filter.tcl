@@ -122,7 +122,7 @@ check absent_label_cuts_nothing_a [admits $Ap] 1
 check absent_label_cuts_nothing_b [admits $Bp] 1
 $SL attr_filter_set model [list]
 
-# ---- composes with bookmarked_only: both clauses must admit the row ----------
+# ---- composes with the bookmarked filter: both clauses must admit the row ----
 # B is the only bookmarked row. With bookmarked on, A and C hide; add the model
 # cut and B hides too, so no row shows - the clauses AND.
 $SL attr_filter_set bookmarked 1
@@ -133,7 +133,7 @@ check bm_and_excluded_hides_b [admits $Bp] 0
 $SL attr_filter_set model [list]
 $SL attr_filter_set bookmarked 0
 
-# ---- composes with running_only: liveness and the exclusion both gate --------
+# ---- composes with the running filter: liveness and the exclusion both gate --
 # Mark A and B running. Running-only keeps both; excluding Sonnet then drops B,
 # and A (running, not excluded) stays. C is neither running nor excluded, but the
 # running filter alone already hides it.

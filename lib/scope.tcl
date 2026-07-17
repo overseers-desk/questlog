@@ -202,7 +202,7 @@ proc ::questlog::scope::in_subtree_of {path subtree_list} {
 
 # 1 iff a row is in a snapshot's row-level SCOPE: the since cutoff, the until
 # ceiling, the subtree scope, and the min-turns floor. A bookmark is a session
-# attribute the view toggles read (bookmarked_only), never a window exemption:
+# attribute the bookmarked view filter reads, never a window exemption:
 # a since/until window means exactly what it says, bookmarked or not, so a
 # CLI cost audit over a window is exact. The
 # min-turns floor drops a session whose recorded nturns is below the threshold

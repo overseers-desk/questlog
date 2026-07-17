@@ -1,5 +1,5 @@
 #!/usr/bin/env wish9.0
-# Reversible list-view toggles: a toggle (here bookmarked_only) hides or shows
+# Reversible list-view toggles: a filter (here bookmarked) hides or shows
 # rows in place without re-scanning, without dropping them from the model, and
 # without losing the selection.
 #
@@ -103,7 +103,7 @@ $SL selection_set $Ap
 update
 check "A is selected" [$SL is_selected $Ap] 1
 
-# --- 3. Toggle bookmarked_only on via the fast path. A hides in place but stays
+# --- 3. Turn the bookmarked filter on. A hides in place but stays
 #        in the model; B keeps rendering; the model total holds at 2 (so the
 #        toggle is reversible) while the viewable count drops to 1; A's selection
 #        is retained (path-keyed) though it is unpainted.
