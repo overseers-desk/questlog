@@ -66,6 +66,7 @@ install -D -m 0644 assets/questlog-512.png \
 - Session viewer: the transcript is a streaming document of foldable regions with Turns and Quotes index tabs; each assistant turn chipped with its model; tool results read as TOOL RESULT
 - CLI: the command line is declared once through ocmdline; a --markdown output mode joins --json and --shortstat; context flags -A/-B/-C return whole messages around each hit
 - Packaging: authored modules live under modules/, vendored copies under vendor/, installed by every package
+- GUI: the cost-worker thread resolves tallyman from modules/ and vendor/, matching the entry script's module path, so per-session cost and the A/H multiplier column populate from the first launch
 
 * Thu Jul 02 2026 Weiwu Zhang <a@colourful.land> - 1.1.5-1
 - GUI: questlog runs on a host without the Tcl Thread package, searching on the single-threaded coroutine path and computing the cost pass on the main thread; a notice banner reports the mode, silenced by QUESTLOG_THREADS=0

@@ -1239,7 +1239,8 @@ proc ::questlog::ui::app::init_cost_pool {} {
     # The worker runs parse_file, which delegates token parsing to the tallyman
     # module; the module search path is registered so cost.tcl's
     # `package require tallyman` resolves in the fresh worker interp.
-    set initcmd "::tcl::tm::path add [list $Root]
+    set initcmd "::tcl::tm::path add [list [file join $Root modules]]
+::tcl::tm::path add [list [file join $Root vendor]]
 source [list [file join $Root lib cost.tcl]]\n$CostWorkerScript"
     set CostPool [tpool::create \
         -minworkers [::questlog::config::get cost_workers_min] \
