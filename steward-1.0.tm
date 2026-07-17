@@ -17,27 +17,83 @@ package provide steward 1.0
 # A killed or truncated turn may still hold real work in its product,
 # and the caller validates that product.
 #
-# steward::Harness is a base class. A host subclass overrides only what
-# it needs:
+# DEPENDENCY. Besides Tcllib (json, json::write, logger), steward needs
+# `deadman` 1.0 or later on the module path: the process watchdog that
+# owns the child's pipe, stall clock, and group kill. deadman's home,
+# man page, and test suite are in the teatotal module shelf; vendor a
+# copy beside this file. `package require steward` fails without it.
+#
+# SYNOPSIS. Subclass, point the injections at your own services, drive:
+#
+#   oo::class create MyHarness {
+#       superclass steward::Harness
+#       method claude_bin {} { return /usr/local/bin/claude }
+#       method prompt_root {} { return /opt/myapp }   ;# see load_prompt
+#   }
+#   set h [MyHarness new $run_dir $log_dir]
+#   set rc [$h call build "$log_dir/build" "Write me a haiku."]
+#   if {$rc == 0} { set product [$h log_prefix] }
+#
+# CONSTRUCTOR {prompt_dir log_dir}.
+#   prompt_dir - the run's own directory. Two uses only: its file tail
+#                becomes the slug that names this harness's files, and
+#                an optional meta.env inside it tunes the watchdogs.
+#                Prompt TEMPLATES do not come from here (see prompt_root).
+#   log_dir    - where the product, transcript and ledger are written.
+#                Created if absent.
+#
+# DRIVE. `call stage log_file prompt ?args?` runs a fresh session;
+# `resume stage log_file prompt ?args?` continues the captured one (it
+# needs a prior call that reached a session id). Extra args are spliced
+# into the claude command line; a `--model X` pair among them overrides
+# the sonnet default. Both return the same code:
+#
+#   0  success; the product is written to $log_file
+#   1  hard failure (no claude binary, no result in the output)
+#   2  external kill, stall, or truncated turn - the product on disk may
+#      still hold real work, so validate it rather than discard it
+#   3  cost cap tripped; the run was killed deliberately
+#
+# A usage-limit block never reaches the caller: it is classified inside,
+# waited out, and retried.
+#
+# FILES per call, given `log_file`:
+#   $log_file           the product (the turn's result text)
+#   ${log_file}.json    the stream-json transcript
+#   ${log_file}.stderr  the child's stderr
+#   <log_dir>/<slug>-cost.jsonl   the ledger, one record per invocation,
+#                       summed by `cost_total`. The constructor TRUNCATES
+#                       this file, so one harness owns one slug's ledger.
+#
+# META.ENV, optional, in prompt_dir, lines of KEY=value:
+#   WORKER_COST_CAP_USD  dollar ceiling for one session (0 disables)
+#   STALL_TIMEOUT_SECS   silence before a stall kill (0 disables)
+#
+# INJECTIONS. A subclass overrides only what it needs:
 #
 #   log_service      - logger service for runtime output
 #                      (default: a cached `steward` service)
-#   prompt_root      - directory holding prompts/<name>.txt templates
-#                      (default: this module's own directory)
+#   prompt_root      - directory under which load_prompt resolves
+#                      prompts/<name>.txt. No template tree ships with
+#                      this module, so a subclass that calls load_prompt
+#                      overrides this; the default (the module's own
+#                      directory) suits only a caller that puts templates
+#                      beside it.
 #   claude_bin       - path to the claude CLI
 #                      (default: `claude`, resolved on PATH)
-#   session_cost_usd - USD spent so far by a session; feeds the cost cap
-#                      (default: 0.0, which leaves the cap dormant)
-#   permission_args  - the claude permission flags the session runs under
+#   session_cost_usd - USD spent so far by a session; feeds the cost cap.
+#                      Default 0.0, which reports no spend, so the cap
+#                      never trips until a subclass supplies real figures.
+#   permission_args  - the claude permission flags the session runs under.
+#                      The default suits unattended batch runs and grants
+#                      the session broad tool access; an interactive or
+#                      untrusted caller overrides it.
 #   recovery_posture / continuation_prompt - how an interrupted `call`
 #                      is re-issued after a usage-window reset
 #   after_resume / report_fix_failure - fix-loop hooks
 #
 # and supplies the validator and prompt-builder methods named in the
 # run_fix_loop contract (documented at that method).
-#
-# steward's only non-Tcllib dependency is deadman, the process watchdog
-# that owns the child's pipe, stall clock, and group kill.
 
 namespace eval steward {
     # The module's own directory, captured at load time: the default
@@ -639,24 +695,29 @@ oo::class create steward::Harness {
         return [join $parts {, }]
     }
 
-    # Parse "resets 3am (Australia/Brisbane)" → seconds to sleep.
+    # Parse "resets 3am (Australia/Brisbane)" → seconds to sleep. The zone
+    # is whatever the message states in parentheses; a message that names
+    # none is read in the system's own zone, which is the best available
+    # guess for where the caller is. An hour is the fallback whenever the
+    # string does not parse: long enough to be worth waiting, short enough
+    # that a wrong guess costs one retry rather than a night.
     method _credit_wait_secs {msg} {
         if {![regexp {resets (\d{1,2}(?::\d{2})?\s*[ap]m)} $msg -> reset_time]} {
             return 3600
         }
-        set tz "Australia/Brisbane"
+        set tzargs {}
         if {[regexp {\(([^)]+)\)} $msg -> found_tz]} {
-            set tz $found_tz
+            set tzargs [list -timezone :$found_tz]
         }
         set now_epoch [clock seconds]
         if {[catch {
-            set reset_epoch [clock scan "today $reset_time" -timezone :$tz]
+            set reset_epoch [clock scan "today $reset_time" {*}$tzargs]
         }]} {
             return 3600
         }
         if {$reset_epoch <= $now_epoch} {
             if {[catch {
-                set reset_epoch [clock scan "tomorrow $reset_time" -timezone :$tz]
+                set reset_epoch [clock scan "tomorrow $reset_time" {*}$tzargs]
             }]} {
                 return 3600
             }
