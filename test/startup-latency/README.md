@@ -1,6 +1,6 @@
 # Startup latency instrument
 
-Measures how long the GUI takes to show its first row in the session list, and whether the event loop stays responsive while the list fills. The acceptance gate for startup work is first row <= 1.0s from process launch, read off screenshots; an in-app timer self-reports and misses failure modes (it can print "loaded" while the loader has died), so frames are the only accepted evidence.
+Measures how long the GUI takes to show its first row in the session list, and whether the event loop stays responsive while the list fills. This file defines the acceptance gate for startup work: first row <= 1.0s from process launch, read off screenshots. Frames are the accepted evidence because a self-reported timer misses failure modes (it can print "loaded" while the loader that would print it has died).
 
 ## Running
 
@@ -14,7 +14,7 @@ Needs Xvfb, ImageMagick `import`, and wish9.0. Run it twice per change; the numb
 ## Reading the output
 
 - The frame-change timeline lists each moment the screen content changed (seconds after launch, PNG byte size). The window maps at the first jump from the blank-screen size; the first row is the next jump. Confirm by opening the named frame: the row region is the left column under the Session/Date header bar.
-- The ping list shows event-loop round-trips over 150ms. A healthy loop answers in ~0ms; multi-second round-trips mean the loop was blocked and clicks would have sat unprocessed that long.
+- The "ping round-trips over 150ms" list shows how long the event loop took to answer. A healthy loop answers in ~0ms; multi-second round-trips mean the loop was blocked and clicks would have sat unprocessed that long.
 
 ## Baseline (2026-07-17, corpus of 3,944 sessions, 757 in the default 1-week window)
 

@@ -43,7 +43,8 @@ namespace eval ::questlog::config {
     # scan_resume_ms (steady progress); idle = resume only when the event loop
     # is otherwise idle (yields hard to input, may pause under continuous typing;
     # also lets any `update idletasks` in a handler drain the whole remaining
-    # scan). Measured equal to timer for paint latency at 20-file chunks.
+    # scan). At 20-file chunks idle measures the same as timer for paint
+    # latency, so timer stays the default.
     dict set Config scan_resume        timer
     dict set Config scan_resume_ms     1
     # 0 = pause the browse scan while the user is actively typing in the search
