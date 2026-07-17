@@ -231,10 +231,12 @@ update
 check "case-B parent is rendered" [$SL sflag $PB rendered] 1
 check "case-B note sits below the row (2 matches, 1 subagent)" \
     [has_line "*no match in this session - 2 matches below in a subagent*"] 1
-# The subject run is dimmed (only its subagents matched).
+# The subject run is dimmed (only its subagents matched). The subject begins
+# after the chevron and its tab, so probe the first subject character rather
+# than a fixed offset into the line.
 set sm [$SL node_field [$SL sid $PB] start]
 check "case-B subject run is dimmed" \
-    [expr {"dimmed" in [$TX tag names "$sm +6c"]}] 1
+    [expr {"dimmed" in [$TX tag names "$sm +3c"]}] 1
 # Subagent capped at snippets_per_subagent (1); its 2nd match becomes overflow.
 check "subagent overflow names the rest (2 matches, cap 1 -> +1)" \
     [has_line "*1 more match in this session - open to see all*"] 1
