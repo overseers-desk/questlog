@@ -1,10 +1,14 @@
 package require Tcl 9
 package require Tk
-package provide streamtree 1.0.2
+package provide streamtree 1.1.0
 
 namespace eval ::streamtree {}
 
 # ::streamtree::StreamTree - the generic "tree drawn in one text widget" engine.
+#
+# Home: the teatotal module collection. The copy here is vendored; a change
+# lands at the home and the vendored copy is refreshed in the same act, so the
+# two never diverge.
 #
 # A StreamTree owns a tree of abstract NODES rendered into a single read-only
 # text widget, with a right-pinned, sortable metadata strip whose columns line

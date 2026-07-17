@@ -296,7 +296,7 @@ if {$tripped} {
     puts "TRIPWIRE: fold_all or the folded scroll sweep exceeded 1s on this session."
     puts "Elide-based folding is too slow at this scale. The fallback is to fold"
     puts "by delete-and-re-render between marks instead of elide - the posture"
-    puts "streamtree-1.0.2.tm already implements for the session list - at the"
+    puts "the streamtree module already implements for the session list - at the"
     puts "cost of moving search from the widget to the model and every bare"
     puts "index in the viewer to marks."
 } else {
