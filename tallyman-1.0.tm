@@ -9,8 +9,9 @@ package provide tallyman 1.0
 # and the model that produced them. tallyman reads those counts, dedupes the
 # several stream records that report one request, sums them per model, and
 # prices the total against a time-versioned rate table. It also splits the
-# wall clock into machine and human time and renders the short labels a caller
-# shows for a model id or a duration.
+# wall clock into machine and human time, reads the context occupancy off the
+# final request, and renders the short labels a caller shows for a model id
+# or a duration.
 #
 # tallyman is filesystem-free: it never opens a file and never parses a rate
 # file. The caller owns all I/O - it reads the transcript's lines off disk and
@@ -141,6 +142,28 @@ proc tallyman::model_label {id} {
     return $id
 }
 
+# A model id's context window in tokens, the denominator context_pct is
+# computed against. Per Anthropic's model catalog: the Claude 5 family
+# (fable, and its Mythos sibling), and Opus/Sonnet from 4.6, carry a native
+# 1M window; on older models Claude Code marks the 1M long-context beta with
+# a "[1m]" suffix on the id. Everything else - Haiku, pre-4.6 Opus/Sonnet,
+# old-scheme ids, local models - reads as 200k, the widest window such a
+# transcript can truthfully claim.
+proc tallyman::model_context_window {id} {
+    if {[string match {*\[1m\]*} $id]} { return 1000000 }
+    regsub -- {-\d{6,}$} $id "" id
+    if {[regexp {(opus|sonnet|haiku|fable|mythos)-(\d+)(?:-(\d+))?$} $id -> fam maj min]} {
+        if {$min eq ""} { set min 0 }
+        switch -- $fam {
+            fable - mythos { return 1000000 }
+            opus - sonnet {
+                if {$maj > 4 || ($maj == 4 && $min >= 6)} { return 1000000 }
+            }
+        }
+    }
+    return 200000
+}
+
 # The opus/sonnet/haiku/fable family token of a model id, lowercased, or "" for
 # an id fmt_model does not recognise (an old-scheme claude-3-5-sonnet-... or a
 # local model). Reuses fmt_model's exact anchored family/version regexp, so
@@ -234,11 +257,23 @@ proc tallyman::_classify_stamp {line ask_ids} {
 
 # Fold a transcript's raw JSONL lines into a result dict:
 #   {per_model {model -> {in out cw cr}}  first_ts  last_ts  turns
-#    stamps {{epoch class} ...}  last_model  ok}
+#    stamps {{epoch class} ...}  last_model  ctx_tokens  ctx_model  ok}
 # `ok` is always 1 - the caller decides what an unreadable file means and builds
 # its own ok-0 result for that case. Dedupes the several stream records that
 # report one requestId by taking the max usage per request, then sums the
 # per-request maxima per model.
+#
+# ctx_tokens is the context occupancy at the transcript's end: the input +
+# cache-read + cache-write tokens of the last assistant record that carries a
+# real usage block - what the final request actually sent, which is how full
+# the window is if the session is resumed. Post-compact records report the
+# compacted context, so the figure survives an auto-compact honestly.
+# ctx_model is that record's own model id, raw (it may carry the "[1m]"
+# long-context suffix), for the window the figure is measured against.
+# Sidechain records are other contexts interleaved into a session's file, so
+# they never set the pair - except in a subagent's own transcript, where every
+# record is marked sidechain and the sidechain reading is the file's own; a
+# non-sidechain record wins whenever one exists at all.
 proc tallyman::parse_lines {lines} {
     set req_usage [dict create]
     set dummy_req 0
@@ -248,6 +283,10 @@ proc tallyman::parse_lines {lines} {
     set stamps [list]
     set ask_ids [dict create]
     set last_model ""
+    set ctx_tokens ""
+    set ctx_model ""
+    set side_ctx_tokens ""
+    set side_ctx_model ""
     foreach line $lines {
         if {$line eq ""} continue
         # file-history-snapshot records carry no top-level timestamp; the regex
@@ -302,6 +341,20 @@ proc tallyman::parse_lines {lines} {
         set cw_t  [dict getdef $u cache_creation_input_tokens 0]
         set cr_t  [dict getdef $u cache_read_input_tokens 0]
 
+        # The context this request sent. A <synthetic> filler and a zero-usage
+        # record say nothing about occupancy, so they never overwrite the last
+        # real reading.
+        set ctx [expr {$in_t + $cw_t + $cr_t}]
+        if {$ctx > 0 && $model ne "<synthetic>"} {
+            if {[regexp {"isSidechain":true} $line]} {
+                set side_ctx_tokens $ctx
+                set side_ctx_model $model
+            } else {
+                set ctx_tokens $ctx
+                set ctx_model $model
+            }
+        }
+
         if {[dict exists $req_usage $req_id]} {
             lassign [dict get $req_usage $req_id] om oi oo ow or
             if {$om eq "unknown"} { set om $model }
@@ -311,6 +364,10 @@ proc tallyman::parse_lines {lines} {
         } else {
             dict set req_usage $req_id [list $model $in_t $out_t $cw_t $cr_t]
         }
+    }
+    if {$ctx_tokens eq ""} {
+        set ctx_tokens $side_ctx_tokens
+        set ctx_model $side_ctx_model
     }
 
     set per_model [dict create]
@@ -322,16 +379,20 @@ proc tallyman::parse_lines {lines} {
 
     return [dict create per_model $per_model \
         first_ts $first_ts last_ts $last_ts turns $turns stamps $stamps \
-        last_model $last_model ok 1]
+        last_model $last_model ctx_tokens $ctx_tokens ctx_model $ctx_model \
+        ok 1]
 }
 
 # A parse_lines result + the rate table + the human-gap cap (seconds) -> the
 # caller-facing cost dict:
 #   {cost_usd input_tokens output_tokens cache_write_tokens cache_read_tokens
-#    model_breakdown model turns duration_secs human_secs}
+#    model_breakdown model turns duration_secs human_secs context_pct}
+# context_pct is ctx_tokens as a whole percentage of ctx_model's window, ""
+# when the transcript carries no usage at all (an empty or windowed result),
+# so the cell reads as "no figure" rather than a false 0%.
 proc tallyman::build_cost_dict {res rates cap} {
     if {![dict get $res ok]} {
-        return [dict create cost_usd 0.0 turns 0 duration_secs 0 human_secs 0 input_tokens 0 output_tokens 0 cache_write_tokens 0 cache_read_tokens 0 model_breakdown {} model ""]
+        return [dict create cost_usd 0.0 turns 0 duration_secs 0 human_secs 0 input_tokens 0 output_tokens 0 cache_write_tokens 0 cache_read_tokens 0 model_breakdown {} model "" context_pct ""]
     }
     set per_model [dict get $res per_model]
     set first_ts [dict get $res first_ts]
@@ -348,6 +409,9 @@ proc tallyman::build_cost_dict {res rates cap} {
         incr in $i; incr out $o; incr cw $w; incr cr $r
     }
     lassign [split_secs [dict get $res stamps] $cap] active human
+    set ctx [dict getdef $res ctx_tokens ""]
+    set ctx_pct [expr {$ctx eq "" ? "" : round(100.0 * $ctx \
+        / [model_context_window [dict getdef $res ctx_model ""]])}]
     return [dict create \
         cost_usd $usd \
         input_tokens $in \
@@ -358,7 +422,8 @@ proc tallyman::build_cost_dict {res rates cap} {
         model [model_label [dict getdef $res last_model ""]] \
         turns $turns \
         duration_secs $active \
-        human_secs $human]
+        human_secs $human \
+        context_pct $ctx_pct]
 }
 
 # Cost accrued strictly inside the window [lo, hi] by each assistant message's

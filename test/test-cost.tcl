@@ -84,6 +84,56 @@ check "model_family local model" [::questlog::cost::model_family qwen3-coder] ""
 check "model_family old scheme"  [::questlog::cost::model_family claude-3-5-sonnet-20241022] ""
 check "model_family empty"       [::questlog::cost::model_family ""] ""
 
+# ---- context occupancy -----------------------------------------------------
+
+# The window a model id is measured against: 1M for the Claude 5 family and
+# for Opus/Sonnet from 4.6; 200k for Haiku, pre-4.6 models, and anything
+# unrecognised; "[1m]" marks the long-context beta on an older id.
+check "window fable 5"     [tallyman::model_context_window claude-fable-5] 1000000
+check "window mythos 5"    [tallyman::model_context_window claude-mythos-5] 1000000
+check "window opus 4.8"    [tallyman::model_context_window claude-opus-4-8] 1000000
+check "window sonnet 5"    [tallyman::model_context_window claude-sonnet-5] 1000000
+check "window opus 4.5"    [tallyman::model_context_window claude-opus-4-5-20251101] 200000
+check "window haiku 4.5"   [tallyman::model_context_window claude-haiku-4-5-20251001] 200000
+check "window sonnet 4.5"  [tallyman::model_context_window claude-sonnet-4-5] 200000
+check "window 1m beta"     [tallyman::model_context_window {claude-sonnet-4-5[1m]}] 1000000
+check "window local model" [tallyman::model_context_window qwen3-coder] 200000
+check "window empty id"    [tallyman::model_context_window ""] 200000
+
+# The final request sent 2 + 99998 + 400000 = 500k of Opus 4.8's 1M window:
+# 50%. The later sidechain record (another context, however large) and the
+# trailing <synthetic> filler must not overwrite the reading.
+set fd [file tempfile fix]
+puts $fd {{"type":"user","timestamp":"2026-06-01T10:00:00.000Z","message":{"role":"user","content":"fill the window"}}}
+puts $fd {{"type":"assistant","timestamp":"2026-06-01T10:00:05.000Z","message":{"model":"claude-opus-4-8","usage":{"input_tokens":2,"output_tokens":50,"cache_creation_input_tokens":99998,"cache_read_input_tokens":400000}}}}
+puts $fd {{"type":"assistant","isSidechain":true,"timestamp":"2026-06-01T10:00:10.000Z","message":{"model":"claude-haiku-4-5","usage":{"input_tokens":2,"output_tokens":5,"cache_read_input_tokens":190000}}}}
+puts $fd {{"type":"assistant","timestamp":"2026-06-01T10:00:20.000Z","message":{"model":"<synthetic>","content":[{"type":"text","text":"No response requested."}]}}}
+close $fd
+set cost_dict [::questlog::cli::cost::compute_sync $fix]
+check "context_pct reads the final main-chain request against its window" \
+    [dict get $cost_dict context_pct] 50
+file delete $fix
+
+# A subagent's own transcript marks every record sidechain; with no
+# non-sidechain record in the file at all, the sidechain reading is the
+# file's own. 300k of the 1M window its id claims: 30%.
+set fd [file tempfile fix]
+puts $fd {{"type":"assistant","isSidechain":true,"timestamp":"2026-06-01T10:00:05.000Z","message":{"model":"claude-sonnet-4-5[1m]","usage":{"input_tokens":10,"output_tokens":50,"cache_read_input_tokens":299990}}}}
+close $fd
+set cost_dict [::questlog::cli::cost::compute_sync $fix]
+check "context_pct falls back to sidechain in an all-sidechain transcript" \
+    [dict get $cost_dict context_pct] 30
+file delete $fix
+
+# No usage anywhere: no figure, not a false 0%.
+set fd [file tempfile fix]
+puts $fd {{"type":"user","timestamp":"2026-06-01T10:00:00.000Z","message":{"role":"user","content":"nothing answered yet"}}}
+close $fd
+set cost_dict [::questlog::cli::cost::compute_sync $fix]
+check "context_pct blank when the transcript carries no usage" \
+    [dict get $cost_dict context_pct] ""
+file delete $fix
+
 # ---- compute_cost: turns + timestamps over a fixture ---------------------
 
 # Three typed prompts ("role":"user","content":"…"), one tool-result user
