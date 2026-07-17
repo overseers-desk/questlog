@@ -2833,6 +2833,8 @@ oo::class create ::questlog::ui::SessionList {
                 my redraw_header $path
             }
         }
+        set running_changed [expr {[lsort [dict keys $running]] \
+                                   ne [lsort [dict keys $PrevRunning]]}]
         set PrevRunning $running
         if {[dict size $dirty]} {
             # A toggle changed which sessions are viewable. Rebuild from the
@@ -2850,14 +2852,16 @@ oo::class create ::questlog::ui::SessionList {
             if {[my session_count] != $before} { my schedule_resort }
         }
         # A change in the running set changes the `running` attribute's value on
-        # the rows that flipped, so when the engine's running lens is on its own
-        # hide ledger has gone stale: re-apply the attribute filters against the
-        # fresh set. The session_shown re-derivation above already settled the
-        # view; this keeps the engine's filter state authoritative for the next
-        # strip toggle (a session that stopped while "running only" is on stays
-        # gone, one that started shows). It is a near no-op when the flags already
-        # agree, and skipped entirely when the running lens is off.
-        if {[my attr_filter_get running]} { my apply_attr_filters }
+        # the rows that flipped, so when the engine's running lens is on its
+        # picture of the rows has gone stale: re-apply the attribute filters
+        # against the fresh set, which re-lays the list. A session that stopped
+        # while "running only" is on drops out; one that started shows. Gated on
+        # the membership actually moving, because the poll fires every couple of
+        # seconds and an unconditional re-apply would rebuild the list on every
+        # tick for nothing.
+        if {$running_changed && [my attr_filter_get running]} {
+            my apply_attr_filters
+        }
         # The loaded set and the running set have both just settled, so this is
         # where the lens's cut is recounted: every tick, and every filter change
         # that routes through here.

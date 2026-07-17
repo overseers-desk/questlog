@@ -89,7 +89,7 @@ namespace eval ::streamtree {}
 #               (defaults to the id).
 #   kind        bool or enum. A bool is a two-state flag; an enum is a string drawn
 #               from a roster. Kinds past bool and enum, a scalar or free-text
-#               filter, are a recorded future question and stay deliberately absent.
+#               filter, are deliberately absent until a consumer needs one.
 #   glyph       a short string (one Unicode character is typical) a true bool draws
 #               as a subject-prefix mark. A bool with no glyph draws a check column.
 #   filterable  1 to offer the attribute as a filter control, 0 (default) to draw
@@ -127,8 +127,8 @@ namespace eval ::streamtree {}
 # and shows a node again only when the node is in that ledger and now passes. A node
 # the consumer hid for its own reasons (its search, its recency window) is never in
 # the ledger and the filter never resurrects it. A node shows only when nobody hides
-# it. The change moves the view through the hide/unhide primitives and the
-# hidden-aware rebuild, and fires -attrfiltercb with the whole filter state. That
+# it. The change moves the view through the hide/unhide primitives (whose hides
+# rebuilds respect), and fires -attrfiltercb with the whole filter state. That
 # state reads and writes through attr_filter_get / attr_filter_set (a bool's flag,
 # an enum's excluded set); a programmatic set applies and fires the callback only on
 # a real change, and apply_attr_filters reapplies the active filters after a host
