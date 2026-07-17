@@ -342,10 +342,14 @@ oo::class create steward::Harness {
         # past the stall timeout produced nothing on disk to validate, and the
         # silence is often a usage-limit window the CLI never surfaced as a
         # resets-string for the rc==4 path to catch. Retry it on a fresh
-        # session rather than dropping the job with no product. Bounded
-        # separately from the usage-window retries (the two failure classes
-        # are independent), and each retry already spaces itself by one
-        # stall_timeout of wall clock.
+        # session rather than dropping the job with no product. Each retry
+        # already spaces itself by one stall_timeout of wall clock.
+        #
+        # Stall retries carry their own ceiling, but they share the loop's
+        # attempt counter with the usage-window retries, so max_retries is
+        # the bound on invocations of any kind: two stalls leave three
+        # usage-window attempts, not five. That is the intended reading -
+        # the two classes have separate ceilings, one shared budget.
         set max_stall_retries 2
         set stall_attempt 0
         set json_file "${log_file}.json"
