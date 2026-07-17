@@ -113,10 +113,8 @@ set LIVE    [dict create bbbb $Bp]
 
 proc snap {args} {
     return [dict merge [dict create since all min_turns 1 search "" \
-        subtree [list $::INSIDE] \
-        listview [dict create running_only 0 bookmarked_only 0 model_excluded {}]] $args]
+        subtree [list $::INSIDE]] $args]
 }
-set LENS [snap listview [dict create running_only 1 bookmarked_only 0 model_excluded {}]]
 
 # --- 1. Browse, scoped to one project. B runs in another, so it never loads.
 $SL apply_filter [snap]
@@ -134,7 +132,7 @@ check "no lens on: the strip claims nothing about one" [strip] ""
 # --- 2. The Running lens goes on and the poll pushes in the membership. The list
 #        is now EMPTY - A is not running, B was never loaded - and it must not
 #        stand there in silence.
-$SL apply_listview $LENS
+$SL attr_filter_set running 1
 $SL set_lens_members $MEMBERS
 settle
 check "A hidden (not running)"             [$SL sflag $Ap rendered] 0
@@ -170,7 +168,7 @@ check "and is still painted"                      [$SL sflag $Bp rendered] 1
 
 # --- 6. A pure lens: switching it off loads nothing and drops nothing.
 set before [llength [$SL all_session_paths]]
-$SL apply_listview [snap]
+$SL attr_filter_set running 0
 settle
 check "toggling the lens off loads nothing" \
     [llength [$SL all_session_paths]] $before
@@ -179,9 +177,9 @@ check "and the strip drops the lens clause"  [strip] ""
 # --- 7. A content search cuts a running session too: with criteria active the
 #        matches decide what loads, and a live session with no hit is not among
 #        them. Nothing here reads the running session's file.
-set SEARCH [snap search a-first subtree {} \
-    listview [dict create running_only 1 bookmarked_only 0 model_excluded {}]]
+set SEARCH [snap search a-first subtree {}]
 $SL apply_filter $SEARCH
+$SL attr_filter_set running 1
 $SL add_session_matches [list [dict create path $Ap folder $FOLDER \
     btype user content a-first lineoff 0]]
 $SL reconcile_running $LIVE
@@ -209,8 +207,10 @@ write_session $Cp $INSIDE {c-first c-second} "2026-05-24T19:00"
 file mtime $Cp [clock seconds]
 ::questlog::path::set_bookmark $Cp
 
-set OPEN [snap listview [dict create running_only 0 bookmarked_only 1 model_excluded {}]]
+set OPEN [snap]
 $SL apply_filter $OPEN
+$SL attr_filter_set running 0
+$SL attr_filter_set bookmarked 1
 $SL reconcile_running [dict create]
 $SL set_lens_members [dict create cccc [dict create path $Cp]]
 settle

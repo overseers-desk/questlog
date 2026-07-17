@@ -1,12 +1,15 @@
 package require Tcl 9
 package require Tk
 
-# Glyphs for the status markers. The single home for both; the toolbar
-# toggles are plain text, so these characters live only here.
+# Glyphs for the status markers, and the model lens at rest. The single home
+# for each: the glyphs mark running and bookmarked rows in the list, and
+# MODEL_ANY is the word the model lens carries when no model is chosen (read by
+# the strip's model control below for its rest label).
 namespace eval ::questlog::ui {
     variable GLYPH_RUNNING  ●
     variable GLYPH_BOOKMARK ★
     variable GLYPH_ACTIONS  ⋯
+    variable MODEL_ANY "any model"
 }
 
 # The session list's metadata columns, in render order. This is the single
@@ -615,22 +618,13 @@ oo::class create ::questlog::ui::SessionList {
 
     method apply_filter {snapshot} {
         set Snapshot $snapshot
+        # The arriving snapshot is search and scope; the lenses are the engine's
+        # and ride along by mirror. Without the re-graft, a scope change would
+        # wipe the lens keys while the strip controls stayed pressed, and the
+        # rows the new scan inserts would ignore a lens the reader can see is on.
+        dict set Snapshot listview [my lens_mirror]
         set CriteriaActive [::questlog::ui::any_criteria $snapshot]
         my clear
-    }
-
-    # A list-view-toggle-only snapshot change: the search and scope are unchanged, so the
-    # result set is unchanged; only which in-model sessions are shown changes. Re-derive
-    # the visible set in place (no clear, no re-scan, no re-search), preserving selection
-    # and scroll, by recomputing each row's hidden flag and re-rendering the affected
-    # folders - which reconcile_running already does.
-    method apply_listview {snapshot} {
-        set Snapshot $snapshot
-        set CriteriaActive [::questlog::ui::any_criteria $snapshot]
-        # reconcile_running re-derives the shown set from the loaded rows alone and
-        # ends by recounting the lens against its membership, so the new lens says
-        # what it shows and what it is missing in the same turn, with no disk read.
-        my reconcile_running $RunningSet
     }
 
     # The models the loaded rows carry: every distinct, non-empty model label in
@@ -687,6 +681,11 @@ oo::class create ::questlog::ui::SessionList {
     # is never filtered. This is what the strip controls drive, and what
     # reconcile_running re-applies when the running set changes.
     method apply_attr_filters {} {
+        # Mirror the engine state before the rebuild, not after: render_skip
+        # reads the snapshot's lens keys to decide whether an emptied folder
+        # keeps its heading, and a rebuild over yesterday's mirror would leave a
+        # heading standing over rows this very change hides.
+        dict set Snapshot listview [my lens_mirror]
         set st [$Text cget -state]
         $Text configure -state normal
         foreach path [my all_session_paths] {
@@ -696,22 +695,26 @@ oo::class create ::questlog::ui::SessionList {
         my rebuild
     }
 
+    # The snapshot's listview sub-dict, read off the engine's filter state: the
+    # engine owns the lenses, and every holder of them derives from it. The
+    # snapshot carries this mirror so the list's view predicate, the lens counts
+    # and the lens note read the same lenses the strip controls show.
+    method lens_mirror {} {
+        set state [my attr_filter_all]
+        return [dict create \
+            running_only    [expr {[dict getdef $state running 0] ? 1 : 0}] \
+            bookmarked_only [expr {[dict getdef $state bookmarked 0] ? 1 : 0}] \
+            model_excluded  [dict getdef $state model {}]]
+    }
+
     # A strip lens moved (engine hook -attrfiltercb): apply_attr_filters (fired from
     # attr_filter_set just before this) has already re-derived the view and rebuilt.
-    # Mirror the engine's filter state into the snapshot's listview sub-dict so the
-    # list's own view predicate, the lens counts and the lens note read the same
-    # lenses, then recount the lens note. No disk: the loaded rows come from the
-    # cache and nothing here scans or searches.
+    # Re-mirror the engine's filter state into the snapshot, recount the lens note,
+    # and tell the app so it can gather the lens memberships. No disk: the loaded
+    # rows come from the cache and nothing here scans or searches.
     method on_attr_filter {state} {
-        set lv [dict getdef $Snapshot listview {}]
-        dict set lv running_only    [expr {[dict getdef $state running 0] ? 1 : 0}]
-        dict set lv bookmarked_only [expr {[dict getdef $state bookmarked 0] ? 1 : 0}]
-        dict set lv model_excluded  [dict getdef $state model {}]
-        dict set Snapshot listview $lv
+        dict set Snapshot listview [my lens_mirror]
         my refresh_lens_note
-        # The app still learns of a lens change through the toolbar's publish while
-        # its View row stands; this fires only once a later stage wires the list's
-        # own lens-change callback, so it does not double-apply in the interim.
         if {$OnLensChange ne ""} { {*}$OnLensChange $Snapshot }
     }
 

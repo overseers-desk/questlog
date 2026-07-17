@@ -90,7 +90,7 @@ check "C not loaded"                  [$SL has_session $Cp] 0
 set Buuid [$SL sget $Bp uuid]
 
 # --- 2. Turn running_only ON with an empty running set: both loaded rows hide.
-$SL apply_listview [dict create since all min_turns 2 listview [dict create running_only 1]]
+$SL attr_filter_set running 1
 update
 check "A hidden (running_only on, not live)" [$SL sflag $Ap rendered] 0
 check "B hidden (running_only on, not live)" [$SL sflag $Bp rendered] 0

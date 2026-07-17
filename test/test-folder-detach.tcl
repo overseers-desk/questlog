@@ -51,6 +51,7 @@ set Cp [file join $P3 cccc.jsonl]
 write_session $Ap {a-first a-second} "2026-05-24T17:00"
 write_session $Bp {b-first b-second} "2026-05-23T10:00"
 write_session $Cp {c-first c-second} "2026-05-22T09:00"
+::questlog::path::set_bookmark $Bp   ;# P2 bookmarked: section 4 filters on it
 file mtime $Ap [clock scan "2026-05-24 17:01:00" -gmt 1]
 file mtime $Bp [clock scan "2026-05-23 10:01:00" -gmt 1]
 file mtime $Cp [clock scan "2026-05-22 09:01:00" -gmt 1]
@@ -98,9 +99,11 @@ check "three folders, in arrival order" [rendered_order] {-tmp-fd-p1 -tmp-fd-p2 
 check "P1 count = 1 viewable" [$SL folder_visible_count -tmp-fd-p1] 1
 check "P2 count = 1 viewable" [$SL folder_visible_count -tmp-fd-p2] 1
 
-# --- 2. Mark only P2's session running, then turn running-only ON.
+# --- 2. Turn running-only ON. The engine holds the lens; the running poll settles
+#        the view each tick, so mark only P2's session running and let a poll pass:
+#        P1 and P3 have no running row and detach, P2 stays.
+$SL attr_filter_set running 1
 $SL reconcile_running [dict create bbbb $Bp]
-$SL apply_listview [dict create since all listview [dict create running_only 1]]
 update
 check "P1 detached (no running session)"  [$SL folder_attached -tmp-fd-p1] 0
 check "P3 detached (no running session)"  [$SL folder_attached -tmp-fd-p3] 0
@@ -110,11 +113,24 @@ check "only P2 is drawn"                   [rendered_order] {-tmp-fd-p2}
 check "P2 heading shows 1 viewable"        [$SL folder_visible_count -tmp-fd-p2] 1
 
 # --- 3. Turn running-only OFF. P1 and P3 re-attach AROUND P2, order intact.
-$SL apply_listview [dict create since all listview [dict create running_only 0]]
+$SL attr_filter_set running 0
 update
 check "all three drawn again"             [$SL folder_attached -tmp-fd-p1] 1
 check "order preserved across mass re-attach" [rendered_order] {-tmp-fd-p1 -tmp-fd-p2 -tmp-fd-p3}
 check "P2 count back to 1"                 [$SL folder_visible_count -tmp-fd-p2] 1
+
+# --- 4. A lens with no poll behind it detaches folders on the toggle alone.
+#        Running rides the liveness reconcile; bookmarked has no such follow-up,
+#        so the toggle itself is the only chance to drop an emptied heading. The
+#        rebuild inside the toggle must therefore already see the new lens state.
+$SL attr_filter_set bookmarked 1
+update
+check "bookmarked toggle alone detaches P1" [$SL folder_attached -tmp-fd-p1] 0
+check "bookmarked toggle alone detaches P3" [$SL folder_attached -tmp-fd-p3] 0
+check "the bookmarked folder stays"         [$SL folder_attached -tmp-fd-p2] 1
+$SL attr_filter_set bookmarked 0
+update
+check "releasing the lens re-attaches all"  [rendered_order] {-tmp-fd-p1 -tmp-fd-p2 -tmp-fd-p3}
 
 ::questlog::path::_real_file delete -force $SAND
 puts [expr {$fails ? "FAILED ($fails)" : "PASS"}]

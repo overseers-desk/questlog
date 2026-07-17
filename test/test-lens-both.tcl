@@ -142,9 +142,12 @@ set BM [dict create \
 set LIVE [dict create bbbb $Bp cccc $Cp dddd $Dp eeee $Ep]
 
 # The poll's job, as app.tcl does it: gather a set for each lens that has one and
-# hand the list what they jointly claim. With both lenses on that is the
-# intersection, which is the only membership the counts may be measured against.
-proc push {snap} {
+# hand the list what they jointly claim. The lenses live in the engine, so read
+# which ones are on from the snapshot the engine mirrors, not from a snapshot the
+# caller builds. With both lenses on that is the intersection, which is the only
+# membership the counts may be measured against.
+proc push {} {
+    set snap [set [info object namespace $::SL]::Snapshot]
     set sets [list]
     foreach lens [::questlog::sessionlist::member_lenses $snap] {
         switch -- $lens {
@@ -162,16 +165,14 @@ proc push {snap} {
 set MODEL [::questlog::cost::model_label claude-3-5-sonnet-20241022]
 set OTHER_MODEL "Opus 4.8"
 
-proc snap {run bm {excluded {}}} {
-    return [dict create since all min_turns 1 search "" subtree [list $::INSIDE] \
-        listview [dict create running_only $run bookmarked_only $bm \
-            model_excluded $excluded]]
+proc snap {} {
+    return [dict create since all min_turns 1 search "" subtree [list $::INSIDE]]
 }
 
 # --- 1. Browse, scoped to one project: A, B and C load; D and E never do.
-$SL apply_filter [snap 0 0]
+$SL apply_filter [snap]
 set ::scan_done 0
-$::Scan extend [snap 0 0]
+$::Scan extend [snap]
 after 300 [list set ::scan_done 1]
 vwait ::scan_done
 $SL toggle_folder $FOLDER
@@ -193,8 +194,8 @@ set loaded_before [llength [$SL all_session_paths]]
 
 # --- 2. Running alone: B and C show, and the cut is every running session the
 #        search left on disk - D and E both.
-$SL apply_listview [snap 1 0]
-push [snap 1 0]
+$SL attr_filter_set running 1
+push
 settle
 check "Running: A hidden"    [$SL sflag $Ap rendered] 0
 check "Running: B shown"     [$SL sflag $Bp rendered] 1
@@ -207,8 +208,8 @@ check "Running: the strip counts every running session" \
 #        running alone. E is no member of this view, so the search did not cut it
 #        from this view, and the count says 1, not 2. Were E counted, the banner
 #        would name its project beside D's.
-$SL apply_listview [snap 1 1]
-push [snap 1 1]
+$SL attr_filter_set bookmarked 1
+push
 settle
 check "both: A hidden (not running)"     [$SL sflag $Ap rendered] 0
 check "both: B hidden (not bookmarked)"  [$SL sflag $Bp rendered] 0
@@ -241,8 +242,8 @@ check "and the running session that carries no bookmark was never pulled in" \
 # --- 5. Releasing Bookmarked leaves Running pressed, and the count returns to the
 #        running membership alone: the two lenses are independent, and the strip
 #        re-derives what it is speaking for rather than remembering it.
-$SL apply_listview [snap 1 0]
-push [snap 1 0]
+$SL attr_filter_set bookmarked 0
+push
 settle
 check "Running alone again: B shows"  [$SL sflag $Bp rendered] 1
 check "Running alone again: the strip counts running sessions" \
@@ -274,8 +275,8 @@ foreach path [$SL all_session_paths] {
 }
 update
 check "the cost pass put the model on the rows" [$SL sget $Bp model] $MODEL
-$SL apply_listview [snap 1 0 [list $OTHER_MODEL]]
-push [snap 1 0 [list $OTHER_MODEL]]
+$SL attr_filter_set model [list $OTHER_MODEL]
+push
 settle
 check "exclusion beside Running: rows carrying other labels still show" \
     [$SL sflag $Bp rendered] 1
@@ -292,8 +293,8 @@ check "exclusion beside Running: the banner names Running alone" \
 # adds a member nor takes one away - it never looked. A phrase drawn from every
 # active lens would now put "and model" over a 4 and a 1 that counted running
 # sessions.
-$SL apply_listview [snap 1 0 [list $MODEL]]
-push [snap 1 0 [list $MODEL]]
+$SL attr_filter_set model [list $MODEL]
+push
 settle
 check "the carried label shut off: it hides the rows Running admits" \
     [$SL sflag $Bp rendered] 0
@@ -313,8 +314,8 @@ check "the model lens loaded nothing" \
 #        ran this model" to count the loaded rows against, and a lens with no
 #        membership may not tell the reader the search cut one. No clause, no
 #        banner, no offer to load anything.
-$SL apply_listview [snap 0 0 [list $MODEL]]
-push [snap 0 0 [list $MODEL]]
+$SL attr_filter_set running 0
+push
 settle
 check "the model lens alone hides every row" [$SL folder_visible_count $FOLDER] 0
 check "the model lens alone says nothing in the strip" [strip] ""
@@ -323,8 +324,8 @@ check "the model lens alone raises no cut banner"      [banner] ""
 # --- 8. Releasing both: every loaded row paints again, the strip drops the lens
 #        clause, and the selection the reader made before any of this is still
 #        theirs. Nothing was loaded and nothing dropped by a lens the whole way.
-$SL apply_listview [snap 0 0]
-push [snap 0 0]
+$SL attr_filter_set model [list]
+push
 settle
 check "no lens: A renders again"   [$SL sflag $Ap rendered] 1
 check "no lens: A still selected"  [$SL is_selected $Ap] 1

@@ -107,7 +107,7 @@ check "A is selected" [$SL is_selected $Ap] 1
 #        in the model; B keeps rendering; the model total holds at 2 (so the
 #        toggle is reversible) while the viewable count drops to 1; A's selection
 #        is retained (path-keyed) though it is unpainted.
-$SL apply_listview [dict create since all listview [dict create bookmarked_only 1]]
+$SL attr_filter_set bookmarked 1
 update
 check "A not rendered (hidden)"   [$SL sflag $Ap rendered] 0
 check "A still in model"          [$SL has_session $Ap] 1
@@ -118,7 +118,7 @@ check "A selection retained"      [$SL is_selected $Ap] 1
 
 # --- 4. Toggle bookmarked_only back off: A renders again and is still selected
 #        (the selected tag is re-applied by render_session from SelectedSet).
-$SL apply_listview [dict create since all listview [dict create bookmarked_only 0]]
+$SL attr_filter_set bookmarked 0
 update
 check "A rendered again"        [$SL sflag $Ap rendered] 1
 check "A still selected"        [$SL is_selected $Ap] 1
@@ -127,7 +127,7 @@ check "B still rendered"        [$SL sflag $Bp rendered] 1
 # --- 5. A running, non-bookmarked session stays hidden under bookmarked_only:
 #        the label promises bookmarks and nothing else. Running-ness retains it
 #        in the model; it does not paint it.
-$SL apply_listview [dict create since all listview [dict create bookmarked_only 1]]
+$SL attr_filter_set bookmarked 1
 update
 set Auuid [$SL sget $Ap uuid]
 $SL reconcile_running [dict create $Auuid $Ap]

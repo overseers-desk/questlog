@@ -201,6 +201,37 @@ $SL close_enum_popover
 check "no lens click ran a scan_path" $::scan_path_calls $base_scans
 check "A survived the whole lens sequence selected" [$SL is_selected $Ap] 1
 
+# --- 8. A lens survives a scope change. The toolbar's snapshot carries search
+#        and scope only; the lenses are the engine's and ride along by mirror.
+#        With bookmarked pressed, a scope change (apply_filter, clear, refill)
+#        must re-insert rows that still honour the lens, and the strip control
+#        must still read as pressed.
+$SL attr_filter_set bookmarked 1
+update
+check "bookmarked lens on: only B shows" \
+    [list [$SL sflag $Ap rendered] [$SL sflag $Bp rendered] [$SL sflag $Cp rendered]] {0 1 0}
+# Mirror the app's scope-switch sequence: replay the memoised rows the new
+# snapshot admits (the scan coroutine skips already-scanned paths), then extend
+# for anything newly in scope.
+set snap2 [dict create since all min_turns 1]
+$SL apply_filter $snap2
+foreach row [$::Scan query $snap2] { $SL on_scan_row $row }
+set ::scan_done 0
+$::Scan extend $snap2
+after 300 [list set ::scan_done 1]
+vwait ::scan_done
+$SL toggle_folder $FOLDER
+update
+check "the engine still holds the lens across the scope change" \
+    [$SL attr_filter_get bookmarked] 1
+check "the refilled list still honours the lens" \
+    [list [$SL sflag $Ap rendered] [$SL sflag $Bp rendered] [$SL sflag $Cp rendered]] {0 1 0}
+set snapmirror [set [info object namespace $SL]::Snapshot]
+check "the snapshot mirror carries the lens the strip shows" \
+    [::questlog::sessionlist::toggle $snapmirror bookmarked_only 0] 1
+$SL attr_filter_set bookmarked 0
+update
+
 $SL reconcile_running [dict create]
 ::questlog::path::_real_file delete -force $SAND
 puts [expr {$fails ? "FAILED ($fails)" : "PASS"}]
