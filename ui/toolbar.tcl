@@ -27,22 +27,11 @@ package require facetbar
 #   min_turns        the minimum-turns scope floor (1 = include all). A scope
 #                    filter alongside since/subtree: a session below the floor leaves
 #                    the corpus, not just the view - see lib/filter.tcl.
-#   listview         the session-list lenses, grouped away from the search and
-#                    scope keys above so no reader mistakes one for a search:
-#                    running_only 0|1, bookmarked_only 0|1 (the View row's two
-#                    toggles, each latching on its own, so both may be 1 and the
-#                    list then shows the rows that are running AND bookmarked),
-#                    and model, the model label a row must carry to show ("" = any
-#                    model). They narrow what the left pane shows out of what is
-#                    already loaded, not what is searched, and so re-filter in
-#                    place without a re-read - see lib/sessionlist.tcl.
 #   cwd              launch cwd, constant after startup
-
-namespace eval ::questlog::ui {
-    # The model lens at rest: the word on the menubutton and the first menu entry
-    # when no model is chosen. One home, so the button and the entry cannot drift.
-    variable MODEL_ANY "any model"
-}
+#
+# The session-list lenses (running, bookmarked, model) are not here: they live
+# on the list's own strip and re-filter the loaded rows in place, so no toolbar
+# key carries them - see ui/sessions.tcl.
 
 # any_criteria snapshot - true iff the snapshot carries a content-matching
 # clause (search text, regex pattern, or a file/tool clause). The `subtree`
@@ -96,11 +85,6 @@ oo::class create ::questlog::ui::Toolbar {
     variable ScopeLabelVar    ;# the menubutton's friendly label for the scope
     variable MinTurnsVar
     variable MinTurnsModel    ;# the min_turns values the model held when the editor last read it
-    variable RunningVar       ;# the Running lens: show only rows live in the registry
-    variable BookmarkedVar    ;# the Bookmarked lens: show only rows carrying the +x bit
-    variable ModelVar         ;# the model lens: a row's model label, or "" for any
-    variable ModelLabelVar    ;# the model menubutton's text
-    variable ModelsProvider   ;# callback returning the models the loaded rows carry
     variable Bar              ;# the ::facetbar::FacetBar holding the six criteria
     variable Restrict         ;# the bordered frame the bar is built into
     variable Clamp            ;# the frame Restrict is placed in: see fit_now
@@ -129,11 +113,6 @@ oo::class create ::questlog::ui::Toolbar {
         set ScopeLabelVar "anywhere"
         set MinTurnsVar [::questlog::config::get min_turns_default]
         set MinTurnsModel [my turns_vals $MinTurnsVar]
-        set RunningVar 0
-        set BookmarkedVar 0
-        set ModelVar ""
-        set ModelLabelVar $::questlog::ui::MODEL_ANY
-        set ModelsProvider ""
         set Subscribers [list]
         array set AddText {subtree {} file {} tool {} pattern {}}
         set AddOp either
@@ -193,23 +172,6 @@ oo::class create ::questlog::ui::Toolbar {
             -variable [my varname SearchCaseVar] \
             -command [list [self] publish]
         pack $Top.search.aa -side left -padx {6 0}
-
-        # View row: the lenses over the rows the list already holds. A change here
-        # leaves the search and the scope alone, so app.tcl's scope_equal sends it
-        # down the fast path - the list re-filters in place, keeping its selection,
-        # with no disk read. The scroll is not kept: the rows that are hidden are
-        # what changed, and the list re-lays from the top. The restrict box below is
-        # the opposite: it decides which sessions are loaded at all.
-        ttk::frame $Top.view
-        pack $Top.view -side top -fill x -padx 6 -pady {0 3}
-        ttk::label $Top.view.label -text "View:"
-        pack $Top.view.label -side left -padx {0 6}
-        my build_view_toggles $Top.view.lens
-        pack $Top.view.lens -side left
-        ttk::label $Top.view.mlbl -text "Model:"
-        pack $Top.view.mlbl -side left -padx {12 2}
-        my build_model_menu $Top.view.model
-        pack $Top.view.model -side left
 
         # Restrict group: the criteria bar, in a lightly-bordered box whose first
         # inner line is the heading (the legend sits inside, at the top, as in the
@@ -286,72 +248,6 @@ oo::class create ::questlog::ui::Toolbar {
         # %h, from the event, and no path spliced into the script: bind runs its %
         # substitutions over whatever it is handed.
         bind $Restrict <Configure> [list [self] fit_now %h]
-    }
-
-    # Running and Bookmarked: two latching toggles, each answering for its own
-    # attribute, so both can be pressed and the list then shows the rows that are
-    # running AND bookmarked (row_visible ANDs the clauses). Neither pressed is
-    # every loaded row, which is why there is no third button offering it: the
-    # rest state already says "all", and a control for it would only be another
-    # way to release these two.
-    method build_view_toggles {w} {
-        ttk::frame $w
-        foreach {name text var} {running    Running    RunningVar
-                                 bookmarked Bookmarked BookmarkedVar} {
-            ttk::checkbutton $w.$name -text $text -style Seg.Toolbutton \
-                -variable [my varname $var] -onvalue 1 -offvalue 0 \
-                -command [list [self] publish]
-            pack $w.$name -side left
-        }
-    }
-
-    # The model lens. Its entries are the models the loaded rows actually carry,
-    # asked of the list each time the menu is posted, never a hardcoded roster: a
-    # model that lands with the cost pass shows up on the next post, and a local
-    # model questlog cannot price is offered by its own id rather than being
-    # unreachable. The value is the row's model label - what row_visible compares
-    # a row against - so a dated and an undated id of one model are one entry.
-    method build_model_menu {w} {
-        ttk::menubutton $w -textvariable [my varname ModelLabelVar] \
-            -menu $w.m -direction below
-        menu $w.m -tearoff 0 -postcommand [list [self] refresh_model_menu $w.m]
-        my refresh_model_menu $w.m
-    }
-
-    method refresh_model_menu {m} {
-        $m delete 0 end
-        set models [list]
-        if {$ModelsProvider ne ""} { set models [{*}$ModelsProvider] }
-        foreach val [linsert $models 0 ""] {
-            set label [expr {$val eq "" ? $::questlog::ui::MODEL_ANY : $val}]
-            $m add radiobutton -label $label -value $val \
-                -variable [my varname ModelVar] \
-                -command [list [self] set_model $val]
-        }
-    }
-
-    # Where the model lens reads its entries: a callback answering with the models
-    # present in the loaded rows. app.tcl wires it once both widgets exist (the
-    # Toolbar is built first); until then, and in a headless toolbar, the lens
-    # offers "any model" alone.
-    method set_models_provider {cb} { set ModelsProvider $cb }
-
-    method set_model {model} {
-        set ModelVar $model
-        set ModelLabelVar [expr {$model eq "" ? $::questlog::ui::MODEL_ANY : $model}]
-        my publish
-    }
-
-    # Set one lens from code; a click on its toggle writes the variable and
-    # publishes on its own. The other lens is left where it stands, as the two
-    # toggles leave each other.
-    method set_lens {which on} {
-        switch -- $which {
-            running    { set RunningVar    [expr {!!$on}] }
-            bookmarked { set BookmarkedVar [expr {!!$on}] }
-            default    { return }
-        }
-        my publish
     }
 
     # Relax one criterion, for the list's cut banner: the lens member it names was
@@ -704,10 +600,6 @@ oo::class create ::questlog::ui::Toolbar {
             tool           [dict get $m tool] \
             pattern        [dict get $m pattern] \
             min_turns      [my turns_value] \
-            listview       [dict create \
-                running_only    $RunningVar \
-                bookmarked_only $BookmarkedVar \
-                model           $ModelVar] \
             cwd            $Cwd]
     }
 

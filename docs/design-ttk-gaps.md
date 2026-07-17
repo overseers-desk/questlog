@@ -24,4 +24,4 @@ The accepted design (the `Questlog - Design overview` canvas) is drawn in React 
 
 ## Reading a design screen against the app
 
-Where a design screen shows a gradient, read a solid fill; where it shows a shadow or glass, read a border and an opaque surface; where it shows a macOS window, read a native frame. The three-tier toolbar, the criteria chips and their collapse, the view lenses, the session-name breadcrumb, and the reload boundary are all reproduced as drawn. Only the finish is approximated.
+Where a design screen shows a gradient, read a solid fill; where it shows a shadow or glass, read a border and an opaque surface; where it shows a macOS window, read a native frame. The search-and-restrict toolbar, the criteria chips and their collapse, the session-name breadcrumb, and the reload boundary are all reproduced as drawn; the view lenses render on the list's own strip rather than as a toolbar row. Only the finish is approximated.

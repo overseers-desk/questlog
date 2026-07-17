@@ -14,8 +14,8 @@
 #      but the user has chosen nothing - shows no count, and three file values
 #      read "3 active". The toolbar names the four in -countables.
 #
-# Also the two labels the design words: the folder row's tag reads "folder" over
-# the connective "ran under", and the View row's model lens is "Model:".
+# Also a label the design words: the folder row's tag reads "folder" over the
+# connective "ran under".
 
 package require Tcl 9
 package require Tk
@@ -78,7 +78,6 @@ $BAR expand
 update
 check "the folder row's tag reads 'folder'" folder [$BODY.rows.tag_subtree cget -text]
 check "over the connective 'ran under'" "ran under" [$BODY.rows.conn_subtree cget -text]
-check "the model lens label reads 'Model:'" "Model:" [.tb.view.mlbl cget -text]
 
 puts [expr {$fails ? "FAILED ($fails)" : "PASS"}]
 exit $fails

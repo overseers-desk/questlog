@@ -48,7 +48,8 @@ namespace eval ::questlog::ui::app {
     variable ScanActive       ;# 1 while the corpus scan coroutine is in flight
     variable SearchActive     ;# 1 while a search is in flight
     variable CostOutstanding  ;# cost jobs posted but not yet returned (the cost pass is live when > 0)
-    variable PrevSnapshot     ;# the last published snapshot, to detect a view-toggle-only change
+    variable PrevSnapshot     ;# the last published snapshot, to skip a rebuild on a no-op republish
+    variable LensSnapshot     ;# the strip's lens state, as the list last mirrored it back; the poll gathers membership for these lenses
 }
 
 proc ::questlog::ui::app::start {root {seed {}}} {
@@ -84,6 +85,7 @@ proc ::questlog::ui::app::start {root {seed {}}} {
     variable SearchActive
     variable CostOutstanding
     variable PrevSnapshot
+    variable LensSnapshot
 
     set Root $root
     set StatusMode browse
@@ -97,6 +99,9 @@ proc ::questlog::ui::app::start {root {seed {}}} {
     set CostOutstanding 0
     # The first publish has nothing to diff against, so it always takes the heavy path.
     set PrevSnapshot {}
+    # No lens is on until the reader flips one on the strip, so the poll gathers
+    # no membership until the list mirrors a lens change back through on_lens_change.
+    set LensSnapshot {}
     set StatusVar [scope_status]
     set Running [dict create]
     set CurrentQuery {}
@@ -191,12 +196,9 @@ proc ::questlog::ui::app::start {root {seed {}}} {
         [namespace code on_widen] \
         [namespace code status_peek] \
         [namespace code status_unpeek] \
-        [namespace code on_scope_folder]]
+        [namespace code on_scope_folder] \
+        [namespace code on_lens_change]]
     pack $list_frame.s -side top -fill both -expand 1
-    # The toolbar's model lens offers the models the loaded rows carry, so it
-    # reads them off the list. The Toolbar is built first (it heads the pane), so
-    # the reader is wired here, once the list it asks exists.
-    $Toolbar set_models_provider [list $SessionList loaded_models]
     $PW add $list_frame -weight 58
 
     # Viewer pane: a full-height peer of the list, present from launch. It
@@ -421,17 +423,31 @@ proc ::questlog::ui::app::run_tick {} {
 # Each lens gathers its own set; lens_members reduces them to the membership the
 # lenses jointly claim, which with both on is the intersection - the sessions the
 # list would show if the search had loaded them, and nothing else.
+#
+# Which lenses are on comes from LensSnapshot, the strip state the list mirrors
+# back through on_lens_change: the lenses are the strip's now, not the toolbar's,
+# so the toolbar's published snapshot carries none of them.
 proc ::questlog::ui::app::refresh_lens_members {} {
     variable SessionList
-    variable PrevSnapshot
+    variable LensSnapshot
     set sets [list]
-    foreach lens [::questlog::sessionlist::member_lenses $PrevSnapshot] {
+    foreach lens [::questlog::sessionlist::member_lenses $LensSnapshot] {
         switch -- $lens {
             running    { lappend sets [::questlog::ui::live::running_sessions] }
             bookmarked { lappend sets [bookmarked_members] }
         }
     }
     $SessionList set_lens_members [::questlog::sessionlist::lens_members $sets]
+}
+
+# A strip lens moved. The list has already re-derived the view in place and
+# mirrored the new lens state into the snapshot it hands back here; remember it
+# so the poll gathers membership for the same lenses, then gather now so the
+# count lands with the toggle. No scope or search changed, so nothing re-scans.
+proc ::questlog::ui::app::on_lens_change {snapshot} {
+    variable LensSnapshot
+    set LensSnapshot $snapshot
+    refresh_lens_members
 }
 
 # Every bookmarked session on disk, uuid -> {path}: one glob per project folder
@@ -479,9 +495,9 @@ proc ::questlog::ui::app::on_scope_folder {folder} {
 
 # ---- toolbar callback --------------------------------------------------
 
-# The snapshot keys that define the search and scope. A change confined to the
-# listview sub-key (the view toggles) is a view-only change and takes the fast
-# path; any difference here forces the full rebuild.
+# The snapshot keys that define the search and scope - every key the toolbar now
+# publishes. Two publishes equal across all of them changed nothing that decides
+# which sessions load, so on_filter can skip the rebuild.
 proc ::questlog::ui::app::scope_equal {a b} {
     foreach k {search search_case search_regions file tool pattern subtree since until min_turns} {
         if {[dict getdef $a $k {}] ne [dict getdef $b $k {}]} { return 0 }
@@ -504,36 +520,13 @@ proc ::questlog::ui::app::on_filter {snapshot} {
     variable SearchActive
     variable PrevSnapshot
 
-    # A view-toggle-only change (search and scope unchanged) leaves the result set
-    # intact: only which in-model rows are shown changes. Take the fast path - no
-    # clear, no re-scan, no re-search - so the toggle is reversible and keeps the
-    # selection.
-    #
-    # What it does to the scroll depends on the row the reader is parked on. The
-    # re-filter ends in a rebuild, which reseats the view on the node that was at
-    # the top of the viewport (rebuild_restore in ui/sessions.tcl): that row when
-    # the lens still admits it, so the reader does not move; its folder heading
-    # when the row is now hidden but the folder still shows one, so the view slides
-    # up to the folder; and the head only when the row is hidden AND its folder
-    # lost every row, which takes the heading out from under it too. Two other
-    # things land on the head: a reader already there (rebuild keeps them), and a
-    # lens narrow enough that the rows it leaves fit the viewport, where the reseat
-    # still runs but there is no longer anything to scroll. A narrow lens over a
-    # long list is the common case, which is why the fast path so often reads as
-    # "jumped to the top" even though the anchor was honoured.
-    #
-    # Any scope/search difference falls through to the rebuild.
+    # A republish whose scope and search keys all match the last one changed
+    # nothing that decides which sessions load, so the rebuild below would only
+    # reproduce what is already shown. Skip it, keeping the list and its selection.
+    # The list-view lenses no longer come this way: they live on the list strip
+    # and re-filter the loaded rows in place, telling the app through on_lens_change.
     if {$PrevSnapshot ne {} && [scope_equal $PrevSnapshot $snapshot]} {
-        set CriteriaActive [::questlog::ui::any_criteria $snapshot]
-        $SessionList apply_listview $snapshot
-        refresh_status
-        update_spinner
         set PrevSnapshot $snapshot
-        # The lens just changed, so its membership did: the list re-filters in
-        # place from the rows it holds (no disk), and this hands it the set to
-        # count that against. Running's set is free; Bookmarked's stat sweep runs
-        # after the re-filter has already painted, never before it.
-        refresh_lens_members
         return
     }
 
