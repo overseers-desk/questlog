@@ -1243,9 +1243,10 @@ proc ::questlog::ui::app::init_cost_pool {} {
     # Without Thread there is no pool; start_cost_one parses on the main
     # thread instead.
     if {![::questlog::search::thread_available]} return
-    # The worker runs parse_file, which counts turns through
-    # ::questlog::jsonl::is_user_turn, so jsonl.tcl is sourced ahead of cost.tcl.
-    set initcmd "source [list [file join $Root lib jsonl.tcl]]
+    # The worker runs parse_file, which delegates token parsing to the tallyman
+    # module; the module search path is registered so cost.tcl's
+    # `package require tallyman` resolves in the fresh worker interp.
+    set initcmd "::tcl::tm::path add [list $Root]
 source [list [file join $Root lib cost.tcl]]\n$CostWorkerScript"
     set CostPool [tpool::create \
         -minworkers [::questlog::config::get cost_workers_min] \

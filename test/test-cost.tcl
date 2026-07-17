@@ -7,6 +7,7 @@ package require Tcl 9
 package require json
 
 set ROOT [file dirname [file dirname [file normalize [info script]]]]
+::tcl::tm::path add $ROOT
 namespace eval ::questlog::cost {}
 source [file join $ROOT config.tcl]
 source [file join $ROOT lib jsonl.tcl]
