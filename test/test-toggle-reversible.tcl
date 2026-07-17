@@ -116,7 +116,7 @@ check "model total unchanged"     [$SL fget $FOLDER count] 2
 check "viewable count drops to 1" [$SL folder_visible_count $FOLDER] 1
 check "A selection retained"      [$SL is_selected $Ap] 1
 
-# --- 4. Toggle bookmarked_only back off: A renders again and is still selected
+# --- 4. Turn the bookmarked filter back off: A renders again, still selected
 #        (the selected tag is re-applied by render_session from SelectedSet).
 $SL attr_filter_set bookmarked 0
 update
@@ -124,7 +124,7 @@ check "A rendered again"        [$SL sflag $Ap rendered] 1
 check "A still selected"        [$SL is_selected $Ap] 1
 check "B still rendered"        [$SL sflag $Bp rendered] 1
 
-# --- 5. A running, non-bookmarked session stays hidden under bookmarked_only:
+# --- 5. A running, non-bookmarked session stays hidden under the bookmarked filter:
 #        the label promises bookmarks and nothing else. Running-ness retains it
 #        in the model; it does not paint it.
 $SL attr_filter_set bookmarked 1
@@ -132,7 +132,7 @@ update
 set Auuid [$SL sget $Ap uuid]
 $SL reconcile_running [dict create $Auuid $Ap]
 update
-check "running A still hidden under bookmarked_only" [$SL sflag $Ap rendered] 0
+check "running A still hidden under the bookmarked filter" [$SL sflag $Ap rendered] 0
 check "running A retained in model" [$SL has_session $Ap] 1
 $SL reconcile_running [dict create]
 

@@ -74,7 +74,7 @@ proc check {name got want} {
     }
 }
 
-# --- 1. Load A and B only (running_only off); expand the folder. Both render.
+# --- 1. Load A and B only (filter off); expand the folder. Both render.
 #        C is left on disk, deliberately not scanned in.
 $SL apply_filter [dict create since all min_turns 2]
 set ::scan_done 0
@@ -83,27 +83,27 @@ after 200 [list set ::scan_done 1]
 vwait ::scan_done
 $SL toggle_folder $FOLDER
 update
-check "A rendered (running_only off)" [$SL sflag $Ap rendered] 1
-check "B rendered (running_only off)" [$SL sflag $Bp rendered] 1
+check "A rendered (filter off)" [$SL sflag $Ap rendered] 1
+check "B rendered (filter off)" [$SL sflag $Bp rendered] 1
 check "C not loaded"                  [$SL has_session $Cp] 0
 
 set Buuid [$SL sget $Bp uuid]
 
-# --- 2. Turn running_only ON with an empty running set: both loaded rows hide.
+# --- 2. Turn the running filter ON with an empty running set: both loaded rows hide.
 $SL attr_filter_set running 1
 update
-check "A hidden (running_only on, not live)" [$SL sflag $Ap rendered] 0
-check "B hidden (running_only on, not live)" [$SL sflag $Bp rendered] 0
+check "A hidden (filter on, not live)" [$SL sflag $Ap rendered] 0
+check "B hidden (filter on, not live)" [$SL sflag $Bp rendered] 0
 
-# --- 3. The live poll reports C running while running_only is on. Membership
+# --- 3. The live poll reports C running while the filter is on. Membership
 #        is scope-or-running: C imports (running bypasses the min-turns floor
 #        here exactly as it does in plain browse) and paints, because
-#        running_only's job is to show live sessions - the toggle hides rows,
+#        the running filter's job is to show live sessions - it hides rows,
 #        it never blocks liveness from arriving. Only running sessions can
 #        enter this way: the import loop iterates the running set alone.
 $SL reconcile_running [dict create cccc $Cp]
 update
-check "C imported under running_only" [$SL has_session $Cp] 1
+check "C imported under the running filter" [$SL has_session $Cp] 1
 check "C rendered (it is running)"    [$SL sflag $Cp rendered] 1
 
 # --- 4. A loaded session that becomes running shows in place; a running-only
