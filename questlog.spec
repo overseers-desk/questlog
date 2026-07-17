@@ -28,13 +28,14 @@ working directory.
 # Pure Tcl; nothing to build.
 
 %install
-install -d %{buildroot}%{_datadir}/%{name}/lib %{buildroot}%{_datadir}/%{name}/ui %{buildroot}%{_datadir}/%{name}/cli %{buildroot}%{_datadir}/%{name}/data %{buildroot}%{_datadir}/%{name}/assets
+install -d %{buildroot}%{_datadir}/%{name}/modules %{buildroot}%{_datadir}/%{name}/vendor %{buildroot}%{_datadir}/%{name}/lib %{buildroot}%{_datadir}/%{name}/ui %{buildroot}%{_datadir}/%{name}/cli %{buildroot}%{_datadir}/%{name}/data %{buildroot}%{_datadir}/%{name}/assets
 cp lib/*.tcl %{buildroot}%{_datadir}/%{name}/lib/
 cp ui/*.tcl  %{buildroot}%{_datadir}/%{name}/ui/
 cp cli/*.tcl %{buildroot}%{_datadir}/%{name}/cli/
 cp data/*.csv %{buildroot}%{_datadir}/%{name}/data/
 cp config.tcl %{buildroot}%{_datadir}/%{name}/
-cp *.tm %{buildroot}%{_datadir}/%{name}/
+cp modules/*.tm %{buildroot}%{_datadir}/%{name}/modules/
+cp vendor/*.tm %{buildroot}%{_datadir}/%{name}/vendor/
 cp assets/questlog.svg %{buildroot}%{_datadir}/%{name}/assets/
 install -D -m 0755 questlog %{buildroot}%{_bindir}/questlog
 sed -i 's|^set ROOT .*|set ROOT %{_datadir}/%{name}|' %{buildroot}%{_bindir}/questlog

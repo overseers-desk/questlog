@@ -8,7 +8,8 @@
 package require Tcl 9
 
 set ROOT [file dirname [file dirname [file normalize [info script]]]]
-::tcl::tm::path add $ROOT
+::tcl::tm::path add [file join $ROOT modules]
+::tcl::tm::path add [file join $ROOT vendor]
 source [file join $ROOT lib cost.tcl]
 source [file join $ROOT cli main.tcl]
 set failures 0

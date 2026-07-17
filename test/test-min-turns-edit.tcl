@@ -22,7 +22,8 @@ package require Tcl 9
 package require Tk
 
 set ROOT [file dirname [file dirname [file normalize [info script]]]]
-::tcl::tm::path add $ROOT
+::tcl::tm::path add [file join $ROOT modules]
+::tcl::tm::path add [file join $ROOT vendor]
 package require leash
 foreach f {config.tcl lib/debug.tcl lib/cost.tcl ui/theme.tcl lib/path.tcl \
            lib/scope.tcl lib/sessionlist.tcl lib/search.tcl ui/toolbar.tcl} {

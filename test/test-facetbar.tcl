@@ -9,7 +9,8 @@ package require Tcl 8.6-
 package require Tk 8.6-
 
 set ROOT [file dirname [file dirname [file normalize [info script]]]]
-::tcl::tm::path add $ROOT
+::tcl::tm::path add [file join $ROOT modules]
+::tcl::tm::path add [file join $ROOT vendor]
 package require facetbar
 
 set fails 0

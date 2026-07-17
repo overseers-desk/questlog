@@ -16,7 +16,8 @@ package require Tcl 9
 package require Tk
 
 set ROOT [file dirname [file dirname [file normalize [info script]]]]
-::tcl::tm::path add $ROOT
+::tcl::tm::path add [file join $ROOT modules]
+::tcl::tm::path add [file join $ROOT vendor]
 package require leash
 package require streamtree
 # Mirror the launcher's GUI source order for the subset the Viewer needs: config

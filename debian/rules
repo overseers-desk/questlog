@@ -11,13 +11,14 @@ override_dh_auto_build:
 override_dh_auto_test:
 
 override_dh_auto_install:
-	install -d $(SHARE)/lib $(SHARE)/ui $(SHARE)/cli $(SHARE)/data $(SHARE)/assets
+	install -d $(SHARE)/modules $(SHARE)/vendor $(SHARE)/lib $(SHARE)/ui $(SHARE)/cli $(SHARE)/data $(SHARE)/assets
 	cp lib/*.tcl $(SHARE)/lib/
 	cp ui/*.tcl  $(SHARE)/ui/
 	cp cli/*.tcl $(SHARE)/cli/
 	cp data/*.csv $(SHARE)/data/
 	cp config.tcl $(SHARE)/
-	cp *.tm $(SHARE)/
+	cp modules/*.tm $(SHARE)/modules/
+	cp vendor/*.tm $(SHARE)/vendor/
 	cp assets/questlog.svg $(SHARE)/assets/
 	install -D -m 0755 questlog $(PKGDIR)/usr/bin/questlog
 	sed -i 's|^set ROOT .*|set ROOT /usr/share/questlog|' $(PKGDIR)/usr/bin/questlog

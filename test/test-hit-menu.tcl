@@ -21,7 +21,8 @@ set SAND [file join [pwd] _hitmenu_sandbox]
 set FA "-tmp-hitmenu"
 
 set ROOT [file dirname [file dirname [file normalize [info script]]]]
-::tcl::tm::path add $ROOT
+::tcl::tm::path add [file join $ROOT modules]
+::tcl::tm::path add [file join $ROOT vendor]
 package require leash
 package require streamtree
 foreach f {config.tcl lib/cost.tcl ui/theme.tcl lib/path.tcl lib/scope.tcl lib/sessionlist.tcl lib/jsonl.tcl \

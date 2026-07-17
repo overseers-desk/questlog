@@ -6,9 +6,9 @@ namespace eval ::streamtree {}
 
 # ::streamtree::StreamTree - the generic "tree drawn in one text widget" engine.
 #
-# Home: the teatotal module collection. The copy here is vendored; a change
-# lands at the home and the vendored copy is refreshed in the same act, so the
-# two never diverge.
+# Home: the teatotal module collection, the one stable place this module's
+# updates arrive from. A project holding a copy refreshes it from there rather
+# than editing the copy, so every copy stays identical to the home.
 #
 # A StreamTree owns a tree of abstract NODES rendered into a single read-only
 # text widget, with a right-pinned, sortable metadata strip whose columns line

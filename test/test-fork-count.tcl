@@ -21,7 +21,8 @@ set PROJDIR [file join $SAND .claude projects $FOLDER]
 set ::env(HOME) $SAND
 
 set ROOT [file dirname [file dirname [file normalize [info script]]]]
-::tcl::tm::path add $ROOT
+::tcl::tm::path add [file join $ROOT modules]
+::tcl::tm::path add [file join $ROOT vendor]
 package require leash
 package require streamtree
 # SessionList::build reads ::questlog::ui::theme colours and the named fonts, and

@@ -13,7 +13,8 @@ package require Tcl 9
 package require Tk
 
 set ROOT [file dirname [file dirname [file normalize [info script]]]]
-::tcl::tm::path add $ROOT
+::tcl::tm::path add [file join $ROOT modules]
+::tcl::tm::path add [file join $ROOT vendor]
 package require streamtree
 
 set fails 0
