@@ -282,12 +282,12 @@ oo::class create steward::Harness {
     # tracked one.
     #
     # This is what lets a caller keep a persistent session while running
-    # context-isolated side sessions off the same harness: an author session
-    # that later resumes to revise, with a fresh critic invoked by `call`
-    # between the two. Under last-wins the critic would steal the tracked id
-    # and the author's revise prompt would land in the critic's context,
-    # silently. A caller that wants each call tracked constructs a harness per
-    # session, or overrides this method.
+    # context-isolated side sessions off the same harness: one session drafts
+    # and later resumes to revise, and a throwaway session invoked by `call`
+    # between the two reviews the draft on a clean context. Under last-wins the
+    # throwaway would steal the tracked id, and the revise prompt would land in
+    # its context instead, silently. A caller that wants every call tracked
+    # builds a harness per session, or overrides this method.
     method call {stage log_file prompt args} {
         set rc [my _with_recovery call $stage $log_file $prompt {*}$args]
         # Capture whenever the stream produced an id (including an incomplete
