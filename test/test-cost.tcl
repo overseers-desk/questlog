@@ -213,7 +213,7 @@ file delete $fix
 
 # ---- accrue_window: cost windowed by each message's own timestamp ---------
 # Needs the rate table and the window-edge helpers, same as the CLI run path.
-source [file join $ROOT lib filter.tcl]
+source [file join $ROOT lib scope.tcl]
 ::questlog::cost::load_rates $ROOT
 proc near {got want} { return [expr {abs($got - $want) < 0.001}] }
 proc write_lines {lines} {
@@ -225,7 +225,7 @@ proc write_lines {lines} {
 # Window edges exactly as run computes them, from the user's --since/--until.
 proc win {since until} {
     set s [dict create since $since until $until]
-    return [list [::questlog::filter::cutoff_for $s] [::questlog::filter::ceiling_for $s]]
+    return [list [::questlog::scope::cutoff_for $s] [::questlog::scope::ceiling_for $s]]
 }
 
 # Three single-request days at the opus-4-8 rate (in 5 / out 25 per Mtok, from

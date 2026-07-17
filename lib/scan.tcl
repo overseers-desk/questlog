@@ -216,8 +216,8 @@ oo::class create ::questlog::Scan {
     method list_paths_for {snapshot {include_subagents 0} {cli_only 0}} {
         set root [::questlog::path::projects_root]
         if {![file isdirectory $root]} { return [list] }
-        set cutoff [::questlog::filter::cutoff_for $snapshot]
-        set ceiling [::questlog::filter::ceiling_for $snapshot]
+        set cutoff [::questlog::scope::cutoff_for $snapshot]
+        set ceiling [::questlog::scope::ceiling_for $snapshot]
         # `subtree` is the scan's root, not a post-filter: when it is set, walk
         # only the folders whose encoded name places them at or below a subtree
         # directory, so sessions outside the scope are never enumerated or opened.
@@ -228,7 +228,7 @@ oo::class create ::questlog::Scan {
         set pairs [list]
         foreach folder [glob -nocomplain -directory $root -type d -- *] {
             if {[llength $subtree] > 0 \
-                && ![::questlog::filter::folder_subtree_candidate [file tail $folder] $subtree]} continue
+                && ![::questlog::scope::folder_subtree_candidate [file tail $folder] $subtree]} continue
             foreach f [glob -nocomplain -directory $folder -- *.jsonl] {
                 # Vanished between glob and stat (transcript pruning): skip.
                 if {[catch {file mtime $f} m]} continue
@@ -487,7 +487,7 @@ oo::class create ::questlog::Scan {
     # Filter rows by a snapshot. Used by the session list and Search to read
     # the current memoised view. The snapshot row-level predicate (the since
     # cutoff, the until ceiling, the subtree scope, the min-turns floor)
-    # lives in ::questlog::filter, shared with SessionList. Returns a list of
+    # lives in ::questlog::scope, shared with SessionList. Returns a list of
     # row dicts, mtime DESC.
     method query {snapshot} {
         set out [list]
@@ -498,7 +498,7 @@ oo::class create ::questlog::Scan {
             # paint a ghost the next reconcile tick has to take back. Drop it
             # from the result and from the memo.
             if {![file exists $path]} { lappend dead $path; continue }
-            if {![::questlog::filter::row_matches $snapshot $row]} continue
+            if {![::questlog::scope::row_matches $snapshot $row]} continue
             lappend out $row
         }
         foreach p $dead { dict unset Rows $p }
@@ -511,7 +511,7 @@ oo::class create ::questlog::Scan {
     # unresolvable (its directory is gone, or the encoded basename is
     # ambiguous). row_subtree_match reads the field as the residence
     # authority; the stamping lives here because Scan owns the resolver and
-    # its cache, which keeps ::questlog::filter pure over its dicts. A ""
+    # its cache, which keeps ::questlog::scope pure over its dicts. A ""
     # stamp is not re-tried until the file is rescanned - resolve_folder
     # itself never caches a failure, so a directory restored later heals on
     # the next scan of the row.

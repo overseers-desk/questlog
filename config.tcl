@@ -116,7 +116,7 @@ namespace eval ::questlog::config {
     # The recency filter. since_presets is the set the toolbar's radio offers;
     # since_default is the one a fresh GUI launch starts on; "all" means no
     # bound. A since value (a preset, or an open --since duration) is turned
-    # into a cutoff by ::questlog::filter::parse_since.
+    # into a cutoff by ::questlog::scope::parse_since.
     dict set Config since_presets {24h 7d 30d all}
     dict set Config since_default 7d
 

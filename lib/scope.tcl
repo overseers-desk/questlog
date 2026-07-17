@@ -1,12 +1,12 @@
 package require Tcl 9
 
-# ::questlog::filter - the single home for snapshot row-level matching.
+# ::questlog::scope - the single home for snapshot row-level matching.
 #
 # Whether a session row passes the toolbar's snapshot SCOPE - the since/until
 # recency bounds, the subtree scope, and the min-turns floor - is one
-# question with one answer, asked by both the model (Scan, when it filters its
-# memoised rows) and the view (SessionList, when it reconciles which rows stay
-# shown). The cutoff computation and the subtree-scope predicate used to live in
+# question with one answer, asked by both the model (Scan, when it decides
+# which memoised rows the snapshot admits) and the view (SessionList, when it
+# reconciles which rows stay shown). The cutoff computation and the subtree-scope predicate used to live in
 # both, so the model logic was mirrored into the view. These procs are that one
 # answer; Scan and SessionList call them rather than each carrying a copy. The
 # session-list view toggles (running_only, bookmarked_only) are a separate
@@ -18,7 +18,7 @@ package require Tcl 9
 # joint state that co-evolves and no named global to absorb - the issue-67
 # criteria all fail, and a few procs over two dicts beat a class.
 
-namespace eval ::questlog::filter {
+namespace eval ::questlog::scope {
     namespace export parse_since cutoff_for ceiling_for since_label time_locale \
         row_subtree_match row_matches folder_subtree_candidate
 }
@@ -39,7 +39,7 @@ namespace eval ::questlog::filter {
 # needs to reproduce an exact window. The regex pre-gates clock scan so only a
 # structurally valid string reaches it; the catch turns an impossible value
 # (2026-02-30, 25:00) into a clean error rather than a clock stack trace.
-proc ::questlog::filter::parse_since {spec} {
+proc ::questlog::scope::parse_since {spec} {
     if {$spec eq "" || $spec eq "all"} { return {none} }
     if {[regexp {^([0-9]+)([mhdw])$} $spec -> n unit]} {
         return [list rel [expr {$n * [dict get {m 60 h 3600 d 86400 w 604800} $unit]}]]
@@ -69,7 +69,7 @@ proc ::questlog::filter::parse_since {spec} {
 # instant (local midnight for a bare date, the named second for a datetime: mtime
 # >= epoch). That -1 is tied to the <= test at those two call sites; change one and
 # revisit this.
-proc ::questlog::filter::cutoff_for {snapshot} {
+proc ::questlog::scope::cutoff_for {snapshot} {
     set since [dict getdef $snapshot since [::questlog::config::get since_default]]
     lassign [parse_since $since] kind val
     switch -- $kind {
@@ -90,7 +90,7 @@ proc ::questlog::filter::cutoff_for {snapshot} {
 # expansion - which is what brackets a precise window. Unlike cutoff_for there is no
 # config default: the upper bound is a CLI-only filter, absent by default rather
 # than falling back to a configured one.
-proc ::questlog::filter::ceiling_for {snapshot} {
+proc ::questlog::scope::ceiling_for {snapshot} {
     set until [dict getdef $snapshot until ""]
     lassign [parse_since $until] kind val
     switch -- $kind {
@@ -107,7 +107,7 @@ proc ::questlog::filter::ceiling_for {snapshot} {
 # .ENCODING suffix is stripped because -locale en_AU.UTF-8 falls back to C while
 # -locale en_AU resolves. The one home for the date locale, used by since_label
 # and the GUI calendar's month header.
-proc ::questlog::filter::time_locale {} {
+proc ::questlog::scope::time_locale {} {
     foreach var {LC_ALL LC_TIME LANG} {
         if {[info exists ::env($var)] && $::env($var) ne ""} {
             return [lindex [split $::env($var) .] 0]
@@ -122,7 +122,7 @@ proc ::questlog::filter::time_locale {} {
 # %x convention ("since 1/04/2026" under en_AU). The leading space %x pads the
 # day with is trimmed. Relative labels stay English (there is no message
 # catalogue, and only the date was asked to track locale).
-proc ::questlog::filter::since_label {spec} {
+proc ::questlog::scope::since_label {spec} {
     lassign [parse_since $spec] kind val
     switch -- $kind {
         none  { return all }
@@ -151,7 +151,7 @@ proc ::questlog::filter::since_label {spec} {
 # ...-proj-sub - so this can over-include a hyphenated sibling repo;
 # row_subtree_match settles that per row. The pair: this narrows the walk for
 # speed, row_subtree_match confirms each row.
-proc ::questlog::filter::folder_subtree_candidate {fname subtree_list} {
+proc ::questlog::scope::folder_subtree_candidate {fname subtree_list} {
     foreach u $subtree_list {
         set enc [::questlog::path::encode_cwd $u]
         if {$fname eq $enc || [string match "$enc-*" $fname]} { return 1 }
@@ -173,7 +173,7 @@ proc ::questlog::filter::folder_subtree_candidate {fname subtree_list} {
 #     their old path.
 #   - cwd_hint also empty (a transcript that never recorded a cwd): the
 #     encoded folder name against the subtree dirs, the last honest evidence.
-proc ::questlog::filter::row_subtree_match {row subtree_list} {
+proc ::questlog::scope::row_subtree_match {row subtree_list} {
     set folder_cwd [dict getdef $row folder_cwd ""]
     if {$folder_cwd ne ""} {
         return [in_subtree_of $folder_cwd $subtree_list]
@@ -188,7 +188,7 @@ proc ::questlog::filter::row_subtree_match {row subtree_list} {
 # 1 iff $path equals a directory in subtree_list or extends it past a "/".
 # Literal prefix compare, not string match: a glob metacharacter in a
 # directory name ([, ?, *) is a character here, never a pattern.
-proc ::questlog::filter::in_subtree_of {path subtree_list} {
+proc ::questlog::scope::in_subtree_of {path subtree_list} {
     foreach u $subtree_list {
         set u [string trimright $u /]
         if {$path eq $u
@@ -210,7 +210,7 @@ proc ::questlog::filter::in_subtree_of {path subtree_list} {
 # scopes browse and search alike; a row that somehow lacks nturns defaults to the
 # threshold and passes. The session-list view toggles are applied separately, by
 # ::questlog::sessionlist::row_visible.
-proc ::questlog::filter::row_matches {snapshot row} {
+proc ::questlog::scope::row_matches {snapshot row} {
     if {[dict get $row mtime] <= [cutoff_for $snapshot]} { return 0 }
     set ceiling [ceiling_for $snapshot]
     if {$ceiling ne "" && [dict get $row mtime] > $ceiling} { return 0 }

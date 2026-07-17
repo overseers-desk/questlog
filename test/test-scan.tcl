@@ -6,7 +6,7 @@ set ROOT [file dirname [file dirname [file normalize [info script]]]]
 package require leash
 source [file join $ROOT config.tcl]
 source [file join $ROOT lib path.tcl]
-source [file join $ROOT lib filter.tcl]
+source [file join $ROOT lib scope.tcl]
 source [file join $ROOT lib sessionlist.tcl]
 source [file join $ROOT lib jsonl.tcl]
 source [file join $ROOT lib match.tcl]
@@ -173,7 +173,7 @@ foreach r $qrows { set nturns_of([dict get $r path]) [dict get $r nturns] }
 check nturns_recorded_aaa 3 $nturns_of(/tmp/questlog-test-projects/-home-test-code-foo/aaa-1.jsonl)
 check nturns_recorded_bbb 1 $nturns_of(/tmp/questlog-test-projects/-home-test-code-foo/bbb-2.jsonl)
 set inscope 0
-foreach r $qrows { if {[::questlog::filter::row_matches $snap1 $r]} { incr inscope } }
+foreach r $qrows { if {[::questlog::scope::row_matches $snap1 $r]} { incr inscope } }
 check row_matches_min_turns 2 $inscope
 
 # Memoisation: re-extending shouldn't re-scan unchanged paths.
@@ -346,8 +346,8 @@ check turns_scan_file_eq_cost $cost_turns $scan_file_turns
 # The floor reads nturns, the column shows the cost turns; with both 3, a floor
 # of 3 keeps the row and a floor of 4 drops it, and that decision is the one the
 # displayed turns count would predict.
-check floor_3_keeps 1 [::questlog::filter::row_matches [dict create since all min_turns 3] $row3]
-check floor_4_drops 0 [::questlog::filter::row_matches [dict create since all min_turns 4] $row3]
+check floor_3_keeps 1 [::questlog::scope::row_matches [dict create since all min_turns 3] $row3]
+check floor_4_drops 0 [::questlog::scope::row_matches [dict create since all min_turns 4] $row3]
 check floor_agrees_with_column 1 [expr {$cost_turns >= 3}]
 
 $s4 destroy

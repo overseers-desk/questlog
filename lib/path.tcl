@@ -38,7 +38,7 @@ if {[info commands ::questlog::path::_real_file] eq ""} {
 # expands ~ nowhere - file normalize treats a leading ~ as an ordinary
 # relative segment - so a typed ~/x would ride through every comparison as
 # a literal and the scope would silently match nothing. Expand the tilde
-# here and normalize, so the predicates in ::questlog::filter only ever see
+# here and normalize, so the predicates in ::questlog::scope only ever see
 # the same absolute form Claude Code records as a session cwd. A ~user for
 # an unknown user throws (the caller turns that into its own loud failure);
 # existence is not required, since scoping to a since-deleted directory is

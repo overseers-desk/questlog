@@ -8,13 +8,13 @@ package require Tcl 9
 # does not re-run a search or change which sessions are eligible. They live
 # under the snapshot's
 # `listview` sub-key, and this namespace is their one predicate home - the
-# analogue, for the view question, of ::questlog::filter::row_matches (which
+# analogue, for the view question, of ::questlog::scope::row_matches (which
 # answers the scope question, including the min-turns floor that was once a view
 # toggle). The browse stream and the in-place reducer both ask row_visible, so
 # the model and the rendered view never disagree on what the toggles admit.
 #
 # A namespace of pure predicates over (snapshot, row), not a class: the same
-# issue-67 reasoning as ::questlog::filter - no joint state, no named global,
+# issue-67 reasoning as ::questlog::scope - no joint state, no named global,
 # tell-don't-ask all fail.
 
 namespace eval ::questlog::sessionlist {

@@ -24,7 +24,7 @@ set ROOT [file dirname [file dirname [file normalize [info script]]]]
 ::tcl::tm::path add $ROOT
 package require leash
 foreach f {config.tcl lib/debug.tcl lib/cost.tcl ui/theme.tcl lib/path.tcl \
-           lib/filter.tcl lib/sessionlist.tcl lib/search.tcl ui/toolbar.tcl} {
+           lib/scope.tcl lib/sessionlist.tcl lib/search.tcl ui/toolbar.tcl} {
     source [file join $ROOT $f]
 }
 ::questlog::ui::theme::init

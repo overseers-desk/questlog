@@ -310,7 +310,7 @@ oo::class create ::questlog::Search {
     # from scan_file without a residence stamp (workers never resolve folders),
     # so stamp it here on the main thread before the predicate reads it.
     method row_in_scope {row} {
-        return [::questlog::filter::row_matches $Snapshot [$Scan stamp_subtree $row]]
+        return [::questlog::scope::row_matches $Snapshot [$Scan stamp_subtree $row]]
     }
 
     method cancel {} {

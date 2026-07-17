@@ -721,10 +721,10 @@ oo::class create ::questlog::ui::SessionList {
     # ---- snapshot membership -----------------------------------------
 
     # Whether a row passes the current snapshot's row-level filters. The
-    # predicate is shared with Scan through ::questlog::filter, so the model and
+    # predicate is shared with Scan through ::questlog::scope, so the model and
     # the view never disagree on what the snapshot admits.
     method row_matches_snapshot {row} {
-        return [::questlog::filter::row_matches $Snapshot $row]
+        return [::questlog::scope::row_matches $Snapshot $row]
     }
 
     # 1 iff a session is shown under the current snapshot: the view toggles
@@ -2781,7 +2781,7 @@ oo::class create ::questlog::ui::SessionList {
                 # scope surfaces in plain browse.
                 if {[my has_session $path]} continue
                 if {[llength $subtree] > 0 \
-                    && ![::questlog::filter::row_subtree_match $row $subtree]} continue
+                    && ![::questlog::scope::row_subtree_match $row $subtree]} continue
                 my model_add_session $path $row
                 # Drawing is the dirty pass's job below: rebuild is
                 # hidden-aware and creates the folder heading, which this
@@ -2811,7 +2811,7 @@ oo::class create ::questlog::ui::SessionList {
                 # recency / min-turns bounds (it always surfaces), but a running
                 # session OUTSIDE the subtree scope does not.
                 set in_subtree [expr {[llength $subtree] == 0 || $row eq "" \
-                    || [::questlog::filter::row_subtree_match $row $subtree]}]
+                    || [::questlog::scope::row_subtree_match $row $subtree]}]
                 # A session the reader pulled in through the cut banner stays,
                 # whatever the scope says: they named it and asked for it, and
                 # dropping it on the next tick would answer them by taking it away.
@@ -3179,7 +3179,7 @@ oo::class create ::questlog::ui::SessionList {
             return subtree
         }
         if {$CriteriaActive} { return search }
-        if {[::questlog::filter::cutoff_for $Snapshot] > 0} { return since }
+        if {[::questlog::scope::cutoff_for $Snapshot] > 0} { return since }
         if {[dict getdef $Snapshot min_turns 1] > 1} { return min_turns }
         return unloaded
     }
@@ -3190,11 +3190,11 @@ oo::class create ::questlog::ui::SessionList {
     # to its encoded folder name, the same evidence the scanner's walk uses.
     method member_in_subtree {member subtree} {
         set cwd [dict getdef $member cwd ""]
-        if {$cwd ne ""} { return [::questlog::filter::in_subtree_of $cwd $subtree] }
+        if {$cwd ne ""} { return [::questlog::scope::in_subtree_of $cwd $subtree] }
         set path [dict get $member path]
         set row [{*}$LookupSession $path]
-        if {$row ne ""} { return [::questlog::filter::row_subtree_match $row $subtree] }
-        return [::questlog::filter::folder_subtree_candidate \
+        if {$row ne ""} { return [::questlog::scope::row_subtree_match $row $subtree] }
+        return [::questlog::scope::folder_subtree_candidate \
                     [file tail [file dirname $path]] $subtree]
     }
 
