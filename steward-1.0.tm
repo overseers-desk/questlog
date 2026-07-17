@@ -400,8 +400,9 @@ oo::class create steward::Harness {
                     }} [info coroutine]]
                 yield
             } else {
-                after [expr {$UsageResetSecs * 1000}] set ::_wake 1
-                vwait ::_wake
+                after [expr {$UsageResetSecs * 1000}] \
+                    [list set [my varname _wake] 1]
+                vwait [my varname _wake]
             }
 
             # Already in resume mode (either a resume-initiated call, or a
