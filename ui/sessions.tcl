@@ -33,7 +33,7 @@ proc ::questlog::ui::session_columns {} {
         {cost     Cost     {$9999.99}         right 1}
         {turns    Turns    {9999}             right 1}
         {duration Duration {0:00:00}          right 1}
-        {ratio    H%       {100%}             right 1}
+        {ah       A/H      {999.9}            right 1}
         {context  Ctx%     {100%}             right 1}
         {model    Model    {Sonnet 4.6}       right 0}
         {actions  {}       {⋯}                right 0}
@@ -1532,14 +1532,20 @@ oo::class create ::questlog::ui::SessionList {
                 duration {
                     set v [::questlog::cost::fmt_dur [dict getdef $s duration_secs ""]]
                 }
-                ratio {
-                    # Human share of the engaged time, human/(human+machine).
-                    # Blank until both figures exist and they amount to
-                    # anything, so an unscanned or empty session shows no 0%.
+                ah {
+                    # Machine time over human time: how many multiples of the
+                    # user's composing the machine worked. One decimal below 10
+                    # (3.5), whole from 10 up (12). Blank until both figures
+                    # exist and human time is above zero, so an unscanned or
+                    # empty session shows nothing rather than a bare number.
                     set h [dict getdef $s human_secs ""]
                     set m [dict getdef $s duration_secs ""]
-                    set v [expr {($h ne "" && $m ne "" && $h + $m > 0) \
-                                 ? "[expr {round(100.0 * $h / ($h + $m))}]%" : ""}]
+                    if {$h eq "" || $m eq "" || $h <= 0} {
+                        set v ""
+                    } else {
+                        set r [expr {double($m) / $h}]
+                        set v [expr {$r < 10 ? [format %.1f $r] : round($r)}]
+                    }
                 }
                 context {
                     set p [dict getdef $s context_pct ""]
@@ -1649,11 +1655,11 @@ oo::class create ::questlog::ui::SessionList {
                 if {$v eq ""} { return -1 }
                 return $v
             }
-            ratio {
+            ah {
                 set h [dict getdef $s human_secs ""]
                 set m [dict getdef $s duration_secs ""]
-                if {$h eq "" || $m eq "" || $h + $m == 0} { return -1 }
-                return [expr {double($h) / ($h + $m)}]
+                if {$h eq "" || $m eq "" || $h <= 0} { return -1 }
+                return [expr {double($m) / $h}]
             }
             context {
                 set v [dict getdef $s context_pct ""]
@@ -2116,9 +2122,9 @@ oo::class create ::questlog::ui::SessionList {
             my refresh_status
         }
         if {[my sflag $path rendered]} { my redraw_header $path }
-        # The worker result can change cost-, turns-, duration-, ratio- or
+        # The worker result can change cost-, turns-, duration-, A/H- or
         # context-sorted order.
-        if {$SortKey in {cost turns duration ratio context}} { my schedule_resort }
+        if {$SortKey in {cost turns duration ah context}} { my schedule_resort }
     }
 
     # A subagent's cost/turns/duration arriving from the second pass. Stored on
@@ -2158,9 +2164,9 @@ oo::class create ::questlog::ui::SessionList {
                 my rerender_children $parent
             }
             $Text configure -state disabled
-            # The worker result can change cost-, turns-, duration-, ratio- or
+            # The worker result can change cost-, turns-, duration-, A/H- or
             # context-sorted order.
-            if {$SortKey in {cost turns duration ratio context}} { my schedule_resort }
+            if {$SortKey in {cost turns duration ah context}} { my schedule_resort }
         }
     }
 

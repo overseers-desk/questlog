@@ -82,7 +82,7 @@ namespace eval ::questlog::config {
     # flood of results does not churn the list during interaction.
     dict set Config cost_render      coalesced
     dict set Config cost_coalesce_ms 80
-    # Under a non-default sort, a late metric (cost/turns/duration/H%) reorders
+    # Under a non-default sort, a late metric (cost/turns/duration/A/H) reorders
     # the list, which means a full re-render. Debounce that re-render by this
     # many ms: each arrival resets the timer, so a metric flood resolves to one
     # rebuild when arrivals pause and the list stays still (in arrival order)
