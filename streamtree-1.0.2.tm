@@ -68,6 +68,80 @@ namespace eval ::streamtree {}
 #     sort_siblings ids          reorder a sibling set for display, keeping every node
 #     render_skip id             leave a node out of the view while keeping it in the store
 #     rebuild_restore anchor     re-pin the view to a {kind key} top node after a rebuild
+#   Attributes
+#     attr_value node id         the value of a declared attribute on a node, read
+#                                through this one hook so the payload stays opaque;
+#                                the default reads the payload's `id` key
+#
+# ---- declarative attributes --------------------------------------------
+#
+# A consumer declares ATTRIBUTES, a small typed vocabulary the engine draws and
+# filters on its behalf while still reading nothing inside a payload: every value
+# arrives through the attr_value hook, so the engine interprets only what the
+# consumer named. Attributes are declared through the -attrs option, an ordered
+# list of descriptor dicts, and validated at the door like the other option
+# surfaces (an unknown key, a bad kind, a duplicate id are refused where they were
+# written). Descriptor keys, only `id` required:
+#   id          the attribute's key, a plain word (letters, digits, underscore).
+#               It is the payload key the default attr_value reads, and it names
+#               the glyph tag and the filter control.
+#   label       the wording on a control and, for a check column, its header label
+#               (defaults to the id).
+#   kind        bool or enum. A bool is a two-state flag; an enum is a string drawn
+#               from a roster. Kinds past bool and enum, a scalar or free-text
+#               filter, are a recorded future question and stay deliberately absent.
+#   glyph       a short string (one Unicode character is typical) a true bool draws
+#               as a subject-prefix mark. A bool with no glyph draws a check column.
+#   filterable  1 to offer the attribute as a filter control, 0 (default) to draw
+#               it and no more.
+#   values      an enum's roster provider, a command prefix returning the current
+#               list of values; with none the roster is the distinct values the
+#               nodes carry, gathered through attr_value.
+#
+# Presentation. A bool WITH a glyph prefixes the subject with that glyph while the
+# value is true, under a per-attribute tag `attr-<id>` the host styles by name. A
+# bool WITHOUT a glyph is a check column joined to the metadata strip like a
+# column_spec entry, a check mark when true and blank when false, and it does not
+# sort (a two-valued mark offers no ordering). An enum adds no presentation of its
+# own: its column, when it wants one, is an ordinary column_spec entry the consumer
+# lays. Both bool branches are part of the contract and stand whether a given host
+# reaches for one or the other.
+#
+# Filtering. A filterable attribute becomes a control the host packs into a frame
+# it owns (build_filters frame side): the module fills that frame, and only it, and
+# packs the controls toward `side` (left or right). A bool is a checkbutton, and on
+# it a row whose value is explicitly false (0/false/no/off) hides; a true value
+# shows, and so does an absent one, a flag the row does not carry. An enum is a
+# menubutton opening a stay-open checklist popover, one entry per roster value plus
+# select-all and select-none; its filter is an EXCLUDED-value set, empty meaning
+# off. A row hides when its value is known (non-empty) and in the excluded set; a
+# row whose value is empty always shows, because it is a value the row may acquire
+# late, so select-none, which excludes the whole current roster, still leaves the
+# unknown-valued rows in view. A filter reads whatever attr_value answers for ANY
+# node kind, so a container that answers with a value is filtered like a row; the
+# three-valued bool is what spares a container that carries no such flag.
+#
+# Composition with other hides. The one hidden flag is shared, so the filter never
+# assumes it owns it. The attribute layer keeps a ledger of the nodes IT hid: a
+# filter change hides a rejected node only while the node is visible, recording it,
+# and shows a node again only when the node is in that ledger and now passes. A node
+# the consumer hid for its own reasons (its search, its recency window) is never in
+# the ledger and the filter never resurrects it. A node shows only when nobody hides
+# it. The change moves the view through the hide/unhide primitives and the
+# hidden-aware rebuild, and fires -attrfiltercb with the whole filter state. That
+# state reads and writes through attr_filter_get / attr_filter_set (a bool's flag,
+# an enum's excluded set); a programmatic set applies and fires the callback only on
+# a real change, and apply_attr_filters reapplies the active filters after a host
+# streams in new nodes. The popover rereads the roster each time it opens, so a value
+# added after it last drew appears the next open. Styles reach the controls by name
+# through -attrstyles (roles check, menu, popcheck, popbtn); a role left empty falls
+# back to the stock ttk widget, and the module configures no style a host named.
+#
+# Stable paths and tags the attribute facility adds:
+#   attr-<id>              the text tag on a true bool's subject-prefix glyph.
+#   <frame>.attr_<id>      a filter control (checkbutton or menubutton) in the frame
+#                          the host handed build_filters.
+#   .streamtree_attrpop    the enum checklist popover toplevel, one at a time.
 
 # Coerce a {pos align ...} tab spec to strictly increasing positive stops,
 # which Tk requires. Guards the degenerate column geometry a too-narrow width
@@ -117,6 +191,16 @@ oo::class create ::streamtree::StreamTree {
     variable AtTop            ;# anchor state across a streaming insert
     variable AtBottom         ;# tail-latch state across a streaming insert (-autofollow)
     variable WasAtBottom      ;# last observed bottom state, edges fire <<AtBottom>>/<<LeftBottom>>
+    # Declarative attributes: the parsed descriptor set and the live filter state.
+    variable AttrOrder        ;# declared attribute ids, in declaration order
+    variable AttrSpec         ;# id -> descriptor dict
+    variable AttrFilter       ;# filterable id -> filter state (bool 0|1; enum excluded list)
+    variable AttrPopTop       ;# the enum checklist popover toplevel, or "" when none is open
+    variable AttrPopId        ;# the attribute the open popover filters
+    variable AttrPopRoster    ;# the roster the open popover was built from, index-keyed
+    variable AttrHidden       ;# set (dict id->1) of the nodes the attribute filter hid
+    variable FilterUI         ;# array: bool filter id -> its checkbutton's -variable value
+    variable PopUI            ;# array: popover row index -> its checkbutton's -variable value
 
     # ---- generic node store ------------------------------------------
     #
@@ -128,6 +212,7 @@ oo::class create ::streamtree::StreamTree {
     method reset_nodes {} {
         set Nodes [dict create]
         set Roots [list]
+        set AttrHidden [dict create]
     }
 
     method node_new {kind parent key payload} {
@@ -206,7 +291,10 @@ oo::class create ::streamtree::StreamTree {
     # its muted label ink, the active-column ink), the debounce a streamed resort
     # waits out, and a motion callback the drag-to-move host wires in. Defaults
     # are a plain Tk look so the widget runs standalone; a host overrides them
-    # through `configure` before the body is built.
+    # through `configure` before the body is built. The attribute surface rides the
+    # same door: -attrs declares the typed attributes, -attrstyles names the styles
+    # its filter controls take (empty roles fall back to the stock ttk widget), and
+    # -attrfiltercb is fired with the filter state whenever a filter changes.
     method engine_default_opts {} {
         return [dict create \
             listfont TkTextFont \
@@ -214,16 +302,27 @@ oo::class create ::streamtree::StreamTree {
             colours [dict create strip #ececec muted #767676 ink #1d1d1d] \
             resortdelay 250 \
             autofollow 0 \
-            motioncb ""]
+            motioncb "" \
+            attrs [list] \
+            attrstyles [dict create check "" menu "" popcheck "" popbtn ""] \
+            attrfiltercb ""]
     }
     method configure {args} {
         if {![info exists Opts]} { set Opts [my engine_default_opts] }
         set known [my engine_default_opts]
+        # Stage into a copy and validate the whole call before committing any of it,
+        # so a bad option (or a bad -attrs) partway through leaves both the option
+        # dict and the parsed attribute state exactly as they were.
+        set staged $Opts
+        set reparse 0
         foreach {opt val} $args {
             set k [string trimleft $opt -]
             if {![dict exists $known $k]} { error "unknown option $opt" }
-            dict set Opts $k $val
+            if {$k eq "attrs"} { my validate_attrs $val; set reparse 1 }
+            dict set staged $k $val
         }
+        set Opts $staged
+        if {$reparse} { my parse_attrs }
     }
     method opt {k} {
         if {![info exists Opts]} { set Opts [my engine_default_opts] }
@@ -245,7 +344,7 @@ oo::class create ::streamtree::StreamTree {
         set NextId 0
         set SortKey [my subject_sort_id]
         if {$SortKey eq ""} {
-            foreach col [my column_spec] {
+            foreach col [my effective_column_spec] {
                 lassign $col id label sample align sortable
                 if {$sortable} { set SortKey $id; break }
             }
@@ -342,7 +441,7 @@ oo::class create ::streamtree::StreamTree {
         if {![info exists ColMinW]} { set ColMinW [dict create] }
         if {![info exists ResizeCol]} { set ResizeCol "" }
         set ColWMeasured [list]
-        foreach col [my column_spec] {
+        foreach col [my effective_column_spec] {
             lassign $col id label sample
             # A column must be wide enough for both its widest cell (the sample)
             # and its header label with the sort arrow, so a short-sampled column
@@ -361,7 +460,7 @@ oo::class create ::streamtree::StreamTree {
     method effective_col_widths {} {
         set out [list]
         set i 0
-        foreach col [my column_spec] {
+        foreach col [my effective_column_spec] {
             set id [lindex $col 0]
             set w [lindex $ColWMeasured $i]
             if {[dict exists $ColWOverride $id]} { set w [dict get $ColWOverride $id] }
@@ -555,7 +654,7 @@ oo::class create ::streamtree::StreamTree {
         set cx [expr {$x - 8}]
         # The column's right edge is pinned, so dragging its left-edge handle
         # left (cx down) widens it by the same amount.
-        set id [lindex [lindex [my column_spec] $ResizeCol] 0]
+        set id [lindex [lindex [my effective_column_spec] $ResizeCol] 0]
         set w [expr {$ResizeW0 + ($ResizeX0 - $cx)}]
         set minw [dict getdef $ColMinW $id 16]
         if {$w < $minw} { set w $minw }
@@ -585,7 +684,7 @@ oo::class create ::streamtree::StreamTree {
     # when it defines one; a click in the gaps sorts nothing.
     method on_header_click {x} {
         set cx [expr {$x - 8}]
-        set cols [my column_spec]
+        set cols [my effective_column_spec]
         if {![llength $cols]} {
             set sid [my subject_sort_id]
             if {$sid ne ""} { my set_sort $sid }
@@ -641,7 +740,7 @@ oo::class create ::streamtree::StreamTree {
             set act_off 0
             set act_len [string length $line]
         }
-        foreach col [my column_spec] {
+        foreach col [my effective_column_spec] {
             lassign $col id label
             append line "\t"
             set lbl $label
@@ -813,26 +912,35 @@ oo::class create ::streamtree::StreamTree {
         return "[string range $text 0 [expr {$lo - 1}]]…"
     }
 
-    # Build one row's text: the subject from render_subject, then the metadata
-    # cells from cell_values pinned to the right by the column tab stops. Returns
-    # {line subject subjtags meta_run meta_off offs}, where offs maps each laid
-    # column id to its {off len} range for cell tagging.
+    # Build one row's text: the glyphed-bool attribute prefix, the subject from
+    # render_subject, then the metadata cells (the consumer's from cell_values and
+    # the glyphless-bool check columns) pinned to the right by the column tab stops.
+    # Returns {line subject subjtags meta_run meta_off offs}, where offs maps each
+    # laid column id to its {off len} range for cell tagging. The attribute prefix
+    # sits at the row start, so the subject's own tag ranges shift past it and every
+    # prefix glyph carries its per-attribute tag.
     method build_line {node} {
+        lassign [my subject_prefix $node] ptext ptags
+        set plen [string length $ptext]
         set sub [my render_subject $node $SubjectMax]
         set subject [dict get $sub subject]
-        set subjtags [dict getdef $sub tags {}]
+        set subjtags [lmap r [dict getdef $sub tags {}] {
+            lassign $r tag off len
+            list $tag [expr {$off + $plen}] $len
+        }]
         set meta_run [dict getdef $sub meta_run 0]
-        set meta_off [string length $subject]
-        set line $subject
+        set line $ptext$subject
+        set meta_off [string length $line]
         set offs [dict create]
-        foreach pair [my cell_values $node] {
+        foreach pair [my effective_cell_values $node] {
             lassign $pair col val
             append line "\t"
             set off [string length $line]
             append line $val
             dict set offs $col [list $off [string length $val]]
         }
-        return [dict create line $line subject $subject subjtags $subjtags \
+        return [dict create line $line subject $subject \
+            subjtags [concat $ptags $subjtags] \
             meta_run $meta_run meta_off $meta_off offs $offs]
     }
 
@@ -923,6 +1031,12 @@ oo::class create ::streamtree::StreamTree {
     method sort_key {payload col} { return "" }
     method apply_column_tabs {tabs} { $Text configure -tabs $tabs }
     method relayout_content {} { foreach id [my all_rendered_nodes] { my item $id } }
+
+    # The value of a declared attribute on a node (engine hook). The engine reads
+    # every attribute only through here, so a payload stays opaque: the default
+    # takes the payload's `id` key, and a host with the value elsewhere overrides
+    # this and nothing else.
+    method attr_value {node id} { return [my node_pget $node $id] }
 
     # Lay a node's row at its parent's append point and register its marks. The
     # one home for the right-gravity-temp-mark insert and the ancestor-end
@@ -1078,6 +1192,7 @@ oo::class create ::streamtree::StreamTree {
         foreach c [my node_field $id children] { my forget_subtree $c }
         my on_before_delete $id
         my drop_render_marks $id
+        if {[info exists AttrHidden]} { dict unset AttrHidden $id }
         dict unset Nodes $id
     }
     # Remove a node from its parent's child list (or from Roots for a root).
@@ -1320,6 +1435,356 @@ oo::class create ::streamtree::StreamTree {
         $Text configure -state $st
         my check_invariant drop_loose
         return 1
+    }
+
+    # ---- declarative attributes ---------------------------------------
+    #
+    # The typed attribute vocabulary the -attrs option declares, plus the filter
+    # state and the controls that drive it. The engine draws a glyphed bool as a
+    # subject-prefix mark and a glyphless bool as a check column, filters on both
+    # bool and enum through the hide/unhide primitives, and reads every value only
+    # through attr_value so a payload stays opaque. The header carries the contract.
+
+    method validate_attrs {attrs} {
+        if {[catch {llength $attrs}]} { error "attrs is not a list" }
+        set known {id label kind glyph filterable values}
+        set seen [list]
+        foreach d $attrs {
+            if {[catch {dict size $d}]} { error "attribute descriptor is not a dict: $d" }
+            if {![dict exists $d id]} { error "attribute descriptor with no id: $d" }
+            set id [dict get $d id]
+            if {![regexp {^[A-Za-z0-9_]+$} $id]} {
+                error "attribute id '$id' is not a plain word (letters, digits, underscore)"
+            }
+            if {$id in $seen} { error "duplicate attribute id '$id'" }
+            lappend seen $id
+            foreach k [dict keys $d] {
+                if {$k ni $known} { error "attribute '$id': unknown descriptor key '$k'" }
+            }
+            set kind [dict getdef $d kind bool]
+            if {$kind ni {bool enum}} {
+                error "attribute '$id': kind '$kind' is neither bool nor enum"
+            }
+            set filt [dict getdef $d filterable 0]
+            if {![string is boolean -strict $filt]} {
+                error "attribute '$id': filterable '$filt' is not a true or false value"
+            }
+        }
+    }
+
+    # Turn the -attrs list into the id-keyed store the draw and filter paths read,
+    # keeping the filter state a declaration already carries and dropping the state
+    # of an attribute the new list no longer names.
+    method parse_attrs {} {
+        set AttrOrder [list]
+        set AttrSpec [dict create]
+        if {![info exists AttrFilter]} { set AttrFilter [dict create] }
+        foreach d [my opt attrs] {
+            set id [dict get $d id]
+            lappend AttrOrder $id
+            dict set AttrSpec $id $d
+            if {[dict getdef $d filterable 0] && ![dict exists $AttrFilter $id]} {
+                dict set AttrFilter $id \
+                    [expr {[dict getdef $d kind bool] eq "bool" ? 0 : [list]}]
+            }
+        }
+        foreach id [dict keys $AttrFilter] {
+            if {$id ni $AttrOrder} { dict unset AttrFilter $id }
+        }
+    }
+    method attr_ensure {} { if {![info exists AttrSpec]} { my parse_attrs } }
+    method attr_order {} { my attr_ensure; return $AttrOrder }
+    method attr_desc {id} {
+        my attr_ensure
+        if {![dict exists $AttrSpec $id]} { error "no such attribute '$id'" }
+        return [dict get $AttrSpec $id]
+    }
+    method attr_label {id} { return [dict getdef [my attr_desc $id] label $id] }
+    method attr_kind {id} { return [dict getdef [my attr_desc $id] kind bool] }
+    method attr_glyph {id} { return [dict getdef [my attr_desc $id] glyph ""] }
+    method attr_filterable {id} { return [dict getdef [my attr_desc $id] filterable 0] }
+    method attr_provider {id} { return [dict getdef [my attr_desc $id] values ""] }
+    method attr_check_filterable {id} {
+        if {![my attr_filterable $id]} { error "attribute '$id' is not filterable" }
+    }
+
+    # A bool value read as one of `true`, `false` or `absent`: an empty value is a
+    # value the node does not carry (it always shows and draws no glyph), a false
+    # value (0/false/no/off) is a flag that is off, and anything else is on.
+    method attr_truth {node id} {
+        set v [my attr_value $node $id]
+        if {$v eq ""} { return absent }
+        if {[string is false -strict $v]} { return false }
+        return true
+    }
+
+    # ---- attribute presentation ---------------------------------------
+
+    # The check character a glyphless bool column draws when its value is true.
+    method attr_check {} { return "✓" }
+
+    # The glyphless bool attributes, in declaration order: each is a check column
+    # appended to the metadata strip after the consumer's own columns.
+    method attr_columns {} {
+        set out [list]
+        foreach id [my attr_order] {
+            if {[my attr_kind $id] eq "bool" && [my attr_glyph $id] eq ""} {
+                lappend out $id
+            }
+        }
+        return $out
+    }
+
+    # The column strip the geometry and header lay: the consumer's column_spec, then
+    # a non-sortable check column per glyphless bool. Every geometry site reads this
+    # rather than column_spec, so the check columns line up like any other cell.
+    method effective_column_spec {} {
+        set cols [my column_spec]
+        foreach id [my attr_columns] {
+            lappend cols [list $id [my attr_label $id] [my attr_check] center 0]
+        }
+        return $cols
+    }
+
+    # The cells build_line lays: the consumer's from cell_values, then a check cell
+    # per glyphless bool (the check character when the value is true, blank when
+    # false or absent), in the same order effective_column_spec adds its columns.
+    method effective_cell_values {node} {
+        set cells [my cell_values $node]
+        foreach id [my attr_columns] {
+            lappend cells [list $id \
+                [expr {[my attr_truth $node $id] eq "true" ? [my attr_check] : ""}]]
+        }
+        return $cells
+    }
+
+    # The subject prefix a row carries: each true glyphed bool's glyph, in
+    # declaration order, under its `attr-<id>` tag, then one space before the
+    # subject. Returns {text tags} with the tags row-relative, ready for apply_line.
+    method subject_prefix {node} {
+        set text ""
+        set tags [list]
+        foreach id [my attr_order] {
+            if {[my attr_kind $id] ne "bool"} continue
+            set g [my attr_glyph $id]
+            if {$g eq "" || [my attr_truth $node $id] ne "true"} continue
+            lappend tags [list attr-$id [string length $text] [string length $g]]
+            append text $g
+        }
+        if {$text ne ""} { append text " " }
+        return [list $text $tags]
+    }
+
+    # ---- attribute filtering ------------------------------------------
+
+    # The whole filter state (filterable ids only): a bool's flag, an enum's
+    # excluded-value list. This is what -attrfiltercb carries.
+    method attr_filter_all {} { my attr_ensure; return $AttrFilter }
+    method attr_filter_get {id} {
+        my attr_check_filterable $id
+        return [dict get $AttrFilter $id]
+    }
+    # Set a filter, apply it and fire the callback, but only when it really changed.
+    # A bool coerces to 0|1; an enum takes an excluded-value list, compared as a set.
+    method attr_filter_set {id value} {
+        my attr_check_filterable $id
+        if {[my attr_kind $id] eq "bool"} {
+            set value [expr {$value ? 1 : 0}]
+        } elseif {[catch {llength $value}]} {
+            error "attribute '$id': excluded set is not a list"
+        }
+        set cur [dict get $AttrFilter $id]
+        if {[my attr_filter_same $id $cur $value]} return
+        dict set AttrFilter $id $value
+        my attr_sync_control $id
+        my apply_attr_filters
+        set cb [my opt attrfiltercb]
+        if {$cb ne ""} { {*}$cb [my attr_filter_all] }
+    }
+    method attr_filter_same {id a b} {
+        if {[my attr_kind $id] eq "bool"} { return [expr {!!$a == !!$b}] }
+        return [expr {[lsort $a] eq [lsort $b]}]
+    }
+
+    # Whether a node passes the active filters: a bool filter that is on rejects a
+    # row whose value is false (absent and true both show); an enum filter rejects a
+    # row whose value is known and in the excluded set (an empty value always shows).
+    method attr_admits {node} {
+        dict for {id state} [my attr_filter_all] {
+            if {[my attr_kind $id] eq "bool"} {
+                if {$state && [my attr_truth $node $id] eq "false"} { return 0 }
+            } else {
+                set v [my attr_value $node $id]
+                if {$v ne "" && $v in $state} { return 0 }
+            }
+        }
+        return 1
+    }
+
+    # Reapply the active filters to every node through the hide/unhide primitives,
+    # composing with whatever else hides a node rather than fighting it over the one
+    # hidden flag. The attribute layer keeps a ledger of the nodes IT hid: it hides a
+    # rejected node only while the node is visible (and records it), and it shows a
+    # node again only when the node is in that ledger and now passes. A node the
+    # consumer hid for its own reasons is never in the ledger, so the filter never
+    # resurrects it; a node shows only when nobody hides it. A host calls this after
+    # streaming new nodes so a live filter greets them too.
+    method apply_attr_filters {} {
+        if {![info exists AttrHidden]} { set AttrHidden [dict create] }
+        foreach id [my all_node_ids] {
+            if {[my attr_admits $id]} {
+                if {[dict exists $AttrHidden $id]} {
+                    dict unset AttrHidden $id
+                    if {[my node_field $id hidden]} { my unhide $id }
+                }
+            } elseif {![my node_field $id hidden]} {
+                dict set AttrHidden $id 1
+                my hide $id
+            }
+        }
+    }
+
+    # ---- attribute filter controls ------------------------------------
+
+    # Fill a host-owned frame with a control per filterable attribute, packed toward
+    # `side`: a checkbutton for a bool, a menubutton opening the checklist for an
+    # enum. The frame is the host's to create, pack and empty; the module puts only
+    # these controls into it.
+    method build_filters {frame side} {
+        if {$side ni {left right}} {
+            error "filter side '$side' is neither left nor right"
+        }
+        foreach id [my attr_order] {
+            if {![my attr_filterable $id]} continue
+            if {[my attr_kind $id] eq "bool"} {
+                my build_bool_filter $frame $side $id
+            } else {
+                my build_enum_filter $frame $side $id
+            }
+        }
+    }
+    method astyle_cfg {role} {
+        set s [dict getdef [my opt attrstyles] $role ""]
+        return [expr {$s eq "" ? [list] : [list -style $s]}]
+    }
+    method build_bool_filter {frame side id} {
+        set w $frame.attr_$id
+        set FilterUI($id) [dict get $AttrFilter $id]
+        ttk::checkbutton $w -text [my attr_label $id] \
+            -variable [my varname FilterUI]($id) \
+            -command [list [self] on_bool_filter $id] \
+            {*}[my astyle_cfg check]
+        pack $w -side $side
+    }
+    method on_bool_filter {id} {
+        my attr_filter_set $id [set [my varname FilterUI]($id)]
+    }
+    method build_enum_filter {frame side id} {
+        set w $frame.attr_$id
+        ttk::menubutton $w -text "[my attr_label $id] ▾" -takefocus 0 \
+            {*}[my astyle_cfg menu]
+        # A menubutton with no menu would raise on its class press binding, so the
+        # instance binding opens the checklist and breaks before that binding runs.
+        bind $w <ButtonPress-1> [format {%s open_enum_popover %s; break} [self] $id]
+        pack $w -side $side
+    }
+
+    # The enum checklist: a stay-open transient toplevel, one checkbutton per roster
+    # value (checked = shown, cleared = excluded) plus select-all and select-none.
+    # It rereads the roster on every open, so a value the provider gained since the
+    # last open is offered now.
+    method open_enum_popover {id} {
+        set p .streamtree_attrpop
+        if {[winfo exists $p]} { destroy $p }
+        toplevel $p
+        set AttrPopTop $p
+        set AttrPopId $id
+        wm title $p [my attr_label $id]
+        wm transient $p [winfo toplevel $Top]
+        ttk::frame $p.f -padding 8
+        pack $p.f -fill both -expand 1
+        my build_enum_checklist
+        bind $p <Escape> [list [self] close_enum_popover]
+        wm protocol $p WM_DELETE_WINDOW [list [self] close_enum_popover]
+        update idletasks
+        catch {grab set $p}
+    }
+    method build_enum_checklist {} {
+        set id $AttrPopId
+        set f $AttrPopTop.f
+        foreach c [winfo children $f] { destroy $c }
+        set excluded [dict get $AttrFilter $id]
+        set AttrPopRoster [my attr_roster $id]
+        set i 0
+        foreach v $AttrPopRoster {
+            set PopUI($i) [expr {$v in $excluded ? 0 : 1}]
+            ttk::checkbutton $f.v$i -text $v \
+                -variable [my varname PopUI]($i) \
+                -command [list [self] on_enum_check $id] \
+                {*}[my astyle_cfg popcheck]
+            pack $f.v$i -side top -anchor w
+            incr i
+        }
+        ttk::frame $f.btns
+        pack $f.btns -side top -fill x -pady {6 0}
+        ttk::button $f.btns.all -text "Select all" \
+            -command [list [self] on_enum_all $id] {*}[my astyle_cfg popbtn]
+        ttk::button $f.btns.none -text "Select none" \
+            -command [list [self] on_enum_none $id] {*}[my astyle_cfg popbtn]
+        pack $f.btns.all -side left
+        pack $f.btns.none -side left -padx {6 0}
+    }
+    # The excluded set the popover's checkbuttons now describe: every cleared row.
+    method on_enum_check {id} {
+        set excluded [list]
+        for {set i 0} {$i < [llength $AttrPopRoster]} {incr i} {
+            if {![set [my varname PopUI]($i)]} {
+                lappend excluded [lindex $AttrPopRoster $i]
+            }
+        }
+        my attr_filter_set $id $excluded
+    }
+    method on_enum_all {id} {
+        for {set i 0} {$i < [llength $AttrPopRoster]} {incr i} {
+            set [my varname PopUI]($i) 1
+        }
+        my on_enum_check $id
+    }
+    method on_enum_none {id} {
+        for {set i 0} {$i < [llength $AttrPopRoster]} {incr i} {
+            set [my varname PopUI]($i) 0
+        }
+        my on_enum_check $id
+    }
+    method close_enum_popover {} {
+        if {[info exists AttrPopTop] && $AttrPopTop ne "" && [winfo exists $AttrPopTop]} {
+            catch {grab release $AttrPopTop}
+            destroy $AttrPopTop
+        }
+        set AttrPopTop ""
+    }
+    # The roster an enum draws its checklist from: the declared provider's answer,
+    # or the distinct non-empty values the nodes carry, sorted.
+    method attr_roster {id} {
+        set prov [my attr_provider $id]
+        if {$prov ne ""} { return [{*}$prov] }
+        set seen [dict create]
+        foreach nid [my all_node_ids] {
+            set v [my attr_value $nid $id]
+            if {$v ne ""} { dict set seen $v 1 }
+        }
+        return [lsort [dict keys $seen]]
+    }
+    # Mirror a programmatic filter change into the live controls: a bool's
+    # checkbutton follows its variable, and an open popover for this enum rebuilds
+    # so its checkbuttons show the set that was just applied.
+    method attr_sync_control {id} {
+        if {[my attr_kind $id] eq "bool"} {
+            set FilterUI($id) [dict get $AttrFilter $id]
+        } elseif {[info exists AttrPopTop] && $AttrPopTop ne "" \
+                  && [winfo exists $AttrPopTop] && $AttrPopId eq $id} {
+            my build_enum_checklist
+        }
     }
 
     # ---- drag hit-testing ---------------------------------------------
