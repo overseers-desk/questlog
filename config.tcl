@@ -34,15 +34,17 @@ namespace eval ::questlog::config {
     # ---- browse scan -------------------------------------------------------
     # Files scanned per chunk before the coroutine yields to the event loop.
     # Larger = faster scan, coarser yielding (longer the UI can stall per chunk).
-    # 20 keeps a chunk near 250ms on a spinning-rust-cold corpus (~13ms/file),
-    # so rows stream into the list from the first chunk on.
+    # A chunk is also the first-paint latency: rows stream into the list between
+    # chunks, so at ~13ms of scan_one per file, 20 puts the first rows on screen
+    # a quarter-second after the scan starts and bounds mid-scan input stalls
+    # near that. 200 held the window frozen and empty for the whole pass.
     dict set Config scan_yield_files   20
     # Resume policy for the browse scan between chunks. timer = resume after
     # scan_resume_ms (steady progress); idle = resume only when the event loop
-    # is otherwise idle (yields hard to input, may pause under continuous typing).
-    # idle lets Tk's idle-priority repaints run between chunks; under timer the
-    # resume treadmill starves them and the list appears only when the scan ends.
-    dict set Config scan_resume        idle
+    # is otherwise idle (yields hard to input, may pause under continuous typing;
+    # also lets any `update idletasks` in a handler drain the whole remaining
+    # scan). Measured equal to timer for paint latency at 20-file chunks.
+    dict set Config scan_resume        timer
     dict set Config scan_resume_ms     1
     # 0 = pause the browse scan while the user is actively typing in the search
     # field, so keystrokes own the main thread; 1 = let the scan run regardless.
