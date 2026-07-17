@@ -114,9 +114,9 @@ set LIVE    [dict create bbbb $Bp]
 proc snap {args} {
     return [dict merge [dict create since all min_turns 1 search "" \
         subtree [list $::INSIDE] \
-        listview [dict create running_only 0 bookmarked_only 0 model ""]] $args]
+        listview [dict create running_only 0 bookmarked_only 0 model_excluded {}]] $args]
 }
-set LENS [snap listview [dict create running_only 1 bookmarked_only 0 model ""]]
+set LENS [snap listview [dict create running_only 1 bookmarked_only 0 model_excluded {}]]
 
 # --- 1. Browse, scoped to one project. B runs in another, so it never loads.
 $SL apply_filter [snap]
@@ -180,7 +180,7 @@ check "and the strip drops the lens clause"  [strip] ""
 #        matches decide what loads, and a live session with no hit is not among
 #        them. Nothing here reads the running session's file.
 set SEARCH [snap search a-first subtree {} \
-    listview [dict create running_only 1 bookmarked_only 0 model ""]]
+    listview [dict create running_only 1 bookmarked_only 0 model_excluded {}]]
 $SL apply_filter $SEARCH
 $SL add_session_matches [list [dict create path $Ap folder $FOLDER \
     btype user content a-first lineoff 0]]
@@ -209,7 +209,7 @@ write_session $Cp $INSIDE {c-first c-second} "2026-05-24T19:00"
 file mtime $Cp [clock seconds]
 ::questlog::path::set_bookmark $Cp
 
-set OPEN [snap listview [dict create running_only 0 bookmarked_only 1 model ""]]
+set OPEN [snap listview [dict create running_only 0 bookmarked_only 1 model_excluded {}]]
 $SL apply_filter $OPEN
 $SL reconcile_running [dict create]
 $SL set_lens_members [dict create cccc [dict create path $Cp]]

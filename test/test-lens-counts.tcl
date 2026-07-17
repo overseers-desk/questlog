@@ -93,13 +93,13 @@ proc lenses {listview} {
 check lens_none  {} [lenses {}]
 check lens_run   running    [lenses {running_only 1}]
 check lens_bm    bookmarked [lenses {bookmarked_only 1}]
-check lens_model model      [lenses {model {Opus 4.8}}]
+check lens_model model      [lenses {model_excluded {{Opus 4.8}}}]
 # Each lens latches on its own, so every combination is reachable, and the caller
 # is told about all of them - naming one and dropping the other would leave the
 # reader a count measured against a lens the words never mention.
 check lens_both  {running bookmarked} [lenses {running_only 1 bookmarked_only 1}]
 check lens_all   {running bookmarked model} \
-    [lenses {running_only 1 bookmarked_only 1 model {Opus 4.8}}]
+    [lenses {running_only 1 bookmarked_only 1 model_excluded {{Opus 4.8}}}]
 # A snapshot with no listview key at all is a lens-free one, not an error.
 check lens_bare  {} [::questlog::sessionlist::active_lenses [dict create since 7d]]
 
@@ -111,8 +111,8 @@ proc mlenses {listview} {
     return [::questlog::sessionlist::member_lenses [dict create listview $listview]]
 }
 check member_none  {} [mlenses {}]
-check member_model {} [mlenses {model {Opus 4.8}}]
-check member_run   running [mlenses {running_only 1 model {Opus 4.8}}]
+check member_model {} [mlenses {model_excluded {{Opus 4.8}}}]
+check member_run   running [mlenses {running_only 1 model_excluded {{Opus 4.8}}}]
 check member_both  {running bookmarked} [mlenses {running_only 1 bookmarked_only 1}]
 
 # ---- lens_members: two lenses on means the INTERSECTION of their sets ---------

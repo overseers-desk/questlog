@@ -34,22 +34,25 @@ proc ::questlog::sessionlist::toggle {snapshot name dflt} {
 # bookmarked (+x) row; running_only keeps only a row whose uuid is live in
 # running_set. running_set is the caller's running uuid->1 dict; it is consulted
 # only under running_only, so {} is the right value when the caller has no
-# liveness context and the toggle is off. model, when set, hides a row whose
-# model is known and different; a row with no model yet (the cost pass has not
-# filled it, or a search row that never carries one) stays visible, or the list
-# would flicker as the cost pass lands. Both sides of that comparison are the
-# model LABEL, what ::questlog::cost::model_label renders ("Opus 4.8", or a local
-# id it cannot price, trimmed of any date suffix), not the raw id from the
-# transcript: the row carries the label the list shows and the lens offers the
-# labels the loaded rows carry, so two ids differing only by a date are one model.
+# liveness context and the toggle is off. model_excluded is the list of model
+# labels the reader has shut off: a row hides when its model is known AND on
+# that list, so one model can be excluded while everything else stays, and a
+# label first seen after the reader chose (rows load late) shows by default. A
+# row with no model yet (the cost pass has not filled it, or a search row that
+# never carries one) stays visible, or the list would flicker as the cost pass
+# lands. Both sides of the comparison are the model LABEL, what
+# ::questlog::cost::model_label renders ("Opus 4.8", or a local id it cannot
+# price, trimmed of any date suffix), not the raw id from the transcript: the
+# row carries the label the list shows and the lens offers the labels the
+# loaded rows carry, so two ids differing only by a date are one model.
 proc ::questlog::sessionlist::row_visible {snapshot row {running_set {}}} {
     if {[toggle $snapshot bookmarked_only 0] && ![dict getdef $row bookmarked 0]} { return 0 }
     if {[toggle $snapshot running_only 0]
         && ![dict exists $running_set [dict getdef $row uuid ""]]} { return 0 }
-    set want [toggle $snapshot model ""]
-    if {$want ne ""} {
+    set shut [toggle $snapshot model_excluded {}]
+    if {[llength $shut]} {
         set have [dict getdef $row model ""]
-        if {$have ne "" && $have ne $want} { return 0 }
+        if {$have ne "" && $have in $shut} { return 0 }
     }
     return 1
 }
@@ -107,7 +110,7 @@ proc ::questlog::sessionlist::active_lenses {snapshot} {
     set out [list]
     if {[toggle $snapshot running_only 0]}    { lappend out running }
     if {[toggle $snapshot bookmarked_only 0]} { lappend out bookmarked }
-    if {[toggle $snapshot model ""] ne ""}    { lappend out model }
+    if {[llength [toggle $snapshot model_excluded {}]]} { lappend out model }
     return $out
 }
 

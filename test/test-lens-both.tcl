@@ -30,8 +30,8 @@
 #   3. the strip and the banner say both lenses, not one of them;
 #   4. "show it" loads the cut member, which passes both lenses, and the cut
 #      closes;
-#   5. a model picked beside Running is named by neither line, and the count is
-#      Running's membership whether the model shows the rows or hides them all;
+#   5. a label shut off beside Running is named by neither line, and the count is
+#      Running's membership whether the exclusion spares the rows or hides them all;
 #   6. the model lens alone claims no cut, though it is hiding every row;
 #   7. a lens is a filter: pressing both and releasing them loads nothing, drops
 #      nothing and keeps the selection - even the selection of a row the lenses
@@ -155,15 +155,17 @@ proc push {snap} {
     $::SL set_lens_members [::questlog::sessionlist::lens_members $sets]
 }
 
-# The model lens carries the LABEL a loaded row carries, which is what the lens
-# menu offers: every session in the corpus is written by one model, so MODEL shows
-# every row the other lenses admit and OTHER_MODEL hides every one of them.
+# The model lens excludes LABELS a loaded row carries, which is what the lens
+# checklist offers: every session in the corpus is written by one model, so
+# shutting off MODEL hides every row the other lenses admit, and shutting off
+# OTHER_MODEL (a label no row here carries) hides none of them.
 set MODEL [::questlog::cost::model_label claude-3-5-sonnet-20241022]
 set OTHER_MODEL "Opus 4.8"
 
-proc snap {run bm {model ""}} {
+proc snap {run bm {excluded {}}} {
     return [dict create since all min_turns 1 search "" subtree [list $::INSIDE] \
-        listview [dict create running_only $run bookmarked_only $bm model $model]]
+        listview [dict create running_only $run bookmarked_only $bm \
+            model_excluded $excluded]]
 }
 
 # --- 1. Browse, scoped to one project: A, B and C load; D and E never do.
@@ -246,14 +248,14 @@ check "Running alone again: B shows"  [$SL sflag $Bp rendered] 1
 check "Running alone again: the strip counts running sessions" \
     [strip] "Running · showing 3 of 4 · 1 outside your criteria"
 
-# --- 6. A model picked while Running is pressed. Two lenses are on, and the rows
-#        on screen answer to both - but only one of them can say what the search
-#        left on disk, so only one of them may be named beside a number. The model
-#        lens is not it: E is a running session the search never read, and nothing
-#        knows what model E ran without opening it.
+# --- 6. A model shut off while Running is pressed. Two lenses are on, and the
+#        rows on screen answer to both - but only one of them can say what the
+#        search left on disk, so only one of them may be named beside a number.
+#        The model lens is not it: E is a running session the search never read,
+#        and nothing knows what model E ran without opening it.
 #
-#        First a model every loaded row carries, so the model lens hides nothing:
-#        the lines must read exactly as they do with Running alone, above.
+#        First shut off a label no loaded row carries, so the lens is on and
+#        hides nothing: the lines must read exactly as with Running alone, above.
 #
 #        A row's model is the label the COST PASS put there: the worker parses the
 #        transcript, the main thread stamps the label, and the result lands in two
@@ -272,33 +274,34 @@ foreach path [$SL all_session_paths] {
 }
 update
 check "the cost pass put the model on the rows" [$SL sget $Bp model] $MODEL
-$SL apply_listview [snap 1 0 $MODEL]
-push [snap 1 0 $MODEL]
+$SL apply_listview [snap 1 0 [list $OTHER_MODEL]]
+push [snap 1 0 [list $OTHER_MODEL]]
 settle
-check "model beside Running: the rows the model admits still show" \
+check "exclusion beside Running: rows carrying other labels still show" \
     [$SL sflag $Bp rendered] 1
-check "model beside Running: the strip names Running alone" \
+check "exclusion beside Running: the strip names Running alone" \
     [strip] "Running · showing 3 of 4 · 1 outside your criteria"
-check "model beside Running: the banner names Running alone" \
+check "exclusion beside Running: the banner names Running alone" \
     [banner] \
     "1 running session outside your criteria: $ELSEWHERE.\
      The folder scope excluded it."
 
-# Now a model no loaded row carries, so the model lens hides every row the
-# Running lens admits. Only `showing` may move: it is the rows on screen. The
-# membership and the cut are Running's, and the model lens neither adds a member
-# nor takes one away - it never looked. A phrase drawn from every active lens
-# would now put "and model" over a 4 and a 1 that counted running sessions.
-$SL apply_listview [snap 1 0 $OTHER_MODEL]
-push [snap 1 0 $OTHER_MODEL]
+# Now shut off the label every loaded row carries, so the model lens hides every
+# row the Running lens admits. Only `showing` may move: it is the rows on
+# screen. The membership and the cut are Running's, and the model lens neither
+# adds a member nor takes one away - it never looked. A phrase drawn from every
+# active lens would now put "and model" over a 4 and a 1 that counted running
+# sessions.
+$SL apply_listview [snap 1 0 [list $MODEL]]
+push [snap 1 0 [list $MODEL]]
 settle
-check "another model: it hides the rows Running admits" \
+check "the carried label shut off: it hides the rows Running admits" \
     [$SL sflag $Bp rendered] 0
-check "another model: no row is left showing" \
+check "the carried label shut off: no row is left showing" \
     [$SL folder_visible_count $FOLDER] 0
-check "another model: the strip still names Running, and counts Running's members" \
+check "the carried label shut off: the strip still names Running, counts Running's members" \
     [strip] "Running · showing 0 of 4 · 1 outside your criteria"
-check "another model: the cut is Running's, and the banner says only running" \
+check "the carried label shut off: the cut is Running's, the banner says only running" \
     [banner] \
     "1 running session outside your criteria: $ELSEWHERE.\
      The folder scope excluded it."
@@ -310,8 +313,8 @@ check "the model lens loaded nothing" \
 #        ran this model" to count the loaded rows against, and a lens with no
 #        membership may not tell the reader the search cut one. No clause, no
 #        banner, no offer to load anything.
-$SL apply_listview [snap 0 0 $OTHER_MODEL]
-push [snap 0 0 $OTHER_MODEL]
+$SL apply_listview [snap 0 0 [list $MODEL]]
+push [snap 0 0 [list $MODEL]]
 settle
 check "the model lens alone hides every row" [$SL folder_visible_count $FOLDER] 0
 check "the model lens alone says nothing in the strip" [strip] ""
