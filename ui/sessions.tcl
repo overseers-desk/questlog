@@ -19,9 +19,11 @@ namespace eval ::questlog::ui {
 # The row reads subject-on-the-left, metadata right-pinned: the subject (glyphs,
 # slug, preview, match count) fills from the left and the columns below sit in a
 # fixed strip flush to the right edge, in this left-to-right order. Turns,
-# Duration and Model are filled by the cost second pass (the forward scan stops
-# at the second user record and computes none of them); Model is the session's
-# last non-sidechain assistant model and is not sortable (the per-session sort
+# Duration, Ctx% and Model are filled by the cost second pass (the forward scan
+# stops at the second user record and computes none of them); Ctx% is the
+# context occupancy of the transcript's final request against its model's
+# window, how full the session is if resumed; Model is the session's last
+# non-sidechain assistant model and is not sortable (the per-session sort
 # keys are numeric, and a model name has none). The actions column carries the
 # row's "⋯" overflow control and is not sortable.
 proc ::questlog::ui::session_columns {} {
@@ -32,6 +34,7 @@ proc ::questlog::ui::session_columns {} {
         {turns    Turns    {9999}             right 1}
         {duration Duration {0:00:00}          right 1}
         {ratio    H%       {100%}             right 1}
+        {context  Ctx%     {100%}             right 1}
         {model    Model    {Sonnet 4.6}       right 0}
         {actions  {}       {⋯}                right 0}
     }
@@ -783,6 +786,7 @@ oo::class create ::questlog::ui::SessionList {
         set dsecs [dict getdef $row duration_secs ""]
         set hsecs [dict getdef $row human_secs ""]
         set model [dict getdef $row model ""]
+        set ctxp  [dict getdef $row context_pct ""]
         # The session node: payload carries the per-session domain dict; the
         # node's expanded/rendered flags, start/end marks, tag and children
         # (the attached subagent nodes) live alongside it in the store.
@@ -791,8 +795,9 @@ oo::class create ::questlog::ui::SessionList {
             folder $folder label $label slug $slug ai_title $aitt \
             when $when mtime $mtime size $size uuid $uuid cost $cost \
             turns $turns duration_secs $dsecs human_secs $hsecs model $model \
+            context_pct $ctxp \
             own_cost $cost own_turns $turns own_duration_secs $dsecs \
-            own_human_secs $hsecs own_model $model \
+            own_human_secs $hsecs own_model $model own_context_pct $ctxp \
             count 0 snippets [list] \
             has_subagents [dict getdef $row has_subagents 0] \
             sub_total 0 children_listed 0 all_child_paths [list]]]
@@ -1205,6 +1210,7 @@ oo::class create ::questlog::ui::SessionList {
             mtime [dict getdef $crow mtime 0] \
             size [dict getdef $crow size 0] \
             cost "" turns "" duration_secs "" human_secs "" model "" \
+            context_pct "" \
             agent_type [dict getdef $crow agent_type ""] \
             agent_id [dict getdef $crow agent_id [file rootname [file tail $cp]]] \
             label $label hits [list] count 0 open_lineoff 0]]
@@ -1535,6 +1541,10 @@ oo::class create ::questlog::ui::SessionList {
                     set v [expr {($h ne "" && $m ne "" && $h + $m > 0) \
                                  ? "[expr {round(100.0 * $h / ($h + $m))}]%" : ""}]
                 }
+                context {
+                    set p [dict getdef $s context_pct ""]
+                    set v [expr {$p ne "" ? "$p%" : ""}]
+                }
                 model { set v [dict getdef $s model ""] }
                 actions { set v $::questlog::ui::GLYPH_ACTIONS }
                 default { set v "" }
@@ -1644,6 +1654,11 @@ oo::class create ::questlog::ui::SessionList {
                 set m [dict getdef $s duration_secs ""]
                 if {$h eq "" || $m eq "" || $h + $m == 0} { return -1 }
                 return [expr {double($h) / ($h + $m)}]
+            }
+            context {
+                set v [dict getdef $s context_pct ""]
+                if {$v eq ""} { return -1 }
+                return $v
             }
             default { return -1 }
         }
@@ -2084,6 +2099,7 @@ oo::class create ::questlog::ui::SessionList {
         my sset $path own_duration_secs [dict getdef $cost_dict duration_secs ""]
         my sset $path own_human_secs [dict getdef $cost_dict human_secs ""]
         my sset $path own_model [dict getdef $cost_dict model ""]
+        my sset $path own_context_pct [dict getdef $cost_dict context_pct ""]
 
         my recompute_parent_totals $path
 
@@ -2100,9 +2116,9 @@ oo::class create ::questlog::ui::SessionList {
             my refresh_status
         }
         if {[my sflag $path rendered]} { my redraw_header $path }
-        # The worker result can change cost-, turns-, duration- or
-        # ratio-sorted order.
-        if {$SortKey in {cost turns duration ratio}} { my schedule_resort }
+        # The worker result can change cost-, turns-, duration-, ratio- or
+        # context-sorted order.
+        if {$SortKey in {cost turns duration ratio context}} { my schedule_resort }
     }
 
     # A subagent's cost/turns/duration arriving from the second pass. Stored on
@@ -2116,6 +2132,7 @@ oo::class create ::questlog::ui::SessionList {
         my cset $cp duration_secs [dict getdef $cost_dict duration_secs ""]
         my cset $cp human_secs [dict getdef $cost_dict human_secs ""]
         my cset $cp model [dict getdef $cost_dict model ""]
+        my cset $cp context_pct [dict getdef $cost_dict context_pct ""]
         set parent [my cget_field $cp parent_path]
         if {[my has_session $parent]} {
             set folder [my sget $parent folder]
@@ -2141,9 +2158,9 @@ oo::class create ::questlog::ui::SessionList {
                 my rerender_children $parent
             }
             $Text configure -state disabled
-            # The worker result can change cost-, turns-, duration- or
-            # ratio-sorted order.
-            if {$SortKey in {cost turns duration ratio}} { my schedule_resort }
+            # The worker result can change cost-, turns-, duration-, ratio- or
+            # context-sorted order.
+            if {$SortKey in {cost turns duration ratio context}} { my schedule_resort }
         }
     }
 
@@ -2208,9 +2225,11 @@ oo::class create ::questlog::ui::SessionList {
         my sset $path turns [expr {$has_any_turns ? $sum_turns : ""}]
         my sset $path duration_secs $dur
         my sset $path human_secs $hum
-        # Model is the session's own, never summed: a parent shows the model it
-        # ran on, not its subagents'.
+        # Model and context occupancy are the session's own, never summed: a
+        # parent shows the model it ran on and how full its own window is, not
+        # its subagents'.
         my sset $path model [dict getdef $s own_model ""]
+        my sset $path context_pct [dict getdef $s own_context_pct ""]
     }
 
     method glyph_cell {running bookmarked} {
