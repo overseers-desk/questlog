@@ -3015,6 +3015,13 @@ oo::class create ::questlog::ui::SessionList {
     method relocate_card {old_path new_path new_folder} {
         if {![my has_session $old_path]} return
         set sid [my sid $old_path]
+        # The session's own size and cost move with it; capture them and the
+        # source folder before the node is re-keyed and reparented, so the two
+        # folders' aggregates can be settled below.
+        set src_fid [my node_field $sid parent]
+        set src_folder [my node_field $src_fid key]
+        set size [my node_pget $sid size 0]
+        set cost [my node_pget $sid cost]
         my node_pset $sid folder $new_folder
         my node_set $sid key $new_path
         dict unset PathNode $old_path
@@ -3034,6 +3041,21 @@ oo::class create ::questlog::ui::SessionList {
         }
         if {$SelectAnchor eq $old_path} { set SelectAnchor $new_path }
         my move $sid [my fid $new_folder]
+        # Carry the aggregates across: the destination gains the session's size,
+        # cost and one to its count; the source loses them, or is dropped whole
+        # when the move emptied it (the same rule forget_session applies). Cost
+        # stays in TotalCost throughout - the session left neither folder's app,
+        # only its heading.
+        my fset $new_folder size [expr {[my fget $new_folder size 0] + $size}]
+        my bump_folder_count $new_folder 1
+        if {$cost ne "" && $cost > 0} { my bump_folder_cost $new_folder $cost }
+        if {[llength [my node_field $src_fid children]] == 0} {
+            my forget_folder $src_folder
+        } else {
+            my fset $src_folder size [expr {[my fget $src_folder size 0] - $size}]
+            my bump_folder_count $src_folder -1
+            if {$cost ne "" && $cost > 0} { my bump_folder_cost $src_folder [expr {-$cost}] }
+        }
     }
 
     # Reorder a sibling set for a rebuild, keeping every node (the base renders

@@ -166,6 +166,7 @@ $SL selection_set $a01
 $SL forget_session $a01
 check "deleting the selected session empties the set" [$SL selection_count] 0
 
+check "domain audit clean at end" [$SL audit] {}
 ::questlog::path::_real_file delete -force $SAND
 puts [expr {$fails ? "FAILED ($fails)" : "PASS"}]
 exit $fails

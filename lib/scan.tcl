@@ -624,10 +624,9 @@ oo::class create ::questlog::Scan {
     # Re-key a row after the underlying jsonl was renamed into a new
     # project folder. The row's path and folder are updated; mtime/size
     # are re-read because the rename preserves them but we want any
-    # subsequent extend pass to see a consistent state. OnRow fires so
-    # the session list can re-insert under the new folder. The caller is
-    # responsible for removing the old entry from the UI first - OnRow
-    # has no "forget" channel.
+    # subsequent extend pass to see a consistent state. This re-keys Rows
+    # silently: the session list moves its own node through relocate_card,
+    # so OnRow stays reserved for scan arrivals and does not fire here.
     method relocate_row {old_path new_path} {
         if {![dict exists $Rows $old_path]} { return }
         set row [dict get $Rows $old_path]
@@ -647,7 +646,6 @@ oo::class create ::questlog::Scan {
         # represents. After a move those disagree. Leave Folders alone;
         # resolve_folder will recover the new folder's identity from the
         # filesystem (candidate_cwds_for) on first lookup.
-        if {$OnRow ne ""} { {*}$OnRow $row }
     }
 
 }
