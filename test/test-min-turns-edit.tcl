@@ -55,7 +55,7 @@ $TB subscribe [list apply {{snap} {set ::Published $snap}}]
 $TB begin_edit min_turns
 update
 
-# The spinbox, at the path the facetbar module documents for a control facet's
+# The spinbox, at the path the querybuilder module documents for a control facet's
 # editor area: <bar>.body.rows.ed_<id>.
 set SB .tb.crit.bar.body.rows.ed_min_turns.sb
 check editor_is_there 1 [winfo exists $SB]
