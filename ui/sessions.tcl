@@ -938,6 +938,23 @@ oo::class create ::questlog::ui::SessionList {
         set hsecs [dict getdef $row human_secs ""]
         set model [dict getdef $row model ""]
         set ctxp  [dict getdef $row context_pct ""]
+        # Scan's row fields the store answers session questions from directly,
+        # so a modelled session need not be looked up in Scan.Rows to be asked
+        # about. bookmarked defaults to the on-disk +x bit for a synthetic row
+        # that omits it; the rest default empty. The token fields and
+        # model_breakdown arrive with cost and are kept fresh by refresh_cost,
+        # bookmarked by reconcile_one; the rest are set-at-scan and static.
+        set bkmk  [dict getdef $row bookmarked [file executable $path]]
+        set fuser [dict getdef $row first_user ""]
+        set okind [dict getdef $row kind ""]
+        set fcwd  [dict getdef $row folder_cwd ""]
+        set chint [dict getdef $row cwd_hint ""]
+        set ntrn  [dict getdef $row nturns ""]
+        set itok  [dict getdef $row input_tokens ""]
+        set otok  [dict getdef $row output_tokens ""]
+        set cwtok [dict getdef $row cache_write_tokens ""]
+        set crtok [dict getdef $row cache_read_tokens ""]
+        set mbrk  [dict getdef $row model_breakdown ""]
         # The session node: payload carries the per-session domain dict; the
         # node's expanded/rendered flags, start/end marks, tag and children
         # (the attached subagent nodes) live alongside it in the store.
@@ -947,6 +964,10 @@ oo::class create ::questlog::ui::SessionList {
             when $when mtime $mtime size $size uuid $uuid cost $cost \
             turns $turns duration_secs $dsecs human_secs $hsecs model $model \
             context_pct $ctxp \
+            bookmarked $bkmk first_user $fuser kind $okind folder_cwd $fcwd \
+            cwd_hint $chint nturns $ntrn input_tokens $itok output_tokens $otok \
+            cache_write_tokens $cwtok cache_read_tokens $crtok \
+            model_breakdown $mbrk \
             own_cost $cost own_turns $turns own_duration_secs $dsecs \
             own_human_secs $hsecs own_model $model own_context_pct $ctxp \
             count 0 snippets [list] \
@@ -2251,6 +2272,15 @@ oo::class create ::questlog::ui::SessionList {
         my sset $path own_human_secs [dict getdef $cost_dict human_secs ""]
         my sset $path own_model [dict getdef $cost_dict model ""]
         my sset $path own_context_pct [dict getdef $cost_dict context_pct ""]
+        # The token counts and per-model split are own-session values with no
+        # subagent aggregation; store them from the same cost arrival that
+        # Scan.update_cost writes into Rows, so the payload copy stays level
+        # with Rows for a session question that reads them.
+        my sset $path input_tokens [dict getdef $cost_dict input_tokens ""]
+        my sset $path output_tokens [dict getdef $cost_dict output_tokens ""]
+        my sset $path cache_write_tokens [dict getdef $cost_dict cache_write_tokens ""]
+        my sset $path cache_read_tokens [dict getdef $cost_dict cache_read_tokens ""]
+        my sset $path model_breakdown [dict getdef $cost_dict model_breakdown ""]
 
         my recompute_parent_totals $path
 
