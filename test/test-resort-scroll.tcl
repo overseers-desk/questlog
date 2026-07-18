@@ -187,6 +187,7 @@ check "rebuild_restore tolerates an empty anchor" \
 check "rebuild_restore falls back when the node is gone" \
     [catch {$SL rebuild_restore [list session /nope.jsonl]}] 0
 
+check "domain audit clean at end" [$SL audit] {}
 ::questlog::path::_real_file delete -force $SAND
 puts [expr {$fails ? "FAILED ($fails)" : "PASS"}]
 exit $fails

@@ -86,6 +86,7 @@ $SL apply_filter $FILTER
 $Scan extend $FILTER
 update
 check "all sessions streamed in, invariant clean" 0 [tripped]
+check "domain audit clean after stream" [$SL audit] {}
 
 # Expand every folder so sessions, costs and resizes all touch rendered rows.
 foreach folder {proj-a proj-b proj-c} {
@@ -127,14 +128,19 @@ for {set k 0} {$k < 60} {incr k} {
     }
     update
     if {[tripped]} { check "iteration $k kept the invariant" 1 0; break }
+    # The domain audit rides beside the mark invariant: after every operation
+    # the store's reverse indices, child lists and folder aggregates agree.
+    if {[llength [$SL audit]]} { check "iteration $k domain audit clean" [$SL audit] {}; break }
 }
 check "60 interleaved driver iterations kept the invariant" 0 [tripped]
+check "60 interleaved driver iterations kept the domain audit clean" [$SL audit] {}
 
 # Clearing the model returns the buffer to its empty-baseline mark count.
 $SL clear
 update
 check "cleared model leaks no position marks" 0 [live_marks]
 check "invariant still clean after clear" 0 [tripped]
+check "domain audit clean after clear" [$SL audit] {}
 
 ::questlog::path::_real_file delete -force $SAND
 puts [expr {$fails ? "FAILED ($fails)" : "PASS"}]

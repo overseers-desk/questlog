@@ -134,6 +134,7 @@ $SL attr_filter_set bookmarked 0
 update
 check "releasing the filter re-attaches all"  [rendered_order] {-tmp-fd-p1 -tmp-fd-p2 -tmp-fd-p3}
 
+check "domain audit clean at end" [$SL audit] {}
 ::questlog::path::_real_file delete -force $SAND
 puts [expr {$fails ? "FAILED ($fails)" : "PASS"}]
 exit $fails

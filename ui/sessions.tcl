@@ -274,6 +274,94 @@ oo::class create ::questlog::ui::SessionList {
         return [my node_payload [dict get $FolderNode $folder]]
     }
 
+    # ---- domain invariant audit ----------------------------------------
+    #
+    # The whole-store consistency check over the session domain, the
+    # counterpart to the engine's structural check_invariant (which guards the
+    # marks). It returns a list of human-readable violation strings, empty when
+    # clean, so a test asserts `check audit [$SL audit] {}` and the soak calls
+    # it after every operation. Three invariants:
+    #   (a) PathNode and the session/subagent nodes' key fields are a bijection,
+    #       and FolderNode likewise over folder keys: every registered key
+    #       resolves to a node carrying it, and every keyed node is registered
+    #       under that key. The half-done move's fault - two nodes under one key -
+    #       shows here as a node absent from its own reverse index.
+    #   (b) no node's children list names a child twice, the fault that paints a
+    #       row twice when sort_siblings maps a repeated key back through sid.
+    #   (c) each folder's stored count/size/cost equal a fresh sum over its
+    #       member sessions' payloads. The stored count tracks total membership;
+    #       a view toggle changes only what the heading displays
+    #       (folder_visible_count), not what is stored, so the stored value is
+    #       compared against the full member count.
+    method audit {} {
+        set probs [list]
+        # (a) reverse indices are a bijection with the keyed nodes.
+        dict for {path id} $PathNode {
+            if {![dict exists $Nodes $id]} {
+                lappend probs "PathNode\[$path] -> missing node $id"
+            } elseif {[my node_field $id key] ne $path} {
+                lappend probs "PathNode\[$path] -> node keyed '[my node_field $id key]'"
+            }
+        }
+        dict for {folder id} $FolderNode {
+            if {![dict exists $Nodes $id]} {
+                lappend probs "FolderNode\[$folder] -> missing node $id"
+            } elseif {[my node_field $id key] ne $folder} {
+                lappend probs "FolderNode\[$folder] -> node keyed '[my node_field $id key]'"
+            }
+        }
+        foreach id [my all_node_ids] {
+            set key [my node_field $id key]
+            switch [my node_field $id kind] {
+                session - subagent {
+                    if {![dict exists $PathNode $key]} {
+                        lappend probs "[my node_field $id kind] $key not in PathNode"
+                    } elseif {[dict get $PathNode $key] ne $id} {
+                        lappend probs "[my node_field $id kind] $key -> $id but PathNode holds [dict get $PathNode $key]"
+                    }
+                }
+                folder {
+                    if {![dict exists $FolderNode $key]} {
+                        lappend probs "folder $key not in FolderNode"
+                    } elseif {[dict get $FolderNode $key] ne $id} {
+                        lappend probs "folder $key -> $id but FolderNode holds [dict get $FolderNode $key]"
+                    }
+                }
+            }
+        }
+        # (b) no children list holds an id twice.
+        foreach id [my all_node_ids] {
+            set seen [dict create]
+            foreach c [my node_field $id children] {
+                if {[dict exists $seen $c]} {
+                    lappend probs "[my node_field $id key] children repeat $c"
+                }
+                dict set seen $c 1
+            }
+        }
+        # (c) folder aggregates equal a fresh sum over member sessions.
+        dict for {folder fid} $FolderNode {
+            set n 0; set sz 0; set cst 0.0
+            foreach sid [my node_field $fid children] {
+                if {[my node_field $sid kind] ne "session"} continue
+                incr n
+                set sz [expr {$sz + [my node_pget $sid size 0]}]
+                set c [my node_pget $sid cost]
+                if {$c ne "" && $c > 0} { set cst [expr {$cst + $c}] }
+            }
+            if {[my fget $folder count] != $n} {
+                lappend probs "folder $folder count [my fget $folder count] != $n members"
+            }
+            if {[my fget $folder size 0] != $sz} {
+                lappend probs "folder $folder size [my fget $folder size 0] != $sz members"
+            }
+            if {abs([my fget $folder cost 0.0] - $cst) > 1e-6} {
+                lappend probs "folder $folder cost [my fget $folder cost 0.0] != $cst members"
+            }
+        }
+        return $probs
+    }
+
     # ---- domain-keyed shims over the node store ----------------------
     #
     # Folder/session/subagent operations name their target by domain key
