@@ -895,7 +895,12 @@ oo::class create ::questlog::ui::SessionList {
     # Stage a scanned row the view is not attaching: create or freshen its
     # detached node. A path already attached is left alone - the attached
     # copy has its own freshness writers, and a second node under one path is
-    # exactly the duplication the audit exists to catch.
+    # exactly the duplication the audit exists to catch. Under active criteria
+    # on_scan_row routes every row here, so leaving an attached path alone also
+    # holds a re-scanned matched card at its scan-stale fields: freshening it
+    # would run the retire/restore trip and disturb the live match decoration
+    # the result index drew, which the scan stream does not own. The card
+    # settles on the next browse rescan, where freshen_attached runs.
     method stage_row {row} {
         set path [dict get $row path]
         if {[dict exists $PathNode $path]} return
