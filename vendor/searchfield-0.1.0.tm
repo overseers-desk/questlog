@@ -1,7 +1,7 @@
 package require Tcl 9
 package require Tk
 package require leash
-package provide searchfield 1.0
+package provide searchfield 0.1.0
 
 namespace eval ::searchfield {}
 

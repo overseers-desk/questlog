@@ -291,7 +291,7 @@ proc ::questlog::ui::theme::build_chrome {} {
             -anchor center -padding {8 1}
     }
     # ---- the criteria bar's own roles --------------------------------------
-    # querybuilder (querybuilder-1.0.tm) names every widget it draws by a style role and
+    # querybuilder (querybuilder-0.1.0.tm) names every widget it draws by a style role and
     # names no colour itself, so this is where the criteria bar gets its look.
     # The chips, the type pills, the delete × and the ghost add button are the
     # styles above, handed to the module per facet in ui/toolbar.tcl; these are
@@ -394,7 +394,7 @@ proc ::questlog::ui::theme::build_chrome {} {
 # The criteria bar's spacing, scaled from the text.
 #
 # querybuilder keeps every gap it leaves in -gaps, in pixels, and pads a chip whose
-# style names no -padding from those same gaps (querybuilder-1.0.tm). Crit_<t>.TFrame
+# style names no -padding from those same gaps (querybuilder-0.1.0.tm). Crit_<t>.TFrame
 # names none, so this one dict carries both the bar's gaps and its chip padding,
 # and is the whole of what decides how much air the criteria bar has.
 #

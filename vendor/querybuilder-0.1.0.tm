@@ -1,6 +1,6 @@
 package require Tcl 8.6-
 package require Tk 8.6-
-package provide querybuilder 1.0
+package provide querybuilder 0.1.0
 
 namespace eval ::querybuilder {}
 
