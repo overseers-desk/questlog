@@ -420,11 +420,17 @@ oo::class create ::questlog::Scan {
             cwd_hint $cwd]
     }
 
-    # Merge a cost result into the row. Called from the main thread when
-    # the cost-pass worker thread completes a file. Quiet no-op if the
-    # row is absent (race with a delete). Does not fire OnRow: cost
-    # arrivals route through the cost callback so the UI knows it is a
-    # field update, not a fresh row that needs adding.
+    # Merge a cost result into the Rows mirror. Called from the main thread
+    # (on_cost_result) with the same cost_dict that SessionList.refresh_cost
+    # writes into the node payload; the two are fed from one arrival, so Rows
+    # never carries a cost value the payload lacks. refresh_cost is the sole
+    # writer of the rendered meta region, so no displayed value depends on this
+    # write: it keeps only the Rows memo current, for the query-replay and
+    # search-hydration paths that still read a scanned row back from Rows. Those
+    # memo roles move to the store in Wave 4a, and Rows (with this method) is
+    # deleted in Wave 4b, not migrated. Quiet no-op if the row is absent (race
+    # with a delete). Does not fire OnRow: a cost arrival is a field update, not
+    # a fresh row that needs adding.
     method update_cost {path cost_dict} {
         if {![dict exists $Rows $path]} return
         set row [dict get $Rows $path]
@@ -496,7 +502,13 @@ oo::class create ::questlog::Scan {
             # Rows is never pruned on deletion, so a memoised row can outlive
             # its file (transcript pruning, a user delete); returning it would
             # paint a ghost the next reconcile tick has to take back. Drop it
-            # from the result and from the memo.
+            # from the result and from the memo. The store's equivalent already
+            # exists on the same replay turn: reconcile_running (called right
+            # after this replay in on_filter) forgets a modelled session whose
+            # jsonl has vanished, and this existence check keeps such a ghost
+            # from ever entering the store to begin with. So this prune only
+            # trims the Rows memo dict; when Rows goes (Wave 4b) the store's
+            # forget path carries the whole duty.
             if {![file exists $path]} { lappend dead $path; continue }
             if {![::questlog::scope::row_matches $snapshot $row]} continue
             lappend out $row
