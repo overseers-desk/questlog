@@ -2,18 +2,22 @@ package require Tcl 9
 package require TclOO
 package require leash
 
-# ::questlog::Scan - in-memory, coroutine-driven, memoised session scanner.
+# ::questlog::Scan - coroutine-driven session-row stream producer.
 #
-# Each launch builds the row table fresh by line-streaming each jsonl with
-# Tcl regex (no jq, no subprocess, no on-disk cache). Within one process the
-# table is memoised across recency-bound changes: tightening the since bound
-# narrows in O(rows), widening it scans only the delta.
+# Each row is built fresh by line-streaming its jsonl with Tcl regex (no jq,
+# no subprocess, no on-disk cache) and published through OnRow; the consumer
+# retains what it wants (in the GUI, the session list's node store is the one
+# in-memory home of session data). The differential skip asks the consumer
+# through the known_mtime callback, so an unchanged corpus re-extends without
+# re-reading a file. Scan keeps only disk-derived memos of its own: the
+# folder->cwd resolver cache (Folders) and the session-origin cache (Kind),
+# both used headlessly by the CLI.
 #
 # Single-instance by current convention, not by structural constraint.
-# The class earns its existence under issue 67 on (a) named globals
-# absorbed (Rows, Folders, Epoch, Snapshot, callbacks), (b) joint state
-# (epoch and rows co-evolve as the coroutine drains), (c) tell-don't-ask
-# (no caller pokes Rows directly; mutation routes through publish_row).
+# The class earns its existence under issue 67 on (a) named globals absorbed
+# (Folders, Kind, Epoch, Snapshot, callbacks), (b) joint state (the epoch and
+# the in-flight coroutine co-evolve as it drains), (c) tell-don't-ask (rows
+# leave through publish_row's stream, never through a table a caller pokes).
 #
 # Cancellation uses a generation token. `incr Epoch` invalidates any
 # in-flight coroutine; the coroutine compares its captured epoch after
@@ -66,7 +70,6 @@ proc ::questlog::resume_coro {co} {
 
 oo::class create ::questlog::Scan {
     mixin leash
-    variable Rows         ;# dict: path -> row dict
     variable Folders      ;# dict: folder basename -> resolved display path
     variable Epoch        ;# generation counter; inc to cancel
     variable Snapshot     ;# last snapshot the coroutine started under
@@ -83,7 +86,6 @@ oo::class create ::questlog::Scan {
                           ;# read per file once, not on every query
 
     constructor {on_row on_done {on_progress {}} {is_typing {}} {known_mtime {}}} {
-        set Rows [dict create]
         set Folders [dict create]
         set Epoch 0
         set Snapshot [dict create]
@@ -274,8 +276,9 @@ oo::class create ::questlog::Scan {
     # The subagents of one session, as child row dicts, built on demand when the
     # list expands a session's chevron. Pure: globs the session's subagents dir,
     # stats and reads the small meta sidecar of each, and returns them mtime DESC.
-    # Children never enter Rows (they are not browse sessions); the list owns
-    # their model and their cost is computed on render, like a parent's.
+    # Children never enter the row stream (they are not browse sessions); the
+    # list owns their model and their cost is computed on render, like a
+    # parent's.
     method subagents_for {parent_path} {
         set uuid [file rootname [file tail $parent_path]]
         set subdir [file join [file dirname $parent_path] $uuid subagents]
@@ -429,54 +432,17 @@ oo::class create ::questlog::Scan {
             cwd_hint $cwd]
     }
 
-    # Merge a cost result into the Rows mirror. Called from the main thread
-    # (on_cost_result) with the same cost_dict that SessionList.refresh_cost
-    # writes into the node payload; the two are fed from one arrival, so Rows
-    # never carries a cost value the payload lacks. refresh_cost is the sole
-    # writer of the rendered meta region, so no displayed value depends on this
-    # write: it keeps only the Rows mirror current. The memo roles this mirror
-    # once served (query-replay, search hydration) read the session list's
-    # store as of Wave 4a; Rows persists as the audited cross-check and is
-    # deleted with this method in Wave 4b, not migrated. Quiet no-op if the row is absent (race
-    # with a delete). Does not fire OnRow: a cost arrival is a field update, not
-    # a fresh row that needs adding.
-    method update_cost {path cost_dict} {
-        if {![dict exists $Rows $path]} return
-        set row [dict get $Rows $path]
-        dict for {k v} $cost_dict { dict set row $k $v }
-        dict set Rows $path $row
-    }
-
-    # Publish a row. Used by run_scan and by Search (which produces row
-    # data as a free side-effect of its own pass). Last-write-wins; the
-    # content from either consumer is the same row.
+    # Publish a row into the stream. Used by run_scan and by Search (which
+    # produces row data as a free side-effect of its own pass). The row's one
+    # retained home is the consumer's (OnRow lands it in the session list's
+    # store, whose staging keeps a fresher copy over a republished stale one);
+    # here the row only feeds the two disk-derived memos on its way out. A
+    # scan_file republish (the search path) computes neither the cost fields
+    # nor the tail-read identity fields (slug, ai_title, kind) - the store's
+    # retained copy holds those for an unchanged file.
     method publish_row {row} {
         set row [my stamp_subtree $row]
         set path [dict get $row path]
-        # Search republishes this row from scan_file, which computes neither
-        # the cost fields nor the identity fields scan_one reads from the tail
-        # (slug, ai_title, kind). On an unchanged file (same mtime as the
-        # cached row) an absent field means "not computed by this producer",
-        # never "cleared", so carry the cached value across: without the
-        # identity carry a search on session S erased its title from the
-        # browse list for the rest of the process (extend never rescans an
-        # unchanged file), and without the cost carry the republish re-triggered
-        # the cost pass for every matched session. A changed mtime means the
-        # cached values are stale, so they are left to be recomputed.
-        if {[dict exists $Rows $path]} {
-            set old [dict get $Rows $path]
-            if {[dict getdef $old mtime ""] eq [dict getdef $row mtime ""]} {
-                foreach k {slug ai_title kind cost_usd input_tokens \
-                           output_tokens cache_write_tokens cache_read_tokens \
-                           model_breakdown model turns duration_secs human_secs \
-                           context_pct} {
-                    if {![dict exists $row $k] && [dict exists $old $k]} {
-                        dict set row $k [dict get $old $k]
-                    }
-                }
-            }
-        }
-        dict set Rows $path $row
         # Carry the origin classification into the search-corpus cache for free;
         # scan_file republishes (the search path) carry no kind, so guard on it.
         if {[dict exists $row kind]} {
@@ -497,35 +463,6 @@ oo::class create ::questlog::Scan {
             dict set Folders $folder $cwd
         }
         if {$OnRow ne ""} { {*}$OnRow $row }
-    }
-
-    # Select the rows a snapshot admits, from the Rows mirror. As of Wave 4a
-    # no UI fill reads this (the session list replays its own retention,
-    # replay_scope); tests still walk it as the mirror's view, and it goes
-    # with Rows in Wave 4b. The snapshot row-level predicate (the since
-    # cutoff, the until ceiling, the subtree scope, the min-turns floor)
-    # lives in ::questlog::scope, shared with SessionList. Returns a list of
-    # row dicts, mtime DESC.
-    method query {snapshot} {
-        set out [list]
-        set dead [list]
-        dict for {path row} $Rows {
-            # Rows is never pruned on deletion, so a memoised row can outlive
-            # its file (transcript pruning, a user delete); returning it would
-            # paint a ghost the next reconcile tick has to take back. Drop it
-            # from the result and from the memo. The store's equivalent already
-            # exists on the same replay turn: reconcile_running (called right
-            # after this replay in on_filter) forgets a modelled session whose
-            # jsonl has vanished, and this existence check keeps such a ghost
-            # from ever entering the store to begin with. So this prune only
-            # trims the Rows memo dict; when Rows goes (Wave 4b) the store's
-            # forget path carries the whole duty.
-            if {![file exists $path]} { lappend dead $path; continue }
-            if {![::questlog::scope::row_matches $snapshot $row]} continue
-            lappend out $row
-        }
-        foreach p $dead { dict unset Rows $p }
-        return [lsort -decreasing -command ::questlog::scan::cmp_mtime $out]
     }
 
     # Stamp a row with folder_cwd: the directory its project folder resolves
@@ -610,25 +547,10 @@ oo::class create ::questlog::Scan {
         return ""
     }
 
-    # Rows is memoised and never pruned when a file is deleted, so a returned
-    # row may describe a jsonl that no longer exists on disk (e.g. a Resume-
-    # forked session quit before any input, which Claude leaves no file for).
-    # Callers that decide visibility must existence-check the path themselves
-    # rather than trust a non-empty row here - see reconcile_running.
-    method lookup {path} {
-        if {[dict exists $Rows $path]} { return [dict get $Rows $path] }
-        return ""
-    }
-
-    # The whole Rows mirror, read-only, for the session list's audit to
-    # cross-check the store's retention against while both homes exist. Not a
-    # mutation door and not a data source - the store is the memo now - and it
-    # is deleted with Rows in Wave 4b.
-    method rows {} { return $Rows }
-
-    # Scan a single file synchronously and publish it. Used by the running
-    # reconciler to bring a freshly-started (or outside the since bound, but live)
-    # session into Rows on demand. Returns the row, or {} if unreadable.
+    # Scan a single file synchronously and publish it through the stream.
+    # Used by the running reconciler to surface a freshly-started (or outside
+    # the since bound, but live) session on demand, and by the CLI to fill a
+    # row a matcher pass left incomplete. Returns the row, or {} if unreadable.
     method scan_path {path} {
         set row [my scan_one $path]
         if {[dict size $row] > 0} {
@@ -636,45 +558,6 @@ oo::class create ::questlog::Scan {
             my publish_row $row
         }
         return $row
-    }
-
-    # Re-derive a row's bookmarked flag from disk truth after a toggle.
-    # The +x bit is authoritative; this only refreshes the cached field so
-    # the scope query and the view filter see it. The visible glyph is refreshed separately by
-    # the session list (reconcile_one). Routed through Scan to keep Rows
-    # mutation in one place (no caller pokes Rows directly).
-    method set_bookmark_field {path} {
-        if {![dict exists $Rows $path]} return
-        set row [dict get $Rows $path]
-        dict set row bookmarked [file executable $path]
-        dict set Rows $path $row
-    }
-
-    # Re-key a row after the underlying jsonl was renamed into a new
-    # project folder. The row's path and folder are updated; mtime/size
-    # are re-read because the rename preserves them but we want any
-    # subsequent extend pass to see a consistent state. This re-keys Rows
-    # silently: the session list moves its own node through relocate_card,
-    # so OnRow stays reserved for scan arrivals and does not fire here.
-    method relocate_row {old_path new_path} {
-        if {![dict exists $Rows $old_path]} { return }
-        set row [dict get $Rows $old_path]
-        dict set row path $new_path
-        dict set row folder [file tail [file dirname $new_path]]
-        if {[catch {file mtime $new_path} mtime]} { set mtime 0 }
-        if {[catch {file size  $new_path} size]}  { set size 0 }
-        dict set row mtime $mtime
-        dict set row size $size
-        # The +x bit is preserved by rename; re-read so the cached field
-        # stays honest even if it changed out of band.
-        dict set row bookmarked [file executable $new_path]
-        dict unset Rows $old_path
-        dict set Rows $new_path $row
-        # Do not seed Folders[$new_folder] from the row's cwd_hint - the
-        # hint records where the conversation ran, not what the folder
-        # represents. After a move those disagree. Leave Folders alone;
-        # resolve_folder will recover the new folder's identity from the
-        # filesystem (candidate_cwds_for) on first lookup.
     }
 
 }

@@ -55,7 +55,7 @@ puts $fh {{"type":"assistant","message":{"content":"reply"}}}
 puts $fh {{"type":"user","message":{"role":"user","content":"another"}}}
 close $fh
 
-# Subagent fixture - must NOT appear in Rows.
+# Subagent fixture - must NOT enter the browse stream.
 set fh [open /tmp/questlog-test-projects/-home-test-code-foo/$u/subagents/x.jsonl w]
 puts $fh {{"type":"user","message":{"role":"user","content":"subagent should be ignored"}}}
 puts $fh {{"type":"user","message":{"role":"user","content":"second subagent line"}}}
@@ -84,11 +84,11 @@ vwait ::scan_done
 
 check rows_count 3 [llength $::rows]
 
-# Subagent regression: that file's path must not be in Rows.
+# Subagent regression: that file's path must not be published as a browse row.
 set subagent_path "/tmp/questlog-test-projects/-home-test-code-foo/$u/subagents/x.jsonl"
-set in_rows 0
-foreach r $::rows { if {[dict get $r path] eq $subagent_path} { set in_rows 1 } }
-check subagent_excluded 0 $in_rows
+set in_stream 0
+foreach r $::rows { if {[dict get $r path] eq $subagent_path} { set in_stream 1 } }
+check subagent_excluded 0 $in_stream
 
 # Folder display path resolution. The resolver walks the real filesystem
 # and returns a cwd only when the directory exists, so this uses a real
@@ -173,10 +173,11 @@ $sr destroy
 # min_turns is scope: the scanner records each row's nturns (capped), and
 # filter::row_matches drops a row below the floor. The 3-turn aaa session records
 # nturns 3; the single-turn bbb-2 records nturns 1. A min_turns 2 scope keeps the
-# two multi-turn rows (aaa 3, ccc 2) and drops bbb-2.
+# two multi-turn rows (aaa 3, ccc 2) and drops bbb-2. The published stream is
+# the rows' one delivery; scope questions are asked of the row dicts it carried.
 set snap1 [dict create since all min_turns 2]
-set qrows [$s query [dict create since all]]
-check query_scope_all 3 [llength $qrows]
+set qrows $::rows
+check stream_rows_all 3 [llength $qrows]
 array set nturns_of {}
 foreach r $qrows { set nturns_of([dict get $r path]) [dict get $r nturns] }
 check nturns_recorded_aaa 3 $nturns_of(/tmp/questlog-test-projects/-home-test-code-foo/aaa-1.jsonl)
@@ -203,29 +204,19 @@ vwait ::scan_done
 check mtime_invalidation_count 1 [llength $::rows]
 check mtime_invalidation_path /tmp/questlog-test-projects/-home-test-code-foo/aaa-1.jsonl [dict get [lindex $::rows 0] path]
 
-# Ordering: query result is mtime-DESC. The just-touched aaa-1 should be first.
-set qall [$s query [dict create since all]]
-set first_path [dict get [lindex $qall 0] path]
+# Ordering: the path list (and so the stream) is mtime-DESC. The just-touched
+# aaa-1 should lead it. Replay across snapshot changes is the session list
+# store's duty and is proven in test-retention / test-rescan-freshness.
+set first_path [lindex [$s list_paths_for [dict create since all]] 0]
 check ordering_first_is_touched /tmp/questlog-test-projects/-home-test-code-foo/aaa-1.jsonl $first_path
-
-# Regression: query against a previously-seen since bound must return the
-# memoised rows. App's on_filter relies on this to repopulate the tree
-# after a since-bound tighten-then-widen sequence (24h → 7d). Without it the
-# coroutine skips memoised paths and the tree stays empty.
-set q_before [$s query [dict create since all]]
-set ::scan_done 0
-$s extend [dict create since all min_turns 2]   ;# tighter (min_turns 2)
-vwait ::scan_done
-set q_back [$s query [dict create since all]]
-check query_replay_after_since_change [llength $q_before] [llength $q_back]
 
 $s destroy
 
 # ---- bookmark flag + since override ---------------------------------
 # Bookmark bbb-2 and age both it and ccc-3 past a 7d since bound. A fresh Scan
-# (no memoised mtimes) then proves: scan_one reads the +x bit; the old
-# bookmarked file survives both enumeration and query despite the since bound;
-# the old non-bookmarked file does not.
+# then proves: scan_one reads the +x bit; a bookmark is a session attribute,
+# never a window exemption, so neither enumeration nor the row predicate
+# admits the old bookmarked file into a 7d window.
 set bbb /tmp/questlog-test-projects/-home-test-code-foo/bbb-2.jsonl
 set ccc /tmp/questlog-test-projects/-home-test-code-bar-baz/ccc-3.jsonl
 ::questlog::path::set_bookmark $bbb
@@ -239,30 +230,33 @@ $s2 extend [dict create since all]
 vwait ::scan_done
 
 set bbb_row ""
-foreach r $::rows { if {[dict get $r path] eq $bbb} { set bbb_row $r } }
+set ccc_row ""
+foreach r $::rows {
+    if {[dict get $r path] eq $bbb} { set bbb_row $r }
+    if {[dict get $r path] eq $ccc} { set ccc_row $r }
+}
 check bbb_bookmarked_flag 1 [dict get $bbb_row bookmarked]
 
-set q7 [$s2 query [dict create since 7d]]
-set paths7 [lmap r $q7 {dict get $r path}]
 # A bookmark is a session attribute (the bookmarked view filter reads it),
-# never a window exemption: an out-of-window bookmarked session leaves the
-# window's result exactly like a plain one.
-check query_bookmark_obeys_window 0 [expr {$bbb in $paths7}]
-check query_old_plain_dropped 0 [expr {$ccc in $paths7}]
+# never a window exemption: an out-of-window bookmarked row fails the window
+# predicate exactly like a plain one.
+check row_matches_bookmark_obeys_window 0 \
+    [::questlog::scope::row_matches [dict create since 7d] $bbb_row]
+check row_matches_old_plain_dropped 0 \
+    [::questlog::scope::row_matches [dict create since 7d] $ccc_row]
 
 set lp [$s2 list_paths_for [dict create since 7d]]
 check enum_bookmark_obeys_window 0 [expr {$bbb in $lp}]
 check enum_old_plain_dropped 0 [expr {$ccc in $lp}]
 
-# The Bookmarked filter is a view filter, not a query filter: the scope query
-# returns every in-window row regardless of the bookmark, and the +x bit the
-# filter reads rides on the row, not in the query. Exactly one in-window row (bbb)
-# carries it, so a bookmark-agnostic scope query still hands the filter what it
-# needs to keep just that one.
-set qb [$s2 query [dict create since all]]
+# The Bookmarked filter is a view filter, not a scope bound: the stream
+# carries every in-window row regardless of the bookmark, and the +x bit the
+# filter reads rides on the row. Exactly one row (bbb) carries it, so a
+# bookmark-agnostic stream still hands the filter what it needs to keep just
+# that one.
 set bookmarked 0
-foreach r $qb { if {[dict getdef $r bookmarked 0]} { incr bookmarked } }
-check scope_query_is_bookmark_agnostic 1 $bookmarked
+foreach r $::rows { if {[dict getdef $r bookmarked 0]} { incr bookmarked } }
+check stream_is_bookmark_agnostic 1 $bookmarked
 
 $s2 destroy
 

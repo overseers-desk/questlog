@@ -263,8 +263,9 @@ set ::questlog::search::WorkerScript {
 # through OnFile; each match is a dict {path lineoff ts btype content folder}.
 #
 # Side effect: as a free byproduct of reading each file, the row data
-# (multi-turn predicate, first prompt, cwd_hint, first timestamp) is
-# published to Scan via Scan.publish_row, so the tree benefits.
+# (multi-turn predicate, first prompt, cwd_hint, first timestamp) is fed
+# into the row stream via Scan.publish_row, so the session list's store -
+# the one retained home of session data - is staged for hydration.
 #
 # Cancellation: each start increments Epoch; in-flight async dispatches
 # carrying a stale epoch are dropped on arrival.
@@ -418,9 +419,10 @@ oo::class create ::questlog::Search {
                 dict set Counts done $count
                 continue
             }
-            # Publish row data back to Scan as a free side-effect. Subagent
-            # files are not browse sessions, so their rows are never published
-            # (the list owns the child model); their matches still flow to OnFile.
+            # Feed the row into the stream as a free side-effect (the session
+            # list's store stages it for hydration). Subagent files are not
+            # browse sessions, so their rows are never published (the list
+            # owns the child model); their matches still flow to OnFile.
             if {![dict getdef $row is_child 0]} { $Scan publish_row $row }
             # A session qualifies only when every clause is satisfied (scan_file
             # returns no matches otherwise); deliver the whole match list at once
@@ -511,15 +513,16 @@ oo::class create ::questlog::Search {
         }
     }
 
-    # Receives one found file from a worker: its row (published to Scan for
-    # memoisation and the cost-pass side-effect) and its full match list,
+    # Receives one found file from a worker: its row (fed into the row stream,
+    # which stages the session list's store) and its full match list,
     # delivered together so the session renders in a single pass. Disjoint
     # slices mean each path arrives once; the MatchedSessions guard makes that
     # authoritative rather than relying on it.
     method on_worker_file {epoch row matches} {
         if {$epoch != $Epoch} return
-        # Subagent files are not browse sessions: their rows are not published
-        # (the list owns the child model); their matches still flow to OnFile.
+        # Subagent files are not browse sessions: their rows never enter the
+        # stream (the list owns the child model); their matches still flow to
+        # OnFile.
         if {![dict getdef $row is_child 0]} { $Scan publish_row $row }
         dict incr Counts done
         set d [dict get $Counts done]

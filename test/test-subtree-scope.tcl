@@ -142,12 +142,16 @@ check moved_out_new_home    1 [::questlog::scope::row_subtree_match $r_mout [lis
 check metachar_self         1 [::questlog::scope::row_subtree_match $r_wb [list $BASE/we\[i\]rd]]
 check metachar_no_shadow    0 [::questlog::scope::row_subtree_match $r_wp [list $BASE/we\[i\]rd]]
 
-# ---- warm-Rows agreement: query over published rows returns exactly what a
-# fresh walk admits, so a warm GUI and a fresh scan answer the scope alike ----
-foreach f [glob -directory $root -- */*.jsonl] { $s2 scan_path $f }
-set got [lsort [lmap r [$s2 query [dict create since all subtree [list $P]]] \
-                    {file rootname [file tail [dict get $r path]]}]]
-check query_residence {mv01 r001 r002} $got
+# ---- stream agreement: the row predicate over published rows admits exactly
+# what a fresh walk admits, so a warm GUI and a fresh scan answer the scope
+# alike ----
+set ::pub [list]
+foreach f [glob -directory $root -- */*.jsonl] { lappend ::pub [$s2 scan_path $f] }
+set snapP [dict create since all subtree [list $P]]
+set got [lsort [lmap r $::pub {expr {
+    [::questlog::scope::row_matches $snapP $r]
+        ? [file rootname [file tail [dict get $r path]]] : [continue]}}]]
+check stream_residence {mv01 r001 r002} $got
 $s2 destroy
 ::questlog::path::_real_file delete -force $BASE
 

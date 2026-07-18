@@ -761,8 +761,8 @@ proc ::questlog::ui::app::on_scan_progress {done total} {
         set ProgressLine "Scanning $done / $total…"
         refresh_status
     }
-    # Paint what this chunk added before the next one runs. Rows land in the
-    # widget as the scan publishes them, but their repaint is idle-priority,
+    # Paint what this chunk added before the next one runs. Scanned rows land
+    # in the widget as they publish, but their repaint is idle-priority,
     # and the cost pass keeps the event queue fed (worker results and their
     # coalesce timers are events, which precede idle), so on a busy corpus the
     # first paint otherwise drifts past the 1s gate (measured 1.15-1.25s)

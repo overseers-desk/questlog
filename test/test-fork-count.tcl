@@ -1,12 +1,14 @@
 #!/usr/bin/env wish9.0
 # Regression test for fork-related folder-count bugs in reconcile_running.
 #
-# Bug 1 (double-add): a RUNNING session not yet in Rows is added twice. The
-#   first loop calls OnScanPath, which is not a pure read - scan_path ->
-#   publish_row fires OnRow (on_scan_row), which already adds the session; the
-#   loop then calls model_add_session again. Deterministic, no timing.
+# Bug 1 (double-add): a RUNNING session the store has never seen is added
+#   twice. The first loop calls OnScanPath, which is not a pure read -
+#   scan_path -> publish_row fires OnRow (on_scan_row), which already adds
+#   the session; the loop then calls model_add_session again. Deterministic,
+#   no timing.
 # Bug 2 (lingering phantom): a fork quit before any input leaves no file, but
-#   its cached Rows row outlives the file, so the keep-decision retains it.
+#   a cached row could outlive the file, so the keep-decision must re-check
+#   disk rather than retain it.
 #
 # Checks SBF entries == distinct == heading count after each step.
 
@@ -75,9 +77,9 @@ proc check {label expected} {
         [expr {$ok ? "ok " : "FAIL"}] $label $n $d $c $expected]
 }
 
-# Bug 1: running fork not yet in Rows -> must be a single entry.
+# Bug 1: running fork the store has never seen -> must be a single entry.
 $SL reconcile_running [dict create $uF $FP]
-check "running fork (not in Rows)" 1
+check "running fork (unseen by the store)" 1
 
 # Bug 2: it quits and its file is removed -> must be forgotten.
 ::questlog::path::_real_file delete $F

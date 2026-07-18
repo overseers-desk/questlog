@@ -239,12 +239,11 @@ $SL attr_filter_set bookmarked 1
 update
 check "bookmarked filter on: only B shows" \
     [list [$SL sflag $Ap rendered] [$SL sflag $Bp rendered] [$SL sflag $Cp rendered]] {0 1 0}
-# Mirror the app's scope-switch sequence: replay the memoised rows the new
-# snapshot admits (the scan coroutine skips already-scanned paths), then extend
-# for anything newly in scope.
+# Mirror the app's scope-switch sequence: replay the retained rows the new
+# snapshot admits from the store, then extend for anything newly in scope.
 set snap2 [dict create since all min_turns 1]
 $SL apply_filter $snap2
-foreach row [$::Scan query $snap2] { $SL on_scan_row $row }
+$SL replay_scope
 set ::scan_done 0
 $::Scan extend $snap2
 after 300 [list set ::scan_done 1]

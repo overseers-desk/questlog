@@ -40,7 +40,8 @@ for {set i 0} {$i < 300} {incr i} {
 # Test 1: full scan completes via coroutine.
 set ::done 0
 set ::row_count 0
-proc on_row {row}      { incr ::row_count }
+set ::seen [dict create]
+proc on_row {row}      { incr ::row_count; dict set ::seen [dict get $row path] 1 }
 proc on_done {scanned} { set ::done 1 }
 
 set s [::questlog::Scan new on_row on_done]
@@ -59,12 +60,13 @@ for {set i 0} {$i < 200} {incr i} {
 }
 
 # Test 2: epoch cancellation. Mid-flight extend cancels the previous coro.
-# The invariant we test is that after rapid back-to-back extends, the dict
-# still ends up consistent - every path globbed by the final extend is
-# either already memoised or scanned. The intermediate cancellation must
-# not leak a partial state.
+# The invariant we test is that after rapid back-to-back extends, the stream
+# still ends up consistent - every path globbed by the final extend has been
+# published to the consumer. The intermediate cancellation must not leak a
+# partial state.
 set ::done 0
 set ::row_count 0
+set ::seen [dict create]
 $s extend [dict create since all]
 after 5 [list $s extend [dict create since all]]
 after 10 [list $s extend [dict create since all]]
@@ -72,9 +74,9 @@ vwait ::done
 # Drain residual events.
 update
 check second_folder_visible 1 \
-    [expr {[$s lookup /tmp/questlog-test-coro/-home-test-code-second/sess-0000.jsonl] ne ""}]
+    [dict exists $::seen /tmp/questlog-test-coro/-home-test-code-second/sess-0000.jsonl]
 check first_folder_visible 1 \
-    [expr {[$s lookup /tmp/questlog-test-coro/-home-test-code-many/sess-0000.jsonl] ne ""}]
+    [dict exists $::seen /tmp/questlog-test-coro/-home-test-code-many/sess-0000.jsonl]
 
 $s destroy
 ::questlog::path::_real_file delete -force /tmp/questlog-test-coro

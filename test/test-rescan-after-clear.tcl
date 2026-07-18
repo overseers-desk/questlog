@@ -81,11 +81,10 @@ proc check {name got want} {
     }
 }
 
-# Mirror the app's scope-switch sequence: replay the memoised rows that match
-# the snapshot (Scan's coroutine skips already-scanned paths, so the replay is
-# what re-feeds them), then extend for any newly-windowed file.
+# Mirror the app's scope-switch sequence: replay the retained rows the
+# snapshot admits from the store, then extend for any newly-windowed file.
 proc scan_now {snap} {
-    foreach row [$::Scan query $snap] { $::SL on_scan_row $row }
+    $::SL replay_scope
     set ::scan_done 0
     $::Scan extend $snap
     after 300 [list set ::scan_done 1]

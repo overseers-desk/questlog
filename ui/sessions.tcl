@@ -565,7 +565,7 @@ oo::class create ::questlog::ui::SessionList {
         $Text tag configure attr-running    -foreground [::questlog::ui::theme::c attr_running]
         $Text tag configure attr-bookmarked -foreground [::questlog::ui::theme::c attr_bookmarked]
         # Session header: one line, the block's "title" (like a search result
-        # heading), indented under its folder. Rows are separated by the gap
+        # heading), indented under its folder. The rows are separated by the gap
         # above each and the bold title colour; no background band. The
         # selected row gets a highlight for click feedback. The metadata
         # columns align on per-tag right tab stops (set by layout_columns), so
