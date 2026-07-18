@@ -156,7 +156,11 @@ check "cross-folder shift re-anchors to the target alone" [sel] [list $b02]
 # ---- selection survives a move (relocate_card re-keys the set) -----------
 $SL selection_set $a02
 set moved [file join $DIRB moved.jsonl]
-$SL relocate_card $a02 $moved $FB
+# The real move renames the file before relocate_card re-keys the store, so the
+# new path is on disk when relocate_card re-reads its bookmarked/mtime/size and
+# stamps the destination cwd move_one hands it.
+::questlog::path::_real_file rename $a02 $moved
+$SL relocate_card $a02 $moved $FB /tmp/proj
 check "moved member follows to its new path" [$SL is_selected $moved] 1
 check "old path is no longer selected" [$SL is_selected $a02] 0
 

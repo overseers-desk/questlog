@@ -114,6 +114,16 @@ $SL refresh_cost $a2 [dict create cost_usd 2.50 turns 4 duration_secs 40 \
     human_secs 12 model "claude-3-5-sonnet-20241022"]
 update
 set szMoved  [$SL sget $a2 size]
+# The move renames the file, preserving mtime, so a later rescan is skipped and
+# any field carried unchanged would be stale forever. Stage two disk facts that
+# differ from what the move leaves in place - a +x bookmark bit the store does
+# not know, and the source folder's cwd, which is not the destination's - so the
+# move must re-read bookmarked from disk and re-stamp folder_cwd for the new
+# residence rather than carry either across unchanged.
+::questlog::path::_real_file attributes $a2 -permissions u+x
+check "store's bookmarked is stale before the move" [$SL sget $a2 bookmarked] 0
+check "store's folder_cwd is the source folder's before the move" \
+    [$SL sget $a2 folder_cwd] $CWDA
 set aSize0   [$SL fget $FA size 0]
 set bSize0   [$SL fget $FB size 0]
 set aCost0   [$SL fget $FA cost 0.0]
@@ -134,6 +144,8 @@ check "B size gained the moved session"  [$SL fget $FB size 0] [expr {$bSize0 + 
 check "A cost lost the moved session"    [expr {abs([$SL fget $FA cost 0.0] - ($aCost0 - 2.50)) < 1e-6}] 1
 check "B cost gained the moved session"  [expr {abs([$SL fget $FB cost 0.0] - ($bCost0 + 2.50)) < 1e-6}] 1
 check "no path is painted twice"         [$SL audit] {}
+check "bookmarked re-read from disk on move" [$SL sget $a2_new bookmarked] 1
+check "folder_cwd re-stamped for the new residence" [$SL sget $a2_new folder_cwd] $CWDB
 
 # --- Move the last remaining session out of A: the emptied folder is dropped
 #     whole, the way forget_session drops one.

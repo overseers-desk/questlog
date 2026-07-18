@@ -3487,7 +3487,7 @@ oo::class create ::questlog::ui::SessionList {
     # new folder. The move primitive reparents the node off the old folder and
     # onto the new and rebuilds, which keeps the mark scheme consistent; moves
     # are rare, so the cost is not on a hot path.
-    method relocate_card {old_path new_path new_folder} {
+    method relocate_card {old_path new_path new_folder new_cwd} {
         if {![my has_session $old_path]} return
         set sid [my sid $old_path]
         # The session's own size and cost move with it; capture them and the
@@ -3501,6 +3501,16 @@ oo::class create ::questlog::ui::SessionList {
         my node_set $sid key $new_path
         dict unset PathNode $old_path
         dict set PathNode $new_path $sid
+        # The rename preserves the file's mtime, so the differential skip
+        # suppresses any rescan of the new path and a stale bookmarked/mtime/size
+        # would live on forever. Re-read the three from disk now, and re-stamp
+        # folder_cwd for the new residence: move_one hands us the destination cwd
+        # (ResolveFolder walks the filesystem and would not answer for a folder
+        # the scan has not yet touched).
+        my node_pset $sid bookmarked [file executable $new_path]
+        my node_pset $sid mtime [file mtime $new_path]
+        my node_pset $sid size [file size $new_path]
+        my node_pset $sid folder_cwd $new_cwd
         # Create the destination folder in the store when new (no draw; the
         # move's rebuild draws it).
         if {![my has_folder $new_folder]} {
