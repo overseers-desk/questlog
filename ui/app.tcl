@@ -547,7 +547,8 @@ proc ::questlog::ui::app::on_filter {snapshot} {
     # coroutine skips memoised paths, so without this the list stays empty
     # whenever the snapshot was previously seen (e.g. 24h to 7d) - then extend
     # for newly-windowed files. apply_filter above retired every loaded row
-    # into the store's detached retention; replay_scope re-attaches the ones
+    # into the store's detached retention (its clear runs retire_all, not a
+    # wipe); replay_scope re-attaches the ones
     # the new scope admits, applying the same pure predicate
     # (::questlog::scope::row_matches over payload_scope_row's fields) that
     # on_scan_row applies as its admission gate. No disk and no Rows: the
