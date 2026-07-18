@@ -61,7 +61,10 @@ file mtime $Bp [expr {$NOW - 5 * 86400}]
 file mtime $Cp [expr {$NOW - 10 * 86400}]
 
 set SL ""
-set ::Scan [::questlog::Scan new [list apply {{r} { $::SL on_scan_row $r }}] noop]
+# The store is the scan's differential-skip memory, wired the way the app
+# wires it: known_mtime answers from the widget's retained copy.
+set ::Scan [::questlog::Scan new [list apply {{r} { $::SL on_scan_row $r }}] noop \
+    {} {} [list apply {{p} { $::SL stored_mtime $p }}]]
 # The two instruments: every disk scan and every Rows-mirror read is counted,
 # so a step that claims "from the store" proves it by both staying flat.
 set ::SCANS 0

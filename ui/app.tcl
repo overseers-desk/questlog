@@ -237,7 +237,8 @@ proc ::questlog::ui::app::start {root {seed {}}} {
         [namespace code on_scan_row] \
         [namespace code on_scan_done] \
         [namespace code on_scan_progress] \
-        [namespace code scan_is_typing]]
+        [namespace code scan_is_typing] \
+        [namespace code known_mtime]]
 
     set Search [::questlog::Search new $Scan \
         [namespace code on_search_file] \
@@ -1197,6 +1198,16 @@ proc ::questlog::ui::app::folder_cwd {folder} {
 proc ::questlog::ui::app::lookup_session {path} {
     variable Scan
     return [$Scan lookup $path]
+}
+
+# The scan's differential-skip memory: the mtime the session list's store
+# holds for a path ("" when it holds none). Scan re-reads only paths whose
+# live mtime differs, so an unchanged corpus re-extends without disk reads;
+# the lib never references the ui directly, the prefix is injected at
+# construction.
+proc ::questlog::ui::app::known_mtime {path} {
+    variable SessionList
+    return [$SessionList stored_mtime $path]
 }
 
 # Typing predicate the browse Scan consults for its resume policy: true while

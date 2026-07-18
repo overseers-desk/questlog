@@ -75,11 +75,14 @@ oo::class create ::questlog::Scan {
     variable OnProgress   ;# cb {done total} or {}
     variable Active       ;# 1 while a coroutine is running
     variable IsTyping     ;# cb -> 1 while the user is typing, or {} for never
+    variable KnownMtime   ;# cb {path} -> the consumer's stored mtime for a
+                          ;# scanned path, or "" when it holds none; the
+                          ;# differential skip's memory. {} scans every path.
     variable Kind         ;# dict: path -> {mtime kind}; memoised session origin
                           ;# (cli|sdk), so the search corpus gate pays one head
                           ;# read per file once, not on every query
 
-    constructor {on_row on_done {on_progress {}} {is_typing {}}} {
+    constructor {on_row on_done {on_progress {}} {is_typing {}} {known_mtime {}}} {
         set Rows [dict create]
         set Folders [dict create]
         set Epoch 0
@@ -89,6 +92,7 @@ oo::class create ::questlog::Scan {
         set OnProgress $on_progress
         set Active 0
         set IsTyping $is_typing
+        set KnownMtime $known_mtime
         set Kind [dict create]
     }
 
@@ -150,9 +154,14 @@ oo::class create ::questlog::Scan {
         set total [llength $paths]
         foreach path $paths {
             if {$my_epoch != $Epoch} return
+            # The differential skip's memory is the consumer's: KnownMtime asks
+            # the row's retained home (the session list's store in the GUI;
+            # tests inject their own) what mtime it holds for this path, and an
+            # unchanged file is not re-read. Scan itself remembers nothing
+            # row-shaped, so without the callback every path scans.
             set existing_mtime ""
-            if {[dict exists $Rows $path]} {
-                set existing_mtime [dict get $Rows $path mtime]
+            if {$KnownMtime ne ""} {
+                set existing_mtime [{*}$KnownMtime $path]
             }
             # The file can vanish between list_paths_for's glob and this stat
             # (Claude Code prunes transcripts past cleanupPeriodDays; users

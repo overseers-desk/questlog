@@ -65,10 +65,18 @@ close $fh
 
 set ::scan_done 0
 set ::rows [list]
-proc on_row {row} { lappend ::rows $row }
+# The consumer's retained copy is the differential skip's memory: record each
+# published row's mtime, and answer known_mtime from that record, the way the
+# session list's store answers it in the app.
+set ::mtimes [dict create]
+proc on_row {row} {
+    lappend ::rows $row
+    dict set ::mtimes [dict get $row path] [dict get $row mtime]
+}
 proc on_done {scanned} { set ::scan_done 1 }
+proc known_mtime {path} { return [dict getdef $::mtimes $path ""] }
 
-set s [::questlog::Scan new on_row on_done]
+set s [::questlog::Scan new on_row on_done {} {} known_mtime]
 $s extend [dict create since all]
 vwait ::scan_done
 

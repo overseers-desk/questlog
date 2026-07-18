@@ -467,6 +467,16 @@ oo::class create ::questlog::ui::SessionList {
     method has_retained {path} { return [dict exists $DetachedNode $path] }
     method retained_count {} { return [dict size $DetachedNode] }
 
+    # The mtime the store holds for a path, attached or retained, or "" when
+    # the store has never seen it. This is Scan's differential-skip memory
+    # (the known_mtime callback the app hands it): a path answering its live
+    # mtime is not re-read, and an unknown or changed one streams in fresh.
+    method stored_mtime {path} {
+        set id [my session_node $path]
+        if {$id eq ""} { return "" }
+        return [my node_pget $id mtime 0]
+    }
+
     method sid {path} {
         if {[dict exists $PathNode $path]} { return [dict get $PathNode $path] }
         # A retained (detached) path resolves too, so the payload accessors
@@ -942,6 +952,27 @@ oo::class create ::questlog::ui::SessionList {
             [my node_new session "" $path [my row_payload $path $row]]
     }
 
+    # A re-scanned row arriving for an attached path: the store is the memo,
+    # so a file that changed on disk lands its fresh fields here rather than
+    # being dropped. The row leaves through the retire door and returns
+    # through the restore door - the pair that already settles folder books,
+    # view filters, rendering and the re-enumeration of a changed
+    # transcript's subagents (restore_session runs freshen_from_row with the
+    # fresh row). An unchanged file (same mtime) is a no-op. Cost fields do
+    # not ride a scan row, so the freshened payload is costless and the cost
+    # pass re-prices it - correct for a file whose spend just changed.
+    method freshen_attached {path row} {
+        if {[dict getdef $row mtime 0] == [my sget $path mtime 0]} return
+        $Text configure -state normal
+        my anchor_save
+        my retire_session $path
+        my restore_session $path $row
+        my anchor_restore
+        $Text configure -state disabled
+        my schedule_resort
+        my check_invariant freshen_attached
+    }
+
     # Replace a detached node's scan-derived payload when the file changed
     # under it (mtime moved). Wholesale, mirroring what forget-then-re-add did
     # before retention existed: the cost fields ride the row when its producer
@@ -1193,7 +1224,10 @@ oo::class create ::questlog::ui::SessionList {
         if {$CriteriaActive} { my stage_row $row; return }
         if {![my row_matches_snapshot $row]} { my stage_row $row; return }
         set path [dict get $row path]
-        if {[dict exists $PathNode $path]} return
+        if {[dict exists $PathNode $path]} {
+            my freshen_attached $path $row
+            return
+        }
         $Text configure -state normal
         my anchor_save
         my model_add_session $path $row
