@@ -432,10 +432,13 @@ oo::class create ::questlog::ui::SessionList {
     }
 
     method sid {path} {
-        if {[dict exists $PathNode $path]} { return [dict get $PathNode $path] }
-        # A retained (detached) path resolves too, so the payload accessors
-        # below answer for a row that is in the store but not in the tree.
-        return [dict get $DetachedNode $path]
+        # The same attached-then-detached lookup session_node runs, so the
+        # payload accessors below answer for a row that is in the store but not
+        # in the tree. sid keeps its raise-on-missing contract: a path the store
+        # has never seen is a caller error here, not an empty node.
+        set id [my session_node $path]
+        if {$id eq ""} { error "no session node for $path" }
+        return $id
     }
     method fid {folder} { return [dict get $FolderNode $folder] }
 
@@ -955,14 +958,23 @@ oo::class create ::questlog::ui::SessionList {
             [my row_payload [my node_field $id key] $row]
     }
 
-    # Drop a session node's subagent child nodes and their indices (attached
-    # or retained). The stale-children half of freshen_from_row.
-    method drop_child_nodes {id} {
-        set cps [my node_pget $id all_child_paths]
-        foreach cid [my node_field $id children] {
+    # Both child rosters a session node carries: all_child_paths (the enumerated
+    # set) plus the attached children list, since a match-attached child can
+    # predate or outgrow the enumeration (add_subagent_matches seeds it
+    # directly). The union every child-walking site iterates.
+    method child_paths_union {sid} {
+        set cps [my node_pget $sid all_child_paths]
+        foreach cid [my node_field $sid children] {
             set cp [my node_field $cid key]
             if {$cp ni $cps} { lappend cps $cp }
         }
+        return $cps
+    }
+
+    # Drop a session node's subagent child nodes and their indices (attached
+    # or retained). The stale-children half of freshen_from_row.
+    method drop_child_nodes {id} {
+        set cps [my child_paths_union $id]
         foreach cp $cps {
             set cid [my session_node $cp]
             if {$cid eq ""} continue
@@ -983,15 +995,7 @@ oo::class create ::questlog::ui::SessionList {
         dict unset PathNode $path
         dict set DetachedNode $path $sid
         my node_set $sid parent ""
-        # Both child rosters: all_child_paths (the enumerated set) and the
-        # attached children list - a match-attached child can predate or
-        # outgrow the enumeration (add_subagent_matches seeds it directly).
-        set cps [my node_pget $sid all_child_paths]
-        foreach cid [my node_field $sid children] {
-            set cp [my node_field $cid key]
-            if {$cp ni $cps} { lappend cps $cp }
-        }
-        foreach cp $cps {
+        foreach cp [my child_paths_union $sid] {
             if {[dict exists $PathNode $cp]} {
                 dict set DetachedNode $cp [dict get $PathNode $cp]
                 dict unset PathNode $cp
@@ -1071,12 +1075,7 @@ oo::class create ::questlog::ui::SessionList {
         dict unset SelectedSet $path
         dict unset Pinned $path
         if {$SelectAnchor eq $path} { set SelectAnchor "" }
-        if {[llength [my node_field $fid children]] == 0} {
-            my forget_folder $folder
-        } else {
-            my fset $folder size [expr {[my fget $folder size 0] - $size}]
-            my bump_folder_count $folder -1
-        }
+        my folder_after_leave $fid $folder $size
         my sweep_loose_tags
         my check_invariant retire_session
     }
@@ -1101,12 +1100,7 @@ oo::class create ::questlog::ui::SessionList {
         dict unset DetachedNode $path
         dict set PathNode $path $sid
         # The mirror of retention_index's two-roster walk.
-        set cps [my node_pget $sid all_child_paths]
-        foreach cid [my node_field $sid children] {
-            set cp [my node_field $cid key]
-            if {$cp ni $cps} { lappend cps $cp }
-        }
-        foreach cp $cps {
+        foreach cp [my child_paths_union $sid] {
             if {[dict exists $DetachedNode $cp]} {
                 dict set PathNode $cp [dict get $DetachedNode $cp]
                 dict unset DetachedNode $cp
@@ -3440,6 +3434,19 @@ oo::class create ::questlog::ui::SessionList {
 
     # ---- removal / relocation ----------------------------------------
 
+    # The folder-level settle after one session leaves it, shared by every
+    # departure (forgotten or retired): an emptied folder is dropped whole, else
+    # it loses the session's size and one from its count. The node must already
+    # be off the folder's children list (deleted or detached) when this runs.
+    method folder_after_leave {fid folder size} {
+        if {[llength [my node_field $fid children]] == 0} {
+            my forget_folder $folder
+        } else {
+            my fset $folder size [expr {[my fget $folder size 0] - $size}]
+            my bump_folder_count $folder -1
+        }
+    }
+
     method forget_session {path} {
         if {![my has_session $path]} return
         set sid [my sid $path]
@@ -3452,12 +3459,7 @@ oo::class create ::questlog::ui::SessionList {
         # domain indices (its own and its subagents'). The folder-level
         # bookkeeping that depends on whether the folder is now empty stays here.
         my delete $sid
-        if {[llength [my node_field $fid children]] == 0} {
-            my forget_folder $folder
-        } else {
-            my fset $folder size [expr {[my fget $folder size 0] - $size}]
-            my bump_folder_count $folder -1
-        }
+        my folder_after_leave $fid $folder $size
     }
 
     # A session leaving the store: subtract its cost from the folder aggregate
