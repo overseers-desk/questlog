@@ -796,6 +796,23 @@ oo::class create ::questlog::ui::SessionList {
         return [::questlog::scope::row_matches $Snapshot $row]
     }
 
+    # The scope-relevant fields of a modelled session, assembled from its node
+    # payload into the row shape ::questlog::scope reads. These are exactly the
+    # fields row_subtree_match (folder, folder_cwd, cwd_hint) and row_matches
+    # (mtime, nturns) consult; a caller with a modelled path uses this in place
+    # of a Scan.Rows lookup. mtime and nturns are set-at-scan and go stale for a
+    # session still being written, but such a session is running and is retained
+    # by that fact before its recency is ever weighed, so the frozen copy
+    # decides nothing a fresh read would decide differently.
+    method payload_scope_row {path} {
+        return [dict create \
+            folder     [my sget $path folder] \
+            folder_cwd [my sget $path folder_cwd] \
+            cwd_hint   [my sget $path cwd_hint] \
+            mtime      [my sget $path mtime 0] \
+            nturns     [my sget $path nturns]]
+    }
+
     # ---- streaming inserts -------------------------------------------
 
     # Browse-mode row from Scan. Skipped when criteria are active (the result
@@ -2885,7 +2902,9 @@ oo::class create ::questlog::ui::SessionList {
             # Phantom: not running and the backing jsonl is gone (a Resume-fork that quit
             # before any input). Drop it from every mode.
             if {!$is_running && ![file isfile $path]} { my forget_session $path; continue }
-            set row [{*}$LookupSession $path]
+            # This path is modelled (checked at the loop head), so its scope
+            # fields come from the store, not a Scan.Rows lookup.
+            set row [my payload_scope_row $path]
             # Retain in the model: a matched search row always; a browse row while it is
             # in scope or running. An out-of-scope, non-running browse row leaves.
             if {$CriteriaActive} {
