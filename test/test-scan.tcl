@@ -55,7 +55,7 @@ puts $fh {{"type":"assistant","message":{"content":"reply"}}}
 puts $fh {{"type":"user","message":{"role":"user","content":"another"}}}
 close $fh
 
-# Subagent fixture - must NOT enter the browse stream.
+# Subagent fixture - must NOT enter the row stream.
 set fh [open /tmp/questlog-test-projects/-home-test-code-foo/$u/subagents/x.jsonl w]
 puts $fh {{"type":"user","message":{"role":"user","content":"subagent should be ignored"}}}
 puts $fh {{"type":"user","message":{"role":"user","content":"second subagent line"}}}
