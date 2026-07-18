@@ -115,6 +115,26 @@ The engine renders every visible row into the text widget (no virtualization); c
 
 To a screen reader the widget presents as one text area, not a tree of rows and columns; assistive-technology structure (row navigation, expansion state) is not exposed. Cell editing, checkbox columns, and type-ahead are not built in; a host can assemble them from embedded windows, row tags, and key bindings.
 
+## DECLARATIVE ATTRIBUTES (1.1.0)
+
+A consumer declares attributes on its rows: an id, a kind (bool or enum), a
+label, an optional glyph, and whether a reader may filter on it. A glyphed
+bool draws as a subject-prefix mark; a glyphless one as a check-mark column.
+Filter controls build into a frame the host owns (a checkbutton per bool, a
+stay-open checklist per enum with select all and none); an enum filter is a
+set of excluded values. Values reach the engine only through the attr_value
+hook. The filter layer hides through a ledger of its own hides and composes
+with the consumer's: a node shows only when nobody hides it. The module
+header carries the full contract.
+
+## OPEN QUESTION
+
+Filter kinds past bool and enum. A consumer will one day want a scalar
+threshold (a numeric column above some value) or a free-text match as a
+filter. What the control looks like, how a threshold is typed, and whether
+text matching belongs in a tree engine at all are undecided; the kind field
+in the declaration is the extension point when the design round happens.
+
 ## REQUIREMENTS
 
 Tcl 9 and Tk. The sibling of [streamdoc](streamdoc.md): a tree of rows here, a document of regions there, the same architecture.
