@@ -1,6 +1,6 @@
 #!/usr/bin/env wish9.0
-# What the toolbar publishes now that the view filters have moved to the list
-# strip. The toolbar owns the search and the scope (the Restrict box) and nothing
+# What the toolbar publishes. The toolbar owns the search and the scope (the
+# criteria bar) and nothing
 # else: every control change publishes the whole snapshot, and that snapshot
 # carries the search and scope keys and no view-filter key at all. The filters are
 # the list strip's, driven through the streamtree attribute controls and covered
