@@ -130,7 +130,10 @@ oo::class create ::questlog::ui::SessionList {
     # Domain indices into the node store: a folder name or a session/subagent
     # path to its node id.
     variable FolderNode       ;# folder name -> node id
-    variable PathNode         ;# session path OR subagent path -> node id
+    variable PathNode         ;# session path OR subagent path -> node id (attached)
+    variable DetachedNode     ;# path -> node id: scanned rows retained out of the
+                              ;# tree (scope-narrowed, search-suppressed), the
+                              ;# store's memo a scope widen replays without disk
     variable TagNode          ;# folder node.tag -> node id, for drop hit-testing
     variable SelectedSet      ;# ordered set (dict path->1) of selected sessions
     variable SelectAnchor     ;# path a Shift-range extends from, or ""
@@ -251,6 +254,7 @@ oo::class create ::questlog::ui::SessionList {
         next
         set FolderNode [dict create]
         set PathNode [dict create]
+        set DetachedNode [dict create]
         set TagNode [dict create]
         # A wholesale clear can delete the hovered snippet out from under a
         # parked pointer (a streaming search's clear-and-fill); a peek must
@@ -293,14 +297,27 @@ oo::class create ::questlog::ui::SessionList {
     #       a view toggle changes only what the heading displays
     #       (folder_visible_count), not what is stored, so the stored value is
     #       compared against the full member count.
-    method audit {} {
+    method audit {{rows ""}} {
         set probs [list]
-        # (a) reverse indices are a bijection with the keyed nodes.
+        # (a) reverse indices are a bijection with the keyed nodes. A path
+        # lives in exactly one of the two indices: PathNode while attached,
+        # DetachedNode while retained out of the tree; both at once is the
+        # two-homes fault retention must never reintroduce.
         dict for {path id} $PathNode {
             if {![dict exists $Nodes $id]} {
                 lappend probs "PathNode\[$path] -> missing node $id"
             } elseif {[my node_field $id key] ne $path} {
                 lappend probs "PathNode\[$path] -> node keyed '[my node_field $id key]'"
+            }
+        }
+        dict for {path id} $DetachedNode {
+            if {![dict exists $Nodes $id]} {
+                lappend probs "DetachedNode\[$path] -> missing node $id"
+            } elseif {[my node_field $id key] ne $path} {
+                lappend probs "DetachedNode\[$path] -> node keyed '[my node_field $id key]'"
+            }
+            if {[dict exists $PathNode $path]} {
+                lappend probs "$path in PathNode and DetachedNode at once"
             }
         }
         dict for {folder id} $FolderNode {
@@ -314,10 +331,21 @@ oo::class create ::questlog::ui::SessionList {
             set key [my node_field $id key]
             switch [my node_field $id kind] {
                 session - subagent {
-                    if {![dict exists $PathNode $key]} {
-                        lappend probs "[my node_field $id kind] $key not in PathNode"
-                    } elseif {[dict get $PathNode $key] ne $id} {
+                    set inp [dict exists $PathNode $key]
+                    set ind [dict exists $DetachedNode $key]
+                    if {!$inp && !$ind} {
+                        lappend probs "[my node_field $id kind] $key in neither index"
+                    } elseif {$inp && [dict get $PathNode $key] ne $id} {
                         lappend probs "[my node_field $id kind] $key -> $id but PathNode holds [dict get $PathNode $key]"
+                    } elseif {$ind && [dict get $DetachedNode $key] ne $id} {
+                        lappend probs "[my node_field $id kind] $key -> $id but DetachedNode holds [dict get $DetachedNode $key]"
+                    }
+                    # A retained session is out of the tree entirely: no
+                    # parent, so no folder's children (and no aggregate) can
+                    # still be holding it.
+                    if {$ind && [my node_field $id kind] eq "session" \
+                        && [my node_field $id parent] ne ""} {
+                        lappend probs "retained session $key still parented to [my node_field $id parent]"
                     }
                 }
                 folder {
@@ -371,20 +399,44 @@ oo::class create ::questlog::ui::SessionList {
         # not a bug. A field Rows does not carry (a synthetic test row) is
         # skipped: Rows is the authority, and there is nothing to check against.
         if {$LookupSession ne ""} {
+            set dual [list]
             foreach fid $Roots {
                 foreach sid [my node_field $fid children] {
-                    if {[my node_field $sid kind] ne "session"} continue
-                    set path [my node_field $sid key]
-                    set row [{*}$LookupSession $path]
-                    if {$row eq ""} continue
-                    foreach f {bookmarked first_user kind folder_cwd cwd_hint} {
-                        if {![dict exists $row $f]} continue
-                        set rv [dict get $row $f]
-                        set pv [my node_pget $sid $f]
-                        if {$pv ne $rv} {
-                            lappend probs "session $path payload $f '$pv' != Rows '$rv'"
-                        }
+                    lappend dual $sid
+                }
+            }
+            # The retained rows are dual-written too (stage_row and the
+            # detached freshness writers), so the same fields must level.
+            dict for {path sid} $DetachedNode {
+                lappend dual $sid
+            }
+            foreach sid $dual {
+                if {[my node_field $sid kind] ne "session"} continue
+                set path [my node_field $sid key]
+                set row [{*}$LookupSession $path]
+                if {$row eq ""} continue
+                foreach f {bookmarked first_user kind folder_cwd cwd_hint} {
+                    if {![dict exists $row $f]} continue
+                    set rv [dict get $row $f]
+                    set pv [my node_pget $sid $f]
+                    if {$pv ne $rv} {
+                        lappend probs "session $path payload $f '$pv' != Rows '$rv'"
                     }
+                }
+            }
+        }
+        # (e) retention coverage, while Rows and the store are dual-written:
+        # every Rows entry the current snapshot admits has a store node,
+        # attached or retained. The caller passes the Rows dict (Scan.rows);
+        # with none the check is skipped, as in a widget-only test. A Rows
+        # entry whose file is gone is a ghost the store deliberately prunes
+        # (replay_scope) and Rows keeps until Wave 4b deletes it - not a gap.
+        if {$rows ne ""} {
+            dict for {path row} $rows {
+                if {![file isfile $path]} continue
+                if {![my row_matches_snapshot $row]} continue
+                if {[my session_node $path] eq ""} {
+                    lappend probs "Rows $path in scope but not in the store"
                 }
             }
         }
@@ -402,7 +454,25 @@ oo::class create ::questlog::ui::SessionList {
     method has_child {path}   { return [dict exists $PathNode $path] }
     method has_folder {folder} { return [dict exists $FolderNode $folder] }
 
-    method sid {path} { return [dict get $PathNode $path] }
+    # The store node holding this path, attached or retained-detached, or ""
+    # when the store has never seen it. has_session stays the attached
+    # question; this is the memo question ("does the store hold a scanned
+    # copy"), and the freshness writers resolve through it so a field update
+    # lands whether or not the row is currently in the tree.
+    method session_node {path} {
+        if {[dict exists $PathNode $path]} { return [dict get $PathNode $path] }
+        if {[dict exists $DetachedNode $path]} { return [dict get $DetachedNode $path] }
+        return ""
+    }
+    method has_retained {path} { return [dict exists $DetachedNode $path] }
+    method retained_count {} { return [dict size $DetachedNode] }
+
+    method sid {path} {
+        if {[dict exists $PathNode $path]} { return [dict get $PathNode $path] }
+        # A retained (detached) path resolves too, so the payload accessors
+        # below answer for a row that is in the store but not in the tree.
+        return [dict get $DetachedNode $path]
+    }
     method fid {folder} { return [dict get $FolderNode $folder] }
 
     method sget {path key {dflt ""}} { my node_pget [my sid $path] $key $dflt }
@@ -713,9 +783,12 @@ oo::class create ::questlog::ui::SessionList {
     # ---- filter / clear ----------------------------------------------
 
     method clear {} {
-        # The reset primitive wipes the buffer, drops every node's marks and the
-        # store; the loose snippet/match tags it leaves empty are swept after.
-        my reset
+        # A snapshot change is a new view, not new knowledge: the buffer, the
+        # folders and the tree structure go, but every scanned session is
+        # retained detached so the replay that follows (and any later scope
+        # widen) fills from the store instead of disk. The loose snippet/match
+        # tags the buffer wipe leaves empty are swept after.
+        my retire_all
         my sweep_loose_tags
         # A fresh filter/search is a new view; drop the selection (the node store
         # is empty now, and a later rebuild repaints from it).
@@ -842,6 +915,270 @@ oo::class create ::questlog::ui::SessionList {
             nturns     [my sget $path nturns]]
     }
 
+    # ---- retention: scanned-but-not-shown rows -----------------------
+    #
+    # The store is the memo for every scanned row, shown or not. A row the
+    # current view does not hold - out of the snapshot's scope, or streamed in
+    # while search criteria own the list - is retained as a DETACHED node:
+    # a real session node, parent "", indexed in DetachedNode instead of
+    # PathNode, carrying the same payload an attached node would. Scope
+    # widening replays from these nodes without a disk re-scan (replay_scope);
+    # every hydration site re-attaches through restore_session. While Scan's
+    # Rows mirror still exists (it goes in Wave 4b) the audit cross-checks the
+    # two; nothing reads Rows to decide what this store already knows.
+
+    # Stage a scanned row the view is not attaching: create or freshen its
+    # detached node. A path already attached is left alone - the attached
+    # copy has its own freshness writers, and a second node under one path is
+    # exactly the duplication the audit exists to catch.
+    method stage_row {row} {
+        set path [dict get $row path]
+        if {[dict exists $PathNode $path]} return
+        if {[dict exists $DetachedNode $path]} {
+            my freshen_from_row [dict get $DetachedNode $path] $row
+            return
+        }
+        dict set DetachedNode $path \
+            [my node_new session "" $path [my row_payload $path $row]]
+    }
+
+    # Replace a detached node's scan-derived payload when the file changed
+    # under it (mtime moved). Wholesale, mirroring what forget-then-re-add did
+    # before retention existed: the cost fields ride the row when its producer
+    # carried them and are recomputed otherwise, and the enumerated children
+    # are dropped for re-enumeration - a changed transcript may have grown or
+    # lost subagents. Only ever run on a detached node (nothing is rendered).
+    method freshen_from_row {id row} {
+        if {[dict getdef $row mtime 0] == [my node_pget $id mtime 0]} return
+        my drop_child_nodes $id
+        dict set Nodes $id payload \
+            [my row_payload [my node_field $id key] $row]
+    }
+
+    # Drop a session node's subagent child nodes and their indices (attached
+    # or retained). The stale-children half of freshen_from_row.
+    method drop_child_nodes {id} {
+        set cps [my node_pget $id all_child_paths]
+        foreach cid [my node_field $id children] {
+            set cp [my node_field $cid key]
+            if {$cp ni $cps} { lappend cps $cp }
+        }
+        foreach cp $cps {
+            set cid [my session_node $cp]
+            if {$cid eq ""} continue
+            dict unset Nodes $cid
+            dict unset PathNode $cp
+            dict unset DetachedNode $cp
+        }
+        my node_set $id children [list]
+    }
+
+    # Move a session node's indices from the attached side to the retained
+    # side: PathNode -> DetachedNode for the session and every enumerated
+    # subagent (an enumerated-but-never-attached child has an index entry and
+    # no place in the children list, so the walk is over all_child_paths, the
+    # same set forget_session_domain covers).
+    method retention_index {sid} {
+        set path [my node_field $sid key]
+        dict unset PathNode $path
+        dict set DetachedNode $path $sid
+        my node_set $sid parent ""
+        # Both child rosters: all_child_paths (the enumerated set) and the
+        # attached children list - a match-attached child can predate or
+        # outgrow the enumeration (add_subagent_matches seeds it directly).
+        set cps [my node_pget $sid all_child_paths]
+        foreach cid [my node_field $sid children] {
+            set cp [my node_field $cid key]
+            if {$cp ni $cps} { lappend cps $cp }
+        }
+        foreach cp $cps {
+            if {[dict exists $PathNode $cp]} {
+                dict set DetachedNode $cp [dict get $PathNode $cp]
+                dict unset PathNode $cp
+            }
+        }
+    }
+
+    # Clear the search decoration off a node being retained: the match count,
+    # snippets, subagent hit totals and the auto-expand are the OLD view's
+    # answer, and a later restore must draw the row as the new view's scan
+    # stream would have. The domain fields (identity, cost, children roster)
+    # stay - they are what retention is for.
+    method scrub_search_state {sid} {
+        my node_pset $sid count 0
+        my node_pset $sid snippets [list]
+        my node_pset $sid sub_total 0
+        my node_pset $sid subhint_tag ""
+        my node_set $sid expanded 0
+        foreach cid [my node_field $sid children] {
+            my node_pset $cid hits [list]
+            my node_pset $cid count 0
+        }
+    }
+
+    # The whole-view teardown behind clear: every session node moves to the
+    # retention index; the buffer, the marks and the folder nodes go the way
+    # the engine's reset took them. This replaces reset for the snapshot
+    # change, because reset wipes the store and the store is now the memo.
+    # mass_unrender runs while the nodes still hold their marks (the same
+    # ordering reset relies on); the first folder insert after this re-anchors
+    # TailMark itself (render_row's root branch owns that).
+    method retire_all {} {
+        set st [$Text cget -state]
+        $Text configure -state normal
+        set folders $Roots
+        foreach fid $folders {
+            foreach sid [my node_field $fid children] {
+                if {[my node_field $sid kind] ne "session"} continue
+                my retention_index $sid
+                my scrub_search_state $sid
+            }
+        }
+        my mass_unrender
+        foreach fid $folders { dict unset Nodes $fid }
+        set Roots [list]
+        set FolderNode [dict create]
+        set PathNode [dict create]
+        set TagNode [dict create]
+        # Same hover-peek invalidation as reset_nodes: the rows a parked
+        # pointer could be revealing just left the buffer.
+        set PeekByTag [dict create]
+        if {$OnStatusUnpeek ne ""} { {*}$OnStatusUnpeek }
+        $Text configure -state $st
+        my check_invariant retire_all
+    }
+
+    # A session leaving the current scope: out of the view and its folder's
+    # books, into the retention index - the counterpart of forget_session that
+    # keeps the scanned copy. The folder-level arithmetic is forget_session's
+    # exactly; the node and its subagent subtree survive detached.
+    method retire_session {path} {
+        if {![my has_session $path]} return
+        set sid [dict get $PathNode $path]
+        set fid [my node_field $sid parent]
+        set folder [my node_field $fid key]
+        set size [my node_pget $sid size 0]
+        set cost [my node_pget $sid cost]
+        my detach $sid
+        my detach_child $sid
+        my retention_index $sid
+        my scrub_search_state $sid
+        if {$cost ne "" && $cost > 0} {
+            my bump_folder_cost $folder [expr {-$cost}]
+            set TotalCost [expr {$TotalCost - $cost}]
+            my refresh_status
+        }
+        dict unset SelectedSet $path
+        dict unset Pinned $path
+        if {$SelectAnchor eq $path} { set SelectAnchor "" }
+        if {[llength [my node_field $fid children]] == 0} {
+            my forget_folder $folder
+        } else {
+            my fset $folder size [expr {[my fget $folder size 0] - $size}]
+            my bump_folder_count $folder -1
+        }
+        my sweep_loose_tags
+        my check_invariant retire_session
+    }
+
+    # Re-attach a retained node under its folder: the one door every
+    # hydration site reaches the store through. The retained payload is the
+    # data; a caller holding a fresher row (a rescan of a changed file) passes
+    # it and freshen_from_row settles staleness by mtime. `render` mirrors
+    # on_scan_row's tail; the reconcile import passes 0 because drawing there
+    # is the dirty-pass rebuild's job. Returns 1 iff a retained node attached.
+    method restore_session {path {row ""} {render 1}} {
+        if {![dict exists $DetachedNode $path]} { return 0 }
+        set sid [dict get $DetachedNode $path]
+        if {$row ne ""} { my freshen_from_row $sid $row }
+        set folder [my node_pget $sid folder]
+        set st [$Text cget -state]
+        $Text configure -state normal
+        my ensure_folder $folder
+        set fid [my fid $folder]
+        my node_set $sid parent $fid
+        my node_set $fid children [linsert [my node_field $fid children] end $sid]
+        dict unset DetachedNode $path
+        dict set PathNode $path $sid
+        # The mirror of retention_index's two-roster walk.
+        set cps [my node_pget $sid all_child_paths]
+        foreach cid [my node_field $sid children] {
+            set cp [my node_field $cid key]
+            if {$cp ni $cps} { lappend cps $cp }
+        }
+        foreach cp $cps {
+            if {[dict exists $DetachedNode $cp]} {
+                dict set PathNode $cp [dict get $DetachedNode $cp]
+                dict unset DetachedNode $cp
+            }
+        }
+        # The filters settle the hidden flag before the heading is redrawn
+        # from it, the same first-paint discipline model_add_session keeps.
+        my node_set $sid hidden [expr {![my attr_admits $sid]}]
+        set size [my node_pget $sid size 0]
+        set cost [my node_pget $sid cost]
+        my fset $folder count [expr {[my fget $folder count] + 1}]
+        my fset $folder size [expr {[my fget $folder size 0] + $size}]
+        my redraw_folder_heading $folder
+        if {$cost ne "" && $cost > 0} {
+            my bump_folder_cost $folder $cost
+            set TotalCost [expr {$TotalCost + $cost}]
+            my refresh_status
+        }
+        if {$render} {
+            if {[my sflag $path hidden]} {
+                my schedule_view_rebuild
+            } elseif {[my folder_expanded $folder] && ![my sflag $path rendered]} {
+                my render_session $path
+            }
+        }
+        $Text configure -state $st
+        my check_invariant restore_session
+        return 1
+    }
+
+    # Replay the retained rows the current snapshot admits, mtime-descending
+    # so folders arrive in the order the old Rows replay produced. This is
+    # the snapshot-change fill that needs no disk: apply_filter retired every
+    # loaded row, and the ones the new scope admits come straight back. Under
+    # active criteria the list is built from matches, so nothing attaches
+    # (the retention itself is untouched and outlives the search). A retained
+    # path whose file is gone (transcript pruning) is dropped here, the
+    # store-side twin of the dead-path prune Scan.query ran over Rows.
+    method replay_scope {} {
+        if {$CriteriaActive} return
+        set keyed [list]
+        dict for {path id} $DetachedNode {
+            # dict for walks a snapshot of the index; a subagent entry whose
+            # parent a drop_retained above just removed is already gone.
+            if {![dict exists $Nodes $id]} continue
+            if {[my node_field $id kind] ne "session"} continue
+            if {![file isfile $path]} { my drop_retained $path; continue }
+            if {![my row_matches_snapshot [my payload_scope_row $path]]} continue
+            lappend keyed [list $path [my node_pget $id mtime 0]]
+        }
+        if {![llength $keyed]} return
+        $Text configure -state normal
+        my anchor_save
+        foreach e [lsort -integer -decreasing -index 1 $keyed] {
+            my restore_session [lindex $e 0]
+        }
+        my anchor_restore
+        $Text configure -state disabled
+        my schedule_resort
+        my check_invariant replay_scope
+    }
+
+    # Forget a retained node outright (its file is gone): the node, its
+    # subagent children, and their retention entries.
+    method drop_retained {path} {
+        if {![dict exists $DetachedNode $path]} return
+        set sid [dict get $DetachedNode $path]
+        my drop_child_nodes $sid
+        dict unset Nodes $sid
+        dict unset DetachedNode $path
+    }
+
     # ---- streaming inserts -------------------------------------------
 
     # Browse-mode row from Scan. Skipped when criteria are active (the result
@@ -849,8 +1186,12 @@ oo::class create ::questlog::ui::SessionList {
     # not gate the stream: every in-scope row enters the model, and the engine's
     # attr_admits settles its hidden flag, so a filter only chooses what paints.
     method on_scan_row {row} {
-        if {$CriteriaActive} return
-        if {![my row_matches_snapshot $row]} return   ;# scope = model membership
+        # A row the view does not attach still lands in the store: under
+        # active criteria the result index owns the list (the scan stream only
+        # feeds the memo), and an out-of-scope row is the memo's whole point -
+        # widening the scope replays it from here without a re-scan.
+        if {$CriteriaActive} { my stage_row $row; return }
+        if {![my row_matches_snapshot $row]} { my stage_row $row; return }
         set path [dict get $row path]
         if {[dict exists $PathNode $path]} return
         $Text configure -state normal
@@ -911,7 +1252,12 @@ oo::class create ::questlog::ui::SessionList {
             return
         }
         set path  [dict get $first path]
-        if {![my has_session $path]} {
+        # Hydrate from the store first: the search's publish already staged
+        # this row (on_scan_row stages under active criteria), so the retained
+        # node - cost and token fields included - is the copy to attach. The
+        # Rows lookup remains the fallback for a row the store never saw,
+        # until Wave 4b deletes it.
+        if {![my has_session $path] && ![my restore_session $path]} {
             set row [{*}$LookupSession $path]
             if {$row eq ""} { set row [dict create folder [dict get $first folder]] }
             # A streamed result obeys the view toggles from its first paint (the
@@ -965,12 +1311,11 @@ oo::class create ::questlog::ui::SessionList {
         return [my node_field [dict get $FolderNode $folder] expanded]
     }
 
-    # Record a session in the model without drawing it. A collapsed folder
-    # holds its sessions here only; they are drawn lazily on expand. This is
-    # what keeps a folded list cheap and free of hidden (elided) lines.
-    method model_add_session {path row} {
-        set folder [dict get $row folder]
-        my ensure_folder $folder
+    # A session node's payload from a scan-row dict: the one place the row
+    # shape becomes the payload shape, shared by the attach path
+    # (model_add_session) and the detached staging path (stage_row), so a row
+    # retained out of view carries exactly the fields an attached one does.
+    method row_payload {path row} {
         set label [my session_label $path $row]
         set slug  [dict getdef $row slug ""]
         set aitt  [dict getdef $row ai_title ""]
@@ -1001,12 +1346,8 @@ oo::class create ::questlog::ui::SessionList {
         set cwtok [dict getdef $row cache_write_tokens ""]
         set crtok [dict getdef $row cache_read_tokens ""]
         set mbrk  [dict getdef $row model_breakdown ""]
-        # The session node: payload carries the per-session domain dict; the
-        # node's expanded/rendered flags, start/end marks, tag and children
-        # (the attached subagent nodes) live alongside it in the store.
-        set fid [my fid $folder]
-        set sid [my node_new session $fid $path [dict create \
-            folder $folder label $label slug $slug ai_title $aitt \
+        return [dict create \
+            folder [dict get $row folder] label $label slug $slug ai_title $aitt \
             when $when mtime $mtime size $size uuid $uuid cost $cost \
             turns $turns duration_secs $dsecs human_secs $hsecs model $model \
             context_pct $ctxp \
@@ -1018,7 +1359,31 @@ oo::class create ::questlog::ui::SessionList {
             own_human_secs $hsecs own_model $model own_context_pct $ctxp \
             count 0 snippets [list] \
             has_subagents [dict getdef $row has_subagents 0] \
-            sub_total 0 children_listed 0 all_child_paths [list]]]
+            sub_total 0 children_listed 0 all_child_paths [list]]
+    }
+
+    # Record a session in the model without drawing it. A collapsed folder
+    # holds its sessions here only; they are drawn lazily on expand. This is
+    # what keeps a folded list cheap and free of hidden (elided) lines.
+    # A path the store retains as a detached node re-attaches instead of being
+    # rebuilt from the caller's row: the retained payload is the store's own
+    # copy (cost and token fields included), so every hydration site that
+    # funnels through here reads the store first and the row is only the
+    # staleness check (restore_session freshens from it when the mtime moved).
+    method model_add_session {path row} {
+        if {[dict exists $DetachedNode $path]} {
+            my restore_session $path $row
+            return
+        }
+        set folder [dict get $row folder]
+        my ensure_folder $folder
+        set cost [dict getdef $row cost_usd ""]
+        # The session node: payload carries the per-session domain dict; the
+        # node's expanded/rendered flags, start/end marks, tag and children
+        # (the attached subagent nodes) live alongside it in the store.
+        set fid [my fid $folder]
+        set sid [my node_new session $fid $path [my row_payload $path $row]]
+        set size [my node_pget $sid size 0]
         dict set PathNode $path $sid
         my node_set $fid children [linsert [my node_field $fid children] end $sid]
         # Whether the filters admit this row is settled here by the engine, before
@@ -1663,7 +2028,10 @@ oo::class create ::questlog::ui::SessionList {
         set cp     [dict get $first path]
         set parent [dict get $first parent_path]
         set folder [dict get $first folder]
-        if {![my has_session $parent]} {
+        # The subagent's parent hydrates store-first too: a browse-era retained
+        # parent re-attaches with its own payload; the Rows lookup is the
+        # not-in-store fallback until Wave 4b.
+        if {![my has_session $parent] && ![my restore_session $parent]} {
             set row [{*}$LookupSession $parent]
             if {$row eq ""} { set row [dict create folder $folder] }
             # The same first-paint toggle discipline as render_session_matches.
@@ -2302,7 +2670,19 @@ oo::class create ::questlog::ui::SessionList {
     # updates the Sessions cell, bumps the folder aggregate and the running
     # total, then redraws the row's meta region in place.
     method refresh_cost {path cost_dict} {
-        if {![dict exists $PathNode $path]} return
+        if {![dict exists $PathNode $path]} {
+            # A retained (detached) row's cost still lands: the store is the
+            # memo, and a scope widen must bring the cost back with the row.
+            # No folder books, no total, no redraw - the row is in no view.
+            # A detached subagent's arrival is dropped; its cost pass re-fires
+            # when the restored parent renders it (wire_subagent_row).
+            if {[dict exists $DetachedNode $path] \
+                && [my node_field [dict get $DetachedNode $path] kind] eq "session"} {
+                my write_cost_fields $path $cost_dict
+                my recompute_parent_totals $path
+            }
+            return
+        }
         # A subagent's cost lands on its child row, not a session row.
         if {[my node_field [my sid $path] kind] eq "subagent"} {
             my refresh_child_cost $path $cost_dict
@@ -2311,22 +2691,7 @@ oo::class create ::questlog::ui::SessionList {
         set folder [my sget $path folder]
         set old_cost [my sget $path cost]
         if {$old_cost eq "" || $old_cost < 0} { set old_cost 0.0 }
-        my sset $path own_cost [dict get $cost_dict cost_usd]
-        my sset $path own_turns [dict getdef $cost_dict turns ""]
-        my sset $path own_duration_secs [dict getdef $cost_dict duration_secs ""]
-        my sset $path own_human_secs [dict getdef $cost_dict human_secs ""]
-        my sset $path own_model [dict getdef $cost_dict model ""]
-        my sset $path own_context_pct [dict getdef $cost_dict context_pct ""]
-        # The token counts and per-model split are own-session values with no
-        # subagent aggregation; store them from the same cost arrival that
-        # Scan.update_cost writes into Rows, so the payload copy stays level
-        # with Rows for a session question that reads them.
-        my sset $path input_tokens [dict getdef $cost_dict input_tokens ""]
-        my sset $path output_tokens [dict getdef $cost_dict output_tokens ""]
-        my sset $path cache_write_tokens [dict getdef $cost_dict cache_write_tokens ""]
-        my sset $path cache_read_tokens [dict getdef $cost_dict cache_read_tokens ""]
-        my sset $path model_breakdown [dict getdef $cost_dict model_breakdown ""]
-
+        my write_cost_fields $path $cost_dict
         my recompute_parent_totals $path
 
         set new_cost [my sget $path cost]
@@ -2345,6 +2710,26 @@ oo::class create ::questlog::ui::SessionList {
         # The worker result can change cost-, turns-, duration-, A/H- or
         # context-sorted order.
         if {$SortKey in {cost turns duration ah context}} { my schedule_resort }
+    }
+
+    # The cost arrival's payload writes, shared by the attached path (which
+    # then settles folder books and redraws) and the detached path (which has
+    # nothing drawn to settle). sset resolves attached or retained, so one
+    # writer keeps every store copy level with the Rows write update_cost
+    # makes from the same arrival. The token counts and per-model split are
+    # own-session values with no subagent aggregation.
+    method write_cost_fields {path cost_dict} {
+        my sset $path own_cost [dict get $cost_dict cost_usd]
+        my sset $path own_turns [dict getdef $cost_dict turns ""]
+        my sset $path own_duration_secs [dict getdef $cost_dict duration_secs ""]
+        my sset $path own_human_secs [dict getdef $cost_dict human_secs ""]
+        my sset $path own_model [dict getdef $cost_dict model ""]
+        my sset $path own_context_pct [dict getdef $cost_dict context_pct ""]
+        my sset $path input_tokens [dict getdef $cost_dict input_tokens ""]
+        my sset $path output_tokens [dict getdef $cost_dict output_tokens ""]
+        my sset $path cache_write_tokens [dict getdef $cost_dict cache_write_tokens ""]
+        my sset $path cache_read_tokens [dict getdef $cost_dict cache_read_tokens ""]
+        my sset $path model_breakdown [dict getdef $cost_dict model_breakdown ""]
     }
 
     # A subagent's cost/turns/duration arriving from the second pass. Stored on
@@ -2393,8 +2778,11 @@ oo::class create ::questlog::ui::SessionList {
     # Recomputes the parent session's aggregated totals from its own raw values
     # plus the computed metrics of all its subagents.
     method recompute_parent_totals {path} {
-        if {![my has_session $path]} return
-        set s [my session_payload $path]
+        # Attached or retained: a detached row's totals stay current so a
+        # restore attaches the right aggregate without a recompute pass.
+        set sid [my session_node $path]
+        if {$sid eq ""} return
+        set s [my node_payload $sid]
 
         set has_any_cost 0
         set has_any_turns 0
@@ -2418,8 +2806,9 @@ oo::class create ::questlog::ui::SessionList {
         }
 
         foreach cp [dict get $s all_child_paths] {
-            if {[my has_child $cp]} {
-                set c [my node_payload [my sid $cp]]
+            set cid [my session_node $cp]
+            if {$cid ne ""} {
+                set c [my node_payload $cid]
                 set cc [dict getdef $c cost ""]
                 if {$cc ne "" && $cc >= 0} {
                     set sum_cost [expr {$sum_cost + $cc}]
@@ -2887,6 +3276,19 @@ oo::class create ::questlog::ui::SessionList {
         if {!$CriteriaActive} {
             dict for {uuid path} $running {
                 if {[my has_session $path]} continue
+                # Store first: a running session the scope narrowed out is
+                # sitting retained, and re-attaching it is the same import a
+                # Rows lookup used to feed - minus the read. The subtree scope
+                # stays hard over it, same as the lookup path below.
+                if {[my has_retained $path]} {
+                    if {[llength $subtree] > 0 && ![::questlog::scope::row_subtree_match \
+                            [my payload_scope_row $path] $subtree]} continue
+                    my restore_session $path "" 0
+                    if {![my sflag $path hidden]} {
+                        dict set imported [my sget $path folder] 1
+                    }
+                    continue
+                }
                 set row [{*}$LookupSession $path]
                 if {$row eq "" && [file isfile $path]} {
                     set row [{*}$OnScanPath $path]
@@ -2950,7 +3352,9 @@ oo::class create ::questlog::ui::SessionList {
                 set retained [expr {[dict exists $Pinned $path] || ($in_subtree \
                     && (($row ne "" && [my row_matches_snapshot $row]) || $is_running))}]
             }
-            if {!$retained} { my forget_session $path; continue }
+            # Out of scope is not forgotten: the row leaves the tree into the
+            # store's retention, so a scope widen brings it back without disk.
+            if {!$retained} { my retire_session $path; continue }
             set now_hidden [expr {![my attr_admits [my sid $path]]}]
             if {$now_hidden != [my sflag $path hidden]} {
                 my sflagset $path hidden $now_hidden
@@ -3010,14 +3414,16 @@ oo::class create ::questlog::ui::SessionList {
     }
 
     method reconcile_one {path} {
-        if {![my has_session $path]} return
+        if {[my session_node $path] eq ""} return
         # A bookmark toggle flips the file's +x bit and then calls here to
         # redraw the one row's marker. The marker is drawn from the payload's
         # bookmarked field (session_bookmarked), so refresh it from the bit
         # before the redraw: this is the store-side counterpart of Scan's
         # set_bookmark_field keeping Rows fresh, and it is what lets the glyph
-        # follow a toggle without a re-scan.
+        # follow a toggle without a re-scan. A retained row (toggled from the
+        # viewer while scoped out) takes the field write and has no marker.
         my sset $path bookmarked [file executable $path]
+        if {![my has_session $path]} return
         $Text configure -state normal
         my redraw_header $path
         $Text configure -state disabled

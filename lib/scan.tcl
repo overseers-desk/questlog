@@ -425,10 +425,10 @@ oo::class create ::questlog::Scan {
     # writes into the node payload; the two are fed from one arrival, so Rows
     # never carries a cost value the payload lacks. refresh_cost is the sole
     # writer of the rendered meta region, so no displayed value depends on this
-    # write: it keeps only the Rows memo current, for the query-replay and
-    # search-hydration paths that still read a scanned row back from Rows. Those
-    # memo roles move to the store in Wave 4a, and Rows (with this method) is
-    # deleted in Wave 4b, not migrated. Quiet no-op if the row is absent (race
+    # write: it keeps only the Rows mirror current. The memo roles this mirror
+    # once served (query-replay, search hydration) read the session list's
+    # store as of Wave 4a; Rows persists as the audited cross-check and is
+    # deleted with this method in Wave 4b, not migrated. Quiet no-op if the row is absent (race
     # with a delete). Does not fire OnRow: a cost arrival is a field update, not
     # a fresh row that needs adding.
     method update_cost {path cost_dict} {
@@ -490,8 +490,10 @@ oo::class create ::questlog::Scan {
         if {$OnRow ne ""} { {*}$OnRow $row }
     }
 
-    # Select the rows a snapshot admits. Used by the session list and Search to read
-    # the current memoised view. The snapshot row-level predicate (the since
+    # Select the rows a snapshot admits, from the Rows mirror. As of Wave 4a
+    # no UI fill reads this (the session list replays its own retention,
+    # replay_scope); tests still walk it as the mirror's view, and it goes
+    # with Rows in Wave 4b. The snapshot row-level predicate (the since
     # cutoff, the until ceiling, the subtree scope, the min-turns floor)
     # lives in ::questlog::scope, shared with SessionList. Returns a list of
     # row dicts, mtime DESC.
@@ -608,6 +610,12 @@ oo::class create ::questlog::Scan {
         if {[dict exists $Rows $path]} { return [dict get $Rows $path] }
         return ""
     }
+
+    # The whole Rows mirror, read-only, for the session list's audit to
+    # cross-check the store's retention against while both homes exist. Not a
+    # mutation door and not a data source - the store is the memo now - and it
+    # is deleted with Rows in Wave 4b.
+    method rows {} { return $Rows }
 
     # Scan a single file synchronously and publish it. Used by the running
     # reconciler to bring a freshly-started (or outside the since bound, but live)
