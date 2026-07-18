@@ -543,27 +543,23 @@ proc ::questlog::ui::app::on_filter {snapshot} {
     discard_search_buffer
     $SessionList apply_filter $snapshot
 
-    # Replay the memoised rows that match the new snapshot - Scan's coroutine
-    # skips memoised paths, so without this the list stays empty whenever the
-    # snapshot was previously seen (e.g. 24h to 7d) - then extend for
-    # newly-windowed files. Model membership is the scope's question alone;
-    # the list-view filters only decide which in-model rows paint (the engine's
-    # attr_admits), so a scope change under running-only repopulates like
-    # any other and untoggling shows the full corpus instantly. With criteria
-    # active the list is built from matches, but the scan still runs so
-    # Search has a corpus and lookup_session resolves rows.
-    #
-    # The scope decision here is one pure predicate, ::questlog::scope::row_matches:
-    # query applies it while walking the Rows memo, and on_scan_row re-applies it
-    # as its admission gate. The fields it reads - mtime, nturns, and (through
-    # row_subtree_match) folder/folder_cwd/cwd_hint - are exactly the shape
-    # SessionList.payload_scope_row assembles from a node, with no Rows-only
-    # field among them. So the row source is Rows this wave, but the decision is
-    # already the store-feedable path: a later wave swaps this query for a store
-    # enumeration yielding the same shape without touching the predicate.
-    foreach row [$Scan query $snapshot] {
-        $SessionList on_scan_row $row
-    }
+    # Replay the store's retained rows that match the new snapshot - Scan's
+    # coroutine skips memoised paths, so without this the list stays empty
+    # whenever the snapshot was previously seen (e.g. 24h to 7d) - then extend
+    # for newly-windowed files. apply_filter above retired every loaded row
+    # into the store's detached retention; replay_scope re-attaches the ones
+    # the new scope admits, applying the same pure predicate
+    # (::questlog::scope::row_matches over payload_scope_row's fields) that
+    # on_scan_row applies as its admission gate. No disk and no Rows: the
+    # widget's node store is the memo now, and $Scan query survives only as
+    # the Rows mirror's own walk until Wave 4b deletes both. Model membership
+    # is the scope's question alone; the list-view filters only decide which
+    # in-model rows paint (the engine's attr_admits), so a scope change under
+    # running-only repopulates like any other and untoggling shows the full
+    # corpus instantly. With criteria active the list is built from matches
+    # (replay_scope attaches nothing), but the scan still runs so Search has
+    # a corpus and lookup_session resolves rows.
+    $SessionList replay_scope
     set ScanActive 1
     $Scan extend $snapshot
 
