@@ -552,6 +552,15 @@ proc ::questlog::ui::app::on_filter {snapshot} {
     # any other and untoggling shows the full corpus instantly. With criteria
     # active the list is built from matches, but the scan still runs so
     # Search has a corpus and lookup_session resolves rows.
+    #
+    # The scope decision here is one pure predicate, ::questlog::scope::row_matches:
+    # query applies it while walking the Rows memo, and on_scan_row re-applies it
+    # as its admission gate. The fields it reads - mtime, nturns, and (through
+    # row_subtree_match) folder/folder_cwd/cwd_hint - are exactly the shape
+    # SessionList.payload_scope_row assembles from a node, with no Rows-only
+    # field among them. So the row source is Rows this wave, but the decision is
+    # already the store-feedable path: a later wave swaps this query for a store
+    # enumeration yielding the same shape without touching the predicate.
     foreach row [$Scan query $snapshot] {
         $SessionList on_scan_row $row
     }
