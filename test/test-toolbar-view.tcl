@@ -54,15 +54,18 @@ check "it publishes the scope keys" {1 1 1 1} \
 # ---- search and scope controls publish -----------------------------------------
 
 # The Aa toggle publishes with the case bit flipped; nothing else moves, and still
-# no view-filter key rides the publish.
-.tb.search.aa invoke
+# no view-filter key rides the publish. The toggle is the search field module's,
+# at the widget path it documents.
+.tb.search.case invoke
 check "Aa toggle publishes search_case set" 1 [dict get $::Published search_case]
 check "and the publish still carries no view-filter key" 0 [dict exists $::Published listview]
-.tb.search.aa invoke
+.tb.search.case invoke
 check "releasing Aa publishes search_case clear" 0 [dict get $::Published search_case]
 
 # The scope picker publishes the region-spec the search terms must appear in.
-$TB set_scope tool-use "tool calls"
+# Driven through the module's own menu: entry 2 is "tool calls", the tool-use
+# region.
+.tb.search.scope.m invoke 2
 check "the scope pick publishes search_regions" tool-use [dict get $::Published search_regions]
 
 # The typed search text publishes on the one publish path (Return / a launch seed).

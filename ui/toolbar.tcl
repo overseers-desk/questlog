@@ -1,8 +1,17 @@
 package require Tcl 9
 package require Tk
 package require querybuilder
+package require searchfield
 
 # ::questlog::ui::Toolbar - the top-of-window controls.
+#
+# The search row is a ::searchfield::SearchField: the entry, the typing
+# grammar, the live debounce, the Return publish, the scope menubutton and the
+# Aa toggle are the module's, and questlog hands it the region vocabulary
+# lib/search.tcl parses (the names below) with the friendly labels the menu
+# shows. `snapshot` reads the field's fragment back into the search keys every
+# subscriber has always seen: the terms joined back to one string, the case
+# bit, the region name. The module's tokens and promotion go unused here.
 #
 # The criteria block (the "Restrict" box) is a ::querybuilder::QueryBuilder: the
 # chip strip, the connective, the inline add, the add rail, the collapse
@@ -20,8 +29,9 @@ package require querybuilder
 #   since            24h | 7d | 30d | all
 #   search           string (user's typed search; empty when blank)
 #   search_case      0 | 1   (Aa toggle next to the search field)
-#   search_regions   any | user,assistant | tool-use | tool-result (region-spec
-#                    for the search terms; see lib/search.tcl parse_regions)
+#   search_regions   any | user,assistant | tool-use | tool-result | names
+#                    (region-spec for the search terms; see lib/search.tcl
+#                    parse_regions)
 #   subtree          list of absolute paths  (OR within, AND across clauses)
 #   file             list of {op path} pairs (op: either | read | wrote)
 #   tool             list of {name key} pairs (key matches the invocation text;
@@ -70,7 +80,6 @@ proc ::questlog::ui::highlight_terms {snapshot} {
 }
 
 oo::class create ::questlog::ui::Toolbar {
-    mixin leash
     variable Top
     variable Cwd
     variable Subscribers
@@ -82,10 +91,7 @@ oo::class create ::questlog::ui::Toolbar {
     variable PopUnit          ;# relative unit word: minutes | hours | days | weeks
     variable PopDate          ;# absolute ISO date chosen in the popover
     variable CalMonth         ;# YYYY-MM-01 the mini-calendar is showing
-    variable SearchVar
-    variable SearchCaseVar
-    variable SearchScopeVar   ;# region-spec: any | user,assistant | tool-use | tool-result
-    variable ScopeLabelVar    ;# the menubutton's friendly label for the scope
+    variable Field            ;# the ::searchfield::SearchField holding the typed search
     variable MinTurnsVar
     variable MinTurnsModel    ;# the min_turns values the model held when the editor last read it
     variable Bar              ;# the ::querybuilder::QueryBuilder holding the six criteria
@@ -93,11 +99,6 @@ oo::class create ::questlog::ui::Toolbar {
     variable Clamp            ;# the frame Restrict is placed in: see fit_now
     variable AddText          ;# array kind -> the add-entry's pending text
     variable AddOp            ;# op for the next file value added (either|read|wrote)
-    variable DebounceAfter    ;# leash token of the pending live-search publish, or ""
-    variable TypingUntil      ;# clock-ms deadline through which the user counts as typing
-    variable LastQueryText    ;# search text the live trigger last acted on; gates out
-                              ;# key releases that move the cursor or select but leave
-                              ;# the query unchanged, so they raise no redundant search
 
     constructor {parent cwd} {
         set Top $parent
@@ -110,18 +111,11 @@ oo::class create ::questlog::ui::Toolbar {
         set PopUnit days
         set PopDate ""
         set CalMonth ""
-        set SearchVar  ""
-        set SearchCaseVar 0
-        set SearchScopeVar any
-        set ScopeLabelVar "anywhere"
         set MinTurnsVar [::questlog::config::get min_turns_default]
         set MinTurnsModel [my turns_vals $MinTurnsVar]
         set Subscribers [list]
         array set AddText {subtree {} file {} tool {} pattern {}}
         set AddOp either
-        set DebounceAfter ""
-        set TypingUntil 0
-        set LastQueryText ""
 
         my build
     }
@@ -135,46 +129,27 @@ oo::class create ::questlog::ui::Toolbar {
         # faint × ChipX.TButton, the ghost add RGhost.TButton. The op pill on a
         # file chip is questlog's own widget, in the op_<op>_{bg,fg} colours.
 
-        # Search row: label, full-width entry, scope picker, Aa toggle.
+        # Search row: a ::searchfield::SearchField in a frame the toolbar owns.
+        # The entry, the scope picker and the Aa toggle are the module's; the
+        # region names are the region-spec vocabulary lib/search.tcl
+        # parse_regions reads out of the snapshot, and the labels are the
+        # menu's friendly words for them. Live mode searches as typing pauses,
+        # on the module's debounce; enter mode waits for Return, so the
+        # placeholder hint matches the configured trigger.
         ttk::frame $Top.search
         pack $Top.search -side top -fill x -padx 6 -pady {6 3}
-        ttk::label $Top.search.label -text "Search:"
-        pack $Top.search.label -side left -padx {0 6}
-        ttk::entry $Top.search.e -textvariable [my varname SearchVar]
-        # Placeholder microcopy (Tk 9 ttk entry); a harmless no-op if the build
-        # lacks -placeholder. Live mode searches as typing pauses; enter mode
-        # waits for Return, so the hint matches the configured trigger.
         set live [expr {[::questlog::config::get search_trigger] eq "live"}]
         set ph [expr {$live \
             ? "type one or more words; all must appear somewhere in the session" \
             : "type one or more words and press Enter; all must appear somewhere in the session"}]
-        catch {$Top.search.e configure -placeholder $ph}
-        pack $Top.search.e -side left -fill x -expand 1
-        # Return always publishes at once and cancels any pending debounce. In
-        # live mode a key release that changed the query text schedules a
-        # debounced publish; one that only moved the cursor or selected does not.
-        bind $Top.search.e <Return> [list [self] publish_now]
-        if {$live} {
-            bind $Top.search.e <KeyRelease> [list [self] on_search_change]
-            # A paste arrives without a KeyRelease: the clipboard shortcut is
-            # caught by the virtual event, a middle-click PRIMARY paste by the
-            # button release. Deferred to idle so the class binding has
-            # inserted the text before the debounce compares it.
-            bind $Top.search.e <<Paste>> \
-                [list [self] later idle [list [self] on_search_change]]
-            bind $Top.search.e <ButtonRelease-2> \
-                [list [self] later idle [list [self] on_search_change]]
-        }
-        # Scope picker: where the search terms must appear. A menubutton posts
-        # its menu anchored to itself - no transient popup, so nothing nests.
-        ttk::label $Top.search.inlbl -text "in"
-        pack $Top.search.inlbl -side left -padx {6 2}
-        my build_scope_menu $Top.search.scope
-        pack $Top.search.scope -side left
-        ttk::checkbutton $Top.search.aa -text "Aa" \
-            -variable [my varname SearchCaseVar] \
-            -command [list [self] publish]
-        pack $Top.search.aa -side left -padx {6 0}
+        set Field [::searchfield::SearchField new]
+        $Field configure -label "Search:" -inlabel "in" -placeholder $ph \
+            -live $live -debounce [::questlog::config::get search_debounce_ms] \
+            -regions [list any "anywhere" user,assistant "user + asst" \
+                          tool-use "tool calls" tool-result "tool output" \
+                          names "session names"] \
+            -changecommand [list [self] on_search]
+        $Field setup $Top.search
 
         # Restrict group: the criteria bar, in a lightly-bordered box whose first
         # inner line is the heading (the legend sits inside, at the top, as in the
@@ -265,34 +240,12 @@ oo::class create ::questlog::ui::Toolbar {
             since   { my quiet_set {since {}} }
             subtree { my quiet_set {subtree {}} }
             search {
-                set SearchVar ""
-                set LastQueryText ""
+                $Field set_fragment {terms {}}
                 my quiet_set {file {} tool {} pattern {}}
             }
             min_turns { my quiet_set {min_turns {}} }
             default   { return }
         }
-        my publish
-    }
-
-    # The search-scope picker. The value is the region-spec the search terms are
-    # matched in (parsed by lib/search.tcl parse_regions); the label is the
-    # friendly word shown on the button.
-    method build_scope_menu {w} {
-        ttk::menubutton $w -textvariable [my varname ScopeLabelVar] \
-            -menu $w.m -direction below
-        menu $w.m -tearoff 0
-        foreach {val label} {any "anywhere" user,assistant "user + asst" \
-                             tool-use "tool calls" tool-result "tool output" \
-                             names "session names"} {
-            $w.m add command -label $label \
-                -command [list [self] set_scope $val $label]
-        }
-    }
-
-    method set_scope {val label} {
-        set SearchScopeVar $val
-        set ScopeLabelVar $label
         my publish
     }
 
@@ -326,19 +279,24 @@ oo::class create ::questlog::ui::Toolbar {
     # True while the search entry holds the keyboard, so the global Control-b
     # sidebar toggle declines and leaves the entry's own Control-b (cursor left)
     # alone while the user is typing.
-    method owns_focus {} { return [expr {[focus] eq "$Top.search.e"}] }
+    method owns_focus {} { return [$Field owns_focus] }
 
     method subscribe {cb} {
         lappend Subscribers $cb
     }
 
     # Pre-fill the search field from a launch --keyword. The value is the raw
-    # query string the search bar would hold; the one startup publish runs it.
-    method set_search {text} { set SearchVar $text; set LastQueryText $text }
+    # query string the search bar would hold, tokenized through the module's
+    # one grammar home; set_fragment is quiet, so the one startup publish runs
+    # it.
+    method set_search {text} {
+        $Field set_fragment [list terms [::searchfield::split_terms $text]]
+    }
 
-    # Press the Aa toggle from a launch --case. The checkbutton's own command
-    # publishes; a launch value rides the one startup publish instead.
-    method set_case {on} { set SearchCaseVar $on }
+    # Press the Aa toggle from a launch --case. The toggle's own click
+    # publishes; a launch value seeds quietly and rides the one startup
+    # publish instead.
+    method set_case {on} { $Field set_fragment [list case $on] }
 
     # Pre-select the time row from a launch --since. A preset picks its radio;
     # any other spec the engine accepts (a relative window, an absolute date)
@@ -593,17 +551,22 @@ oo::class create ::questlog::ui::Toolbar {
         set PopTop ""
     }
 
-    # The snapshot every subscriber reads. The six criteria come out of the bar's
-    # model, back into the keys they have always had: the two facets that hold no
-    # value at their floor (an "all" time bound, a one-turn floor) publish that
-    # floor, since lib/scope.tcl reads a value there and not an absence.
+    # The snapshot every subscriber reads. The search keys come out of the
+    # field's fragment, back into the shapes they have always had: the terms
+    # joined into the one string lib/search.tcl re-tokenizes, through the
+    # module's own grammar home so the round trip loses nothing. The six
+    # criteria come out of the bar's model the same way: the two facets that
+    # hold no value at their floor (an "all" time bound, a one-turn floor)
+    # publish that floor, since lib/scope.tcl reads a value there and not an
+    # absence.
     method snapshot {} {
         set m [$Bar model]
+        set f [$Field fragment]
         return [dict create \
             since          [my since_value] \
-            search         $SearchVar \
-            search_case    $SearchCaseVar \
-            search_regions $SearchScopeVar \
+            search         [::searchfield::join_terms [dict get $f terms]] \
+            search_case    [dict get $f case] \
+            search_regions [dict get $f region] \
             subtree        [dict get $m subtree] \
             file           [dict get $m file] \
             tool           [dict get $m tool] \
@@ -621,50 +584,26 @@ oo::class create ::questlog::ui::Toolbar {
         }
     }
 
-    # Live-search debounce: republish after a pause in typing. A key release
-    # that left the query text unchanged (cursor moves with Home/End/arrows,
-    # selection with Shift, bare modifiers, the trailing release of an Enter)
-    # raises no search; only an actual edit arms the timer. The ttk entry has
-    # already written SearchVar by KeyRelease, so comparing it is reliable.
-    method on_search_change {} {
-        if {$SearchVar eq $LastQueryText} {
-            ::questlog::debug::log search "keyrelease '$SearchVar' unchanged; no re-search"
-            return
-        }
-        set LastQueryText $SearchVar
-        set ms [::questlog::config::get search_debounce_ms]
-        ::questlog::debug::log search "keyrelease '$SearchVar' changed; (re)arm ${ms}ms debounce"
-        # The user counts as typing through the debounce window, so the browse
-        # scan can defer while they type (see scan_while_typing).
-        set TypingUntil [expr {[clock milliseconds] + $ms}]
-        if {$DebounceAfter ne ""} { my forget $DebounceAfter }
-        set DebounceAfter [my later $ms [list [self] debounce_fire]]
-    }
-
-    method debounce_fire {} {
-        set DebounceAfter ""
-        set TypingUntil 0
-        ::questlog::debug::log search "debounce elapsed; dispatching search '$SearchVar'"
+    # The field's one callback: a user gesture in it changed the query - the
+    # debounce's lapse, Return, the Aa toggle, a scope pick. The whole
+    # snapshot goes out, as it does for every other control here, so a
+    # subscriber never has to know which of the two halves of the toolbar
+    # moved; the fragment the module appends is unread, since snapshot
+    # re-reads it whole.
+    method on_search {frag} {
+        ::questlog::debug::log search "search field publish: terms=[dict get $frag terms]"
         my publish
     }
 
-    # Enter: cancel any pending debounce and publish now, so the search runs at
-    # once and the trailing KeyRelease cannot fire a second, redundant search.
-    method publish_now {} {
-        if {$DebounceAfter ne ""} { my forget $DebounceAfter; set DebounceAfter "" }
-        set TypingUntil 0
-        set LastQueryText $SearchVar
-        ::questlog::debug::log search "Return; dispatching search '$SearchVar'"
-        my publish
-    }
+    # Publish on demand, for the paths that batch quiet seeds and then speak
+    # once (a launch query, a driving test).
+    method publish_now {} { my publish }
 
     # True while the user is mid-burst of typing in the search field: a recent
     # keystroke whose debounce window has not elapsed. The browse scan consults
     # this (via app.tcl) to defer while typing. False under search_trigger=enter,
     # where no keystroke advances the deadline.
-    method is_typing {} {
-        return [expr {[clock milliseconds] < $TypingUntil}]
-    }
+    method is_typing {} { return [$Field is_typing] }
 
 
     # ---- the criteria, as querybuilder sees them ---------------------------
