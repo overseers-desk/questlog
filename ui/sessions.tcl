@@ -410,7 +410,6 @@ oo::class create ::questlog::ui::SessionList {
         return ""
     }
     method has_retained {path} { return [dict exists $DetachedNode $path] }
-    method retained_count {} { return [dict size $DetachedNode] }
 
     # The mtime the store holds for a path, attached or retained, or "" when
     # the store has never seen it. This is Scan's differential-skip memory

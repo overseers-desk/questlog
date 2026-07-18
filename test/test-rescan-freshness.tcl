@@ -110,7 +110,7 @@ check "no background error" $::bgerr ""
 check "audit clean after the attached freshen" [$SL audit] {}
 
 # --- 3. Under active criteria the rows are retained detached; a change on
-# disk still freshens the retained copy through the staging seam.
+# disk still freshens the retained copy through freshen_from_row.
 $SL apply_filter [dict create since 30d search b-first search_case 0]
 check "criteria retained B detached" [$SL has_retained $Bp] 1
 write_session $Bp {b-first b-second b-third} [expr {$NOW - 4 * 86400}]

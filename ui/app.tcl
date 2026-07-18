@@ -543,13 +543,14 @@ proc ::questlog::ui::app::on_filter {snapshot} {
     discard_search_buffer
     $SessionList apply_filter $snapshot
 
-    # Replay the store's retained rows that match the new snapshot - Scan's
-    # coroutine skips memoised paths, so without this the list stays empty
-    # whenever the snapshot was previously seen (e.g. 24h to 7d) - then extend
-    # for newly-windowed files. apply_filter above retired every loaded row
-    # into the store's detached retention (its clear runs retire_all, not a
-    # wipe); replay_scope re-attaches the ones
-    # the new scope admits, applying the same pure predicate
+    # Replay the store's retained rows that match the new snapshot - Scan
+    # itself remembers no rows (its differential skip answers through
+    # known_mtime), so without this the list stays empty whenever the
+    # snapshot was previously seen (e.g. 24h to 7d) - then extend for
+    # newly-windowed files. apply_filter above retired every loaded row into
+    # the store's detached retention (its clear runs retire_all, not a wipe);
+    # replay_scope re-attaches the ones the new scope admits, applying the
+    # same pure predicate
     # (::questlog::scope::row_matches over payload_scope_row's fields) that
     # on_scan_row applies as its admission gate. No disk: the widget's node
     # store is the memo, session data's one in-memory home. Model membership
