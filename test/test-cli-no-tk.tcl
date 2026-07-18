@@ -56,7 +56,9 @@ foreach f $lib_files {
         # -inline interleaves each whole match with its capture; the whole match
         # is the line, the capture is the package name wanted here.
         if {[string match "package require*" $pkg]} continue
-        lappend lib_files {*}[glob -nocomplain [file join $ROOT $pkg-*.tm]]
+        lappend lib_files {*}[glob -nocomplain \
+            [file join $ROOT modules $pkg-*.tm] \
+            [file join $ROOT vendor $pkg-*.tm]]
     }
 }
 foreach f $lib_files {

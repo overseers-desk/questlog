@@ -1,5 +1,6 @@
 package require Tcl 9
 package require TclOO
+package require leash
 
 # ::questlog::Scan - in-memory, coroutine-driven, memoised session scanner.
 #

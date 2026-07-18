@@ -1,6 +1,7 @@
 package require Tcl 9
 package require TclOO
 package require json
+package require leash
 
 namespace eval ::questlog::search {}
 
