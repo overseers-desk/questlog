@@ -1,16 +1,19 @@
 package require Tcl 9
 package require Tk
-package require facetbar
+package require querybuilder
 
 # ::questlog::ui::Toolbar - the top-of-window controls.
 #
-# The criteria block (the "Restrict" box) is a ::facetbar::FacetBar: the chip
-# strip, the connective, the inline add, the add rail, the collapse disclosure
-# and the active count are the module's, and questlog hands it six descriptors
-# saying what its criteria mean - the formatter that prints a value, the editor
-# that picks one, the op pill a file value carries. The bar's model (facet id ->
-# list of values) is where those six criteria live; `snapshot` reads it back into
-# the keys below, which are what every subscriber has always seen.
+# The criteria block (the "Restrict" box) is a ::querybuilder::QueryBuilder: the
+# chip strip, the connective, the inline add, the add rail, the collapse
+# disclosure and the active count are the module's, and questlog hands it six
+# descriptors saying what its criteria mean - the formatter that prints a value,
+# the editor that picks one, the op pill a file value carries. The builder's
+# model (kind -> list of values) is where those six criteria live; `snapshot`
+# reads it back into the keys below, which are what every subscriber has always
+# seen. The builder's own operator vocabulary goes unused here: questlog's ops
+# ride inside the values (a file value is an {op path} pair), so its facets
+# declare no `op` and their values stay opaque to the module.
 #
 # Owns the filter state. Subscribers receive the full snapshot dict
 # whenever any control changes:
@@ -85,7 +88,7 @@ oo::class create ::questlog::ui::Toolbar {
     variable ScopeLabelVar    ;# the menubutton's friendly label for the scope
     variable MinTurnsVar
     variable MinTurnsModel    ;# the min_turns values the model held when the editor last read it
-    variable Bar              ;# the ::facetbar::FacetBar holding the six criteria
+    variable Bar              ;# the ::querybuilder::QueryBuilder holding the six criteria
     variable Restrict         ;# the bordered frame the bar is built into
     variable Clamp            ;# the frame Restrict is placed in: see fit_now
     variable AddText          ;# array kind -> the add-entry's pending text
@@ -176,7 +179,7 @@ oo::class create ::questlog::ui::Toolbar {
         # Restrict group: the criteria bar, in a lightly-bordered box whose first
         # inner line is the heading (the legend sits inside, at the top, as in the
         # design). The box is the frame the module builds into; questlog owns the
-        # border and the padding, facetbar owns everything within.
+        # border and the padding, querybuilder owns everything within.
         #
         # Clamp is the box's parent, and the box is placed in it, not packed:
         # place passes no request up, so the width the box asks for stops here,
@@ -200,7 +203,7 @@ oo::class create ::questlog::ui::Toolbar {
         ttk::frame $Restrict -relief solid -borderwidth 1 -padding {8 5}
         place $Restrict -x 0 -y 0 -relwidth 1
 
-        set Bar [::facetbar::FacetBar new]
+        set Bar [::querybuilder::QueryBuilder new]
         # The delete sits at the chip's left, against the usual side, because these
         # values are paths and patterns: a chip holding one can be wider than the
         # bar, and the end that runs out of view is the far one. A delete anchored
@@ -216,7 +219,7 @@ oo::class create ::questlog::ui::Toolbar {
         # would read "2 active" on a bare launch where the user has chosen nothing.
         # Named out of -countables, they still hold their value and raise no count.
         $Bar configure -heading "Restrict to sessions that…" \
-            -raillabel "Add criterion" -changecb [list [self] on_criteria] \
+            -raillabel "Add criterion" -changecommand [list [self] on_criteria] \
             -delside left \
             -gaps [::questlog::ui::theme::crit_gaps] \
             -countables {subtree file pattern tool} \
@@ -299,8 +302,9 @@ oo::class create ::questlog::ui::Toolbar {
     # snapshot; the visible value is rewritten too, so the field never shows the
     # rejected text. A floor of 1 excludes no session, so it is no criterion and
     # the facet holds no value there. Reported, not set: report_values leaves the
-    # spinbox standing under the hand still on it. A floor that did not move is not
-    # reported at all, which keeps the <FocusOut> that a rebuild raises from
+    # spinbox standing under the hand still on it, and is quiet, so the publish
+    # is this method's own. A floor that did not move is not reported or
+    # published at all, which keeps the <FocusOut> that a rebuild raises from
     # publishing a change nobody made.
     method set_min_turns {} {
         set cap [::questlog::config::get turn_count_cap]
@@ -314,6 +318,7 @@ oo::class create ::questlog::ui::Toolbar {
         set MinTurnsModel $want
         if {$want eq [$Bar values min_turns]} return
         $Bar report_values min_turns $want
+        my publish
     }
 
     # ---- public API --------------------------------------------------------
@@ -382,7 +387,8 @@ oo::class create ::questlog::ui::Toolbar {
     # Drop the custom member back to the presets. If it was the active value,
     # reselect the default window so the row never sits with nothing chosen.
     # set_values, not report_values: the row must be drawn again without the
-    # member this just took off it.
+    # member this just took off it. Quiet like every builder door, so the ×
+    # click publishes here.
     method clear_custom {} {
         set vals [$Bar values since]
         if {[lindex $vals 0] eq $CustomSpec} {
@@ -390,6 +396,7 @@ oo::class create ::questlog::ui::Toolbar {
         }
         set CustomSpec ""
         $Bar set_values since $vals
+        my publish
     }
 
     # Open the custom-window popover (the move_dialog idiom: a transient toplevel
@@ -562,7 +569,8 @@ oo::class create ::questlog::ui::Toolbar {
     # Assemble the chosen spec, validate it through the one grammar home (so the
     # popover can never emit a spec the engine would reject), commit it as the
     # custom member, and publish. set_values draws the time row again, this time
-    # with the custom member selected, and publishes the criterion in one step.
+    # with the custom member selected; the Apply click's publish is this
+    # method's own, since the builder's doors are quiet.
     method commit_time {} {
         if {$PopMode eq "relative"} {
             set unit [dict get {minutes m hours h days d weeks w} $PopUnit]
@@ -574,6 +582,7 @@ oo::class create ::questlog::ui::Toolbar {
         set CustomSpec $spec
         my close_time_popover
         $Bar set_values since [my since_vals $spec]
+        my publish
     }
 
     method close_time_popover {} {
@@ -658,11 +667,11 @@ oo::class create ::questlog::ui::Toolbar {
     }
 
 
-    # ---- the criteria, as facetbar sees them -------------------------------
+    # ---- the criteria, as querybuilder sees them ---------------------------
 
-    # The six criteria as facetbar descriptors, in reading order. The module owns
-    # the chips, the connective, the inline add, the rail, the disclosure and the
-    # count; each descriptor hands back the business - what a value means
+    # The six criteria as querybuilder descriptors, in reading order. The module
+    # owns the chips, the connective, the inline add, the rail, the disclosure and
+    # the count; each descriptor hands back the business - what a value means
     # (format), how one is picked (editor), and, on a file value, the read/wrote/
     # either the criterion applies to (chipctl, the per-value control in a chip).
     #
@@ -679,40 +688,43 @@ oo::class create ::questlog::ui::Toolbar {
     # for, or until a launch seeds one with a value.
     method facets {} {
         return [list \
-            [list id since label "time" mode control max 1 \
+            [list kind since label "time" mode control max 1 \
                  format [list [self] since_chip] \
                  editor [list [self] since_editor] \
                  tagstyle Pill_time.TLabel chipstyle Crit_time.TFrame] \
-            [list id min_turns label "min turns" mode control max 1 \
+            [list kind min_turns label "min turns" mode control max 1 \
                  editor [list [self] turns_editor] \
                  tagstyle Pill_turns.TLabel chipstyle Crit_turns.TFrame] \
-            [list id subtree label "folder" conn "ran under" \
+            [list kind subtree label "folder" conn "ran under" \
                  format [list [self] path_chip] \
-                 editor [list [self] chip_editor] \
+                 editor [list [self] chip_editor subtree] \
                  tagstyle Pill_subtree.TLabel chipstyle Crit_subtree.TFrame] \
-            [list id file label "file" conn "touched" \
+            [list kind file label "file" conn "touched" \
                  format [list [self] file_chip] \
-                 editor [list [self] chip_editor] \
+                 editor [list [self] chip_editor file] \
                  chipctl [list [self] file_op_pill] \
                  tagstyle Pill_file.TLabel chipstyle Crit_file.TFrame] \
-            [list id pattern label "regex" conn "matches" tail 1 railtext "+ regex" \
-                 editor [list [self] chip_editor] \
+            [list kind pattern label "regex" conn "matches" tail 1 railtext "+ regex" \
+                 editor [list [self] chip_editor pattern] \
                  tagstyle Pill_regex.TLabel chipstyle Crit_regex.TFrame] \
-            [list id tool label "tool" conn "used" tail 1 railtext "+ tool" \
+            [list kind tool label "tool" conn "used" tail 1 railtext "+ tool" \
                  format [list [self] tool_chip] \
-                 editor [list [self] chip_editor] \
+                 editor [list [self] chip_editor tool] \
                  tagstyle Pill_tool.TLabel chipstyle Crit_tool.TFrame]]
     }
 
-    # The bar's one door: a criterion changed, and the model is what it now is.
-    # The whole snapshot goes out, as it does for every other control here, so a
-    # subscriber never has to know which of the two halves of the toolbar moved.
-    method on_criteria {model} { my publish }
+    # The bar's one callback: a user gesture in it changed a criterion. The
+    # whole snapshot goes out, as it does for every other control here, so a
+    # subscriber never has to know which of the two halves of the toolbar moved;
+    # the fragment the module appends is unread, since snapshot re-reads the
+    # model whole.
+    method on_criteria {frag} { my publish }
 
-    # Write facet values without waking the change callback: for the paths that
-    # publish once themselves (the launch seed, the list's widen escape), where a
-    # per-facet door would publish once per facet and start a search for each.
-    # set_model takes the whole model, so it is merged over what the bar holds.
+    # Write several facets' values in one builder call, for the paths that
+    # publish once themselves (the launch seed, the list's widen escape): one
+    # door, one redraw, and - the builder's doors all being quiet - exactly the
+    # one publish the caller then makes. set_model takes the whole model, so the
+    # overrides are merged over what the bar holds.
     method quiet_set {overrides} {
         $Bar set_model [dict merge [$Bar model] $overrides]
     }
@@ -753,15 +765,19 @@ oo::class create ::questlog::ui::Toolbar {
 
     # ---- the time facet's editor -------------------------------------------
 
-    method since_chip {spec} { return [::questlog::scope::since_label $spec] }
+    method since_chip {crit} {
+        return [::questlog::scope::since_label [dict get $crit value]]
+    }
 
     # The time row's whole editor: the preset radios, then the custom member. It
-    # is a function of the facet's values, redrawn from them every time the row
-    # is - so a time bound deleted from its chip while the bar was collapsed comes
-    # back with "all" selected, and no radio is left showing a criterion that is
-    # no longer applied.
-    method since_editor {parent id values} {
-        set WindowVar [expr {[llength $values] ? [lindex $values 0] : "all"}]
+    # is a function of the facet's state, redrawn from the criterion the builder
+    # hands it every time the row is - so a time bound deleted from its chip while
+    # the bar was collapsed comes back with "all" selected, and no radio is left
+    # showing a criterion that is no longer applied. The commit and cancel
+    # prefixes go unused: a control editor reports through report_values (see
+    # set_since), which leaves this radio group standing under the click.
+    method since_editor {parent initial commit cancel} {
+        set WindowVar [expr {[dict size $initial] ? [dict get $initial value] : "all"}]
         foreach w [::questlog::config::get since_presets] {
             ttk::radiobutton $parent.r$w -text $w \
                 -variable [my varname WindowVar] -value $w \
@@ -784,11 +800,13 @@ oo::class create ::questlog::ui::Toolbar {
     }
 
     # A radio in the time group was chosen. report_values, not set_values: the bar
-    # must not rebuild the radio group under the click that just moved it.
+    # must not rebuild the radio group under the click that just moved it. The
+    # builder's doors are quiet, so the click publishes here.
     method set_since {} {
         set want [my since_vals $WindowVar]
         if {$want eq [$Bar values since]} return
         $Bar report_values since $want
+        my publish
     }
 
     # ---- the min-turns facet's editor ---------------------------------------
@@ -808,8 +826,11 @@ oo::class create ::questlog::ui::Toolbar {
     # force. So the model is read back only when the model itself moved (which is
     # what MinTurnsModel remembers); a redraw that carries the same floor through
     # leaves the spinbox exactly as the hand left it. The typed value is still not
-    # published until it is committed - that part is the point.
-    method turns_editor {parent id values} {
+    # published until it is committed - that part is the point. The commit and
+    # cancel prefixes go unused, as in since_editor: the spinbox reports through
+    # report_values (see set_min_turns), the door that leaves it standing.
+    method turns_editor {parent initial commit cancel} {
+        set values [expr {[dict size $initial] ? [list [dict get $initial value]] : {}}]
         if {$values ne $MinTurnsModel} {
             set MinTurnsVar [expr {[llength $values] ? [lindex $values 0] : 1}]
             set MinTurnsModel $values
@@ -828,43 +849,49 @@ oo::class create ::questlog::ui::Toolbar {
     # ---- the chip facets' editor --------------------------------------------
 
     # The inline add editor, built into the frame the bar hands over when a "+" is
-    # pressed. Row-appropriate: file gets the op pill and an open-file glyph,
-    # folder a directory glyph, tool the name picker, regex a bare mono field. The
-    # typed text lives in AddText($id), so a redraw elsewhere in the bar leaves it
-    # standing; Return commits through that row's own validator, Escape abandons.
-    # The editor takes the caret itself, as the module asks it to: only the editor
-    # knows which of the widgets it built is the one that takes typing.
-    method chip_editor {parent id values} {
-        if {$id eq "file"} {
+    # pressed, under the module's editor protocol: the criterion the row edits
+    # (unused here - these facets add fresh values), the commit prefix every
+    # accept gesture funnels into, and the cancel prefix Escape reaches. Row-
+    # appropriate: file gets the op pill and an open-file glyph, folder a
+    # directory glyph, tool the name picker, regex a bare mono field. The typed
+    # text lives in AddText($kind), so a redraw elsewhere in the bar leaves it
+    # standing; Return commits through that row's own validator. Escape on the
+    # entry abandons through cancel_add below, which also clears that text; the
+    # builder's own injected Escape binding covers the widgets with no binding of
+    # their own (the op pill, the picker). The editor takes the caret itself, as
+    # the module asks it to: only the editor knows which of the widgets it built
+    # is the one that takes typing.
+    method chip_editor {kind parent initial commit cancel} {
+        if {$kind eq "file"} {
             my op_pill $parent.op $AddOp [list [self] set_add_op] [my varname AddOp]
             pack $parent.op -side left -padx {0 3}
         }
-        set mono [expr {$id eq "pattern"}]
+        set mono [expr {$kind eq "pattern"}]
         ttk::frame $parent.field -style Field.TFrame -padding {6 2}
         tk::entry $parent.field.e -width 22 -relief flat -borderwidth 0 \
             -highlightthickness 0 \
             -background [::questlog::ui::theme::c chip_bg] \
             -foreground [::questlog::ui::theme::c ink] \
-            -textvariable [my varname AddText]($id) \
+            -textvariable [my varname AddText]($kind) \
             -font [expr {$mono ? "QLMono" : "TkTextFont"}]
-        set commit [switch -- $id {
-            subtree { list [self] commit_folder_add }
-            file    { list [self] commit_file_add }
-            pattern { list [self] commit_pattern_add }
-            tool    { list [self] commit_tool_add }
+        set enter [switch -- $kind {
+            subtree { list [self] commit_folder_add $commit }
+            file    { list [self] commit_file_add $commit }
+            pattern { list [self] commit_pattern_add $commit }
+            tool    { list [self] commit_tool_add $commit }
         }]
-        bind $parent.field.e <Return> $commit
-        bind $parent.field.e <Escape> [list [self] cancel_add $id]
+        bind $parent.field.e <Return> $enter
+        bind $parent.field.e <Escape> [list [self] cancel_add $kind]
         # The open glyph packs first against the right edge so the entry fills the
         # rest and its text never runs under it.
-        switch -- $id {
-            file    { my add_icon $parent.field.icon "\U0001F4C2" [list [self] browse_file] }
-            subtree { my add_icon $parent.field.icon "\U0001F4C1" [list [self] browse_folder] }
+        switch -- $kind {
+            file    { my add_icon $parent.field.icon "\U0001F4C2" [list [self] browse_file $commit] }
+            subtree { my add_icon $parent.field.icon "\U0001F4C1" [list [self] browse_folder $commit] }
         }
         pack $parent.field.e -side left -fill x -expand 1
         pack $parent.field -side left
-        if {$id eq "tool"} {
-            my build_tool_menu $parent.pick
+        if {$kind eq "tool"} {
+            my build_tool_menu $parent.pick $commit
             pack $parent.pick -side left -padx {3 0}
         }
         focus $parent.field.e
@@ -887,15 +914,15 @@ oo::class create ::questlog::ui::Toolbar {
     # becoming a chip that silently matches nothing. The text is cleared before
     # the value lands, because the bar leaves the editor open for the next value
     # and redraws it from AddText as it does.
-    method commit_folder_add {} {
+    method commit_folder_add {commit} {
         set v [string trim $AddText(subtree)]
         if {$v eq ""} { my cancel_add subtree; return }
         if {[catch {::questlog::path::canon_dir $v} v]} { bell; return }
         set AddText(subtree) ""
-        $Bar add_value subtree $v
+        {*}$commit $v
     }
 
-    method commit_file_add {} {
+    method commit_file_add {commit} {
         set v [string trim $AddText(file)]
         if {$v eq ""} { my cancel_add file; return }
         # A ~-headed path expands the way the subtree editor's does (Tcl 9
@@ -906,64 +933,69 @@ oo::class create ::questlog::ui::Toolbar {
             if {[catch {::questlog::path::canon_dir $v} v]} { bell; return }
         }
         set AddText(file) ""
-        $Bar add_value file [list $AddOp $v]
+        {*}$commit [list $AddOp $v]
     }
 
-    method commit_pattern_add {} {
+    method commit_pattern_add {commit} {
         set v [string trim $AddText(pattern)]
         if {$v eq ""} { my cancel_add pattern; return }
         # An unparseable regex stays in the editor with a bell rather than
         # becoming a chip whose first execution would abort every search.
         if {[catch {regexp -- $v {}}]} { bell; return }
         set AddText(pattern) ""
-        $Bar add_value pattern $v
+        {*}$commit $v
     }
 
     # name "" reads the typed tool name; the quick-pick menu passes the name in.
-    method commit_tool_add {{name ""}} {
+    method commit_tool_add {commit {name ""}} {
         if {$name eq ""} { set name [string trim $AddText(tool)] }
         if {$name eq ""} { my cancel_add tool; return }
         set AddText(tool) ""
-        $Bar add_value tool [list $name ""]
+        {*}$commit [list $name ""]
     }
 
     # The picked path goes through the same canonicaliser as a typed one, so a
-    # dir reached both ways dedups to one chip.
-    method browse_folder {} {
+    # dir reached both ways dedups to one chip. The dialogs commit through the
+    # open editor's commit prefix, a user accept gesture like the entry's Return.
+    method browse_folder {commit} {
         set d [tk_chooseDirectory -initialdir $Cwd -mustexist 1]
-        if {$d ne ""} { $Bar add_value subtree [::questlog::path::canon_dir $d] }
+        if {$d ne ""} { {*}$commit [::questlog::path::canon_dir $d] }
     }
 
-    method browse_file {} {
+    method browse_file {commit} {
         set f [tk_getOpenFile -initialdir $Cwd]
-        if {$f ne ""} { $Bar add_value file [list $AddOp $f] }
+        if {$f ne ""} { {*}$commit [list $AddOp $f] }
     }
 
     # Add a value to a criterion from outside the bar: the launch query's seed,
-    # normalised by the entry script into these same kinds. Deduped as a chip
-    # commit is, and quiet, so a seeded criterion neither opens an editor nor
-    # fires the change callback; the one publish here is what app.tcl expects.
+    # normalised by the entry script into these same kinds. add_criterion dedupes
+    # as a chip commit does and is quiet, so a seeded criterion neither opens an
+    # editor nor fires the change callback; the one publish here is what app.tcl
+    # expects, and a repeat raises none at all.
     method add_value {kind value} {
-        set vals [$Bar values $kind]
-        if {$value in $vals} return
-        my quiet_set [list $kind [linsert $vals end $value]]
+        if {$value in [$Bar values $kind]} return
+        $Bar add_criterion $kind $value
         my publish
     }
 
     # ---- what a criterion's value means -------------------------------------
 
-    # subtree chips render ~-abbreviated; a file chip shows its path, the op it
-    # applies to being the pill inside the chip; tool shows its name (and key, if
-    # set); a regex renders raw, and so needs no formatter at all.
-    method path_chip {value} { return [::questlog::path::pretty_home $value] }
+    # The formatters take the whole criterion dict, as the module hands it, and
+    # read their value out of it: subtree chips render ~-abbreviated; a file chip
+    # shows its path, the op it applies to being the pill inside the chip; tool
+    # shows its name (and key, if set); a regex renders raw, and so needs no
+    # formatter at all.
+    method path_chip {crit} {
+        return [::questlog::path::pretty_home [dict get $crit value]]
+    }
 
-    method file_chip {value} {
-        lassign $value op path
+    method file_chip {crit} {
+        lassign [dict get $crit value] op path
         return [::questlog::path::pretty_home $path]
     }
 
-    method tool_chip {value} {
-        lassign $value name key
+    method tool_chip {crit} {
+        lassign [dict get $crit value] name key
         return [expr {$key eq "" ? $name : "$name: $key"}]
     }
 
@@ -978,13 +1010,15 @@ oo::class create ::questlog::ui::Toolbar {
     # Change the operation on the file value at index $idx (the op pill on a
     # chip). By index, not by value: an op edit can leave two file chips
     # value-equal, and a by-value write would then rewrite the first twin rather
-    # than the chip the user pressed.
+    # than the chip the user pressed. set_value_at is quiet, so the menu pick's
+    # publish is this method's own.
     method set_file_op {idx op} {
         set vals [$Bar values file]
         if {$idx < 0 || $idx >= [llength $vals]} return
         set pair [lindex $vals $idx]
         lset pair 0 $op
         $Bar set_value_at file $idx $pair
+        my publish
     }
 
     # The op for the next file value added. Bound to the add-area op pill's
@@ -1017,12 +1051,12 @@ oo::class create ::questlog::ui::Toolbar {
         }
     }
 
-    method build_tool_menu {w} {
+    method build_tool_menu {w commit} {
         ttk::menubutton $w -text "pick ▾" -menu $w.m -direction below
         menu $w.m -tearoff 0
         foreach name {Bash Read Edit Write Grep Glob WebSearch WebFetch Task} {
             $w.m add command -label $name \
-                -command [list [self] commit_tool_add $name]
+                -command [list [self] commit_tool_add $commit $name]
         }
     }
 }

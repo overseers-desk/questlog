@@ -7,7 +7,7 @@ questlog (1.2.0) unstable; urgency=medium
   * Session viewer: the transcript becomes a streaming document of foldable regions - turns fold, tool noise hides behind a per-turn stub, and fold-all reads the Turns tab as a table of contents; a Quotes tab lists the session's quoted passages and jumps to them; each assistant turn is chipped with its model; tool results read as TOOL RESULT, not USER; a hovering ⧉ copies the message under the pointer; the index band and transcript trade height across a draggable sash.
   * Toolbar: the Restrict box folds to a chip summary that keeps its chips; the find bar says where you are and the index band points at the same hit.
   * CLI: the command line is declared once through ocmdline, so the help and the parser agree; a --markdown output mode joins --json and --shortstat; context flags -A/-B/-C return whole messages around each hit, in json and markdown; the installed claude command teaches the same flags.
-  * Modules: the widget and harness layers publish as root-level Tcl modules (streamtree, streamdoc, tkdown, facetbar, leash, steward, tallyman, ocmdline, deadman), installed by every package.
+  * Modules: the widget and harness layers publish as root-level Tcl modules (streamtree, streamdoc, tkdown, querybuilder, leash, steward, tallyman, ocmdline, deadman), installed by every package.
   * GUI: the cost-worker thread resolves tallyman from modules/ and vendor/, matching the entry script's module path, so per-session cost and the A/H multiplier column populate from the first launch.
 
  -- Weiwu Zhang <a@colourful.land>  Thu, 17 Jul 2026 00:00:00 +0000
