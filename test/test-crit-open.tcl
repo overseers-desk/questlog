@@ -1,8 +1,8 @@
 #!/usr/bin/env wish9.0
 # The criteria bar's opening face, and the count it carries.
 #
-# Two things the toolbar asks of the facetbar bar it hosts, both host-side and
-# neither the module's own default:
+# Two things the toolbar asks of the querybuilder bar it hosts, both host-side
+# and neither the module's own default:
 #
 #   1. the bar opens collapsed. Its resting face is the chip summary - the seeded
 #      window and turn floor shown as chips under the disclosure - and it expands
@@ -45,7 +45,7 @@ proc check {name expected actual} {
 set TB  [::questlog::ui::Toolbar new .tb /tmp]
 pack .tb -fill x
 update
-set BAR  [lindex [info class instances ::facetbar::FacetBar] 0]
+set BAR  [lindex [info class instances ::querybuilder::QueryBuilder] 0]
 set BODY .tb.crit.bar.body
 
 # ---- rule 1: the bar opens collapsed to its chip summary --------------------
