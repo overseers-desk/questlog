@@ -552,9 +552,10 @@ oo::class create ::questlog::ui::Toolbar {
     }
 
     # The snapshot every subscriber reads. The search keys come out of the
-    # field's fragment, back into the shapes they have always had: the terms
-    # joined into the one string lib/search.tcl re-tokenizes, through the
-    # module's own grammar home so the round trip loses nothing. The six
+    # field's fragment, back into the shapes their consumers parse: the terms
+    # joined into the one string lib/search.tcl re-tokenizes under its own
+    # grammar, which splits on space and quotes and knows no backslash rule,
+    # so a term holding a literal quote does not survive the crossing. The six
     # criteria come out of the bar's model the same way: the two facets that
     # hold no value at their floor (an "all" time bound, a one-turn floor)
     # publish that floor, since lib/scope.tcl reads a value there and not an
