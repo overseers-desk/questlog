@@ -234,7 +234,8 @@ oo::class create ::questlog::ui::SessionList {
                 [dict create id model label $::questlog::ui::MODEL_ANY kind enum \
                     filterable 1 values [list [self] loaded_models]]] \
             -attrstyles [dict create \
-                check LV.TCheckbutton menu LV.TMenubutton popcheck "" popbtn ""] \
+                check LV.TCheckbutton menu LV.TMenubutton \
+                popcheck LV.TCheckbutton popbtn LV.TButton popframe LVStrip.TFrame] \
             -attrfiltercb [list [self] on_filter_change]
         my reset_nodes
         my build

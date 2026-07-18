@@ -13,6 +13,9 @@
 
 package require Tcl 9
 package require Tk
+# Opt in to a draft module (module-<v>a<n>.tm) when one sits beside the
+# release; with none present this resolves the releases as usual.
+package prefer latest
 
 set SAND [file join [pwd] _filterstrip_sandbox]
 set FOLDER "-tmp-filterstrip-proj"
@@ -178,14 +181,25 @@ check "excluding Sonnet hides A"  [$SL sflag $Ap rendered] 0
 check "excluding Sonnet hides C"  [$SL sflag $Cp rendered] 0
 check "excluding Sonnet keeps Opus B" [$SL sflag $Bp rendered] 1
 
-# The stay-open checklist opens with one entry per loaded model, plus all/none.
-$SL open_enum_popover model
+# The stay-open checklist opens as a combobox-style popdown under the button:
+# undecorated, themed through the popcheck/popbtn/popframe roles, one entry
+# per loaded model, plus all/none.
+set mbtn .s.lvt.attr_model
+$SL open_enum_popover model $mbtn
 update
-set pf .streamtree_attrpop.f
+set pop .streamtree_attrpop
+set pf $pop.f
+check "the popdown is undecorated" 1 [wm overrideredirect $pop]
+check "the popdown sits under its button" 1 \
+    [expr {[winfo rooty $pop] >= [winfo rooty $mbtn] + [winfo height $mbtn]}]
 check "the checklist offers one entry per loaded model" 2 \
     [llength [lsearch -all -inline [winfo children $pf] $pf.v*]]
 check "the checklist carries select-all and select-none" 1 \
     [expr {[winfo exists $pf.btns.all] && [winfo exists $pf.btns.none]}]
+check "the checklist rows carry the host's style" LV.TCheckbutton \
+    [$pf.v0 cget -style]
+check "the popdown frame carries the host's style" LVStrip.TFrame \
+    [$pf cget -style]
 # Select-none excludes the whole roster: every known-model row hides.
 $SL on_enum_none model
 update
@@ -196,6 +210,22 @@ $SL on_enum_all model
 update
 check "select-all brings every row back" \
     [list [$SL sflag $Ap rendered] [$SL sflag $Bp rendered] [$SL sflag $Cp rendered]] {1 1 1}
+# A press outside the popdown closes it, the combobox contract.
+$SL on_pop_press 1 1
+update
+check "a press outside closes the popdown" 0 [winfo exists $pop]
+# Pressing the button again toggles: open, open again, closed.
+$SL open_enum_popover model $mbtn
+update
+$SL open_enum_popover model $mbtn
+update
+check "the button press toggles the popdown closed" 0 [winfo exists $pop]
+# The window moving from under it closes it (the Configure guard).
+$SL open_enum_popover model $mbtn
+update
+event generate . <Configure>
+update
+check "the app window moving closes the popdown" 0 [winfo exists $pop]
 $SL close_enum_popover
 
 # --- 7. Not one filter click touched disk: the scan saw no new scan_path.
