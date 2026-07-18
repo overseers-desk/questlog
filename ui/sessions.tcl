@@ -1936,8 +1936,7 @@ oo::class create ::questlog::ui::SessionList {
     }
 
     method session_bookmarked {path} {
-        set row [{*}$LookupSession $path]
-        if {$row ne ""} { return [dict getdef $row bookmarked 0] }
+        if {[my has_session $path]} { return [my sget $path bookmarked 0] }
         return [file executable $path]
     }
 
@@ -2968,6 +2967,13 @@ oo::class create ::questlog::ui::SessionList {
 
     method reconcile_one {path} {
         if {![my has_session $path]} return
+        # A bookmark toggle flips the file's +x bit and then calls here to
+        # redraw the one row's marker. The marker is drawn from the payload's
+        # bookmarked field (session_bookmarked), so refresh it from the bit
+        # before the redraw: this is the store-side counterpart of Scan's
+        # set_bookmark_field keeping Rows fresh, and it is what lets the glyph
+        # follow a toggle without a re-scan.
+        my sset $path bookmarked [file executable $path]
         $Text configure -state normal
         my redraw_header $path
         $Text configure -state disabled
