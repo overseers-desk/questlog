@@ -431,13 +431,13 @@ proc ::questlog::ui::app::refresh_filter_members {} {
     variable SessionList
     variable FilterState
     set sets [list]
-    foreach f [::questlog::sessionlist::member_filters $FilterState] {
+    foreach f [::questlog::listfilter::member_filters $FilterState] {
         switch -- $f {
             running    { lappend sets [::questlog::ui::live::running_sessions] }
             bookmarked { lappend sets [bookmarked_members] }
         }
     }
-    $SessionList set_filter_members [::questlog::sessionlist::filter_members $sets]
+    $SessionList set_filter_members [::questlog::listfilter::filter_members $sets]
 }
 
 # A strip filter moved. The list has already re-derived the view in place and

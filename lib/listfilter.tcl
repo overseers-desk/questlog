@@ -1,6 +1,6 @@
 package require Tcl 9
 
-# ::questlog::sessionlist - the session list's view-filter arithmetic.
+# ::questlog::listfilter - the session list's view-filter arithmetic.
 #
 # The left pane's view filters - Running, Bookmarked and the Model filter - live
 # on the list strip and are owned and evaluated by the StreamTree engine, the one
@@ -16,7 +16,7 @@ package require Tcl 9
 # reasoning as ::questlog::scope - no joint state, no named global, tell-don't-ask
 # all fail.
 
-namespace eval ::questlog::sessionlist {
+namespace eval ::questlog::listfilter {
     namespace export active_filters member_filters filter_members filter_cut
 }
 
@@ -26,7 +26,7 @@ namespace eval ::questlog::sessionlist {
 # then shows the rows that pass all of them: running and bookmarked both on means
 # running AND bookmarked, one set of rows, not two. A bool filter is on when its
 # flag is 1, the model filter when its excluded-label list is non-empty.
-proc ::questlog::sessionlist::active_filters {state} {
+proc ::questlog::listfilter::active_filters {state} {
     set out [list]
     if {[dict getdef $state running 0]}          { lappend out running }
     if {[dict getdef $state bookmarked 0]}       { lappend out bookmarked }
@@ -40,7 +40,7 @@ proc ::questlog::sessionlist::active_filters {state} {
 # filter has neither, because a row's model is known only once its transcript is
 # parsed, and a filter reads no transcript. So the model filter hides loaded rows
 # like any other and claims nothing about what it cannot see.
-proc ::questlog::sessionlist::member_filters {state} {
+proc ::questlog::listfilter::member_filters {state} {
     set out [list]
     foreach f [active_filters $state] {
         if {$f in {running bookmarked}} { lappend out $f }
@@ -59,7 +59,7 @@ proc ::questlog::sessionlist::member_filters {state} {
 # exists. A uuid in several sets keeps every key any of them recorded, so a
 # running bookmark still carries the cwd the registry knows for free (which names
 # it without opening its transcript) alongside the path the sweep found on disk.
-proc ::questlog::sessionlist::filter_members {sets} {
+proc ::questlog::listfilter::filter_members {sets} {
     if {![llength $sets]} { return [dict create] }
     set out [lindex $sets 0]
     foreach s [lrange $sets 1 end] {
@@ -82,7 +82,7 @@ proc ::questlog::sessionlist::filter_members {sets} {
 # no filter on, or with no membership context: a caller with neither must not be
 # told a cut exists, and a loaded row a filter merely hides is the filter working,
 # never a cut.
-proc ::questlog::sessionlist::filter_cut {state loaded full_set} {
+proc ::questlog::listfilter::filter_cut {state loaded full_set} {
     if {![llength [active_filters $state]] || ![dict size $full_set]} { return [list] }
     set out [list]
     foreach uuid [dict keys $full_set] {

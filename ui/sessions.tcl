@@ -2058,7 +2058,7 @@ oo::class create ::questlog::ui::SessionList {
     # loaded rows exactly as the other two do, and a folder whose rows it all
     # hides must not go on reporting them.
     method any_view_toggle {} {
-        return [expr {[llength [::questlog::sessionlist::active_filters [my attr_filter_all]]] > 0}]
+        return [expr {[llength [::questlog::listfilter::active_filters [my attr_filter_all]]] > 0}]
     }
 
     # A row that arrives while a filter is on lands hidden, and the folder created
@@ -3033,7 +3033,7 @@ oo::class create ::questlog::ui::SessionList {
     # The membership comes from outside the search and is pushed in by the poll
     # (set_filter_members): the live registry for Running, which knows every session
     # running on this machine whatever the window was, and a bookmark sweep for
-    # Bookmarked. filter_cut in lib/sessionlist.tcl does the arithmetic; the status
+    # Bookmarked. filter_cut in lib/listfilter.tcl does the arithmetic; the status
     # line says the cut, and the banner names it and offers the two escapes.
 
     # The membership the active filters claim, uuid -> {path ?cwd?}, as the caller
@@ -3061,7 +3061,7 @@ oo::class create ::questlog::ui::SessionList {
     # membership size; the cut (filter_cut) is the members no loaded node carries.
     method refresh_filter_note {} {
         set state [my attr_filter_all]
-        set filters [::questlog::sessionlist::member_filters $state]
+        set filters [::questlog::listfilter::member_filters $state]
         if {![llength $filters] || ![dict size $FilterMembers]} { my drop_filter_note; return }
         set shown 0
         set loaded [dict create]
@@ -3072,7 +3072,7 @@ oo::class create ::questlog::ui::SessionList {
         set FilterNote "[my filter_phrase $filters] · showing $shown\
             of [dict size $FilterMembers]"
         set CutMembers [list]
-        foreach uuid [::questlog::sessionlist::filter_cut $state $loaded $FilterMembers] {
+        foreach uuid [::questlog::listfilter::filter_cut $state $loaded $FilterMembers] {
             set m [dict get $FilterMembers $uuid]
             dict set m resolved [my member_file $m]
             lappend CutMembers $m
@@ -3224,7 +3224,7 @@ oo::class create ::questlog::ui::SessionList {
         set n [llength $CutMembers]
         if {$n == 0} { pack forget $b; return }
         set noun [string tolower \
-            [my filter_phrase [::questlog::sessionlist::member_filters [my attr_filter_all]]]]
+            [my filter_phrase [::questlog::listfilter::member_filters [my attr_filter_all]]]]
         set it [expr {$n == 1 ? "it" : "them"}]
         set names [list]
         foreach m [lrange $CutMembers 0 1] { lappend names [my member_name $m] }

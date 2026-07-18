@@ -1,5 +1,5 @@
 #!/usr/bin/env tclsh9.0
-# The pure filter arithmetic in lib/sessionlist.tcl: which filters are active,
+# The pure filter arithmetic in lib/listfilter.tcl: which filters are active,
 # which can name a cut, the membership two of them jointly claim, and the cut
 # itself. Every proc reads the engine's filter state dict (attr_filter_all shape:
 # running 0|1, bookmarked 0|1, model {excluded labels}) - the one filter state,
@@ -15,7 +15,7 @@
 # Tk-free: hand-built state, loaded-uuid and set dicts drive the procs directly.
 package require Tcl 9
 set ROOT [file dirname [file dirname [file normalize [info script]]]]
-source [file join $ROOT lib sessionlist.tcl]
+source [file join $ROOT lib listfilter.tcl]
 
 set fails 0
 proc check {name expected actual} {
@@ -29,7 +29,7 @@ proc check {name expected actual} {
     }
 }
 proc cut {state loaded full_set} {
-    return [::questlog::sessionlist::filter_cut $state $loaded $full_set]
+    return [::questlog::listfilter::filter_cut $state $loaded $full_set]
 }
 
 # The list has loaded aaaa and bbbb.
@@ -61,7 +61,7 @@ check names_two_cut [list dddd ffff] \
     [cut $run $loaded [dict create aaaa 1 dddd 1 ffff 1]]
 
 # ---- active_filters: which filters the caller narrates ----------------------
-proc filters {state} { return [::questlog::sessionlist::active_filters $state] }
+proc filters {state} { return [::questlog::listfilter::active_filters $state] }
 check filter_none  {} [filters [dict create]]
 check filter_run   running    [filters [dict create running 1]]
 check filter_bm    bookmarked [filters [dict create bookmarked 1]]
@@ -79,7 +79,7 @@ check filter_off {} [filters [dict create running 0 bookmarked 0 model {}]]
 # The model filter is not one of them: a row's model is known only once its
 # transcript is parsed, and a filter parses nothing, so it can claim no member it
 # cannot see.
-proc mfilters {state} { return [::questlog::sessionlist::member_filters $state] }
+proc mfilters {state} { return [::questlog::listfilter::member_filters $state] }
 check member_none  {} [mfilters [dict create]]
 check member_model {} [mfilters [dict create model {{Opus 4.8}}]]
 check member_run   running [mfilters [dict create running 1 model {{Opus 4.8}}]]
@@ -93,8 +93,8 @@ set RUN [dict create aaaa [dict create path a.jsonl cwd /p/a] \
                      bbbb [dict create path b.jsonl cwd /p/b]]
 set BM  [dict create aaaa [dict create path a.jsonl] \
                      cccc [dict create path c.jsonl]]
-proc members {args} { return [::questlog::sessionlist::filter_members $args] }
-check members_none  {} [::questlog::sessionlist::filter_members {}]
+proc members {args} { return [::questlog::listfilter::filter_members $args] }
+check members_none  {} [::questlog::listfilter::filter_members {}]
 check members_one   {aaaa bbbb} [dict keys [members $RUN]]
 check members_both  aaaa        [dict keys [members $RUN $BM]]
 # The intersected member keeps what either set knew of it: the cwd the registry

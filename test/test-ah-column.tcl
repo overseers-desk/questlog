@@ -13,7 +13,7 @@ set ROOT [file dirname [file dirname [file normalize [info script]]]]
 package require leash
 package require streamtree
 foreach f {config.tcl lib/cost.tcl ui/theme.tcl lib/path.tcl lib/scope.tcl \
-           lib/sessionlist.tcl lib/jsonl.tcl lib/match.tcl ui/terminal.tcl \
+           lib/listfilter.tcl lib/jsonl.tcl lib/match.tcl ui/terminal.tcl \
            ui/live.tcl lib/scan.tcl lib/search.tcl ui/drag.tcl ui/toolbar.tcl \
            ui/sessions.tcl} {
     source [file join $ROOT $f]

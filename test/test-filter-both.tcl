@@ -54,7 +54,7 @@ set ROOT [file dirname [file dirname [file normalize [info script]]]]
 package require leash
 package require streamtree
 foreach f {config.tcl lib/cost.tcl ui/theme.tcl lib/path.tcl lib/scope.tcl \
-           lib/sessionlist.tcl lib/jsonl.tcl lib/match.tcl ui/terminal.tcl \
+           lib/listfilter.tcl lib/jsonl.tcl lib/match.tcl ui/terminal.tcl \
            ui/live.tcl lib/scan.tcl lib/search.tcl ui/drag.tcl ui/toolbar.tcl \
            ui/sessions.tcl} {
     source [file join $ROOT $f]
@@ -150,13 +150,13 @@ set LIVE [dict create bbbb $Bp cccc $Cp dddd $Dp eeee $Ep]
 proc push {} {
     set state [$::SL attr_filter_all]
     set sets [list]
-    foreach f [::questlog::sessionlist::member_filters $state] {
+    foreach f [::questlog::listfilter::member_filters $state] {
         switch -- $f {
             running    { lappend sets $::RUN }
             bookmarked { lappend sets $::BM }
         }
     }
-    $::SL set_filter_members [::questlog::sessionlist::filter_members $sets]
+    $::SL set_filter_members [::questlog::listfilter::filter_members $sets]
 }
 
 # The model filter excludes LABELS a loaded row carries, which is what the filter
