@@ -11,7 +11,7 @@ Execution: plan ~/.claude/plans/eager-humming-bentley.md (approved 2026-07-14).
 Items numbered 1-19 there. Line numbers below were read at 66f4b4f.
 
 EXECUTED AND PUSHED 2026-07-14, 66f4b4f..2aec692 (five commits: viewer find
-readout + band tracking; Restrict rest state w/ querybuilder -countables + folder
+readout + band tracking; Restrict rest state w/ facetbar -countables + folder
 tag + Model:; the thirteen list-side items; the general-open verb residual;
 the review-findings close). Every floor item and both master decisions landed.
 S-p resolved as SKIP (no live binding backs either accelerator; the keyboard
@@ -30,7 +30,7 @@ suite failed by itself).
   Browse correct; search-mode plain click inverts. FIX plan item 1.
 - B2 "N active" counts facet types incl. time+turn anchors; design counts chip
   VALUES over content criteria only (screens.jsx:335; anchors live outside
-  _groups :403,:430). querybuilder-1.0.tm active_count. DECIDED at plan review:
+  _groups :403,:430). facetbar-1.0.tm active_count. DECIDED at plan review:
   align (M1). FIX plan item 18 (-countables option).
 - B3 Cancel button never disables (design screens.jsx:546 disabled={!cancellable};
   code ui/sessions.tcl:316 always enabled; idle click stamps "Cancelled.").
