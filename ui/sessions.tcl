@@ -2737,16 +2737,12 @@ oo::class create ::questlog::ui::SessionList {
             my popup_multi_menu $X $Y
             return
         }
-        set row [{*}$LookupSession $path]
         set uuid [file rootname [file tail $path]]
         set folder ""
         set cwd ""
-        if {$row ne ""} {
-            set folder [dict getdef $row folder ""]
-            set uuid [dict getdef $row uuid $uuid]
-        }
-        if {$folder eq "" && [my has_session $path]} {
+        if {[my has_session $path]} {
             set folder [my sget $path folder]
+            set uuid [my sget $path uuid $uuid]
         }
         if {$folder ne ""} { set cwd [{*}$ResolveFolder $folder] }
         set MenuPath $path
