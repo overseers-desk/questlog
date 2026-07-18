@@ -66,7 +66,6 @@ file mtime $SP $when
 
 set SL ""
 set ::Scan [::questlog::Scan new [list apply {{r} { $::SL on_scan_row $r }}] noop]
-proc lookup {path}   { return [$::Scan lookup $path] }
 proc scanpath {path} { return [$::Scan scan_path $path] }
 proc resolvef {f}    { return "/tmp/proj" }
 proc subagentsf {path} { return [$::Scan subagents_for $path] }
@@ -74,7 +73,7 @@ proc subagentsf {path} { return [$::Scan subagents_for $path] }
 # Wire the real app peek/restore procs as the list's status callbacks, so the
 # hover drives the actual status machine (not a stub) and the mid-peek survival
 # is a genuine assertion about refresh_status.
-set SL [::questlog::ui::SessionList new .s resolvef lookup noop noop noop noop noop \
+set SL [::questlog::ui::SessionList new .s resolvef noop noop noop noop noop \
             noop scanpath noop subagentsf noop \
             "" ::questlog::ui::app::status_peek ::questlog::ui::app::status_unpeek]
 pack .s -fill both -expand 1

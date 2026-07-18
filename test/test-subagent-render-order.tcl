@@ -67,13 +67,12 @@ file mtime $Fp [clock scan "2026-05-24 17:01:00" -gmt 1]
 # Wire Scan <-> SessionList (same shape as test-subagent-cost-aggregation).
 set SL ""
 set ::Scan [::questlog::Scan new [list apply {{r} { $::SL on_scan_row $r }}] noop]
-proc lookup {path}   { return [$::Scan lookup $path] }
 proc scanpath {path} { return [$::Scan scan_path $path] }
 proc resolvef {f}    { return "/tmp/proj" }
 proc subagentsf {path} { return [$::Scan subagents_for $path] }
 proc subagent_cost_cb {path} {}
 
-set SL [::questlog::ui::SessionList new .s resolvef lookup noop noop noop noop noop \
+set SL [::questlog::ui::SessionList new .s resolvef noop noop noop noop noop \
             noop scanpath noop subagentsf subagent_cost_cb]
 pack .s -fill both -expand 1
 $SL apply_filter [dict create since all]

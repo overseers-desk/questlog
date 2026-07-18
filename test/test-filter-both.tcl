@@ -105,13 +105,12 @@ foreach p [list $Ap $Cp $Dp] { ::questlog::path::set_bookmark $p }
 
 set SL ""
 set ::Scan [::questlog::Scan new [list apply {{r} { $::SL on_scan_row $r }}] noop]
-proc lookup {path}   { return [$::Scan lookup $path] }
 proc scanpath {path} { return [$::Scan scan_path $path] }
 proc resolvef {f}    { return "" }
 proc subagentsf {path} { return [$::Scan subagents_for $path] }
 proc widen {criterion} { set ::widened $criterion }
 
-set SL [::questlog::ui::SessionList new .s resolvef lookup noop noop noop noop noop \
+set SL [::questlog::ui::SessionList new .s resolvef noop noop noop noop noop \
             noop scanpath noop subagentsf noop widen]
 pack .s -fill both -expand 1
 
@@ -259,19 +258,15 @@ check "Running alone again: the strip counts running sessions" \
 #        First shut off a label no loaded row carries, so the filter is on and
 #        hides nothing: the lines must read exactly as with Running alone, above.
 #
-#        A row's model is the label the COST PASS put there: the worker parses the
-#        transcript, the main thread stamps the label, and the result lands in two
-#        places, because two readers want it. The scan's cache holds it for the
-#        render, which reads a row back through LookupSession; the list's node holds
-#        it for the count, which reads it with sget. ui/app.tcl makes both landings
-#        on a cost result - update_cost always, refresh_cost either in the same turn
-#        (cost_render immediate) or in the next coalesced flush. That is the only way
-#        a model ever reaches a row, and it is why the filter can claim no member it
-#        has not already loaded. Run the pass over the loaded rows so they carry
+#        A row's model is the label the COST PASS put there: the worker parses
+#        the transcript, the main thread stamps the label, and refresh_cost
+#        lands it in the row's node - in the same turn (cost_render immediate)
+#        or in the next coalesced flush. That is the only way a model ever
+#        reaches a row, and it is why the filter can claim no member it has
+#        not already loaded. Run the pass over the loaded rows so they carry
 #        what the app's rows carry.
 foreach path [$SL all_session_paths] {
     set cd [::questlog::cost::build_cost_dict [::questlog::cost::parse_file $path]]
-    $::Scan update_cost $path $cd
     $SL refresh_cost $path $cd
 }
 update

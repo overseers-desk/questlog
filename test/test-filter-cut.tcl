@@ -79,7 +79,6 @@ file mtime $Bp [clock seconds]
 
 set SL ""
 set ::Scan [::questlog::Scan new [list apply {{r} { $::SL on_scan_row $r }}] noop]
-proc lookup {path}   { return [$::Scan lookup $path] }
 proc scanpath {path} { return [$::Scan scan_path $path] }
 proc resolvef {f}    { return "" }
 proc subagentsf {path} { return [$::Scan subagents_for $path] }
@@ -89,7 +88,7 @@ proc subagentsf {path} { return [$::Scan subagents_for $path] }
 set ::widened ""
 proc widen {criterion} { set ::widened $criterion }
 
-set SL [::questlog::ui::SessionList new .s resolvef lookup noop noop noop noop noop \
+set SL [::questlog::ui::SessionList new .s resolvef noop noop noop noop noop \
             noop scanpath noop subagentsf noop widen]
 pack .s -fill both -expand 1
 

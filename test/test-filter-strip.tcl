@@ -66,12 +66,11 @@ file mtime $Cp [clock scan "2026-05-22 09:01:00" -gmt 1]
 set ::scan_path_calls 0
 set SL ""
 set ::Scan [::questlog::Scan new [list apply {{r} { $::SL on_scan_row $r }}] noop]
-proc lookup {path}   { return [$::Scan lookup $path] }
 proc scanpath {path} { incr ::scan_path_calls; return [$::Scan scan_path $path] }
 proc resolvef {f}    { return "/tmp/proj" }
 proc subagentsf {path} { return [$::Scan subagents_for $path] }
 
-set SL [::questlog::ui::SessionList new .s resolvef lookup noop noop noop noop noop \
+set SL [::questlog::ui::SessionList new .s resolvef noop noop noop noop noop \
             noop scanpath noop subagentsf noop]
 pack .s -fill both -expand 1
 
@@ -96,12 +95,11 @@ vwait ::scan_done
 $SL toggle_folder $FOLDER
 update
 
-# The cost second pass is not wired in this harness; land the model labels the way
-# it would, on both the node (refresh_cost) and the scanner cache (update_cost),
-# so the model filter has a roster and the engine can read each row's model.
+# The cost second pass is not wired in this harness; land the model labels the
+# way it would (refresh_cost writes the node), so the model filter has a
+# roster and the engine can read each row's model.
 foreach {p m} [list $Ap {Sonnet} $Bp {Opus} $Cp {Sonnet}] {
     $SL refresh_cost $p [dict create cost_usd 0.01 model $m]
-    $::Scan update_cost $p [dict create cost_usd 0.01 model $m]
 }
 update
 check "all three rendered before any filter" \

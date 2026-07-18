@@ -50,7 +50,6 @@ file mtime $SP $when
 
 set SL ""
 set ::Scan [::questlog::Scan new [list apply {{r} { $::SL on_scan_row $r }}] noop]
-proc lookup {path}   { return [$::Scan lookup $path] }
 proc scanpath {path} { return [$::Scan scan_path $path] }
 proc resolvef {f}    { return "/tmp/proj" }
 proc subagentsf {path} { return [$::Scan subagents_for $path] }
@@ -60,7 +59,7 @@ proc subagentsf {path} { return [$::Scan subagents_for $path] }
 set ::opened "(never)"
 proc record_open {path args} { set ::opened $path }
 
-set SL [::questlog::ui::SessionList new .s resolvef lookup record_open noop noop noop noop \
+set SL [::questlog::ui::SessionList new .s resolvef record_open noop noop noop noop \
             noop scanpath noop subagentsf noop noop noop]
 pack .s -fill both -expand 1
 set TX .s.body.t

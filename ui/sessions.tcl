@@ -104,7 +104,6 @@ oo::class create ::questlog::ui::SessionList {
     variable StatusVar
     variable CancelCb
     variable ResolveFolder    ;# cb: folder -> display cwd; opens no transcript
-    variable LookupSession    ;# cb: path -> row dict
     variable OnOpen           ;# cb: path lineno -> open + anchor in viewer
     variable OnMoveRequest    ;# cb: paths -> open move picker
     variable OnDropMove       ;# cb: paths folder -> direct move
@@ -158,7 +157,7 @@ oo::class create ::questlog::ui::SessionList {
     # left behind and still offers to load it (that is this object's own doing),
     # and only the widen escape - which relaxes a toolbar criterion, and so needs
     # the toolbar - is absent.
-    constructor {parent resolve_cb lookup_cb on_open on_move_request \
+    constructor {parent resolve_cb on_open on_move_request \
                  on_drop_move on_bookmark_toggle on_bookmark_set on_rename \
                  on_scan_path cancel_cb \
                  on_subagents on_subagent_cost \
@@ -166,7 +165,6 @@ oo::class create ::questlog::ui::SessionList {
                  {on_scope_folder ""} {on_filter_change ""}} {
         set Top $parent
         set ResolveFolder $resolve_cb
-        set LookupSession $lookup_cb
         set OnOpen $on_open
         set OnMoveRequest $on_move_request
         set OnDropMove $on_drop_move
@@ -297,7 +295,7 @@ oo::class create ::questlog::ui::SessionList {
     #       a view toggle changes only what the heading displays
     #       (folder_visible_count), not what is stored, so the stored value is
     #       compared against the full member count.
-    method audit {{rows ""}} {
+    method audit {} {
         set probs [list]
         # (a) reverse indices are a bijection with the keyed nodes. A path
         # lives in exactly one of the two indices: PathNode while attached,
@@ -387,59 +385,6 @@ oo::class create ::questlog::ui::SessionList {
                 lappend probs "folder $folder cost [my fget $folder cost 0.0] != $cst members"
             }
         }
-        # (d) while Scan.Rows and the store both hold session data, the store's
-        # copy of a dual-written field must equal Rows'. Only the fields kept
-        # level synchronously are cross-checked: bookmarked (reconcile_one and
-        # set_bookmark_field fire together on a toggle) and the set-at-scan
-        # identity fields. The aggregating fields (cost, turns) hold different
-        # semantics on each side - the payload sums over subagents, Rows is
-        # own-only - and the cost-arrival fields (tokens, model_breakdown) plus
-        # mtime/nturns update out of step (a coalesced cost flush, a running
-        # session still being written), so comparing them would flag a race,
-        # not a bug. A field Rows does not carry (a synthetic test row) is
-        # skipped: Rows is the authority, and there is nothing to check against.
-        if {$LookupSession ne ""} {
-            set dual [list]
-            foreach fid $Roots {
-                foreach sid [my node_field $fid children] {
-                    lappend dual $sid
-                }
-            }
-            # The retained rows are dual-written too (stage_row and the
-            # detached freshness writers), so the same fields must level.
-            dict for {path sid} $DetachedNode {
-                lappend dual $sid
-            }
-            foreach sid $dual {
-                if {[my node_field $sid kind] ne "session"} continue
-                set path [my node_field $sid key]
-                set row [{*}$LookupSession $path]
-                if {$row eq ""} continue
-                foreach f {bookmarked first_user kind folder_cwd cwd_hint} {
-                    if {![dict exists $row $f]} continue
-                    set rv [dict get $row $f]
-                    set pv [my node_pget $sid $f]
-                    if {$pv ne $rv} {
-                        lappend probs "session $path payload $f '$pv' != Rows '$rv'"
-                    }
-                }
-            }
-        }
-        # (e) retention coverage, while Rows and the store are dual-written:
-        # every Rows entry the current snapshot admits has a store node,
-        # attached or retained. The caller passes the Rows dict (Scan.rows);
-        # with none the check is skipped, as in a widget-only test. A Rows
-        # entry whose file is gone is a ghost the store deliberately prunes
-        # (replay_scope) and Rows keeps until Wave 4b deletes it - not a gap.
-        if {$rows ne ""} {
-            dict for {path row} $rows {
-                if {![file isfile $path]} continue
-                if {![my row_matches_snapshot $row]} continue
-                if {[my session_node $path] eq ""} {
-                    lappend probs "Rows $path in scope but not in the store"
-                }
-            }
-        }
         return $probs
     }
 
@@ -475,6 +420,16 @@ oo::class create ::questlog::ui::SessionList {
         set id [my session_node $path]
         if {$id eq ""} { return "" }
         return [my node_pget $id mtime 0]
+    }
+
+    # The cost the store holds for a path, attached or retained, or "" when
+    # none has landed (or the path is unknown). The app's cost gate reads it:
+    # a row whose retained copy is already priced does not re-enter the cost
+    # pass on a republish.
+    method stored_cost {path} {
+        set id [my session_node $path]
+        if {$id eq ""} { return "" }
+        return [my node_pget $id cost ""]
     }
 
     method sid {path} {
@@ -911,8 +866,8 @@ oo::class create ::questlog::ui::SessionList {
     # The scope-relevant fields of a modelled session, assembled from its node
     # payload into the row shape ::questlog::scope reads. These are exactly the
     # fields row_subtree_match (folder, folder_cwd, cwd_hint) and row_matches
-    # (mtime, nturns) consult; a caller with a modelled path uses this in place
-    # of a Scan.Rows lookup. mtime and nturns are set-at-scan and go stale for a
+    # (mtime, nturns) consult; a caller with a modelled path asks the store,
+    # never the scanner. mtime and nturns are set-at-scan and go stale for a
     # session still being written, but such a session is running and is retained
     # by that fact before its recency is ever weighed, so the frozen copy
     # decides nothing a fresh read would decide differently.
@@ -933,9 +888,9 @@ oo::class create ::questlog::ui::SessionList {
     # a real session node, parent "", indexed in DetachedNode instead of
     # PathNode, carrying the same payload an attached node would. Scope
     # widening replays from these nodes without a disk re-scan (replay_scope);
-    # every hydration site re-attaches through restore_session. While Scan's
-    # Rows mirror still exists (it goes in Wave 4b) the audit cross-checks the
-    # two; nothing reads Rows to decide what this store already knows.
+    # every hydration site re-attaches through restore_session. The store is
+    # the one in-memory home a session's data has: Scan streams rows, and
+    # what this store already knows nothing else remembers.
 
     # Stage a scanned row the view is not attaching: create or freshen its
     # detached node. A path already attached is left alone - the attached
@@ -1169,13 +1124,13 @@ oo::class create ::questlog::ui::SessionList {
     }
 
     # Replay the retained rows the current snapshot admits, mtime-descending
-    # so folders arrive in the order the old Rows replay produced. This is
-    # the snapshot-change fill that needs no disk: apply_filter retired every
-    # loaded row, and the ones the new scope admits come straight back. Under
-    # active criteria the list is built from matches, so nothing attaches
-    # (the retention itself is untouched and outlives the search). A retained
-    # path whose file is gone (transcript pruning) is dropped here, the
-    # store-side twin of the dead-path prune Scan.query ran over Rows.
+    # so folders arrive in the streaming order a fresh scan would produce.
+    # This is the snapshot-change fill that needs no disk: apply_filter
+    # retired every loaded row, and the ones the new scope admits come
+    # straight back. Under active criteria the list is built from matches, so
+    # nothing attaches (the retention itself is untouched and outlives the
+    # search). A retained path whose file is gone (transcript pruning) is
+    # dropped here, so a ghost row never outlives its file in the memo.
     method replay_scope {} {
         if {$CriteriaActive} return
         set keyed [list]
@@ -1286,18 +1241,16 @@ oo::class create ::questlog::ui::SessionList {
             return
         }
         set path  [dict get $first path]
-        # Hydrate from the store first: the search's publish already staged
-        # this row (on_scan_row stages under active criteria), so the retained
-        # node - cost and token fields included - is the copy to attach. The
-        # Rows lookup remains the fallback for a row the store never saw,
-        # until Wave 4b deletes it.
+        # Hydrate from the store: the search's publish already staged this row
+        # (on_scan_row stages under active criteria), so the retained node -
+        # cost and token fields included - is the copy to attach. A path the
+        # store has never seen (its file could not be re-read) gets a minimal
+        # synthetic row; the next scan of it fills the rest.
         if {![my has_session $path] && ![my restore_session $path]} {
-            set row [{*}$LookupSession $path]
-            if {$row eq ""} { set row [dict create folder [dict get $first folder]] }
             # A streamed result obeys the view toggles from its first paint (the
             # hidden flag is settled inside model_add_session) - not two seconds
             # later when the running-reconcile tick recomputes visibility.
-            my model_add_session $path $row
+            my model_add_session $path [dict create folder [dict get $first folder]]
         }
         # Search folders are expanded, so render the session if it is visible
         # and not yet drawn. A result a filter hides leaves its folder a heading
@@ -1364,7 +1317,7 @@ oo::class create ::questlog::ui::SessionList {
         set model [dict getdef $row model ""]
         set ctxp  [dict getdef $row context_pct ""]
         # Scan's row fields the store answers session questions from directly,
-        # so a modelled session need not be looked up in Scan.Rows to be asked
+        # so a modelled session is never looked up anywhere else to be asked
         # about. bookmarked defaults to the on-disk +x bit for a synthetic row
         # that omits it; the rest default empty. The token fields and
         # model_breakdown arrive with cost and are kept fresh by refresh_cost,
@@ -1720,7 +1673,7 @@ oo::class create ::questlog::ui::SessionList {
     # columns. In browse the children are enumerated on demand (all of them); in
     # search the matched children attach as their matches arrive (sub_paths), and
     # the parent auto-expands when only its subagents matched (case B). Children
-    # live in their own model (Children) and never enter Scan's Rows; their cost
+    # live in their own model (Children), under their parent's node; their cost
     # rides the same second pass as a session's, triggered when first drawn.
 
     method toggle_subagents {path} {
@@ -2062,14 +2015,14 @@ oo::class create ::questlog::ui::SessionList {
         set cp     [dict get $first path]
         set parent [dict get $first parent_path]
         set folder [dict get $first folder]
-        # The subagent's parent hydrates store-first too: a browse-era retained
-        # parent re-attaches with its own payload; the Rows lookup is the
-        # not-in-store fallback until Wave 4b.
+        # The subagent's parent hydrates from the store too: a browse-era
+        # retained parent re-attaches with its own payload, and a parent the
+        # store has never seen gets the same minimal synthetic row as a
+        # direct match (the parent rides its subagent into the corpus, so its
+        # own publish normally lands the staged copy first).
         if {![my has_session $parent] && ![my restore_session $parent]} {
-            set row [{*}$LookupSession $parent]
-            if {$row eq ""} { set row [dict create folder $folder] }
             # The same first-paint toggle discipline as render_session_matches.
-            my model_add_session $parent $row
+            my model_add_session $parent [dict create folder $folder]
         }
         my sset $parent has_subagents 1
         if {![my sflag $parent hidden] \
@@ -2749,9 +2702,8 @@ oo::class create ::questlog::ui::SessionList {
     # The cost arrival's payload writes, shared by the attached path (which
     # then settles folder books and redraws) and the detached path (which has
     # nothing drawn to settle). sset resolves attached or retained, so one
-    # writer keeps every store copy level with the Rows write update_cost
-    # makes from the same arrival. The token counts and per-model split are
-    # own-session values with no subagent aggregation.
+    # writer keeps every store copy level from one arrival. The token counts
+    # and per-model split are own-session values with no subagent aggregation.
     method write_cost_fields {path cost_dict} {
         my sset $path own_cost [dict get $cost_dict cost_usd]
         my sset $path own_turns [dict getdef $cost_dict turns ""]
@@ -3311,9 +3263,9 @@ oo::class create ::questlog::ui::SessionList {
             dict for {uuid path} $running {
                 if {[my has_session $path]} continue
                 # Store first: a running session the scope narrowed out is
-                # sitting retained, and re-attaching it is the same import a
-                # Rows lookup used to feed - minus the read. The subtree scope
-                # stays hard over it, same as the lookup path below.
+                # sitting retained, and re-attaching it is an import with no
+                # read at all. The subtree scope stays hard over it, same as
+                # the disk-scan path below.
                 if {[my has_retained $path]} {
                     if {[llength $subtree] > 0 && ![::questlog::scope::row_subtree_match \
                             [my payload_scope_row $path] $subtree]} continue
@@ -3323,20 +3275,20 @@ oo::class create ::questlog::ui::SessionList {
                     }
                     continue
                 }
-                set row [{*}$LookupSession $path]
-                if {$row eq "" && [file isfile $path]} {
-                    set row [{*}$OnScanPath $path]
-                    # OnScanPath re-enters on_scan_row (see below), whose tail
-                    # leaves the widget -state disabled. The model_add_session /
-                    # render_session below mutate the buffer, and a disabled
-                    # widget silently drops every insert - so a folder created
-                    # here gets its heading text dropped, its end mark lands on
-                    # its start (a collapsed [start,end] region), and the next
-                    # real insert drags the start mark past the stranded end into
-                    # end-before-start (the merged-heading desync). Re-assert the
-                    # state this method opened with so the structural inserts land.
-                    $Text configure -state normal
-                }
+                # Not retained: the store has never seen this session (it
+                # started outside the scanned window), so read it from disk.
+                if {![file isfile $path]} continue
+                set row [{*}$OnScanPath $path]
+                # OnScanPath re-enters on_scan_row (see below), whose tail
+                # leaves the widget -state disabled. The model_add_session /
+                # render_session below mutate the buffer, and a disabled
+                # widget silently drops every insert - so a folder created
+                # here gets its heading text dropped, its end mark lands on
+                # its start (a collapsed [start,end] region), and the next
+                # real insert drags the start mark past the stranded end into
+                # end-before-start (the merged-heading desync). Re-assert the
+                # state this method opened with so the structural inserts land.
+                $Text configure -state normal
                 if {$row eq "" || ![dict size $row]} continue
                 # OnScanPath above is not a pure read: scan_path -> publish_row
                 # fires OnRow, which in browse mode is on_scan_row, which has
@@ -3368,7 +3320,7 @@ oo::class create ::questlog::ui::SessionList {
             # before any input). Drop it from every mode.
             if {!$is_running && ![file isfile $path]} { my forget_session $path; continue }
             # This path is modelled (checked at the loop head), so its scope
-            # fields come from the store, not a Scan.Rows lookup.
+            # fields come straight from the store.
             set row [my payload_scope_row $path]
             # Retain in the model: a matched search row always; a browse row while it is
             # in scope or running. An out-of-scope, non-running browse row leaves.
@@ -3452,10 +3404,9 @@ oo::class create ::questlog::ui::SessionList {
         # A bookmark toggle flips the file's +x bit and then calls here to
         # redraw the one row's marker. The marker is drawn from the payload's
         # bookmarked field (session_bookmarked), so refresh it from the bit
-        # before the redraw: this is the store-side counterpart of Scan's
-        # set_bookmark_field keeping Rows fresh, and it is what lets the glyph
-        # follow a toggle without a re-scan. A retained row (toggled from the
-        # viewer while scoped out) takes the field write and has no marker.
+        # before the redraw: this one write is what lets the glyph follow a
+        # toggle without a re-scan. A retained row (toggled from the viewer
+        # while scoped out) takes the field write and has no marker.
         my sset $path bookmarked [file executable $path]
         if {![my has_session $path]} return
         $Text configure -state normal

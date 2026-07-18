@@ -182,7 +182,6 @@ proc ::questlog::ui::app::start {root {seed {}}} {
     pack $list_frame.tb -side top -fill x
     set SessionList [::questlog::ui::SessionList new $list_frame.s \
         [namespace code folder_cwd] \
-        [namespace code lookup_session] \
         [namespace code on_open] \
         [namespace code on_move_request] \
         [namespace code on_drop_move] \
@@ -552,15 +551,14 @@ proc ::questlog::ui::app::on_filter {snapshot} {
     # wipe); replay_scope re-attaches the ones
     # the new scope admits, applying the same pure predicate
     # (::questlog::scope::row_matches over payload_scope_row's fields) that
-    # on_scan_row applies as its admission gate. No disk and no Rows: the
-    # widget's node store is the memo now, and $Scan query survives only as
-    # the Rows mirror's own walk until Wave 4b deletes both. Model membership
+    # on_scan_row applies as its admission gate. No disk: the widget's node
+    # store is the memo, session data's one in-memory home. Model membership
     # is the scope's question alone; the list-view filters only decide which
     # in-model rows paint (the engine's attr_admits), so a scope change under
     # running-only repopulates like any other and untoggling shows the full
     # corpus instantly. With criteria active the list is built from matches
     # (replay_scope attaches nothing), but the scan still runs so Search has
-    # a corpus and lookup_session resolves rows.
+    # a corpus to stage rows from.
     $SessionList replay_scope
     set ScanActive 1
     $Scan extend $snapshot
@@ -604,28 +602,29 @@ proc ::questlog::ui::app::on_filter {snapshot} {
 proc ::questlog::ui::app::on_scan_row {row} {
     variable SessionList
     $SessionList on_scan_row $row
-    # Queue a cost task only for rows that don't yet carry one. A
-    # memoised row republished on a filter change already has its cost.
-    if {![dict exists $row cost_usd]} {
-        start_cost_one [dict get $row path]
+    # Queue a cost task only when the store does not already price this row.
+    # A scan row carries no cost fields of its own (and a search republish
+    # of an unchanged file carries nothing the store lacks), so the store's
+    # copy - written by the row landing just above - is what says whether the
+    # pass already ran; a changed file re-enters costless and is re-priced.
+    set path [dict get $row path]
+    if {![dict exists $row cost_usd] && [$SessionList stored_cost $path] eq ""} {
+        start_cost_one $path
     }
 }
 
-# Cost-pass worker callback. Merge into the in-memory row immediately so Rows
-# stays current for lookups and memoisation, then render the visible card.
-# SessionList::refresh_cost is the only path that touches the rendered meta
-# region, folder aggregate, and total.
+# Cost-pass worker callback. SessionList::refresh_cost is the only path that
+# touches the store's cost fields, the rendered meta region, folder aggregate,
+# and total.
 #
 # Under cost_render=coalesced (the default) the visible render is buffered and
 # flushed in one pass every cost_coalesce_ms, so a flood of worker results does
 # not churn the list (each render is a main-thread text mutation) while the user
 # interacts. immediate restores the per-result render.
 proc ::questlog::ui::app::on_cost_result {path cost_dict} {
-    variable Scan
     variable SessionList
     variable CostPending
     variable CostFlushTimer
-    $Scan update_cost $path $cost_dict
     if {[::questlog::config::get cost_render] eq "immediate"} {
         $SessionList refresh_cost $path $cost_dict
         return
@@ -922,12 +921,12 @@ proc ::questlog::ui::app::on_open {path lineno} {
 # dialog excludes the source's own folder only when exactly one session is
 # moved; a group may span folders, so no folder is excluded then.
 proc ::questlog::ui::app::on_move_request {paths} {
-    variable Scan
+    variable SessionList
     set current_folder ""
     if {[llength $paths] == 1} {
-        set row [$Scan lookup [lindex $paths 0]]
-        if {$row eq ""} return
-        set current_folder [dict get $row folder]
+        set p [lindex $paths 0]
+        if {[$SessionList session_node $p] eq ""} return
+        set current_folder [$SessionList sget $p folder]
     }
     ::questlog::ui::move_dialog::open . [llength $paths] $current_folder \
         [list [namespace current]::on_picker_done $paths] \
@@ -943,15 +942,14 @@ proc ::questlog::ui::app::on_picker_done {paths dst_cwd} {
 # quits. A live session cannot be moved; the move dialog blocks on this.
 proc ::questlog::ui::app::live_move_names {paths} {
     variable Running
-    variable Scan
+    variable SessionList
     set out [list]
     foreach p $paths {
         if {![dict exists $Running [file rootname [file tail $p]]]} continue
-        set row [$Scan lookup $p]
         set name ""
-        if {$row ne ""} {
-            set name [dict getdef $row slug ""]
-            if {$name eq ""} { set name [dict getdef $row first_user ""] }
+        if {[$SessionList session_node $p] ne ""} {
+            set name [$SessionList sget $p slug]
+            if {$name eq ""} { set name [$SessionList sget $p first_user] }
         }
         if {$name eq ""} { set name [file rootname [file tail $p]] }
         lappend out $name
@@ -996,7 +994,6 @@ proc ::questlog::ui::app::do_move_batch {paths dst_cwd} {
 # reaches do_move_batch).
 proc ::questlog::ui::app::move_one {src_path dst_cwd} {
     variable SessionList
-    variable Scan
     variable Running
     # A live session must not be moved: renaming its jsonl out from under the
     # running process splits the transcript. The move dialog disables Move while
@@ -1011,7 +1008,6 @@ proc ::questlog::ui::app::move_one {src_path dst_cwd} {
     }
     set new_path [::questlog::path::move_session $src_path $dst_cwd]
     set new_folder [::questlog::path::encode_cwd $dst_cwd]
-    $Scan relocate_row $src_path $new_path
     $SessionList relocate_card $src_path $new_path $new_folder
 }
 
@@ -1020,10 +1016,9 @@ proc ::questlog::ui::app::move_one {src_path dst_cwd} {
 # Toggle the +x bookmark bit on the session file. Path comes fresh from the
 # clicked session, so it is current; a moved/deleted file fails the sink
 # guard and is reported rather than crashing. The bit is the truth: flip it,
-# refresh the cached field, then re-derive that one row's marker immediately
-# so the user sees it without waiting for a tick.
+# then reconcile_one re-derives the store's cached field and that one row's
+# marker immediately so the user sees it without waiting for a tick.
 proc ::questlog::ui::app::on_bookmark_toggle {path} {
-    variable Scan
     variable SessionList
     if {[file executable $path]} {
         set rc [catch {::questlog::path::clear_bookmark $path} err]
@@ -1035,7 +1030,6 @@ proc ::questlog::ui::app::on_bookmark_toggle {path} {
             -message "Bookmark failed: $err"
         return
     }
-    $Scan set_bookmark_field $path
     $SessionList reconcile_one $path
 }
 
@@ -1045,7 +1039,6 @@ proc ::questlog::ui::app::on_bookmark_toggle {path} {
 # once. Each successful flip refreshes its cached field and re-derives that
 # row's marker, like the single toggle.
 proc ::questlog::ui::app::on_bookmark_set {paths} {
-    variable Scan
     variable SessionList
     set add 0
     foreach p $paths { if {![file executable $p]} { set add 1; break } }
@@ -1056,7 +1049,6 @@ proc ::questlog::ui::app::on_bookmark_set {paths} {
             lappend failures "[file tail $p]: $err"
             continue
         }
-        $Scan set_bookmark_field $p
         $SessionList reconcile_one $p
     }
     if {[llength $failures] > 0} {
@@ -1080,11 +1072,11 @@ proc ::questlog::ui::app::on_rename_request {path} {
     set entered [prompt_rename $current $uuid]
     if {$entered eq "<cancelled>"} return
     set slug [::questlog::rename::apply $path $entered]
-    # Re-scan into the model so the new title is fresh everywhere. scan_path
-    # refreshes Scan's Rows cache, which reconcile_running reads (via lookup) to
-    # re-surface a session that was renamed, quit, then run again - without this
-    # that path would re-add the row with its cached pre-rename title. refresh_row
-    # then redraws the row if it is currently shown.
+    # Re-scan into the model so the new title is fresh everywhere: the rename
+    # appended records and moved the mtime, so the published row freshens the
+    # store's copy, and a session that is renamed, quit, then run again
+    # re-surfaces under its new title. refresh_row then redraws the row if it
+    # is currently shown.
     on_scan_path $path
     $SessionList refresh_row $path $slug
 }
@@ -1161,23 +1153,24 @@ proc ::questlog::ui::app::track_rename_ok {dlg uuid} {
     set RenamePoll [after 300 [list [namespace current]::track_rename_ok $dlg $uuid]]
 }
 
-# Synchronously scan one file into Rows, for the reconciler to surface a
-# running session that the windowed scan has not reached.
+# Synchronously scan one file and publish it through the row stream, for the
+# reconciler to surface a running session that the windowed scan has not
+# reached.
 proc ::questlog::ui::app::on_scan_path {path} {
     variable Scan
     return [$Scan scan_path $path]
 }
 
 # A session's subagents as child row dicts, for the list to render under it on
-# expand (issue #13). A pure read; children never enter Rows.
+# expand (issue #13). A pure read; children live only in the list's model.
 proc ::questlog::ui::app::on_subagents {path} {
     variable Scan
     return [$Scan subagents_for $path]
 }
 
-# Trigger the cost second pass for one subagent file. The result returns through
-# on_cost_result; update_cost no-ops there (the child is not in Rows) and the
-# session list's refresh_cost routes it to the child row.
+# Trigger the cost second pass for one subagent file. The result returns
+# through on_cost_result, and the session list's refresh_cost routes it to
+# the child row.
 proc ::questlog::ui::app::on_subagent_cost {path} {
     start_cost_one $path
 }
@@ -1193,11 +1186,6 @@ proc ::questlog::ui::app::on_subagent_cost {path} {
 proc ::questlog::ui::app::folder_cwd {folder} {
     variable Scan
     return [$Scan folder_cwd $folder]
-}
-
-proc ::questlog::ui::app::lookup_session {path} {
-    variable Scan
-    return [$Scan lookup $path]
 }
 
 # The scan's differential-skip memory: the mtime the session list's store
@@ -1232,10 +1220,10 @@ proc ::questlog::ui::app::quit {} {
     #    flush timers), anything armed without a recorded id, and anything
     #    the widget teardown just armed.
     foreach id [after info] { after cancel $id }
-    # 3. Stop the cost pass before tearing down Scan: a worker result still
-    #    in flight would otherwise reach on_cost_result -> $Scan update_cost
-    #    after the object is gone. The epoch bump makes on_worker_result
-    #    drop those results.
+    # 3. Stop the cost pass before the window's objects go: a worker result
+    #    still in flight would otherwise reach on_cost_result after the
+    #    session list is gone. The epoch bump makes on_worker_result drop
+    #    those results.
     cancel_cost
     # 4. Objects last; their leash destructors cancel their own arms.
     if {[info exists Search] && $Search ne ""} { catch {$Search destroy} }

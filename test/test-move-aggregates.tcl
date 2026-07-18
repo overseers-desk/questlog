@@ -1,11 +1,10 @@
 #!/usr/bin/env wish9.0
-# A drag-move relocates a session between two project folders through the exact
-# path the GUI takes (app::move_one -> Scan relocate_row + SessionList
-# relocate_card). One incomplete operation used to show twice: relocate_row
-# re-emitted the row through OnRow, so on_scan_row built a second node under the
-# new path (one key, two nodes, a row painted twice), and relocate_card moved the
-# node without carrying the folder count/size/cost across, so the source heading
-# kept its old totals over the wrong set of rows.
+# A drag-move relocates a session between two project folders through the
+# exact path the GUI takes (app::move_one -> SessionList relocate_card, the
+# one store move). The faults this guards against: a second node built under
+# the new path (one key, two nodes, a row painted twice), and a move that
+# leaves the folder count/size/cost behind, so the source heading keeps its
+# old totals over the wrong set of rows.
 #
 # This drives real moves and asserts the store stays a bijection with correct
 # aggregates: one node for the moved path, both folders' totals right, an emptied
@@ -65,12 +64,11 @@ file mtime $b1 [clock scan "2026-05-22 09:01:00" -gmt 1]
 
 set SL ""
 set ::Scan [::questlog::Scan new [list apply {{r} { $::SL on_scan_row $r }}] noop]
-proc lookup {path}   { return [$::Scan lookup $path] }
 proc scanpath {path} { return [$::Scan scan_path $path] }
 proc resolvef {f}    { return "/tmp/proj" }
 proc subagentsf {path} { return [$::Scan subagents_for $path] }
 
-set SL [::questlog::ui::SessionList new .s resolvef lookup noop noop noop noop noop \
+set SL [::questlog::ui::SessionList new .s resolvef noop noop noop noop noop \
             noop scanpath noop subagentsf noop]
 pack .s -fill both -expand 1
 
@@ -78,7 +76,6 @@ pack .s -fill both -expand 1
 # live objects in so the real move path runs unchanged (guard included).
 namespace eval ::questlog::ui::app {
     variable SessionList $::SL
-    variable Scan        $::Scan
     variable Running     [dict create]
 }
 

@@ -1,13 +1,11 @@
 #!/usr/bin/env wish9.0
-# The store is the memo for scanned-but-not-shown rows (Wave 4a). A session
-# that leaves the current scope - the window narrows, a running import stops -
-# is retained as a detached node, not forgotten; widening the scope replays it
-# from the store with NO disk re-scan, and every hydration site (search
-# results, the running import) re-attaches the retained copy before it would
-# read Scan's Rows mirror. This test instruments scan_one and the lookup
-# callback to prove the negatives (no scan, no mirror read), and drives the
-# audit - with the Rows dict passed for the coverage cross-check - after every
-# step.
+# The store is the memo for scanned-but-not-shown rows. A session that leaves
+# the current scope - the window narrows, a running import stops - is retained
+# as a detached node, not forgotten; widening the scope replays it from the
+# store with NO disk re-scan, and every hydration site (search results, the
+# running import) re-attaches the retained copy. This test instruments
+# scan_one to prove the negative (no disk read), and drives the audit after
+# every step.
 
 package require Tcl 9
 package require Tk
@@ -65,17 +63,15 @@ set SL ""
 # wires it: known_mtime answers from the widget's retained copy.
 set ::Scan [::questlog::Scan new [list apply {{r} { $::SL on_scan_row $r }}] noop \
     {} {} [list apply {{p} { $::SL stored_mtime $p }}]]
-# The two instruments: every disk scan and every Rows-mirror read is counted,
-# so a step that claims "from the store" proves it by both staying flat.
+# The instrument: every disk scan is counted, so a step that claims "from
+# the store" proves it by the count staying flat.
 set ::SCANS 0
 oo::objdefine $::Scan method scan_one {path} { incr ::SCANS; next $path }
-set ::LOOKUPS 0
-proc lookup {path}   { incr ::LOOKUPS; return [$::Scan lookup $path] }
 proc scanpath {path} { return [$::Scan scan_path $path] }
 proc resolvef {f}    { return "/tmp/proj" }
 proc subagentsf {path} { return [$::Scan subagents_for $path] }
 
-set SL [::questlog::ui::SessionList new .s resolvef lookup noop noop noop noop noop \
+set SL [::questlog::ui::SessionList new .s resolvef noop noop noop noop noop \
             noop scanpath noop subagentsf noop]
 pack .s -fill both -expand 1
 
@@ -105,7 +101,7 @@ check "three sessions scanned from disk" $::SCANS 3
 check "A attached" [$SL has_session $Ap] 1
 check "B attached" [$SL has_session $Bp] 1
 check "C attached" [$SL has_session $Cp] 1
-check "audit clean after the stream" [$SL audit [$Scan rows]] {}
+check "audit clean after the stream" [$SL audit] {}
 
 # --- 2. Narrow to 24h: B and C leave the tree into retention, not oblivion.
 set ::SCANS 0
@@ -116,13 +112,12 @@ check "B out of the tree" [$SL has_session $Bp] 0
 check "B retained in the store" [$SL has_retained $Bp] 1
 check "C retained in the store" [$SL has_retained $Cp] 1
 check "C's emptied folder left the tree" [$SL has_folder -tmp-ret-p2] 0
-check "audit clean after the narrow" [$SL audit [$Scan rows]] {}
+check "audit clean after the narrow" [$SL audit] {}
 
 # --- 3. A cost arrival for a retained row lands in its payload, so the row
 # comes back priced.
 $SL refresh_cost $Bp [dict create cost_usd 1.25 turns 4 duration_secs 60 \
     human_secs 20 model "claude-3-5-sonnet-20241022" context_pct 12]
-$Scan update_cost $Bp [dict create cost_usd 1.25 turns 4]
 check "retained row took the cost write" [$SL sget $Bp cost] 1.25
 
 # --- 4. Widen back: the store replays; disk is not read.
@@ -135,18 +130,18 @@ check "C's folder returned" [$SL has_folder -tmp-ret-p2] 1
 check "B kept its cost across retention" [$SL sget $Bp cost] 1.25
 check "B's folder aggregate carries the cost" [$SL fget -tmp-ret-p1 cost] 1.25
 check "no background error across the round trip" $::bgerr ""
-check "audit clean after the widen" [$SL audit [$Scan rows]] {}
+check "audit clean after the widen" [$SL audit] {}
 
 # --- 5. Search staging: under active criteria the scan stream feeds the memo,
-# and a search result hydrates from it without touching the Rows mirror.
+# and a search result hydrates from it without a disk read.
 $SL apply_filter [dict create since 30d search b-first search_case 0]
 check "criteria cleared the tree" [$SL has_session $Bp] 0
 check "criteria kept the retention" [$SL has_retained $Bp] 1
-$SL on_scan_row [$Scan lookup $Bp]   ;# the scan stream during a search: staged
-set ::LOOKUPS 0
+$Scan scan_path $Bp                  ;# the scan stream during a search: staged
+set ::SCANS 0
 $SL add_session_matches [list [dict create path $Bp folder -tmp-ret-p1 \
     btype user content "b-first hit" lineoff 1]]
-check "search result hydrated without a mirror read" $::LOOKUPS 0
+check "search result hydrated without a disk read" $::SCANS 0
 check "search result attached from the store" [$SL has_session $Bp] 1
 check "hydrated result kept its cost" [$SL sget $Bp cost] 1.25
 check "audit clean under criteria" [$SL audit] {}
@@ -158,20 +153,19 @@ check "search-clear re-scanned nothing" $::SCANS 0
 check "all three back in browse" \
     [list [$SL has_session $Ap] [$SL has_session $Bp] [$SL has_session $Cp]] {1 1 1}
 check "replayed row carries no stale match count" [$SL sget $Bp count] 0
-check "audit clean after the search clears" [$SL audit [$Scan rows]] {}
+check "audit clean after the search clears" [$SL audit] {}
 
 # --- 7. The running import under a narrow scope restores from the store, and
 # a session that stops running retires back into it.
 set ::SCANS 0
 switch_scope [dict create since 24h]
-set ::LOOKUPS 0
 $SL reconcile_running [dict create bbbb $Bp]
 check "running import restored the retained row" [$SL has_session $Bp] 1
-check "the import read no mirror and no disk" [list $::LOOKUPS $::SCANS] {0 0}
+check "the import read no disk" $::SCANS 0
 $SL reconcile_running [dict create]
 check "stopped session retired, not forgotten" \
     [list [$SL has_session $Bp] [$SL has_retained $Bp]] {0 1}
-check "audit clean after the running round trip" [$SL audit [$Scan rows]] {}
+check "audit clean after the running round trip" [$SL audit] {}
 
 ::questlog::path::_real_file delete -force $SAND
 puts [expr {$fails ? "FAILED ($fails)" : "PASS"}]
