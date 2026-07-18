@@ -489,9 +489,6 @@ proc ::querybuilder::getdef {d key dflt} {
 #             editor that binds Escape itself is answered first, and a binding
 #             that destroys its window ends the delivery.
 #
-# Chip text comes from the facet's optional `format` command; absent, the chip
-# shows the raw value.
-#
 # Limits. Every value can be removed and every facet can be edited: there is no locked
 # value, no read-only state and no disabled facet.
 #
