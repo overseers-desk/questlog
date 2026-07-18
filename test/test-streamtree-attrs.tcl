@@ -273,7 +273,7 @@ refused "build_filters refuses a side that is neither left nor right" {
 
 # ---- the enum popover, and the roster refresh ---------------------------
 
-$h open_enum_popover colour
+$h open_enum_popover colour $W.filters.attr_colour
 update
 set pf .streamtree_attrpop.f
 check "the popover offers one checkbutton per roster value" 3 \
@@ -283,7 +283,7 @@ check "the popover carries select-all and select-none" 1 \
 $h close_enum_popover
 # A value the provider gains after the popover last drew appears the next open.
 lappend ::ROSTER purple
-$h open_enum_popover colour
+$h open_enum_popover colour $W.filters.attr_colour
 update
 check "a value added to the roster appears on the next open" 4 \
     [llength [lsearch -all -inline [winfo children $pf] $pf.v*]]
@@ -312,7 +312,7 @@ check "the check control took the named check style" HostCheck.TCheckbutton \
     [$W.styled.attr_ripe cget -style]
 check "the menubutton took the named menu style" HostMenu.TMenubutton \
     [$W.styled.attr_colour cget -style]
-$h open_enum_popover colour
+$h open_enum_popover colour $W.styled.attr_colour
 update
 check "a popover value took the named popcheck style" HostPop.TCheckbutton \
     [$pf.v0 cget -style]

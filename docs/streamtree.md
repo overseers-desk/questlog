@@ -115,13 +115,13 @@ The engine renders every visible row into the text widget (no virtualization); c
 
 To a screen reader the widget presents as one text area, not a tree of rows and columns; assistive-technology structure (row navigation, expansion state) is not exposed. Cell editing, checkbox columns, and type-ahead are not built in; a host can assemble them from embedded windows, row tags, and key bindings.
 
-## DECLARATIVE ATTRIBUTES (1.1.0)
+## DECLARATIVE ATTRIBUTES
 
 A consumer declares attributes on its rows: an id, a kind (bool or enum), a
 label, an optional glyph, and whether a reader may filter on it. A glyphed
 bool draws as a subject-prefix mark; a glyphless one as a check-mark column.
 Filter controls build into a frame the host owns (a checkbutton per bool, a
-stay-open checklist per enum with select all and none); an enum filter is a
+stay-open combobox-style popdown per enum with select all and none, dismissed by a click outside, Escape, or the window moving); an enum filter is a
 set of excluded values. Values reach the engine only through the attr_value
 hook. The filter layer hides through a ledger of its own hides and composes
 with the consumer's: a node shows only when nobody hides it. The module

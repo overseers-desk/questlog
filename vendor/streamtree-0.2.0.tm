@@ -1,6 +1,6 @@
 package require Tcl 9
 package require Tk
-package provide streamtree 1.2a1
+package provide streamtree 0.2.0
 
 namespace eval ::streamtree {}
 
