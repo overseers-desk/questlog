@@ -109,6 +109,33 @@ check "freshened row is re-priced from scratch" [$SL sget $Ap cost] ""
 check "no background error" $::bgerr ""
 check "audit clean after the attached freshen" [$SL audit] {}
 
+# --- 2b. A selected, pinned, anchored running row is the common freshen case:
+# the periodic rescan freshens it, and the retire/restore trip must not lose its
+# place in the selection model. Set the three, change A on disk, re-extend so
+# freshen_attached runs, and assert all three survive.
+proc slvar {name} { global SL; set ns [info object namespace $SL]; return [set ${ns}::$name] }
+$SL selection_set $Ap
+set NS [info object namespace $SL]
+namespace eval $NS { dict set Pinned $::Ap 1 }
+check "A selected before the freshen" [$SL is_selected $Ap] 1
+check "A pinned before the freshen" [dict exists [slvar Pinned] $Ap] 1
+check "A is the anchor before the freshen" [slvar SelectAnchor] $Ap
+# The trigger is a periodic rescan on the unchanged snapshot - no scope switch,
+# so no clear - and A is already attached, so its changed file streams straight
+# into freshen_attached's retire/restore trip.
+write_session $Ap {a-first a-second a-third a-fourth} [expr {$NOW - 2000}]
+file mtime $Ap [expr {$NOW - 2000}]
+set ::scan_done 0
+$::Scan extend [dict create since 30d]
+after 300 [list set ::scan_done 1]
+vwait ::scan_done
+update
+check "the freshen landed the new turn count" [$SL sget $Ap nturns] 4
+check "A stays selected across the freshen" [$SL is_selected $Ap] 1
+check "A stays pinned across the freshen" [dict exists [slvar Pinned] $Ap] 1
+check "A stays the anchor across the freshen" [slvar SelectAnchor] $Ap
+check "audit clean after the selected freshen" [$SL audit] {}
+
 # --- 3. Under active criteria the rows are retained detached; a change on
 # disk still freshens the retained copy through freshen_from_row.
 $SL apply_filter [dict create since 30d search b-first search_case 0]

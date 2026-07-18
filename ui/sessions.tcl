@@ -924,8 +924,18 @@ oo::class create ::questlog::ui::SessionList {
         if {[dict getdef $row mtime 0] == [my sget $path mtime 0]} return
         $Text configure -state normal
         my anchor_save
+        # retire_session drops the row from the selection model and blanks the
+        # anchor, and restore_session does not re-add it - so a freshen of a
+        # selected running row would silently deselect it. Carry the three
+        # across the trip, the way relocate_card carries them across a move.
+        set was_selected [dict exists $SelectedSet $path]
+        set was_pinned [dict exists $Pinned $path]
+        set was_anchor [expr {$SelectAnchor eq $path}]
         my retire_session $path
         my restore_session $path $row
+        if {$was_selected} { dict set SelectedSet $path 1 }
+        if {$was_pinned} { dict set Pinned $path 1 }
+        if {$was_anchor} { set SelectAnchor $path }
         my anchor_restore
         $Text configure -state disabled
         my schedule_resort
