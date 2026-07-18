@@ -398,10 +398,9 @@ proc ::questlog::jsonl::fmt_gap {minutes} {
 # (::questlog::ui::Viewer render_record) and the markdown export
 # (::questlog::markdown::export_session) both walk a session jsonl a record at a
 # time and both draw the same three cues off it - a compaction boundary, an
-# empty-body clock advance, and an idle gap between content records. They used to
-# spell that logic out twice, line for line, which is exactly the drift issue #31
-# set out to end: this proc is the single classifier both fold over, so a change
-# to when a divider fires can no longer land in one surface and miss the other.
+# empty-body clock advance, and an idle gap between content records. This proc
+# is the single classifier both fold over (issue #31), so a change to when a
+# divider fires lands on both surfaces at once.
 #
 # Given a parsed record, `last_ts` (the epoch of the most recent CONTENT record,
 # 0 when none has been seen yet), and the idle-gap threshold in minutes, return

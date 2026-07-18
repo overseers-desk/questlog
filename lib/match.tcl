@@ -4,12 +4,11 @@ package require json
 # ::questlog::match - the pure record-matching and snippet-formatting logic of
 # search, shared verbatim by the main interpreter and the search worker threads.
 #
-# A worker is a separate interp with no reach into the parent's procs, so this
-# logic used to be hand-copied into a worker script string kept "in sync" with
-# the originals by comment. Instead both sides source this one file (with
-# lib/jsonl.tcl, which it leans on for the block/tool walk), so there is one
-# copy and no drift. Nothing here touches Tk, TclOO or Thread; scan_file reads a
-# file and json-parses lines, the rest is string work on already-parsed records.
+# A worker is a separate interp with no reach into the parent's procs, so both
+# sides source this one file (with lib/jsonl.tcl, which it leans on for the
+# block/tool walk): one copy, no drift. Nothing here touches Tk, TclOO or
+# Thread; scan_file reads a file and json-parses lines, the rest is string work
+# on already-parsed records.
 #
 # The five display caps the matchers honour live in ::questlog::config, which a
 # worker cannot read, so they are injected once through set_caps - from config
@@ -192,7 +191,7 @@ proc ::questlog::match::op_toolset {op} {
 # region set. regions is a list of block types (user, assistant, tool_use,
 # tool_result); the empty list is unrestricted - any block type, including the
 # system/compaction blocks the four named regions exclude. Empty is the default,
-# so an unqualified needle searches everywhere, as the old "anywhere" scope did.
+# so an unqualified needle searches everywhere.
 proc ::questlog::match::btype_in_regions {btype regions} {
     return [expr {$regions eq "" || $btype in $regions}]
 }

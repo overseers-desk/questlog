@@ -11,8 +11,8 @@ package require Tcl 9
 # so all of that flows through into the exported markdown alongside the prose.
 #
 # Segmentation runs off ::questlog::jsonl::transcript_step, the single classifier
-# the viewer folds over too (issue #31), so the two can no longer disagree on
-# where a session breaks. This export only formats the cues the step hands back:
+# the viewer folds over too (issue #31), so the two cannot disagree on where a
+# session breaks. This export only formats the cues the step hands back:
 #   primary   - a compact_boundary record ({compact}) opens a "## --- /compact
 #               ---" heading and resets the clock.
 #   secondary - a silence of viewer_idle_gap_min minutes or more between content

@@ -3,12 +3,10 @@ package require Tcl 9
 # ::questlog::config - the single home for every tunable value.
 #
 # The numbers that govern the trade-off between scan/search throughput and UI
-# responsiveness used to sit as bare literals at the point of use: the yield
-# cadence in scan.tcl, the debounce interval in toolbar.tcl, the worker counts
-# in search.tcl and cost.tcl. To find the best feel meant hunting each one.
-# Here every knob is named once, with a
-# line saying what it does and which way it leans, so the whole tuning surface
-# is read and changed in one file.
+# responsiveness - the yield cadence scan.tcl reads, the debounce interval
+# toolbar.tcl reads, the worker counts for search.tcl and cost.tcl - are each
+# named once here, with a line saying what it does and which way it leans, so
+# the whole tuning surface is read and changed in one file.
 #
 # Same shape as ::questlog::ui::theme: a single dict and a `get` accessor that
 # errors loudly on an unknown key, so a typo surfaces at startup. No class -
@@ -124,8 +122,8 @@ namespace eval ::questlog::config {
     # The "min turns" scope filter. The scanner counts a session's user turns
     # up to turn_count_cap (so a row's recorded nturns saturates there, and the
     # spinbox max is this cap); the spinbox spans 1..turn_count_cap.
-    # min_turns_default is the GUI's startup value - 2 keeps the old "exclude
-    # one-turn sessions" default - while 1 means no filter (include all).
+    # min_turns_default is the GUI's startup value - 2 excludes one-turn
+    # sessions - while 1 means no filter (include all).
     dict set Config turn_count_cap   9
     dict set Config min_turns_default 2
 

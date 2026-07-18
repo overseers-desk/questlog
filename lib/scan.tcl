@@ -3,11 +3,10 @@ package require TclOO
 
 # ::questlog::Scan - in-memory, coroutine-driven, memoised session scanner.
 #
-# Replaces the previous sqlite-cached design. Each launch builds the row
-# table fresh by line-streaming each jsonl with Tcl regex (no jq, no
-# subprocess). Within one process the table is memoised across recency-bound
-# changes: tightening the since bound narrows in O(rows), widening it scans
-# only the delta.
+# Each launch builds the row table fresh by line-streaming each jsonl with
+# Tcl regex (no jq, no subprocess, no on-disk cache). Within one process the
+# table is memoised across recency-bound changes: tightening the since bound
+# narrows in O(rows), widening it scans only the delta.
 #
 # Single-instance by current convention, not by structural constraint.
 # The class earns its existence under issue 67 on (a) named globals

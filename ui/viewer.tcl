@@ -113,8 +113,8 @@ oo::class create ::questlog::ui::Viewer {
     variable CopyLast
     variable CopyFbTok
     # Docked index band above the transcript: one collapsible pane whose content
-    # switches between the match index and the tool-call timeline. It replaces the
-    # two floating panels that used to cover the reading view.
+    # switches between the match index and the tool-call timeline. Docked, it
+    # takes its height from the split and never covers the reading view.
     variable Band             ;# the band frame, the body split's top pane while open
     variable BandTab          ;# "turns"|"matches"|"tools"|"quotes": which list the band shows
     variable BandOpen         ;# 1 while the band pane is present (taking transcript height)
@@ -232,7 +232,7 @@ oo::class create ::questlog::ui::Viewer {
     method show {jsonl_path {scroll_to_line 0} {query {}}} {
         # Leaving a session mid-stream detaches its turn (it finishes on disk and
         # reloads on next open) and folds the prompt bar away, like find_hide.
-        # The bar is reset for the new session; a detached run no longer touches
+        # The bar is reset for the new session; a detached run never touches
         # it, so its eventual finish cannot re-enable or clear the wrong session.
         my resume_detach
         my prompt_hide
@@ -974,7 +974,7 @@ oo::class create ::questlog::ui::Viewer {
     # The per-record cues - compact boundary, empty-body clock advance, idle
     # gap - come from ::questlog::jsonl::transcript_step, the one classifier
     # this method and the markdown export both fold over (issue #31), so a
-    # divider rule can no longer land in one surface and miss the other. The
+    # divider rule lands on both surfaces at once. The
     # step owns classification and the clock only: every glyph and tag, the
     # in_section tracking, the section headers and the label/body rendering
     # stay here. The caller holds $Text in -state normal.

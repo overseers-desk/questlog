@@ -523,7 +523,7 @@ proc ::questlog::ui::app::on_filter {snapshot} {
     # A republish whose scope and search keys all match the last one changed
     # nothing that decides which sessions load, so the rebuild below would only
     # reproduce what is already shown. Skip it, keeping the list and its selection.
-    # The list-view filters no longer come this way: they live on the list strip
+    # The list-view filters do not ride the snapshot: they live on the list strip
     # and re-filter the loaded rows in place, telling the app through on_filter_change.
     if {$PrevSnapshot ne {} && [scope_equal $PrevSnapshot $snapshot]} {
         set PrevSnapshot $snapshot

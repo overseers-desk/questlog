@@ -6,10 +6,9 @@ package require Tcl 9
 # recency bounds, the subtree scope, and the min-turns floor - is one
 # question with one answer, asked by both the model (Scan, when it decides
 # which memoised rows the snapshot admits) and the view (SessionList, when it
-# reconciles which rows stay shown). The cutoff computation and the
-# subtree-scope predicate used to live in both, so the model logic was mirrored
-# into the view. These procs are that one answer; Scan and SessionList call
-# them rather than each carrying a copy. The view filters (running, bookmarked,
+# reconciles which rows stay shown). These procs are that one answer; Scan and
+# SessionList call them rather than each carrying a copy of the cutoff
+# computation and the subtree predicate. The view filters (running, bookmarked,
 # model) are a separate question with a separate home, the list engine's
 # attribute filters: they shape which in-scope rows the list shows, not which
 # rows are in scope at all.

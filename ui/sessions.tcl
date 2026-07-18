@@ -277,8 +277,8 @@ oo::class create ::questlog::ui::SessionList {
     #
     # Folder/session/subagent operations name their target by domain key
     # (folder name or file path). These shims turn that key into a node id and
-    # read or write the structural and payload fields, so the bodies below read
-    # the same way they did against the old per-entity dicts.
+    # read or write the structural and payload fields, so the bodies below
+    # speak the domain vocabulary and never touch node ids directly.
 
     method has_session {path} { return [dict exists $PathNode $path] }
     method has_child {path}   { return [dict exists $PathNode $path] }
@@ -1837,7 +1837,7 @@ oo::class create ::questlog::ui::SessionList {
     method redraw_header {path} {
         # item rewrites the session line in place, re-pinning the right-gravity
         # start mark; the selection re-paint rides on_row_rendered's wiring being
-        # untouched, so re-add the selection tag here as the old rewrite did.
+        # untouched, so re-add the selection tag here.
         set sid [my sid $path]
         my item $sid
         if {[my node_field $sid rendered] && [my is_selected $path]} {
@@ -1888,8 +1888,8 @@ oo::class create ::questlog::ui::SessionList {
 
     method redraw_folder_heading {folder} {
         if {![my has_folder $folder]} return
-        # item rewrites the heading line in place; a detached folder is unrendered,
-        # so item no-ops, which is the old folder_attached guard.
+        # item rewrites the heading line in place; a detached folder is
+        # unrendered, so item no-ops and the detached case guards itself.
         my item [my fid $folder]
         # item drops every tag on the re-laid line, including the folder selection
         # highlight; re-add it from membership, the way redraw_header does.

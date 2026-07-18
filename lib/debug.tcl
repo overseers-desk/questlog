@@ -3,11 +3,9 @@ package require Tcl 9
 # ::questlog::debug - an opt-in diagnostic log, off unless the launcher saw
 # -debug 1.
 #
-# A previous, unconditional autoscroll logger (::questlog::ui::diag) wrote to
-# /var/local/log/questlog on every run and was removed once issue #4 closed.
-# This is its gated successor: nothing is opened and nothing is written unless
-# the run was started with -debug 1, so a normal launch pays no cost and leaves
-# no file. When enabled it instruments the viewer's fragile spots (the
+# Nothing is opened and nothing is written unless the run was started with
+# -debug 1, so a normal launch pays no cost and leaves no file (the gate issue
+# #4 asked for). When enabled it instruments the viewer's fragile spots (the
 # per-record line keying, the match-index highlight pass, and scroll_to_line
 # resolution) so a future regression there is caught in a log rather than by
 # eye.

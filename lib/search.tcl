@@ -333,11 +333,10 @@ oo::class create ::questlog::Search {
         my cancel
         set clauses [::questlog::search::build_clauses $snapshot]
         if {![::questlog::search::clauses_any $clauses]} {
-            # An empty clause set completes instantly: fire the callbacks the
-            # way the empty-corpus path does, so a caller awaiting OnDone (the
-            # status line, the spinner) never waits on a search that will not
-            # run - a whitespace-only query used to hang the "Searching..."
-            # state forever here.
+            # An empty clause set (e.g. a whitespace-only query) completes
+            # instantly: fire the callbacks the way the empty-corpus path does,
+            # so a caller awaiting OnDone (the status line, the spinner) never
+            # waits on a search that will not run.
             my later 1 [list {*}$OnProgress 0 0 0]
             my later 1 [list {*}$OnDone 0 0]
             return
