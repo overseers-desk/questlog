@@ -3308,8 +3308,10 @@ oo::class create ::questlog::ui::SessionList {
         set cwd [dict getdef $member cwd ""]
         if {$cwd ne ""} { return [::questlog::scope::in_subtree_of $cwd $subtree] }
         set path [dict get $member path]
-        set row [{*}$LookupSession $path]
-        if {$row ne ""} { return [::questlog::scope::row_subtree_match $row $subtree] }
+        if {[my has_session $path]} {
+            return [::questlog::scope::row_subtree_match \
+                        [my payload_scope_row $path] $subtree]
+        }
         return [::questlog::scope::folder_subtree_candidate \
                     [file tail [file dirname $path]] $subtree]
     }
