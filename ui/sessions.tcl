@@ -359,6 +359,35 @@ oo::class create ::questlog::ui::SessionList {
                 lappend probs "folder $folder cost [my fget $folder cost 0.0] != $cst members"
             }
         }
+        # (d) while Scan.Rows and the store both hold session data, the store's
+        # copy of a dual-written field must equal Rows'. Only the fields kept
+        # level synchronously are cross-checked: bookmarked (reconcile_one and
+        # set_bookmark_field fire together on a toggle) and the set-at-scan
+        # identity fields. The aggregating fields (cost, turns) hold different
+        # semantics on each side - the payload sums over subagents, Rows is
+        # own-only - and the cost-arrival fields (tokens, model_breakdown) plus
+        # mtime/nturns update out of step (a coalesced cost flush, a running
+        # session still being written), so comparing them would flag a race,
+        # not a bug. A field Rows does not carry (a synthetic test row) is
+        # skipped: Rows is the authority, and there is nothing to check against.
+        if {$LookupSession ne ""} {
+            foreach fid $Roots {
+                foreach sid [my node_field $fid children] {
+                    if {[my node_field $sid kind] ne "session"} continue
+                    set path [my node_field $sid key]
+                    set row [{*}$LookupSession $path]
+                    if {$row eq ""} continue
+                    foreach f {bookmarked first_user kind folder_cwd cwd_hint} {
+                        if {![dict exists $row $f]} continue
+                        set rv [dict get $row $f]
+                        set pv [my node_pget $sid $f]
+                        if {$pv ne $rv} {
+                            lappend probs "session $path payload $f '$pv' != Rows '$rv'"
+                        }
+                    }
+                }
+            }
+        }
         return $probs
     }
 
