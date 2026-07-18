@@ -115,9 +115,9 @@ check "running glyph rendered under attr-running" ● \
     [$T get [lindex [$T tag ranges attr-running] 0] [lindex [$T tag ranges attr-running] 1]]
 check "bookmark glyph rendered under attr-bookmarked" ★ \
     [$T get [lindex [$T tag ranges attr-bookmarked] 0] [lindex [$T tag ranges attr-bookmarked] 1]]
-check "running glyph takes the running colour" [::questlog::ui::theme::c glyph_running] \
+check "running glyph takes the running colour" [::questlog::ui::theme::c attr_running] \
     [$T tag cget attr-running -foreground]
-check "bookmark glyph takes the bookmark colour" [::questlog::ui::theme::c glyph_bookmark] \
+check "bookmark glyph takes the bookmark colour" [::questlog::ui::theme::c attr_bookmarked] \
     [$T tag cget attr-bookmarked -foreground]
 $SL reconcile_running [dict create]
 update

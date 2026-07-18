@@ -405,12 +405,12 @@ oo::class create ::questlog::ui::SessionList {
         $Text tag configure folderhead \
             -font QLList -foreground [::questlog::ui::theme::c folder] \
             -spacing1 14 -spacing3 3 -wrap none
-        # The status glyphs are engine-rendered attribute prefixes now (running,
+        # The status glyphs are engine-rendered attribute prefixes (running,
         # bookmarked declared as glyphed bools); the engine tags each glyph
-        # attr-<id>, so these dress attr-running / attr-bookmarked in the same
-        # colours the hand-rolled glyph-running / glyph-bookmark tags used to.
-        $Text tag configure attr-running    -foreground [::questlog::ui::theme::c glyph_running]
-        $Text tag configure attr-bookmarked -foreground [::questlog::ui::theme::c glyph_bookmark]
+        # attr-<id>, and these dress the two glyphed attributes in their
+        # theme colours.
+        $Text tag configure attr-running    -foreground [::questlog::ui::theme::c attr_running]
+        $Text tag configure attr-bookmarked -foreground [::questlog::ui::theme::c attr_bookmarked]
         # Session header: one line, the block's "title" (like a search result
         # heading), indented under its folder. Rows are separated by the gap
         # above each and the bold title colour; no background band. The

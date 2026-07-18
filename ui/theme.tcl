@@ -62,8 +62,8 @@ namespace eval ::questlog::ui::theme {
         onboard_fg      #1d1d1d
         onboard_sub     #41597e
         onboard_accent  #1f6eed
-        glyph_running   #3ec25b
-        glyph_bookmark  #d6a30e
+        attr_running    #3ec25b
+        attr_bookmarked #d6a30e
         chip_or         #808080
         crit_subtree_bg   #ece2f5
         crit_subtree_fg   #4a3677
