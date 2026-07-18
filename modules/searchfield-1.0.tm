@@ -5,21 +5,16 @@ package provide searchfield 1.0
 
 namespace eval ::searchfield {}
 
-# One dict read with a default, for call sites without the built-in.
-proc ::searchfield::getdef {d key dflt} {
-    if {[dict exists $d $key]} { return [dict get $d $key] }
-    return $dflt
-}
-
 # The typing grammar, both directions, in one home. split_terms tokenizes as
 # the field does: whitespace separates terms, double quotes group words into
 # one term, and a backslashed double quote is a literal quote wherever it
 # stands. Empty terms are dropped, so a run of spaces or a bare "" adds
 # nothing. join_terms is the inverse: a term holding whitespace is quoted, a
 # literal quote is backslashed, and split_terms over the result returns the
-# terms it was given, so a consumer joining a fragment's terms back into one
-# string (to save it, to show it, to feed a matcher that takes the raw
-# string) loses nothing on the round trip.
+# terms it was given, so joining a fragment's terms into one string and
+# splitting it again loses nothing. A consumer feeding that string to a
+# tokenizer of its own is bound by that tokenizer's grammar, which may not
+# know this one's backslash rule.
 proc ::searchfield::split_terms {s} {
     set out [list]
     set buf ""
