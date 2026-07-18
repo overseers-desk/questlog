@@ -17,8 +17,8 @@ proc ::querybuilder::getdef {d key dflt} {
 # tells its owner whenever a user gesture changes the set. What the criteria
 # are FOR - what they select, restrict or colour - is the owner's business
 # entirely: the builder stores values, draws them, hands them back, and asks
-# nothing about them. It is one half of the shared query contract in
-# docs/query-contract.md, the half that owns the `criteria` key; the other
+# nothing about them. It is one half of the shared query contract
+# (query-contract.md), the half that owns the `criteria` key; the other
 # half is the search field, and neither knows the other.
 #
 # Vocabulary, and the whole of the widget's world view:
@@ -211,7 +211,7 @@ proc ::querybuilder::getdef {d key dflt} {
 # from, re-lays the bar, and lets the error reach the caller with the widget
 # consistent.
 #
-#   The shared idiom (docs/query-contract.md):
+#   The shared idiom (query-contract.md):
 #   fragment              the current fragment: {criteria <criterion dicts>}, in
 #                         facet declaration order then value order. The criteria
 #                         key is always present, applied or not.
