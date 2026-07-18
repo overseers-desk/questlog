@@ -3342,11 +3342,9 @@ oo::class create ::questlog::ui::SessionList {
     # resort, for a folder whose directory is gone.
     method member_name {member} {
         set resolved [dict getdef $member resolved ""]
-        if {$resolved ne ""} {
-            set row [{*}$LookupSession $resolved]
-            if {$row ne "" && [dict getdef $row slug ""] ne ""} {
-                return [dict get $row slug]
-            }
+        if {$resolved ne "" && [my has_session $resolved]} {
+            set slug [my sget $resolved slug]
+            if {$slug ne ""} { return $slug }
         }
         set cwd [dict getdef $member cwd ""]
         if {$cwd eq ""} {
