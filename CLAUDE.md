@@ -3,6 +3,7 @@
 ## Invariants
 
 - A module's folder names its home and its rule: `vendor/` holds pure copies whose home is the teatotal collection, so keep each synced to teatotal's latest and land any change there first; `modules/` holds modules authored here, so changes land here, and where another project vendors one, re-vendor it there in the same act so the copies never diverge. Publishing a module to teatotal moves it from `modules/` to `vendor/` and reverses which way its changes flow, because teatotal is then the one stable place its updates arrive from.
+- A `vendor/` copy is edited in place only to test a change, and that edit is never committed. Once proven, the change lands at the module's home, and the home's file then replaces the vendor copy whole, so `vendor/` history holds only whole-file adds, deletes, and replacements mirroring the home, never a local edit.
 
 ## Verifying GUI changes
 
