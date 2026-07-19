@@ -543,24 +543,8 @@ proc ::questlog::ui::app::on_filter {snapshot} {
     discard_search_buffer
     $SessionList apply_filter $snapshot
 
-    # Replay the store's retained rows that match the new snapshot - Scan
-    # itself remembers no rows (its differential skip answers through
-    # known_mtime), so without this the list stays empty whenever the
-    # snapshot was previously seen (e.g. 24h to 7d) - then extend for
-    # newly-windowed files. apply_filter above retired every loaded row into
-    # the store's detached retention (its clear runs retire_all, not a wipe);
-    # replay_bounds re-attaches the ones the new bounds admit, applying the
-    # same pure predicate
-    # (::questlog::scan::row_in_bounds over payload_bounds_row's fields) that
-    # on_scan_row applies as its admission gate. No disk: the widget's node
-    # store is the memo, session data's one in-memory home. Model membership
-    # is the bounds' question alone; the list-view filters only decide which
-    # in-model rows paint (the engine's attr_admits), so a bounds change under
-    # running-only repopulates like any other and untoggling shows the full
-    # corpus instantly. With criteria active the list is built from matches
-    # (replay_bounds attaches nothing), but the scan still runs so Search has
-    # a corpus to stage rows from.
-    $SessionList replay_bounds
+    # apply_filter wiped the store, so the scan re-streams the new bounds from
+    # disk (a population change pays population's price through the stream).
     set ScanActive 1
     $Scan extend $snapshot
 
@@ -602,14 +586,16 @@ proc ::questlog::ui::app::on_filter {snapshot} {
 
 proc ::questlog::ui::app::on_scan_row {row} {
     variable SessionList
+    variable CriteriaActive
     $SessionList on_scan_row $row
-    # Queue a cost task only when the store does not already price this row.
-    # A scan row carries no cost fields of its own (and a search republish
-    # of an unchanged file carries nothing the store lacks), so the store's
-    # copy - written by the row landing just above - is what says whether the
-    # pass already ran; a changed file re-enters costless and is re-priced.
+    # Under criteria the stream attaches nothing (hydration prices what it
+    # models); otherwise queue a cost task only when the store does not
+    # already price this row - a changed file re-enters costless and is
+    # re-priced.
+    if {$CriteriaActive} return
     set path [dict get $row path]
-    if {![dict exists $row cost_usd] && [$SessionList stored_cost $path] eq ""} {
+    if {![dict exists $row cost_usd] && [$SessionList has_session $path] \
+        && [$SessionList stored_cost $path] eq ""} {
         start_cost_one $path
     }
 }

@@ -1,10 +1,7 @@
 #!/usr/bin/env wish9.0
-# The store is the memo for every scanned row, so re-scan freshness is its
-# duty: when a file changes on disk and the scan re-reads it, the fresh row
-# must land in the store's payload whether the path is attached (browse) or
-# retained detached (under search criteria). The attached row travels
-# retire-then-restore, so folder books and rendering settle with it; the
-# detached copy freshens in place. An unchanged file is never re-read at all
+# When a file changes on disk and the scan re-reads it, the fresh row must
+# land in the attached payload in place (freshen_attached), and the row keeps
+# its place in the selection model. An unchanged file is never re-read at all
 # (the known_mtime skip answers from the store).
 
 package require Tcl 9
@@ -73,10 +70,12 @@ proc check {name got want} {
     }
 }
 
-# The app's bounds-switch sequence: clear-and-retain, replay, extend.
+# The app's bounds-switch sequence: clear, then extend re-streams.
 proc switch_scope {snap} {
     $::SL apply_filter $snap
-    $::SL replay_bounds
+    rescan $snap
+}
+proc rescan {snap} {
     set ::scan_done 0
     $::Scan extend $snap
     after 300 [list set ::scan_done 1]
@@ -91,14 +90,14 @@ check "A holds two turns" [$SL sget $Ap nturns] 2
 $SL refresh_cost $Ap [dict create cost_usd 0.5 turns 2]
 check "A priced" [$SL sget $Ap cost] 0.5
 
-# --- 2. A changes on disk (a turn appended, mtime moved); re-extend. Only A
-# is re-read - B's stored mtime answers the skip - and the attached payload
-# takes the fresh fields.
+# --- 2. A changes on disk (a turn appended, mtime moved); re-extend on the
+# unchanged snapshot. Only A is re-read - B's stored mtime answers the skip -
+# and the attached payload takes the fresh fields in place.
 set old_size [$SL sget $Ap size 0]
 write_session $Ap {a-first a-second a-third} [expr {$NOW - 3000}]
 file mtime $Ap [expr {$NOW - 3000}]
 set ::SCANS 0
-switch_scope [dict create since 30d]
+rescan [dict create since 30d]
 check "only the changed file was re-read" $::SCANS 1
 check "A still attached" [$SL has_session $Ap] 1
 check "attached payload took the new turn count" [$SL sget $Ap nturns] 3
@@ -110,9 +109,9 @@ check "no background error" $::bgerr ""
 check "audit clean after the attached freshen" [$SL audit] {}
 
 # --- 2b. A selected, pinned, anchored running row is the common freshen case:
-# the periodic rescan freshens it, and the retire/restore trip must not lose its
-# place in the selection model. Set the three, change A on disk, re-extend so
-# freshen_attached runs, and assert all three survive.
+# the periodic rescan freshens it and must not lose its place in the selection
+# model. Set the three, change A on disk, re-extend so freshen_attached runs,
+# and assert all three survive.
 proc slvar {name} { global SL; set ns [info object namespace $SL]; return [set ${ns}::$name] }
 $SL selection_set $Ap
 set NS [info object namespace $SL]
@@ -122,44 +121,30 @@ check "A pinned before the freshen" [dict exists [slvar Pinned] $Ap] 1
 check "A is the anchor before the freshen" [slvar SelectAnchor] $Ap
 # The trigger is a periodic rescan on the unchanged snapshot - no bounds switch,
 # so no clear - and A is already attached, so its changed file streams straight
-# into freshen_attached's retire/restore trip.
+# into freshen_attached.
 write_session $Ap {a-first a-second a-third a-fourth} [expr {$NOW - 2000}]
 file mtime $Ap [expr {$NOW - 2000}]
-set ::scan_done 0
-$::Scan extend [dict create since 30d]
-after 300 [list set ::scan_done 1]
-vwait ::scan_done
-update
+rescan [dict create since 30d]
 check "the freshen landed the new turn count" [$SL sget $Ap nturns] 4
 check "A stays selected across the freshen" [$SL is_selected $Ap] 1
 check "A stays pinned across the freshen" [dict exists [slvar Pinned] $Ap] 1
 check "A stays the anchor across the freshen" [slvar SelectAnchor] $Ap
 check "audit clean after the selected freshen" [$SL audit] {}
 
-# --- 3. Under active criteria the rows are retained detached; a change on
-# disk still freshens the retained copy through freshen_from_row.
+# --- 3. Active criteria wipe the store and the scan stream attaches nothing;
+# B changes on disk meanwhile.
 $SL apply_filter [dict create since 30d search b-first search_case 0]
-check "criteria retained B detached" [$SL has_retained $Bp] 1
+check "criteria wiped the model" [$SL has_session $Bp] 0
 write_session $Bp {b-first b-second b-third} [expr {$NOW - 4 * 86400}]
 file mtime $Bp [expr {$NOW - 4 * 86400}]
-set ::SCANS 0
-set ::scan_done 0
-$::Scan extend [dict create since 30d search b-first search_case 0]
-after 300 [list set ::scan_done 1]
-vwait ::scan_done
-update
-check "only the changed file was re-read under criteria" $::SCANS 1
-check "B stayed detached" [$SL has_retained $Bp] 1
-check "detached payload took the new turn count" [$SL sget $Bp nturns] 3
-check "detached payload took the new mtime" [$SL sget $Bp mtime] [expr {$NOW - 4 * 86400}]
-check "audit clean after the detached freshen" [$SL audit] {}
+rescan [dict create since 30d search b-first search_case 0]
+check "the stream models nothing under criteria" [$SL has_session $Bp] 0
+check "audit clean under criteria" [$SL audit] {}
 
-# --- 4. Clearing the criteria replays the freshened copies without a re-read.
-set ::SCANS 0
+# --- 4. Clearing the criteria re-streams from disk with the fresh fields.
 switch_scope [dict create since 30d]
-check "the replay re-read nothing" $::SCANS 0
-check "replayed B carries the fresh turn count" [$SL sget $Bp nturns] 3
-check "audit clean after the replay" [$SL audit] {}
+check "re-streamed B carries the fresh turn count" [$SL sget $Bp nturns] 3
+check "audit clean after the re-stream" [$SL audit] {}
 
 ::questlog::path::_real_file delete -force $SAND
 puts [expr {$fails ? "FAILED ($fails)" : "PASS"}]

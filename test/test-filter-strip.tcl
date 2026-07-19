@@ -239,11 +239,9 @@ $SL attr_filter_set bookmarked 1
 update
 check "bookmarked filter on: only B shows" \
     [list [$SL sflag $Ap rendered] [$SL sflag $Bp rendered] [$SL sflag $Cp rendered]] {0 1 0}
-# Mirror the app's bounds-switch sequence: replay the retained rows the new
-# snapshot admits from the store, then extend for anything newly in bounds.
+# Mirror the app's bounds-switch sequence: clear, then extend re-streams.
 set snap2 [dict create since all min_turns 1]
 $SL apply_filter $snap2
-$SL replay_bounds
 set ::scan_done 0
 $::Scan extend $snap2
 after 300 [list set ::scan_done 1]

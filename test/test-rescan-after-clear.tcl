@@ -9,9 +9,8 @@
 #
 # The fixture is one folder with two sessions: A inside the 7-day window, B
 # only inside the 30-day window. Under 7-day the folder streams in with A.
-# Switching to 30-day clears, replays A, then extend scans B as a new path -
-# B's path index is absent (so on_scan_row proceeds to model_add_session) while
-# the folder index is stale, which is exactly the combination that crashes.
+# Switching to 30-day clears, then extend re-streams both - a fresh path with
+# a stale folder index is exactly the combination that crashes.
 
 package require Tcl 9
 package require Tk
@@ -81,10 +80,8 @@ proc check {name got want} {
     }
 }
 
-# Mirror the app's bounds-switch sequence: replay the retained rows the
-# snapshot admits from the store, then extend for any newly-windowed file.
+# Mirror the app's bounds-switch sequence: extend re-streams the bounds.
 proc scan_now {snap} {
-    $::SL replay_bounds
     set ::scan_done 0
     $::Scan extend $snap
     after 300 [list set ::scan_done 1]
