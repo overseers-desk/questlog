@@ -51,6 +51,18 @@ check "slug is the prompt dir's tail"    [$h slug] probe-slug
 check "meta.env tunes the cost cap"      [$h cost_cap] 3.5
 check "meta.env tunes the stall timeout" [$h stall_timeout] 7
 
+# Junk numerics in meta.env keep the defaults rather than detonating as
+# an expr error at the first cap comparison.
+set pdir2 [file join $dir probe-junk]
+file mkdir $pdir2
+set fd [open [file join $pdir2 meta.env] w]
+puts $fd "WORKER_COST_CAP_USD=ten dollars"
+puts $fd "STALL_TIMEOUT_SECS=soon"
+close $fd
+set hj [Probe new $pdir2 $dir]
+check "a non-numeric cap keeps the default"   [$hj cost_cap] 10.0
+check "a non-numeric stall keeps the default" [$hj stall_timeout] 600
+
 # ---- _credit_wait_secs ----------------------------------------------------
 
 # The reset scrape sleeps until the stated wall-clock time plus a 2-minute

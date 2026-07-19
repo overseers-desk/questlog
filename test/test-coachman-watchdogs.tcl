@@ -124,6 +124,35 @@ set last [lindex [split [string trim [read_file $::env(FAKE_ARGV_LOG)]] \n] end]
 check "the finalise resumes the killed session" \
     [expr {[lsearch -exact $last sid-stall] >= 0}] 1
 
+# ---- budget_poll prices the session in front of it ------------------------
+
+# Under first-wins capture a later side call runs a different session than
+# the tracked one: the poll prices the json file it was armed with, and
+# passes while that file carries no id yet.
+oo::class create PollHarness {
+    superclass coachman::Harness
+    method log_service {} { return $::QUIET }
+    method claude_bin {} { return $::FAKE }
+    method session_cost_usd {sid} { lappend ::asked $sid; return 0.0 }
+}
+set pdir4 [file join $dir row-poll]
+file mkdir $pdir4
+set ::env(FAKE_ARGV_LOG) [file join $dir argv-poll.log]
+set ::env(FAKE_SCENARIO) ok
+set h4 [PollHarness new $pdir4 $logd]
+$h4 call seed [file join $logd seed.log] "p"
+check "the seed session is captured" [$h4 session_id] sid-fin
+set side [file join $dir side.json]
+write_file $side {{"type":"system","subtype":"init","session_id":"sid-side"}}
+set ::asked {}
+$h4 budget_poll $side dummy-handle
+check "budget_poll prices the session in the json it was armed with" $::asked sid-side
+set empty [file join $dir empty.json]
+write_file $empty ""
+set ::asked {}
+$h4 budget_poll $empty dummy-handle
+check "budget_poll passes while the init event has not landed" $::asked {}
+
 # Without a captured session there is nothing to resume.
 set pdir3 [file join $dir row-nosid]
 file mkdir $pdir3

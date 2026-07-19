@@ -62,7 +62,7 @@ package provide coachman 1.0
 #   }
 #   set h [MyHarness new $run_dir $log_dir]
 #   set rc [$h call build "$log_dir/build" "Write me a haiku."]
-#   if {$rc == 0} { set product [$h log_prefix] }
+#   # rc 0: the haiku is on disk at $log_dir/build (the log_file arg)
 #
 # CONSTRUCTOR {prompt_dir log_dir}.
 #   prompt_dir - the run's own directory. Two uses only: its file tail
@@ -272,10 +272,23 @@ oo::class create coachman::Harness {
         set StallTimeoutMs 600000
         if {[file exists [file join $prompt_dir meta.env]]} {
             set meta [my load_meta]
-            set WorkerCostCapUsd [dict getdef \
-                $meta WORKER_COST_CAP_USD $WorkerCostCapUsd]
-            set StallTimeoutMs [expr {int([dict getdef \
-                $meta STALL_TIMEOUT_SECS 600] * 1000)}]
+            # A non-numeric value would otherwise detonate later as an
+            # obscure expr error at the first cap comparison; keep the
+            # default and say so instead.
+            set cap [dict getdef $meta WORKER_COST_CAP_USD $WorkerCostCapUsd]
+            if {[string is double -strict $cap]} {
+                set WorkerCostCapUsd $cap
+            } else {
+                [my log_service]::warn \
+                    "\[$Slug\] meta.env WORKER_COST_CAP_USD='$cap' is not a number; keeping \$$WorkerCostCapUsd"
+            }
+            set secs [dict getdef $meta STALL_TIMEOUT_SECS 600]
+            if {[string is double -strict $secs]} {
+                set StallTimeoutMs [expr {int($secs * 1000)}]
+            } else {
+                [my log_service]::warn \
+                    "\[$Slug\] meta.env STALL_TIMEOUT_SECS='$secs' is not a number; keeping [expr {$StallTimeoutMs / 1000}]s"
+            }
         }
         file mkdir $log_dir
         set fd [open $CostLog w]; close $fd
@@ -489,10 +502,11 @@ oo::class create coachman::Harness {
     }
 
     # resume - resume the captured session with a fix/revision prompt.
-    # Fails if call has not yet been made successfully.
+    # Fails while no call has captured a session id (capture also happens
+    # on an interrupted or budget-killed call whose init event landed).
     method resume {stage log_file prompt args} {
         if {$SessionId eq ""} {
-            error "coachman::Harness::resume: no session_id — call must succeed first"
+            error "coachman::Harness::resume: no session id captured yet - a call must reach one first"
         }
         return [my _with_recovery resume $stage $log_file $prompt --resume $SessionId {*}$args]
     }
@@ -810,14 +824,16 @@ oo::class create coachman::Harness {
     # via session_cost_usd) and, once the spend crosses WorkerCostCapUsd,
     # kills the run with cause `cost` so _invoke fails it fast.
     # session_id comes from the growing json_file (the init event lands
-    # within the first second), so the poll meters the right session even
-    # though `call` captures SessionId only after _invoke returns. Carries
-    # no leading underscore: TclOO leaves underscored methods unexported,
-    # and this one is dispatched from outside the object.
+    # within the first second), never from the captured SessionId: under
+    # first-wins capture a later side `call` runs a different session
+    # than the tracked one, and pricing the tracked id would leave the
+    # running session uncapped. Until the init event lands there is
+    # nothing safe to price, so the tick passes. Carries no leading
+    # underscore: TclOO leaves underscored methods unexported, and this
+    # one is dispatched from outside the object.
     method budget_poll {json_file h} {
         if {$WorkerCostCapUsd <= 0} { return }
-        set sid $SessionId
-        if {$sid eq ""} { set sid [my _extract_session_id $json_file] }
+        set sid [my _extract_session_id $json_file]
         if {$sid eq ""} { return }
         set cost [my session_cost_usd $sid]
         if {$cost >= $WorkerCostCapUsd} {
