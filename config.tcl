@@ -72,9 +72,13 @@ namespace eval ::questlog::config {
     dict set Config search_threads_max      8
 
     # ---- cost pass ---------------------------------------------------------
-    # The tpool that computes per-session token cost off the main thread.
-    dict set Config cost_workers_min 0
-    dict set Config cost_workers_max 4
+    # Workers in the tpool that computes per-session token cost off the main
+    # thread. The pool is fixed-size: minworkers = maxworkers = this. A min-0
+    # pool never grows past the single worker it lazily spawns, so the whole cost
+    # pass runs serially however many cores the host has (issue #56). The workers
+    # are spawned only once the first rows have painted, so their one-off initcmd
+    # stays off the startup-latency path.
+    dict set Config cost_workers 4
     # immediate = apply each cost result to the list as it arrives; coalesced =
     # batch arrivals and apply them in one pass every cost_coalesce_ms, so a
     # flood of results does not churn the list during interaction.
