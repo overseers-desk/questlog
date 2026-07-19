@@ -4,9 +4,9 @@ package require logger
 package require json
 package require json::write
 package require deadman
-package provide steward 1.0
+package provide coachman 1.0
 
-# steward - drives one harnessed `claude -p` CLI session.
+# coachman - drives one harnessed `claude -p` CLI session.
 #
 # A harness wraps a single claude session with the machinery a validated
 # agent run needs: stream-json invocation, usage-limit-window recovery
@@ -17,16 +17,16 @@ package provide steward 1.0
 # A killed or truncated turn may still hold real work in its product,
 # and the caller validates that product.
 #
-# DEPENDENCY. Besides Tcllib (json, json::write, logger), steward needs
+# DEPENDENCY. Besides Tcllib (json, json::write, logger), coachman needs
 # `deadman` 1.0 or later on the module path: the process watchdog that
 # owns the child's pipe, stall clock, and group kill. deadman's home,
 # man page, and test suite are in the teatotal module shelf; vendor a
-# copy beside this file. `package require steward` fails without it.
+# copy beside this file. `package require coachman` fails without it.
 #
 # SYNOPSIS. Subclass, point the injections at your own services, drive:
 #
 #   oo::class create MyHarness {
-#       superclass steward::Harness
+#       superclass coachman::Harness
 #       method claude_bin {} { return /usr/local/bin/claude }
 #       method prompt_root {} { return /opt/myapp }   ;# see load_prompt
 #   }
@@ -72,7 +72,7 @@ package provide steward 1.0
 # INJECTIONS. A subclass overrides only what it needs:
 #
 #   log_service      - logger service for runtime output
-#                      (default: a cached `steward` service)
+#                      (default: a cached `coachman` service)
 #   prompt_root      - directory under which load_prompt resolves
 #                      prompts/<name>.txt. No template tree ships with
 #                      this module, so a subclass that calls load_prompt
@@ -95,7 +95,7 @@ package provide steward 1.0
 # and supplies the validator and prompt-builder methods named in the
 # run_fix_loop contract (documented at that method).
 
-namespace eval steward {
+namespace eval coachman {
     # The module's own directory, captured at load time: the default
     # prompt_root, under which load_prompt resolves prompts/<name>.txt.
     variable module_dir [file dirname [file normalize [info script]]]
@@ -105,20 +105,20 @@ namespace eval steward {
 }
 
 # Lightweight file helpers.
-proc steward::_read_file {path} {
+proc coachman::_read_file {path} {
     set fd [open $path r]
     set content [read $fd]
     close $fd
     return $content
 }
 
-proc steward::_write_file {path content} {
+proc coachman::_write_file {path content} {
     set fd [open $path w]
     puts -nonewline $fd $content
     close $fd
 }
 
-oo::class create steward::Harness {
+oo::class create coachman::Harness {
     variable Slug LogPrefix CostLog SessionId PromptDir LogDir \
              WorkerCostCapUsd CostKilled \
              StallKilled StallTimeoutMs UsageResetSecs \
@@ -180,21 +180,21 @@ oo::class create steward::Harness {
     # log_service - the logger service runtime output goes through, used
     # as [my log_service]::error / ::warn / ::info. Per-run context (the
     # slug, the stage) goes in the message body; logger adds the
-    # timestamp, service tag, and level. Default: a `steward` service,
+    # timestamp, service tag, and level. Default: a `coachman` service,
     # created once and cached in the namespace. A host overrides this to
     # route output into its own service.
     method log_service {} {
-        if {$::steward::log eq ""} {
-            set ::steward::log [logger::init steward]
+        if {$::coachman::log eq ""} {
+            set ::coachman::log [logger::init coachman]
         }
-        return $::steward::log
+        return $::coachman::log
     }
 
     # prompt_root - the directory that holds the prompts/ template tree
     # load_prompt reads from. Default: the directory this module was
     # loaded from. A host overrides this to point at its own templates.
     method prompt_root {} {
-        return $::steward::module_dir
+        return $::coachman::module_dir
     }
 
     # claude_bin - the claude CLI to invoke. Default: the bare name,
@@ -248,7 +248,7 @@ oo::class create steward::Harness {
     # without the __..__ wrapping; this method adds them.
     method load_prompt {name subs} {
         set path [file join [my prompt_root] prompts "${name}.txt"]
-        set tmpl [::steward::_read_file $path]
+        set tmpl [::coachman::_read_file $path]
         set map {}
         dict for {k v} $subs {
             lappend map "__${k}__" $v
@@ -303,7 +303,7 @@ oo::class create steward::Harness {
     # Fails if call has not yet been made successfully.
     method resume {stage log_file prompt args} {
         if {$SessionId eq ""} {
-            error "steward::Harness::resume: no session_id — call must succeed first"
+            error "coachman::Harness::resume: no session_id — call must succeed first"
         }
         return [my _with_recovery resume $stage $log_file $prompt --resume $SessionId {*}$args]
     }
