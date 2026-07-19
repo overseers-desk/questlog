@@ -110,13 +110,17 @@ namespace eval ::questlog::config {
     # is O(running sessions), independent of the on-disk corpus.
     dict set Config running_poll_ms 2000
 
-    # ---- recency presets ---------------------------------------------------
-    # The recency filter. since_presets is the set the toolbar's radio offers;
-    # since_default is the one a fresh GUI launch starts on; "all" means no
-    # bound. A since value (a preset, or an open --since duration) is turned
-    # into a cutoff by ::questlog::scan::parse_since.
-    dict set Config since_presets {24h 7d 30d all}
+    # ---- recency ----------------------------------------------------------
+    # The recency filter. The toolbar's time row offers two typed windows, a
+    # count of hours and a count of days, plus "all" (no bound); since_default
+    # is the since spec a fresh GUI launch starts on, and since_hours_default /
+    # since_days_default seed the two spinboxes when their unit is not the one in
+    # force. A since value (one of these, or an open --since duration the CLI or
+    # the custom popover produces) is turned into a cutoff by
+    # ::questlog::scan::parse_since.
     dict set Config since_default 7d
+    dict set Config since_hours_default 24
+    dict set Config since_days_default  7
 
     # ---- minimum turns -----------------------------------------------------
     # The "min turns" bounds filter. The scanner counts a session's user turns

@@ -26,7 +26,8 @@ package require searchfield
 #
 # Owns the filter state. Subscribers receive the full snapshot dict
 # whenever any control changes:
-#   since            24h | 7d | 30d | all
+#   since            a since spec: <N>h | <N>d | all, or a custom relative
+#                    window (weeks, minutes) or absolute date the popover emits
 #   search           string (user's typed search; empty when blank)
 #   search_case      0 | 1   (Aa toggle next to the search field)
 #   search_regions   any | user,assistant | tool-use | tool-result | names
@@ -83,7 +84,10 @@ oo::class create ::questlog::ui::Toolbar {
     variable Top
     variable Cwd
     variable Subscribers
-    variable WindowVar
+    variable WindowVar        ;# the time row's single-select: hours | days | all | a custom spec
+    variable HoursNum         ;# the hours-window spinbox count
+    variable DaysNum          ;# the days-window spinbox count
+    variable SinceModel       ;# the since values the model held when the editor last read it
     variable CustomSpec       ;# the committed/parked custom since spec, or "" when none
     variable PopTop           ;# the open custom-window popover toplevel, or ""
     variable PopMode          ;# the popover's chosen option: relative | absolute
@@ -103,8 +107,16 @@ oo::class create ::questlog::ui::Toolbar {
     constructor {parent cwd} {
         set Top $parent
         set Cwd $cwd
-        set WindowVar  [::questlog::config::get since_default]
+        set HoursNum   [::questlog::config::get since_hours_default]
+        set DaysNum    [::questlog::config::get since_days_default]
         set CustomSpec ""
+        # The time row's editor state, reconstructed from the default since spec:
+        # WindowVar picks the unit (or "all"), and the matching count spinbox holds
+        # the number. SinceModel remembers what the model held when the editor last
+        # read it, so a redraw that carries the same bound leaves a half-typed count
+        # standing (see since_editor / set_since), as the turns floor does.
+        my sync_since_state [::questlog::config::get since_default]
+        set SinceModel [my since_vals [::questlog::config::get since_default]]
         set PopTop ""
         set PopMode relative
         set PopNum 3
@@ -213,7 +225,7 @@ oo::class create ::questlog::ui::Toolbar {
         # before setup, because an editor is a function of the model: drawn
         # against an empty one it would first reset the very variables the
         # defaults are being read out of.
-        $Bar set_model [list since     [my since_vals $WindowVar] \
+        $Bar set_model [list since     [my since_vals [::questlog::config::get since_default]] \
                              min_turns [my turns_vals $MinTurnsVar]]
         $Bar setup $Restrict
         # The resting face is the chip summary: the bar opens collapsed, showing
@@ -298,17 +310,20 @@ oo::class create ::questlog::ui::Toolbar {
     # publish instead.
     method set_case {on} { $Field set_fragment [list case $on] }
 
-    # Pre-select the time row from a launch --since. A preset picks its radio;
-    # any other spec the engine accepts (a relative window, an absolute date)
-    # becomes the custom member. Validation goes through the one grammar home, so
-    # this accepts exactly what the headless CLI does. A bad spec is ignored with
-    # a warning, falling back to the default rather than leaving nothing selected.
+    # Pre-select the time row from a launch --since. An hours, days or "all" spec
+    # is one the two spinboxes and the all radio express inline; any other spec
+    # the engine accepts (weeks, minutes, an absolute date) becomes the custom
+    # member. Validation goes through the one grammar home, so this accepts exactly
+    # what the headless CLI does. A bad spec is ignored with a warning, falling
+    # back to the default rather than leaving nothing selected. The editor
+    # reconstructs its own state from the model on the next expand, so seeding the
+    # model (and the custom member, when there is one) is all this has to do.
     method set_window {opt} {
         if {[catch {::questlog::scan::parse_since $opt}]} {
             puts stderr "questlog: ignoring invalid --since '$opt'"
             return
         }
-        if {$opt ni [::questlog::config::get since_presets]} { set CustomSpec $opt }
+        if {![my is_inline_since $opt]} { set CustomSpec $opt }
         my quiet_set [list since [my since_vals $opt]]
     }
 
@@ -525,10 +540,13 @@ oo::class create ::questlog::ui::Toolbar {
     }
 
     # Assemble the chosen spec, validate it through the one grammar home (so the
-    # popover can never emit a spec the engine would reject), commit it as the
-    # custom member, and publish. set_values draws the time row again, this time
-    # with the custom member selected; the Apply click's publish is this
-    # method's own, since the builder's doors are quiet.
+    # popover can never emit a spec the engine would reject), commit it, and
+    # publish. A spec the spinboxes already express (a whole number of hours or
+    # days) goes back to them rather than parking as a redundant custom member;
+    # anything else (weeks, minutes, a date) becomes the custom member. set_values
+    # draws the time row again, and its editor reconstructs which control holds the
+    # spec from the model; the Apply click's publish is this method's own, since
+    # the builder's doors are quiet.
     method commit_time {} {
         if {$PopMode eq "relative"} {
             set unit [dict get {minutes m hours h days d weeks w} $PopUnit]
@@ -537,7 +555,7 @@ oo::class create ::questlog::ui::Toolbar {
             set spec $PopDate
         }
         if {[catch {::questlog::scan::parse_since $spec}]} { bell; return }
-        set CustomSpec $spec
+        set CustomSpec [expr {[my is_inline_since $spec] ? "" : $spec}]
         my close_time_popover
         $Bar set_values since [my since_vals $spec]
         my publish
@@ -709,27 +727,81 @@ oo::class create ::questlog::ui::Toolbar {
         return [::questlog::scan::since_label [dict get $crit value]]
     }
 
-    # The time row's whole editor: the preset radios, then the custom member. It
-    # is a function of the facet's state, redrawn from the criterion the builder
-    # hands it every time the row is - so a time bound deleted from its chip while
-    # the bar was collapsed comes back with "all" selected, and no radio is left
-    # showing a criterion that is no longer applied. The commit and cancel
-    # prefixes go unused: a control editor reports through report_values (see
-    # set_since), which leaves this radio group standing under the click.
+    # The time row's whole editor: two typed windows (a count of hours and a count
+    # of days), the "all" member, then the custom member. Each typed window is a
+    # spinbox for the count and a radio that selects that unit as the bound; the
+    # radios and "all" form one single-select group with the custom member.
+    #
+    # Like the min-turns editor, the two counts are typeable state the model has
+    # not been told about, so the same two rules meet here. A count is published
+    # only when it is committed (Return, an arrow, or its unit radio), so a "2" on
+    # the way to "24" never re-runs the search; and a half-typed count is not lost
+    # to a redraw either, so the model is read back only when it itself moved -
+    # which SinceModel remembers. The commit and cancel prefixes go unused: a
+    # control editor reports through report_values (see set_since / set_since_num),
+    # the door that leaves the group standing under the click.
     method since_editor {parent initial commit cancel} {
-        set WindowVar [expr {[dict size $initial] ? [dict get $initial value] : "all"}]
-        foreach w [::questlog::config::get since_presets] {
-            ttk::radiobutton $parent.r$w -text $w \
-                -variable [my varname WindowVar] -value $w \
-                -command [list [self] set_since]
-            pack $parent.r$w -side left -padx 2
+        set values [expr {[dict size $initial] ? [list [dict get $initial value]] : {}}]
+        if {$values ne $SinceModel} {
+            my sync_since_state [lindex $values 0]
+            set SinceModel $values
         }
-        # The custom 5th member of the same single-select group: a relative window
-        # or an absolute date the presets cannot express. Its own sub-frame, so
-        # committing or clearing re-renders only this, never the presets.
+        foreach {unit var} [list hours [my varname HoursNum] days [my varname DaysNum]] {
+            set sb $parent.n_$unit
+            ttk::spinbox $sb -from 1 -to 999 -width 4 -textvariable $var \
+                -command [list [self] set_since_num $unit]
+            bind $sb <Return>       [list [self] set_since_num $unit]
+            bind $sb <<Increment>>  [list [self] set_since_num $unit]
+            bind $sb <<Decrement>>  [list [self] set_since_num $unit]
+            # A FocusOut may be a rebuild tearing this spinbox down, not a hand
+            # leaving it, so it commits the count only under the unit already in
+            # force: it never flips the bound to a unit the user did not choose.
+            bind $sb <FocusOut>     [list [self] set_since_num $unit 0]
+            pack $sb -side left -padx {0 2}
+            ttk::radiobutton $parent.u_$unit -text $unit \
+                -variable [my varname WindowVar] -value $unit \
+                -command [list [self] set_since]
+            pack $parent.u_$unit -side left -padx {0 8}
+        }
+        ttk::radiobutton $parent.rall -text "all" \
+            -variable [my varname WindowVar] -value all \
+            -command [list [self] set_since]
+        pack $parent.rall -side left -padx 2
+        # The custom member of the same single-select group: a relative window
+        # (weeks, minutes) or an absolute date the two spinboxes cannot express.
+        # Its own sub-frame, so committing or clearing re-renders only this.
         ttk::frame $parent.custom
         pack $parent.custom -side left -padx {6 0}
         my refresh_custom_member
+    }
+
+    # Reconstruct the editor's state (which unit is in force, and the counts) from
+    # a since spec the model holds ("" or "all" is no bound). A spec the spinboxes
+    # express fills the matching count and selects its unit; anything else is the
+    # custom member, and the group points at it.
+    method sync_since_state {spec} {
+        if {$spec eq "" || $spec eq "all"} { set WindowVar all; return }
+        if {[regexp {^([0-9]+)h$} $spec -> n]} { set HoursNum $n; set WindowVar hours; return }
+        if {[regexp {^([0-9]+)d$} $spec -> n]} { set DaysNum  $n; set WindowVar days;  return }
+        set WindowVar $spec
+    }
+
+    # True iff the two spinboxes and the all radio express this spec on their own:
+    # a whole number of hours or days, or no bound. Anything else (weeks, minutes,
+    # an absolute date) is the custom member's to hold.
+    method is_inline_since {spec} {
+        return [expr {$spec eq "all" || [regexp {^[0-9]+[hd]$} $spec]}]
+    }
+
+    # The since spec the editor's state names: the count under the chosen unit, or
+    # "all", or the parked custom spec the custom member selected.
+    method window_spec {} {
+        switch -- $WindowVar {
+            hours   { return "${HoursNum}h" }
+            days    { return "${DaysNum}d" }
+            all     { return "all" }
+            default { return $WindowVar }
+        }
     }
 
     # The time editor's area, at the widget path the module documents, or "" while
@@ -739,11 +811,34 @@ oo::class create ::questlog::ui::Toolbar {
         return [expr {[winfo exists $ed] ? $ed : ""}]
     }
 
-    # A radio in the time group was chosen. report_values, not set_values: the bar
-    # must not rebuild the radio group under the click that just moved it. The
-    # builder's doors are quiet, so the click publishes here.
-    method set_since {} {
-        set want [my since_vals $WindowVar]
+    # A radio in the time group was chosen (a unit, "all", or the custom member).
+    # WindowVar already holds it via the radiobutton's -variable, so this only has
+    # to commit the spec that names.
+    method set_since {} { my commit_window }
+
+    # A count spinbox committed (its arrow, Return, or the unit radio). A deliberate
+    # gesture selects that unit; a FocusOut passes select 0, committing the count
+    # only when its unit is already in force so a rebuild's FocusOut cannot flip the
+    # bound to a unit the user did not choose.
+    method set_since_num {unit {select 1}} {
+        if {!$select && $WindowVar ne $unit} return
+        set WindowVar $unit
+        my commit_window
+    }
+
+    # Commit the editor's current spec to the model. Counts are coerced to a sane
+    # integer here (a blank or garbage entry snaps to 1), and the field is rewritten
+    # so it never shows the rejected text. report_values, not set_values: the bar
+    # must not rebuild the group under the hand still on it. SinceModel catches up
+    # first (a later redraw must not mistake this spec for one it has yet to read),
+    # and a spec that did not move raises no publish - which keeps a rebuild's
+    # FocusOut from publishing a change nobody made. The builder's doors are quiet,
+    # so the commit publishes here.
+    method commit_window {} {
+        if {![string is integer -strict $HoursNum] || $HoursNum < 1} { set HoursNum 1 }
+        if {![string is integer -strict $DaysNum]  || $DaysNum  < 1} { set DaysNum  1 }
+        set want [my since_vals [my window_spec]]
+        set SinceModel $want
         if {$want eq [$Bar values since]} return
         $Bar report_values since $want
         my publish
