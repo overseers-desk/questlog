@@ -128,7 +128,7 @@ check gui_or      {--or needs --json or --markdown or --shortstat (the GUI ANDs 
     [refusal --keyword a --or --keyword b]
 check gui_not     {--not needs --json or --markdown or --shortstat (the GUI has no negated criterion)} \
     [refusal --not --keyword a --keyword b]
-check gui_regions {a :regions suffix needs --json or --markdown or --shortstat (the GUI's bounds cover the whole search)} \
+check gui_regions {a :regions suffix needs --json or --markdown or --shortstat (the GUI's regions selector is one setting for the whole search)} \
     [refusal --keyword:user x]
 check gui_until   {--until needs --json or --markdown or --shortstat}   [refusal --until 7d --keyword x]
 check gui_limit   {--limit needs --json or --markdown or --shortstat}   [refusal --limit 5 --keyword x]

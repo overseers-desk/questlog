@@ -169,12 +169,12 @@ check hits_not_substring    0 [sat [fl wrote spar-manager] $r_spar]
 set r_regions [::questlog::jsonl::parse_line {{"type":"assistant","message":{"content":[{"type":"text","text":"alpha says hello"},{"type":"tool_use","name":"Bash","input":{"command":"echo bravo"}}]}}}]
 check region_text_in_text     1 [sat [kw alpha {user assistant}] $r_regions]
 check region_text_not_use     0 [sat [kw alpha {tool_use}] $r_regions]
-check region_use_in_use       1 [sat [kw bravo {tool_use}] $r_scope]
-check region_use_not_text     0 [sat [kw bravo {user assistant}] $r_scope]
+check region_use_in_use       1 [sat [kw bravo {tool_use}] $r_regions]
+check region_use_not_text     0 [sat [kw bravo {user assistant}] $r_regions]
 check region_result_in_result 1 [sat [kw questlog {tool_result}] $user_tool_result]
 check region_result_not_text  0 [sat [kw questlog {user assistant}] $user_tool_result]
-check region_regex_any        1 [sat [rx alpha {}] $r_scope]
-check region_regex_scoped_out 0 [sat [rx alpha {tool_use}] $r_scope]
+check region_regex_any        1 [sat [rx alpha {}] $r_regions]
+check region_regex_confined_out 0 [sat [rx alpha {tool_use}] $r_regions]
 
 # ---- is_user_turn: the turn-count predicate over raw lines -----------------
 # String content counts; a block-array prompt (text or image first) counts; a
