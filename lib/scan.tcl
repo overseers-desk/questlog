@@ -802,8 +802,8 @@ oo::class create ::questlog::Scan {
     # project folder; a glob plus one stat per jsonl only in a folder whose
     # mtime changed; a file read only for an in-window file the store lacks at
     # that mtime. K simultaneous in-window arrivals cost K synchronous single-
-    # file scans in one tick (about 13 ms each), accepted until observed
-    # otherwise.
+    # file scans in one tick (at scan_one's measured per-file cost, see the
+    # scan_yield_files note in config.tcl), accepted until observed otherwise.
     method poll_arrivals {} {
         # Never interleave with the running scan coroutine; a missed tick self-
         # corrects because absent memo entries read as changed next time.

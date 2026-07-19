@@ -402,7 +402,7 @@ proc ::questlog::ui::app::run_tick {} {
     # leaves the list widget -state disabled (the widget-state trap at
     # sessions.tcl:2856), so it must not run nested inside reconcile; and
     # running it first lets an imported row settle its running glyph and
-    # phantom sweep in the same tick.
+    # phantom drop in the same tick.
     $Scan poll_arrivals
     $SessionList reconcile_running $Running
     # The same tick refreshes the membership the active filters claim, so a session
