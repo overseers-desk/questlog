@@ -103,6 +103,17 @@ check "a bare Spanish limit is suspected" \
     [lindex [$h classify "Límite de uso alcanzado"] 0] suspected
 check "an ordinary error is not a limit" \
     [lindex [$h classify "Error: the file was not found"] 0] none
+# A bare "limit" in a per-request error must NOT halt the batch: only a
+# subscription-window marker is suspected.
+check "a tool rate limit is not a subscription limit" \
+    [lindex [$h classify "Rate limit exceeded for tool WebSearch, try again later"] 0] none
+check "a token limit is not a subscription limit" \
+    [lindex [$h classify "Error: token limit exceeded for this request"] 0] none
+check "a context-window limit is not a subscription limit" \
+    [lindex [$h classify "Error: context window limit reached for this turn"] 0] none
+# A reset clock beside a limit word waits even if the noun drifts.
+check "a reworded window with a reset clock still waits" \
+    [lindex [$h classify "You've reached your limit, resets 3am (UTC)"] 0] wait
 
 # ---- stream readers + transcript recovery ---------------------------------
 

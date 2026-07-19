@@ -1209,13 +1209,36 @@ oo::class create coachman::Harness {
     # code in the harness, kept here as the single home to harden when the
     # CLI wording drifts.
     method _classify_usage_limit {text} {
-        if {![string match -nocase {*limit*} $text]
-                && ![string match -nocase {*límite*} $text]} {
-            return {none {}}
-        }
         set secs [my _credit_wait_secs $text]
-        if {$secs eq ""} { return {suspected {}} }
-        return [list wait $secs]
+        if {$secs ne "" && ([string match -nocase {*limit*} $text]
+                || [string match -nocase {*límite*} $text])} {
+            # A reset clock beside a limit word is the strong signal: a
+            # per-request tool error carries neither a timezone-stamped
+            # reset time nor "limit" together, so this stays waitable even
+            # if the window's wording drifts.
+            return [list wait $secs]
+        }
+        # No waitable reset. Only a subscription-window marker makes this a
+        # suspected usage limit worth halting a whole batch: a bare "limit"
+        # (a tool's rate limit, a token/context/recursion limit) is an
+        # ordinary per-row failure, not a subscription wall.
+        if {[my _usage_window_marker $text]} { return {suspected {}} }
+        return {none {}}
+    }
+
+    # _usage_window_marker - true when the text names a claude subscription
+    # window (English "usage/session/monthly/spend/fast/N-hour limit", the
+    # Spanish "límite de ..." an operator on a Spanish locale sees), the
+    # family a monthly/spend/fast limit or a reworded window belongs to. It
+    # deliberately does not match a bare "limit": that is the false-positive
+    # that would cancel a campaign on an unrelated tool error.
+    method _usage_window_marker {text} {
+        foreach m [list {*usage limit*} {*session limit*} {*monthly limit*} \
+                        {*spend limit*} {*fast limit*} {*hour limit*} \
+                        {*límite de*}] {
+            if {[string match -nocase $m $text]} { return 1 }
+        }
+        return 0
     }
 
     # ── Fix loop ──────────────────────────────────────────────────────
