@@ -139,6 +139,7 @@ oo::class create ::questlog::ui::SessionList {
     variable TotalCost        ;# running sum of per-session cost in the model
     variable StatusBase       ;# last text set by set_progress/set_done
     variable Busy             ;# 1 while a search is in flight (set_progress..set_done/cancel)
+    variable ScanBusy         ;# 1 while the corpus scan is in flight (scan_begin..scan_end)
     variable OnSubagents      ;# cb: parent path -> list of child row dicts
     variable OnSubagentCost   ;# cb: child path -> start the cost pass for it
     variable OnStatusPeek     ;# cb: text -> reveal it on the app's bottom strip, or ""
@@ -176,6 +177,7 @@ oo::class create ::questlog::ui::SessionList {
         set StatusVar "Idle"
         set StatusBase ""
         set Busy 0
+        set ScanBusy 0
         set TotalCost 0.0
         set Snapshot [dict create]
         set CriteriaActive 0
@@ -3516,6 +3518,13 @@ oo::class create ::questlog::ui::SessionList {
         # here rather than leave the status line a poll tick behind the answer.
         my refresh_filter_note
     }
+    # The corpus scan's in-flight signal, paired around app.tcl's scan (issue
+    # #54). Distinct from Busy, which is the search's own flag and drives the
+    # Cancel button: a browse scan streams cost in silently, so without this the
+    # "and counting…" suffix rode a search only and never a plain corpus load.
+    method scan_begin {} { set ScanBusy 1; my refresh_status }
+    method scan_end {}   { set ScanBusy 0; my refresh_status }
+
     method cancel {} {
         # Nothing in flight, nothing to cancel: leave the standing line alone. The
         # button rests disabled off Busy, so this is the belt to that suspenders.
@@ -3546,11 +3555,12 @@ oo::class create ::questlog::ui::SessionList {
         if {$StatusBase ne ""} { lappend parts $StatusBase }
         if {$FilterNote ne ""} { lappend parts $FilterNote }
         if {$TotalCost > 0} {
-            # While a search is still landing, the total is provisional: mark it
-            # "and counting…" so a mid-flight figure does not read as the final
-            # tally. Cleared the moment set_done/cancel drops Busy.
+            # While a search or the corpus scan is still landing, the total is
+            # provisional: mark it "and counting…" so a mid-flight figure does not
+            # read as the final tally. Cleared when both settle (set_done/cancel
+            # drops Busy, scan_end drops ScanBusy).
             set cost [::questlog::cost::format_usd $TotalCost]
-            if {$Busy} { append cost " and counting…" }
+            if {$Busy || $ScanBusy} { append cost " and counting…" }
             lappend parts $cost
         }
         set StatusVar [join $parts " · "]

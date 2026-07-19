@@ -542,6 +542,7 @@ proc ::questlog::ui::app::on_filter {snapshot} {
     # apply_filter wiped the store, so the scan re-streams the new bounds from
     # disk (a population change pays population's price through the stream).
     set ScanActive 1
+    $SessionList scan_begin
     $Scan extend $snapshot
 
     # Seed running markers now, in the same event-loop turn, so there is no
@@ -764,6 +765,7 @@ proc ::questlog::ui::app::on_scan_done {scanned} {
     variable ScanActive
     variable SessionList
     set ScanActive 0
+    $SessionList scan_end
     if {!$CriteriaActive} { set StatusMode browse }
     refresh_status
     update_spinner
