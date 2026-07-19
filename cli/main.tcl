@@ -353,6 +353,79 @@ proc ::questlog::cli::main::has_window_spend {cost_info} {
         || [dict getdef $cost_info turns 0] > 0}]
 }
 
+# ---- parallel file work (issue #17) -----------------------------------------
+
+# Worker count for the CLI's file pool: 0 when Thread is unavailable or
+# QUESTLOG_THREADS=0 (the single-thread fallback), the env override when set,
+# else a core-based default. Same formula and config band as the search
+# fan-out's picker (config.tcl stays the one home for the numbers).
+proc ::questlog::cli::main::worker_count {} {
+    if {![::questlog::search::thread_available]} { return 0 }
+    set v [::questlog::search::env_threads]
+    if {$v ne ""} { return $v }
+    set cores 0
+    if {![catch {exec nproc} out] && [string is integer -strict [string trim $out]]} {
+        set cores [string trim $out]
+    } elseif {![catch {exec sysctl -n hw.ncpu} out]
+              && [string is integer -strict [string trim $out]]} {
+        set cores [string trim $out]
+    }
+    if {$cores < 2} { return [::questlog::config::get search_threads_fallback] }
+    set n [expr {$cores - [::questlog::config::get search_threads_reserve]}]
+    set lo [::questlog::config::get search_threads_min]
+    set hi [::questlog::config::get search_threads_max]
+    if {$n < $lo} { set n $lo }
+    if {$n > $hi} { set n $hi }
+    return $n
+}
+
+# A fixed-size tpool whose workers can run both the matcher (scan_file) and the
+# cost parse (compute_sync / accrue_window), or "" for the single-thread path.
+# minworkers = maxworkers: a min-0 pool never grows past the one worker it
+# lazily spawns (issue #56), so the pass would run serially through it. Each
+# worker sources the matcher (via worker_prelude, which also bakes the display
+# caps) and the cost layer, then loads the rate table, so it can price a file
+# whole rather than shipping raw token tallies back. Built once, reused for both
+# phases; the caller releases it.
+proc ::questlog::cli::main::worker_pool {n} {
+    if {$n <= 0} { return "" }
+    set root $::ROOT
+    set initcmd "::tcl::tm::path add [list [file join $root modules]]
+::tcl::tm::path add [list [file join $root vendor]]
+source [list [file join $root config.tcl]]
+[::questlog::search::worker_prelude $root]
+source [list [file join $root lib cost.tcl]]
+source [list [file join $root cli cost.tcl]]
+::questlog::cost::load_rates [list $root]"
+    return [tpool::create -minworkers $n -maxworkers $n -initcmd $initcmd]
+}
+
+# Run a dict of {key -> command-list} jobs, returning {key -> result}. On the
+# pool the jobs run in parallel and are gathered as they finish; without one
+# (the single-thread fallback) each runs inline in this interp - the same call
+# the synchronous CLI always made, so the two paths return identical results and
+# the no-Thread path raises no new warning.
+proc ::questlog::cli::main::run_jobs {pool jobs} {
+    set out [dict create]
+    if {$pool eq ""} {
+        dict for {key cmd} $jobs { dict set out $key [{*}$cmd] }
+        return $out
+    }
+    set h2k [dict create]
+    set pending [list]
+    dict for {key cmd} $jobs {
+        set h [tpool::post -nowait $pool $cmd]
+        dict set h2k $h $key
+        lappend pending $h
+    }
+    while {[llength $pending]} {
+        foreach h [tpool::wait $pool $pending pending] {
+            dict set out [dict get $h2k $h] [tpool::get $pool $h]
+        }
+    }
+    return $out
+}
+
 # Answer the query on stdout. q is the neutral dict cli/commandline.tcl parsed
 # from the command line; its clause groups become the matcher's boolean tree and
 # its bounds ride outside as global bounds.
@@ -404,11 +477,30 @@ proc ::questlog::cli::main::run {q} {
 
     set scan [::questlog::Scan new {} {}]
 
-    # Initialize rates for synchronous costing
+    # Rates for the single-thread fallback's own pricing (each worker loads its
+    # own copy).
     ::questlog::cost::load_rates $ROOT
 
     # 3. Discover on-disk files including subagents
     set paths [$scan list_paths_for $sel_snapshot 1]
+
+    # The heavy per-file work runs on a fixed-size worker pool (issue #17): the
+    # matcher here, the cost parse below. The grouping, bounds and accrued logic
+    # stay on this thread, reading the results. Without Thread the pool is "" and
+    # run_jobs runs each call inline - the CLI's original synchronous path.
+    # Below two files per worker the pool cannot pay back its ~150ms setup, so a
+    # small result stays inline: a handful of files answers faster serially than
+    # it would after spinning up threads.
+    set nw [::questlog::cli::main::worker_count]
+    set pool [::questlog::cli::main::worker_pool \
+        [expr {[llength $paths] >= 2 * $nw ? $nw : 0}]]
+
+    # Match every discovered file, in parallel when threaded.
+    set scan_jobs [dict create]
+    foreach path $paths {
+        dict set scan_jobs $path [list ::questlog::match::scan_file $path $clauses]
+    }
+    set scanned [::questlog::cli::main::run_jobs $pool $scan_jobs]
 
     # Group matches by parent session and subagents
     set session_groups [dict create]
@@ -435,8 +527,8 @@ proc ::questlog::cli::main::run {q} {
             continue
         }
 
-        # Match logic
-        lassign [::questlog::match::scan_file $path $clauses] row matches
+        # Match result, computed in parallel above.
+        lassign [dict get $scanned $path] row matches
         if {$row eq ""} continue
         
         # Apply the snapshot's row bounds (recency bound and subtree).
@@ -478,6 +570,25 @@ proc ::questlog::cli::main::run {q} {
         dict set session_groups $parent_path $entry
     }
 
+    # Cost every session and subagent that survived grouping, in parallel
+    # (issue #17). Under --accrued-cost the window edges ride the job; otherwise
+    # it is the whole-file compute_sync. Some accrued subtrees are dropped in the
+    # loop below, so a few of these costs go unused - the parallel pass more than
+    # pays for that. The output loop reads each cost from here rather than
+    # computing it inline.
+    set cost_jobs [dict create]
+    dict for {pp gd} $session_groups {
+        foreach cp [linsert [lmap sub [$scan subagents_for $pp] {dict get $sub path}] 0 $pp] {
+            if {$accrued} {
+                dict set cost_jobs $cp [list ::questlog::cost::accrue_window $cp $acc_lo $acc_hi]
+            } else {
+                dict set cost_jobs $cp [list ::questlog::cli::cost::compute_sync $cp]
+            }
+        }
+    }
+    set costs [::questlog::cli::main::run_jobs $pool $cost_jobs]
+    if {$pool ne ""} { tpool::release $pool }
+
     # 4. Construct JSON Model
     set output_folders [dict create]
 
@@ -503,12 +614,9 @@ proc ::questlog::cli::main::run {q} {
         set folder [dict get $parent_row folder]
         set parent_uuid [dict get $parent_row uuid]
 
-        # Parent cost: whole-transcript by default, windowed under --accrued-cost.
-        if {$accrued} {
-            set cost_info [::questlog::cost::accrue_window $parent_path $acc_lo $acc_hi]
-        } else {
-            set cost_info [::questlog::cli::cost::compute_sync $parent_path]
-        }
+        # Parent cost: whole-transcript by default, windowed under --accrued-cost;
+        # computed in parallel above.
+        set cost_info [dict get $costs $parent_path]
         set parent_cost [dict getdef $cost_info cost_usd ""]
         set parent_turns [dict getdef $cost_info turns 0]
         set parent_duration [dict getdef $cost_info duration_secs ""]
@@ -526,12 +634,9 @@ proc ::questlog::cli::main::run {q} {
         set sub_in_sum 0; set sub_out_sum 0; set sub_cw_sum 0; set sub_cr_sum 0
         foreach sub [$scan subagents_for $parent_path] {
             set sub_path [dict get $sub path]
-            if {$accrued} {
-                set sub_cost_info [::questlog::cost::accrue_window $sub_path $acc_lo $acc_hi]
-                if {![::questlog::cli::main::has_window_spend $sub_cost_info]} continue
-            } else {
-                set sub_cost_info [::questlog::cli::cost::compute_sync $sub_path]
-            }
+            set sub_cost_info [dict get $costs $sub_path]
+            # In accrued mode drop a subagent with no in-window spend.
+            if {$accrued && ![::questlog::cli::main::has_window_spend $sub_cost_info]} continue
             incr sub_n
             set sub_cost [dict getdef $sub_cost_info cost_usd ""]
             if {[string is double -strict $sub_cost] && $sub_cost > 0} {
