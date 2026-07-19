@@ -78,6 +78,15 @@ There is one command line. Write a query with it and `questlog` opens the GUI on
 
 `./questlog` opens the main window immediately and streams rows in. The default seven-day window populates in under a second; switching to "all" extends incrementally with the tree growing as files are scanned. Scan progress is reported in the bottom status bar.
 
+## Modules authored here
+
+`modules/` holds two Tcl modules whose home is this repository, reusable outside it by copying the `.tm` file (plus its companions) onto a `::tcl::tm::path`:
+
+- **coachman** drives one harnessed `claude -p` CLI session for unattended, validated agent runs: stream-json invocation, usage-limit-window recovery, session resume for fix loops, stall and cost-cap watchdogs, and a per-stage cost ledger. Vendor `deadman` (from the teatotal shelf) beside it; `anthropic-rates.tcl` and `tallyman` beside it give its cost cap a live meter.
+- **tallyman** turns Claude Code JSONL transcript lines into per-model token tallies and prices them against a rates table. Filesystem-free: the caller does all I/O.
+
+Each module documents itself in its header comment; the `test/test-coachman-*.tcl` scripts double as usage examples.
+
 ## License
 
 [MIT](LICENSE).
