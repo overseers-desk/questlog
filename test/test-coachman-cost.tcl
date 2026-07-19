@@ -1,7 +1,7 @@
 #!/usr/bin/env tclsh9.0
 # Tests for coachman's default cost meter: the tallyman-backed
-# session_cost_usd over a fixture transcripts tree, the dormant path when
-# no rates resolve, and the rates table shipped beside the module. Run:
+# session_cost_usd over a fixture transcripts tree, the refusal when no
+# rates resolve, and the rates table shipped beside the module. Run:
 #   tclsh9.0 test/test-coachman-cost.tcl
 package require Tcl 9
 package require json
@@ -67,14 +67,10 @@ set ::TRATES [dict create othermodel {{2026-01-01 10.0 20.0 5.0 1.0}}]
 check "an unpriced model reads 0, not a wrong price" \
     [$h session_cost_usd sid-c] 0.0
 
-# No rates at all: the meter is dormant and says so once.
+# No rates at all: pricing refuses rather than reading a false 0 that
+# would leave an armed cap untrippable.
 set ::TRATES {}
-set ::coachman::meter_warned 0
-check "empty rates leave the meter dormant" [$h session_cost_usd sid-c] 0.0
-check "the dormant meter warned" $::coachman::meter_warned 1
-set ::coachman::meter_warned 1
-$h session_cost_usd sid-c
-check "the warning fires once per process" $::coachman::meter_warned 1
+check "empty rates refuse to price" [catch {$h session_cost_usd sid-c}] 1
 
 # The default cost_rates resolves the table shipped beside the module.
 oo::class create DefaultHarness {

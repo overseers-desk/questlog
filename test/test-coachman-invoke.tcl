@@ -174,6 +174,31 @@ set h4 [FakeHarness new $pdir $logd]
 check "resume before call errors" \
     [catch {$h4 resume fix [file join $logd fix.log] "p"}] 1
 
+# ---- an armed cap refuses to run unmetered --------------------------------
+
+# The default meter with no rates is a cap the harness cannot enforce, so
+# call refuses at entry. A zero cap needs no meter, and a host that brings
+# its own session_cost_usd passes the guard without rates.
+oo::class create UnmeteredHarness {
+    superclass FakeHarness
+    method cost_rates {} { return {} }
+}
+set ::env(FAKE_ARGV_LOG) [file join $dir argv-unmetered.log]
+set ::env(FAKE_SCENARIO) ok
+set h6 [UnmeteredHarness new $pdir $logd]
+check "an armed cap with no rates refuses the call" \
+    [catch {$h6 call u [file join $logd u.log] "p"}] 1
+$h6 set_worker_cost_cap 0
+check "a zero cap needs no meter and runs" \
+    [$h6 call u [file join $logd u.log] "p"] 0
+oo::class create OwnMeterHarness {
+    superclass UnmeteredHarness
+    method session_cost_usd {sid} { return 0.0 }
+}
+set h7 [OwnMeterHarness new $pdir $logd]
+check "a host meter passes the guard without rates" \
+    [$h7 call o [file join $logd o.log] "p"] 0
+
 # ---- usage-limit block: waited out and retried on the same session --------
 
 set ::env(FAKE_ARGV_LOG) [file join $dir argv-limit.log]

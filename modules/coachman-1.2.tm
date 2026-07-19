@@ -4,7 +4,7 @@ package require logger
 package require json
 package require json::write
 package require deadman
-package provide coachman 1.1
+package provide coachman 1.2
 
 # coachman - drives one harnessed `claude -p` CLI session.
 #
@@ -32,10 +32,12 @@ package provide coachman 1.1
 # COST METER. The cap needs a meter. The default session_cost_usd
 # prices the tracked session (the parent plus its subagents) from the
 # stream transcripts under transcripts_root, using the tallyman module
-# and the anthropic-rates.tcl table beside this file. Both are soft
-# dependencies of the default only: when either is missing the harness
-# logs one warning that the cap is unmetered and runs on, and a host
-# that overrides session_cost_usd needs neither.
+# and the anthropic-rates.tcl table beside this file. Both are
+# dependencies of the default only: a host that overrides
+# session_cost_usd needs neither, and a zero cap needs no meter. With a
+# cap armed and either missing, call and resume refuse to run: an
+# unmetered cap is a promise the harness cannot keep, and refusing
+# loudly beats running unbounded behind a warning.
 #
 # CONCURRENCY. Harnesses are parallel-safe per instance: each owns its
 # slug's files and ledger, and instances share nothing but the logger
@@ -117,14 +119,14 @@ package provide coachman 1.1
 #                      real CLI.
 #   session_cost_usd - USD spent so far by a session; feeds the cost cap.
 #                      Default: the tallyman-backed transcript meter
-#                      (see COST METER), dormant with one warning when
+#                      (see COST METER), which refuses an armed cap when
 #                      tallyman or the rates table is absent.
 #   transcripts_root - where the claude CLI writes session transcripts
 #                      (default ~/.claude/projects); the default meter
 #                      globs it by session id.
 #   cost_rates       - the tallyman rates dict the default meter prices
 #                      with (default: anthropic-rates.tcl beside this
-#                      module; {} leaves the meter dormant).
+#                      module; {} refuses an armed cap).
 #   permission_args  - the claude permission flags the session runs under.
 #                      The default suits unattended batch runs and grants
 #                      the session broad tool access; an interactive or
@@ -149,8 +151,6 @@ namespace eval coachman {
     # from read-and-absent.
     variable rates {}
     variable rates_loaded 0
-    # One warning per process when the default meter runs unmetered.
-    variable meter_warned 0
 }
 
 # Lightweight file helpers.
@@ -363,18 +363,17 @@ oo::class create coachman::Harness {
     # session_cost_usd - USD spent so far by session $sid (the parent
     # session plus its subagents), priced from the stream transcripts
     # by tallyman. Feeds budget_poll. Reads 0.0 before the transcript
-    # appears, so the watchdog can call it from the first poll. When
-    # tallyman or the rates table is absent the meter is dormant: it
-    # reads 0.0, says so once, and the cap never trips.
+    # appears, so the watchdog can call it from the first poll. Errors
+    # when tallyman or the rates table is absent; _assert_metered runs
+    # the same check at call/resume entry, so an armed cap never
+    # reaches the poll unmetered.
     method session_cost_usd {sid} {
         set rates [my cost_rates]
         if {[llength $rates] == 0} {
-            my _meter_dormant "no anthropic-rates.tcl beside the module"
-            return 0.0
+            error "coachman: session_cost_usd unmetered - no rates table (see cost_rates)"
         }
         if {[catch {package require tallyman}]} {
-            my _meter_dormant "tallyman not on the module path"
-            return 0.0
+            error "coachman: session_cost_usd unmetered - tallyman is not on the module path"
         }
         set files [coachman::_session_files $sid [my transcripts_root]]
         if {[llength $files] == 0} { return 0.0 }
@@ -405,14 +404,24 @@ oo::class create coachman::Harness {
         return [expr {$usd < 0 ? 0.0 : $usd}]
     }
 
-    # _meter_dormant - one warning per process that the cost cap is
-    # running unmetered, then silence: the condition is environmental,
-    # and repeating it on every poll would drown the log.
-    method _meter_dormant {why} {
-        if {$::coachman::meter_warned} { return }
-        set ::coachman::meter_warned 1
-        [my log_service]::warn \
-            "Cost cap unmetered ($why): session_cost_usd reads 0 and the cap will not trip"
+    # _assert_metered - the fail-loud guard on an armed cost cap: a cap
+    # above zero whose meter cannot price (no rates table, or no
+    # tallyman) is a promise the harness cannot keep, so the run is
+    # refused at entry rather than run unbounded behind a warning. Only
+    # the DEFAULT meter needs rates and tallyman; a host that overrides
+    # session_cost_usd brings its own arithmetic and passes, which the
+    # implementer of the method in the call chain decides.
+    method _assert_metered {} {
+        if {$WorkerCostCapUsd <= 0} { return }
+        lassign [lindex [info object call [self] session_cost_usd] 0] \
+            calltype methodname cls methodtype
+        if {$cls ne "::coachman::Harness"} { return }
+        if {[llength [my cost_rates]] == 0} {
+            error "coachman: cost cap \$$WorkerCostCapUsd armed but unmetered - no rates table beside the module; supply cost_rates, override session_cost_usd, or set the cap to 0"
+        }
+        if {[catch {package require tallyman}]} {
+            error "coachman: cost cap \$$WorkerCostCapUsd armed but unmetered - tallyman is not on the module path; vendor it beside the module, override session_cost_usd, or set the cap to 0"
+        }
     }
 
     # ──────────────────────────────────────────────────────────────────
@@ -491,6 +500,7 @@ oo::class create coachman::Harness {
     # its context instead, silently. A caller that wants every call tracked
     # builds a harness per session, or overrides this method.
     method call {stage log_file prompt args} {
+        my _assert_metered
         set rc [my _with_recovery call $stage $log_file $prompt {*}$args]
         # Capture whenever the stream produced an id (including an incomplete
         # or budget-killed run) so an interrupted call can still be resumed and
@@ -508,6 +518,7 @@ oo::class create coachman::Harness {
         if {$SessionId eq ""} {
             error "coachman::Harness::resume: no session id captured yet - a call must reach one first"
         }
+        my _assert_metered
         return [my _with_recovery resume $stage $log_file $prompt --resume $SessionId {*}$args]
     }
 
