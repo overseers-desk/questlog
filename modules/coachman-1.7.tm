@@ -621,7 +621,8 @@ oo::class create coachman::Harness {
     # (sleep_wake cleared the sleep and the deferred resume has not run
     # yet, or the run sits between a wake and its next invocation): no
     # handle and no sleeper exist, yet the run is live, so the mark
-    # alone is set and the next boundary check honours it. Idle: a
+    # alone is set; the AbortRequested check after the wake honours
+    # it. Idle: a
     # no-op returning 0. Returns 1 whenever a live run was told to
     # stop; the interrupted call returns 2 (the validate-the-product
     # path) with fail_cause naming the abort, unretried. Only a
