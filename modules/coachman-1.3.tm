@@ -90,10 +90,10 @@ package provide coachman 1.3
 # A usage-limit block never reaches the caller: it is classified inside,
 # waited out, and retried.
 #
-# `abort` cancels an in-flight coroutine-driven run from outside (a GUI
-# cancel, a job loop shutdown); the killed call returns 2 with its
-# fail_cause naming the abort. See the method for the synchronous-mode
-# limit.
+# `abort` cancels an in-flight coroutine-driven run from outside; the
+# killed call returns 2 with its fail_cause naming the abort, and an
+# abort during the usage-window sleep wakes and ends the run at once.
+# See the method for the synchronous-mode limit and intended callers.
 #
 # FILES per call, given `log_file`:
 #   $log_file           the product (the turn's result text)
@@ -268,7 +268,10 @@ proc coachman::tool_use_counts {sid root {toolname ""} {inputfield ""}} {
     }
     set counts [dict create]
     foreach f $files {
-        if {[catch {open $f r} fd]} continue
+        # An unreadable transcript raises rather than reading as zero
+        # calls: a silent zero would forge a "tool never invoked"
+        # verdict downstream, the opposite of what an audit is for.
+        set fd [open $f r]
         fconfigure $fd -encoding utf-8 -profile replace
         try {
             while {[gets $fd line] >= 0} {
@@ -304,7 +307,7 @@ oo::class create coachman::Harness {
     variable Slug LogPrefix CostLog SessionId PromptDir LogDir \
              WorkerCostCapUsd CostKilled \
              StallKilled CallerKilled StallTimeoutMs UsageResetSecs \
-             FailCause DeadmanHandle
+             FailCause DeadmanHandle AbortRequested SleepTimer SleepCoro
 
     constructor {prompt_dir log_dir} {
         set PromptDir $prompt_dir
@@ -319,6 +322,9 @@ oo::class create coachman::Harness {
         set UsageResetSecs 0
         set FailCause ""
         set DeadmanHandle ""
+        set AbortRequested 0
+        set SleepTimer ""
+        set SleepCoro ""
         # The per-session cost cap is the sole budget circuit-breaker: it
         # bounds a runaway think/retry loop that spends fast (BOUNDS in
         # the header holds the no-wall-clock rationale). The prompt
@@ -586,23 +592,42 @@ oo::class create coachman::Harness {
         return [my _with_recovery resume $stage $log_file $prompt --resume $SessionId {*}$args]
     }
 
-    # abort - cancel the in-flight run: the outside kill path a GUI
-    # cancel button or a job loop draining at shutdown reaches for. With
-    # a live handle the child group is killed with cause `caller` and 1
-    # is returned; the interrupted call classifies as an external kill
-    # (return 2, the validate-the-product path) and is not retried.
-    # Idle, a no-op returning 0. Only a coroutine-driven run holds a
-    # handle: deadman's synchronous mode blocks its caller until the
-    # child is reaped, so a synchronous caller is itself parked inside
-    # the very run it would abort, and abort from another event source
-    # finds no handle there. An abort racing a watchdog on one tick can
-    # return 1 while the recorded cause is the watchdog's; deadman's
-    # first-cause-wins rule decides, and the return value reports only
-    # that a live run was told to die.
+    # abort - cancel the in-flight run: the outside kill path a caller
+    # such as a GUI cancel button or a job-loop shutdown would reach
+    # for. Three states answer it. A live child: its group is killed
+    # with cause `caller`, and the abort MARK (AbortRequested), not the
+    # recorded cause, is what stops the run - deadman's first-cause-wins
+    # rule can hand the kill to a watchdog that fired first, and without
+    # the mark the stall-retry loop would run fresh attempts over the
+    # caller's abort. A usage-window sleep between attempts: the run is
+    # marked and, in coroutine mode, woken at once to fail rather than
+    # sleeping out a reset nobody wants. Idle: a no-op returning 0.
+    # Returns 1 whenever a live run was told to stop; the interrupted
+    # call returns 2 (the validate-the-product path) with fail_cause
+    # naming the abort, unretried. Only a coroutine-driven run holds a
+    # handle or a wakeable sleep: deadman's synchronous mode blocks its
+    # caller until the child is reaped, so a synchronous caller is
+    # itself parked inside the very run it would abort.
     method abort {} {
-        if {$DeadmanHandle eq ""} { return 0 }
-        deadman::kill $DeadmanHandle caller
-        return 1
+        if {$DeadmanHandle ne ""} {
+            set AbortRequested 1
+            deadman::kill $DeadmanHandle caller
+            return 1
+        }
+        if {$SleepCoro ne ""} {
+            set AbortRequested 1
+            after cancel $SleepTimer
+            # Resume from the event loop, not from inside abort's own
+            # stack; the guard leaves nothing to fire into if the
+            # coroutine was torn down first.
+            after 0 [list apply {co {
+                if {[llength [info commands $co]]} { $co }
+            }} $SleepCoro]
+            set SleepTimer ""
+            set SleepCoro ""
+            return 1
+        }
+        return 0
     }
 
     # finalise_resume - the bounded recovery for a cost-cap kill (a call
@@ -668,6 +693,7 @@ oo::class create coachman::Harness {
     #     with the original prompt+args, clearing SessionId so the new session
     #     is metered by its own init event, not the dead one.
     method _with_recovery {entry stage log_file prompt args} {
+        set AbortRequested 0
         set max_retries 5
         # A stall kill is a recoverable interruption, not a verdict on the
         # work: a session that emitted only thinking tokens then fell silent
@@ -687,6 +713,17 @@ oo::class create coachman::Harness {
         set json_file "${log_file}.json"
         for {set attempt 1} {1} {incr attempt} {
             set rc [my _invoke $stage $log_file $prompt {*}$args]
+            # The abort mark outranks the recorded kill cause: an abort
+            # that lost deadman's first-cause-wins race to a watchdog
+            # (or landed on a run whose envelope still completed) must
+            # still end the run here, not be retried over. It also
+            # outranks a budget classification - the caller's stop and
+            # the cap's stop both want the run dead, and the caller
+            # asked by name.
+            if {$AbortRequested} {
+                my _fail "FAIL ($stage: aborted by caller): $Slug"
+                return 2
+            }
             if {$rc == 2 && $StallKilled} {
                 if {$stall_attempt >= $max_stall_retries} {
                     my _fail \
@@ -718,11 +755,23 @@ oo::class create coachman::Harness {
             # whole process on a vwait. Outside a coroutine the vwait
             # fallback keeps a standalone run working.
             if {[info coroutine] ne ""} {
-                after [expr {$UsageResetSecs * 1000}] \
+                # The timer and coroutine are held on the instance so
+                # abort can cancel the one and wake the other early;
+                # after the wake, the mark check at the top of the next
+                # iteration's _invoke return is too late (it would
+                # re-invoke first), so check it here.
+                set SleepCoro [info coroutine]
+                set SleepTimer [after [expr {$UsageResetSecs * 1000}] \
                     [list apply {co {
                         if {[llength [info commands $co]]} { $co }
-                    }} [info coroutine]]
+                    }} [info coroutine]]]
                 yield
+                set SleepTimer ""
+                set SleepCoro ""
+                if {$AbortRequested} {
+                    my _fail "FAIL ($stage: aborted by caller): $Slug"
+                    return 2
+                }
             } else {
                 after [expr {$UsageResetSecs * 1000}] \
                     [list set [my varname _wake] 1]

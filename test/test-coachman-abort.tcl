@@ -38,16 +38,40 @@ proc write_file {path content} {
 set QUIET [logger::init coachman-test-quiet]
 ${QUIET}::setlevel critical
 
-# The fake: an init event, then silence far past the test's lifetime.
+# The fake: scenario hang emits an init event then silence far past the
+# test's lifetime; limit reports a usage-window block every time.
 proc write_fake {dir} {
     set path [file join $dir claude]
     write_file $path {#!/usr/bin/env tclsh9.0
 set fd [open $::env(FAKE_ARGV_LOG) a]
 puts $fd $::argv
 close $fd
-puts {{"type":"system","subtype":"init","session_id":"sid-hang"}}
-flush stdout
-after 30000
+switch -- $::env(FAKE_SCENARIO) {
+    hang {
+        puts {{"type":"system","subtype":"init","session_id":"sid-hang"}}
+        flush stdout
+        after 30000
+    }
+    limit {
+        puts {{"type":"system","subtype":"init","session_id":"sid-limit"}}
+        puts {{"type":"result","subtype":"success","is_error":true,"result":"You have hit your usage limit; resets 3am (UTC)"}}
+    }
+}
+}
+    file attributes $path -permissions 0o755
+    return $path
+}
+
+# A TERM-ignoring fake, for the abort-vs-stall race: the stall watchdog's
+# TERM records its cause first and the child lives on until the KILL at
+# the end of deadman's grace period, the window the abort lands in.
+proc write_trap_fake {dir} {
+    set path [file join $dir claude-trap]
+    write_file $path {#!/bin/sh
+echo "$@" >> "$FAKE_ARGV_LOG"
+echo {{"type":"system","subtype":"init","session_id":"sid-trap"}}
+trap '' TERM
+sleep 30
 }
     file attributes $path -permissions 0o755
     return $path
@@ -65,6 +89,7 @@ set logd [file join $dir logs]
 set pdir [file join $dir row-1]
 file mkdir $pdir
 set ::env(FAKE_ARGV_LOG) [file join $dir argv.log]
+set ::env(FAKE_SCENARIO) hang
 
 set h [AbortHarness new $pdir $logd]
 # The stall clock and the cost poll stay out of the way: the abort is
@@ -94,6 +119,79 @@ check "fail_cause names the abort" \
 check "the abort is not retried" \
     [llength [split [string trim [read_file $::env(FAKE_ARGV_LOG)]] \n]] 1
 check "the handle is cleared: abort after the kill is a no-op" [$h abort] 0
+
+# ---- abort that loses the kill race still ends the run --------------------
+
+# A TERM-ignoring child: the stall watchdog fires first and records the
+# stall cause; the abort lands in the grace window before the KILL, so
+# deadman's first-cause-wins rule hands the kill to the stall. The abort
+# mark, not the recorded cause, is the contract: the run ends with the
+# abort's fail_cause and no fresh-session stall retries.
+set TRAP [write_trap_fake $dir]
+oo::class create TrapHarness {
+    superclass coachman::Harness
+    method log_service {} { return $::QUIET }
+    method claude_bin {} { return $::TRAP }
+}
+set pdir2 [file join $dir row-2]
+file mkdir $pdir2
+set ::env(FAKE_ARGV_LOG) [file join $dir argv-race.log]
+set h2 [TrapHarness new $pdir2 $logd]
+$h2 set_stall_timeout 0.3
+$h2 set_worker_cost_cap 0
+set ::race_ret ""
+set ::race_rc ""
+coroutine race_runner apply {{h logd} {
+    set ::race_rc [$h call research [file join $logd race.log] "p"]
+    set ::race_done 1
+}} $h2 $logd
+# 1s: past the stall TERM at 0.3s, well inside the 10s grace window.
+after 1000 [list apply {h {
+    set ::race_ret [$h abort]
+}} $h2]
+vwait ::race_done
+check "abort in the race window still returns 1" $::race_ret 1
+check "the race-losing abort still ends the run with 2" $::race_rc 2
+check "fail_cause names the abort, not the stall" \
+    [string match "*aborted by caller*" [$h2 fail_cause]] 1
+check "no stall retries ran over the abort" \
+    [llength [split [string trim [read_file $::env(FAKE_ARGV_LOG)]] \n]] 1
+
+# ---- abort during the usage-window sleep ----------------------------------
+
+# Between attempts there is no child and no handle; the abort marks the
+# run and wakes the sleeping coroutine at once instead of letting it
+# sleep out the reset and retry.
+oo::class create SleepHarness {
+    superclass coachman::Harness
+    method log_service {} { return $::QUIET }
+    method claude_bin {} { return $::FAKE }
+    method _credit_wait_secs {msg} { return 30 }
+}
+set pdir3 [file join $dir row-3]
+file mkdir $pdir3
+set ::env(FAKE_ARGV_LOG) [file join $dir argv-sleep.log]
+set ::env(FAKE_SCENARIO) limit
+set h3 [SleepHarness new $pdir3 $logd]
+set ::sleep_ret ""
+set ::sleep_rc ""
+set t0 [clock milliseconds]
+coroutine sleep_runner apply {{h logd} {
+    set ::sleep_rc [$h call draft [file join $logd draft.log] "p"]
+    set ::sleep_done 1
+}} $h3 $logd
+after 300 [list apply {h {
+    set ::sleep_ret [$h abort]
+}} $h3]
+vwait ::sleep_done
+set elapsed [expr {[clock milliseconds] - $t0}]
+check "abort during the sleep returns 1" $::sleep_ret 1
+check "the woken run ends with 2" $::sleep_rc 2
+check "fail_cause names the abort" \
+    [string match "*aborted by caller*" [$h3 fail_cause]] 1
+check "the sleep was woken, not slept out" [expr {$elapsed < 5000}] 1
+check "no retry followed the woken abort" \
+    [llength [split [string trim [read_file $::env(FAKE_ARGV_LOG)]] \n]] 1
 
 file delete -force $dir
 
