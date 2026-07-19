@@ -2905,13 +2905,13 @@ oo::class create ::questlog::ui::SessionList {
                 # The subtree bound is hard; within it a running session bypasses the
                 # recency / min-turns bounds (it always surfaces), but a running
                 # session OUTSIDE the subtree bound does not.
-                set in_subtree [expr {[llength $subtree] == 0 || $row eq "" \
+                set in_subtree [expr {[llength $subtree] == 0 \
                     || [::questlog::scan::row_subtree_match $row $subtree]}]
                 # A session the reader pulled in through the cut banner stays,
                 # whatever the bounds say: they named it and asked for it, and
                 # dropping it on the next tick would answer them by taking it away.
                 set retained [expr {[dict exists $Pinned $path] || ($in_subtree \
-                    && (($row ne "" && [my row_matches_snapshot $row]) || $is_running))}]
+                    && ([my row_matches_snapshot $row] || $is_running))}]
             }
             if {!$retained} { my forget_session $path; continue }
             set now_hidden [expr {![my attr_admits [my sid $path]]}]
