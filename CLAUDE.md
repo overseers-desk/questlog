@@ -6,6 +6,10 @@
 - A released `vendor/` file (`module-<version>.tm`) is edited in place only to test, and that edit is never committed; committable work-in-progress lives in a draft beside it, the next version with an alpha marker (`module-1.2a1.tm`). Tcl prefers the stable release, so a committed draft changes no normal run, and a test opts in with `package prefer latest` or an explicit version. Finalising strips the marker: the change lands at the module's home as the bumped release, the release file replaces the copy here, and the draft is deleted in the same act, so a released file's history holds only whole-file adds, deletes, and replacements mirroring the home.
 - Session data has one in-memory home, the session list's node store; the scanner is a stream producer whose only retained state is disk-derived memos (the folder-to-cwd resolver and the session-origin cache), so a scanned row lives in exactly one place and every mutation is one store operation, not a multi-store transaction.
 
+## Test conventions
+
+Tests are standalone `test/test-*.tcl` scripts; `test/run-audit.sh` globs them, so a new file needs no wiring. Each locates the repo root from `info script`, adds `modules/` and `vendor/` to the tm path, carries its own `check` proc, and exits with its failure count. The coachman module's tests drive the harness against a fake claude binary through the `claude_bin` seam; nothing in the suite needs the real CLI.
+
 ## Verifying GUI changes
 
 questlog is a Tcl/Tk app launched with `./questlog` (it runs under `tclsh9.0`). Verify visual or behavioural changes on a headless Xvfb display, never the user's real `DISPLAY=:0`: launching on :0 puts windows over the user's work where they may click or close them, and ImageMagick `import`'s X11 grab is unreliable under this machine's XWayland :0 (it returns an empty image and fails with "missing an image filename"). On a private Xvfb server `import` works.
