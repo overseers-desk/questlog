@@ -10,8 +10,9 @@ package require leash
 # in-memory home of session data). The differential skip asks the consumer
 # through the known_mtime callback, so an unchanged corpus re-extends without
 # re-reading a file. Scan keeps only disk-derived memos of its own: the
-# folder->cwd resolver cache (Folders) and the session-origin cache (Kind),
-# both used headlessly by the CLI.
+# folder->cwd resolver cache (Folders) with its per-pass negative twin
+# (NegFolders), and the session-origin cache (Kind), all used headlessly
+# by the CLI.
 #
 # A class under the issue-67 trial: named globals absorbed, joint
 # epoch/coroutine state, and rows leave tell-don't-ask through publish_row.
@@ -296,6 +297,15 @@ oo::class create ::questlog::Scan {
     variable Kind         ;# dict: path -> {mtime kind}; memoised session origin
                           ;# (cli|sdk), so the search corpus gate pays one head
                           ;# read per file once, not on every query
+    variable NegFolders   ;# dict used as a set: folder basenames that failed to
+                          ;# resolve during the current scan pass. Reset at the
+                          ;# top of each pass (run_scan), so an unresolvable folder
+                          ;# is peeked once per pass, not once per row, while a
+                          ;# directory restored between passes still gets a fresh
+                          ;# chance. Deliberately NOT reset by a single-path scan
+                          ;# (the reconciler, the CLI gap-fill): those repeat, and
+                          ;# a per-call reset would hand the per-row peek cost back
+                          ;# to them; their heal arrives with the next pass.
 
     constructor {on_row on_done {on_progress {}} {is_typing {}} {known_mtime {}}} {
         set Folders [dict create]
@@ -308,6 +318,7 @@ oo::class create ::questlog::Scan {
         set IsTyping $is_typing
         set KnownMtime $known_mtime
         set Kind [dict create]
+        set NegFolders [dict create]
     }
 
     # Session origin from the opening record, classified by the shared
@@ -359,6 +370,9 @@ oo::class create ::questlog::Scan {
         my later 1 [list ::questlog::resume_coro [info coroutine]]
         yield
         if {$my_epoch != $Epoch} return
+        # A negative resolution is only valid within one pass: reset the memo so
+        # a folder restored between passes is peeked afresh.
+        set NegFolders [dict create]
         set count 0
         set scanned 0
         set paths [my list_paths_for $Snapshot]
@@ -641,7 +655,7 @@ oo::class create ::questlog::Scan {
 
     # Publish a row into the stream. Used by run_scan and by Search (which
     # produces row data as a free side-effect of its own pass). The row's one
-    # retained home is the consumer's; here the row only feeds the two
+    # retained home is the consumer's; here the row only feeds Scan's own
     # disk-derived memos on its way out. A scan_file republish (the search
     # path) carries neither the cost fields nor the tail-read identity fields
     # (slug, ai_title, kind).
@@ -677,9 +691,9 @@ oo::class create ::questlog::Scan {
     # ambiguous). row_subtree_match reads the field as the residence
     # authority; the stamping lives here because Scan owns the resolver and
     # its cache, which keeps ::questlog::scan pure over its dicts. A ""
-    # stamp is not re-tried until the file is rescanned - resolve_folder
-    # itself never caches a failure, so a directory restored later heals on
-    # the next scan of the row.
+    # stamp is not re-tried until the file is rescanned; resolve_folder
+    # memoises a failure only for the current pass, so a directory restored
+    # later heals on the next scan of the row.
     method stamp_subtree {row} {
         if {[dict exists $row folder_cwd]} { return $row }
         set cwd [my resolve_folder [dict get $row folder]]
@@ -696,22 +710,29 @@ oo::class create ::questlog::Scan {
     # returns a fictional path.
     #
     #   1. Folders cache - already resolved this process.
-    #   2. peek_folder_cwd - the cwd recorded inside an honest jsonl,
+    #   2. NegFolders memo - already failed this pass; "" without re-peeking.
+    #   3. peek_folder_cwd - the cwd recorded inside an honest jsonl,
     #      trusted only if it still names a real directory. This step
     #      READS TRANSCRIPTS, which is why it is a scan-path step and why
     #      resolve_folder itself must never be called from a UI path
     #      (call folder_cwd instead).
-    #   3. folder_cwd - the Folders cache and the filesystem walk.
-    #   4. "" - unresolvable. Not cached: a directory created or restored
-    #      later in this process should get a fresh chance.
+    #   4. folder_cwd - the Folders cache and the filesystem walk.
+    #   5. "" - unresolvable. Memoised in NegFolders for the rest of this pass,
+    #      so a folder of N sessions whose directory is gone, or whose
+    #      transcripts all point elsewhere, pays one peek per pass rather than
+    #      one per row; the memo is dropped at the next pass boundary, so a
+    #      directory created or restored later still gets a fresh chance.
     method resolve_folder {folder} {
         if {[dict exists $Folders $folder]} { return [dict get $Folders $folder] }
+        if {[dict exists $NegFolders $folder]} { return "" }
         set cwd [my peek_folder_cwd $folder]
         if {$cwd ne "" && [file isdirectory $cwd]} {
             dict set Folders $folder $cwd
             return $cwd
         }
-        return [my folder_cwd $folder]
+        set cwd [my folder_cwd $folder]
+        if {$cwd eq ""} { dict set NegFolders $folder 1 }
+        return $cwd
     }
 
     # The resolver without step 2: the Folders cache, then the filesystem walk. It

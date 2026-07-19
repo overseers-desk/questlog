@@ -155,9 +155,9 @@ set ::opens 0
 check folder_cwd_gives_up_on_moved "" [$sr folder_cwd $movedf]
 check folder_cwd_read_nothing_when_it_gives_up 0 $::opens
 
-# The same question through the full resolver: it reads, and (having found no
-# answer) it will read again next time. That is the cost the filter path no
-# longer pays.
+# The same question through the full resolver: it reads once, memoises the
+# failure for the pass, and answers from the memo until the next run_scan.
+# Still one read more than the filter path, which never reads at all.
 set ::opens 0
 check resolve_folder_gives_up_on_moved "" [$sr resolve_folder $movedf]
 check resolve_folder_read_the_folder 3 $::opens
