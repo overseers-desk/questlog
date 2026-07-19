@@ -62,7 +62,7 @@ check "and the publish still carries no view-filter key" 0 [dict exists $::Publi
 .tb.search.case invoke
 check "releasing Aa publishes search_case clear" 0 [dict get $::Published search_case]
 
-# The bounds picker publishes the region-spec the search terms must appear in.
+# The regions picker publishes the region-spec the search terms must appear in.
 # Driven through the module's own menu: entry 2 is "tool calls", the tool-use
 # region.
 .tb.search.scope.m invoke 2

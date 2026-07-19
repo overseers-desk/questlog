@@ -6,7 +6,7 @@ package require searchfield
 # ::questlog::ui::Toolbar - the top-of-window controls.
 #
 # The search row is a ::searchfield::SearchField: the entry, the typing
-# grammar, the live debounce, the Return publish, the bounds menubutton and the
+# grammar, the live debounce, the Return publish, the regions menubutton and the
 # Aa toggle are the module's, and questlog hands it the region vocabulary
 # lib/search.tcl parses (the names below) with the friendly labels the menu
 # shows. `snapshot` reads the field's fragment back into the search keys every
@@ -39,7 +39,7 @@ package require searchfield
 #   pattern          list of regex strings   (case-sensitive, always)
 #   min_turns        the minimum-turns bounds floor (1 = include all). A bounds
 #                    filter alongside since/subtree: a session below the floor leaves
-#                    the corpus, not just the view - see.
+#                    the corpus, not just the view - see lib/scan.tcl.
 #   cwd              launch cwd, constant after startup
 #
 # The view filters (running, bookmarked, model) are not here: they live
@@ -130,7 +130,7 @@ oo::class create ::questlog::ui::Toolbar {
         # file chip is questlog's own widget, in the op_<op>_{bg,fg} colours.
 
         # Search row: a ::searchfield::SearchField in a frame the toolbar owns.
-        # The entry, the bounds picker and the Aa toggle are the module's; the
+        # The entry, the regions picker and the Aa toggle are the module's; the
         # region names are the region-spec vocabulary lib/search.tcl
         # parse_regions reads out of the snapshot, and the labels are the
         # menu's friendly words for them. Live mode searches as typing pauses,
@@ -558,7 +558,7 @@ oo::class create ::questlog::ui::Toolbar {
     # so a term holding a literal quote does not survive the crossing. The six
     # criteria come out of the bar's model the same way: the two facets that
     # hold no value at their floor (an "all" time bound, a one-turn floor)
-    # publish that floor, since reads a value there and not an
+    # publish that floor, since lib/scan.tcl reads a value there and not an
     # absence.
     method snapshot {} {
         set m [$Bar model]
@@ -680,7 +680,7 @@ oo::class create ::questlog::ui::Toolbar {
         return [expr {$n <= 1 ? {} : [list $n]}]
     }
 
-    # The two floors, read back for the snapshot: the keys reads
+    # The two floors, read back for the snapshot: the keys lib/scan.tcl reads
     # carry a value even where the facet holds none.
     method since_value {} {
         set v [lindex [$Bar values since] 0]
@@ -753,7 +753,7 @@ oo::class create ::questlog::ui::Toolbar {
 
     # The minimum-turns bounds floor: a spinbox over 1..turn_count_cap. 1 includes
     # all; a higher floor drops shorter sessions from the corpus (it is a bound, not
-    # a view toggle - see). set_min_turns clamps to the valid range
+    # a view toggle - see lib/scan.tcl). set_min_turns clamps to the valid range
     # and reports, so a bad keystroke can never leave an out-of-range value; it is
     # wired to the buttons (-command, <<Increment>>/<<Decrement>>) and to
     # <Return>/<FocusOut> for typed edits.

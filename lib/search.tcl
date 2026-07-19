@@ -86,7 +86,7 @@ proc ::questlog::search::search_terms {s} {
 # including the system/compaction blocks the four named regions exclude). An
 # unknown token, or an ambiguous prefix (t, to, tool, tool-, a), throws and names
 # the candidates - never a silent default. The one home for the region
-# vocabulary the CLI colon-qualifier and the GUI bounds selector both parse; the
+# vocabulary the CLI colon-qualifier and the GUI regions selector both parse; the
 # transcript tokens map to jsonl block types, while `names` is not a block type
 # but the session's name history, matched per-session in scan_file.
 proc ::questlog::search::parse_regions {spec} {

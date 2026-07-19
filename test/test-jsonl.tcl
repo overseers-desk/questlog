@@ -166,9 +166,9 @@ check hits_not_substring    0 [sat [fl wrote spar-manager] $r_spar]
 # A region set on a keyword or regex leaf gates which block types it matches
 # (empty = anywhere). Unlike the old behaviour, a regex now honours its regions too:
 # alpha is found anywhere but not when the leaf is restricted to tool_use.
-set r_scope [::questlog::jsonl::parse_line {{"type":"assistant","message":{"content":[{"type":"text","text":"alpha says hello"},{"type":"tool_use","name":"Bash","input":{"command":"echo bravo"}}]}}}]
-check region_text_in_text     1 [sat [kw alpha {user assistant}] $r_scope]
-check region_text_not_use     0 [sat [kw alpha {tool_use}] $r_scope]
+set r_regions [::questlog::jsonl::parse_line {{"type":"assistant","message":{"content":[{"type":"text","text":"alpha says hello"},{"type":"tool_use","name":"Bash","input":{"command":"echo bravo"}}]}}}]
+check region_text_in_text     1 [sat [kw alpha {user assistant}] $r_regions]
+check region_text_not_use     0 [sat [kw alpha {tool_use}] $r_regions]
 check region_use_in_use       1 [sat [kw bravo {tool_use}] $r_scope]
 check region_use_not_text     0 [sat [kw bravo {user assistant}] $r_scope]
 check region_result_in_result 1 [sat [kw questlog {tool_result}] $user_tool_result]
