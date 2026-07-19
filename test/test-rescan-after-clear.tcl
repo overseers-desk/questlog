@@ -84,7 +84,7 @@ proc check {name got want} {
 # Mirror the app's scope-switch sequence: replay the retained rows the
 # snapshot admits from the store, then extend for any newly-windowed file.
 proc scan_now {snap} {
-    $::SL replay_scope
+    $::SL replay_bounds
     set ::scan_done 0
     $::Scan extend $snap
     after 300 [list set ::scan_done 1]

@@ -134,7 +134,7 @@ check "the registry resolves the tag to the full model text" \
 # --- Standing text before any hover: the resting scope line. start() seeds the
 #     bar from the machine once at launch; do the same before asserting on it.
 ::questlog::ui::app::refresh_status
-check "resting bar is the scope line" [statusvar] [::questlog::ui::app::scope_status]
+check "resting bar is the scope line" [statusvar] [::questlog::ui::app::bounds_status]
 
 # --- <Enter>: the strip shows the badge kind then the whole snippet line.
 eval $enter
@@ -161,7 +161,7 @@ eval $enter
 check "peek again while browsing" [statusvar] "tool_use · $LONG"
 eval $leave
 check "leave restores the standing scope line" \
-    [statusvar] [::questlog::ui::app::scope_status]
+    [statusvar] [::questlog::ui::app::bounds_status]
 
 # --- Percent-laden content survives verbatim: the very characters bind's
 #     %-substitution corrupts ("printf %s" -> the state field, "50%" -> "50\ ")
@@ -186,7 +186,7 @@ check "peek up before the clear" [statusvar] "tool_use · $LONG"
 $SL reset
 update
 check "a wholesale clear drops the stale peek" \
-    [statusvar] [::questlog::ui::app::scope_status]
+    [statusvar] [::questlog::ui::app::bounds_status]
 
 ::questlog::path::_real_file delete -force $SAND
 puts [expr {$fails ? "FAILED ($fails)" : "PASS"}]

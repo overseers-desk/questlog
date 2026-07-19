@@ -148,7 +148,7 @@ set ::pub [list]
 foreach f [glob -directory $root -- */*.jsonl] { lappend ::pub [$s2 scan_path $f] }
 set snapP [dict create since all subtree [list $P]]
 set got [lsort [lmap r $::pub {expr {
-    [::questlog::scan::row_matches $snapP $r]
+    [::questlog::scan::row_in_bounds $snapP $r]
         ? [file rootname [file tail [dict get $r path]]] : [continue]}}]]
 check stream_residence {mv01 r001 r002} $got
 $s2 destroy

@@ -7,7 +7,7 @@
 # with known properties. Each case asserts BOTH engines return the exact
 # expected session set. They share lib/ but diverge in orchestration, so a
 # scope filter the GUI search forgets (the `subtree` row-scope, which lives in
-# filter::row_matches and the CLI applies but the GUI search corpus does not)
+# filter::row_in_bounds and the CLI applies but the GUI search corpus does not)
 # shows up as a GUI-vs-truth and GUI-vs-CLI mismatch, not a silent pass.
 #
 # Pure Tcl, no Tk: each case runs the GUI engine through BOTH search paths - the

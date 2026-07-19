@@ -170,7 +170,7 @@ $sr destroy
 ::questlog::path::_real_file delete -force [file join /tmp/questlog-test-projects $movedf]
 
 # min_turns is scope: the scanner records each row's nturns (capped), and
-# filter::row_matches drops a row below the floor. The 3-turn aaa session records
+# filter::row_in_bounds drops a row below the floor. The 3-turn aaa session records
 # nturns 3; the single-turn bbb-2 records nturns 1. A min_turns 2 scope keeps the
 # two multi-turn rows (aaa 3, ccc 2) and drops bbb-2. The published stream is
 # the rows' one delivery; scope questions are asked of the row dicts it carried.
@@ -182,7 +182,7 @@ foreach r $qrows { set nturns_of([dict get $r path]) [dict get $r nturns] }
 check nturns_recorded_aaa 3 $nturns_of(/tmp/questlog-test-projects/-home-test-code-foo/aaa-1.jsonl)
 check nturns_recorded_bbb 1 $nturns_of(/tmp/questlog-test-projects/-home-test-code-foo/bbb-2.jsonl)
 set inscope 0
-foreach r $qrows { if {[::questlog::scan::row_matches $snap1 $r]} { incr inscope } }
+foreach r $qrows { if {[::questlog::scan::row_in_bounds $snap1 $r]} { incr inscope } }
 check row_matches_min_turns 2 $inscope
 
 # Memoisation: re-extending shouldn't re-scan unchanged paths.
@@ -240,9 +240,9 @@ check bbb_bookmarked_flag 1 [dict get $bbb_row bookmarked]
 # never a window exemption: an out-of-window bookmarked row fails the window
 # predicate exactly like a plain one.
 check row_matches_bookmark_obeys_window 0 \
-    [::questlog::scan::row_matches [dict create since 7d] $bbb_row]
+    [::questlog::scan::row_in_bounds [dict create since 7d] $bbb_row]
 check row_matches_old_plain_dropped 0 \
-    [::questlog::scan::row_matches [dict create since 7d] $ccc_row]
+    [::questlog::scan::row_in_bounds [dict create since 7d] $ccc_row]
 
 set lp [$s2 list_paths_for [dict create since 7d]]
 check enum_bookmark_obeys_window 0 [expr {$bbb in $lp}]
@@ -350,8 +350,8 @@ check turns_scan_file_eq_cost $cost_turns $scan_file_turns
 # The floor reads nturns, the column shows the cost turns; with both 3, a floor
 # of 3 keeps the row and a floor of 4 drops it, and that decision is the one the
 # displayed turns count would predict.
-check floor_3_keeps 1 [::questlog::scan::row_matches [dict create since all min_turns 3] $row3]
-check floor_4_drops 0 [::questlog::scan::row_matches [dict create since all min_turns 4] $row3]
+check floor_3_keeps 1 [::questlog::scan::row_in_bounds [dict create since all min_turns 3] $row3]
+check floor_4_drops 0 [::questlog::scan::row_in_bounds [dict create since all min_turns 4] $row3]
 check floor_agrees_with_column 1 [expr {$cost_turns >= 3}]
 
 $s4 destroy

@@ -4,7 +4,7 @@
 # without losing the selection.
 #
 # Invariant under test: MODEL membership is scope (a browse row that passes
-# row_matches), independent of the view toggles. A toggle sets a per-session
+# row_in_bounds), independent of the view toggles. A toggle sets a per-session
 # `hidden` flag and re-renders the affected folders via collapse+expand; the
 # row stays in the model (model total unchanged, so the toggle is reversible),
 # and the selection - keyed by path, not by a rendered mark - survives the hide

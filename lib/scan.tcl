@@ -128,7 +128,7 @@ proc ::questlog::scan::parse_since {spec} {
 
 # Epoch cutoff for a snapshot's since bound. 0 means no bound ("all", or the
 # default when the key is absent); since on-disk mtimes are always positive a 0
-# cutoff excludes nothing. The one cutoff computation, consumed by row_matches
+# cutoff excludes nothing. The one cutoff computation, consumed by row_in_bounds
 # here and by Scan's list_paths_for; both exclude a row when mtime <= cutoff, so
 # the abs/absdt branch returns epoch-1 to keep a session at exactly the chosen
 # instant (local midnight for a bare date, the named second for a datetime: mtime
@@ -275,7 +275,7 @@ proc ::questlog::scan::in_subtree_of {path subtree_list} {
 # scopes browse and search alike; a row that somehow lacks nturns defaults to the
 # threshold and passes. The view filters are applied separately, by the list
 # engine's attribute filters.
-proc ::questlog::scan::row_matches {snapshot row} {
+proc ::questlog::scan::row_in_bounds {snapshot row} {
     if {[dict get $row mtime] <= [cutoff_for $snapshot]} { return 0 }
     set ceiling [ceiling_for $snapshot]
     if {$ceiling ne "" && [dict get $row mtime] > $ceiling} { return 0 }

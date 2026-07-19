@@ -384,7 +384,7 @@ proc ::questlog::cli::main::run {q} {
 
     # 2. The row-level scope snapshot: since, until, subtree. These ride outside
     # the boolean algebra as global scope bounds. The CLI has no session-list view, so
-    # it carries no view filters; row_matches applies scope only.
+    # it carries no view filters; row_in_bounds applies scope only.
     set snapshot [dict create \
         subtree [expr {$subtree eq "" ? {} : [list $subtree]}] \
         since $since \
@@ -448,7 +448,7 @@ proc ::questlog::cli::main::run {q} {
         set row [$scan stamp_subtree $row]
         set row_snapshot [expr {$is_child \
             ? [dict replace $sel_snapshot since all until all] : $sel_snapshot}]
-        if {![::questlog::scan::row_matches $row_snapshot $row]} {
+        if {![::questlog::scan::row_in_bounds $row_snapshot $row]} {
             continue
         }
 

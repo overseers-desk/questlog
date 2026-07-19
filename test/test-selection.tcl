@@ -74,10 +74,10 @@ set ::Scan [::questlog::Scan new [list apply {{r} { $::SL on_scan_row $r }}] noo
 proc scanpath {path} { return [$::Scan scan_path $path] }
 proc resolvef {f}    { return "/tmp/proj" }
 proc subagentsf {path} { return [$::Scan subagents_for $path] }
-proc scopef {f} { set ::scoped $f }
+proc folderboundf {f} { set ::folder_bound_seen $f }
 
 set SL [::questlog::ui::SessionList new .s resolvef noop noop noop noop noop \
-            noop scanpath noop subagentsf noop noop noop noop scopef]
+            noop scanpath noop subagentsf noop noop noop noop folderboundf]
 pack .s -fill both -expand 1
 
 set fails 0
@@ -121,9 +121,9 @@ check "a session gesture clears the folder highlight" [$SL is_folder_selected $F
 check "the session selection stands after clearing the folder" [sel] [list $a01]
 
 # ---- scope-to-folder invokes the owner callback --------------------------
-set ::scoped ""
-$SL folder_scope $FB
-check "folder_scope calls OnScopeFolder with the folder" $::scoped $FB
+set ::folder_bound_seen ""
+$SL folder_bound $FB
+check "folder_bound calls OnFolderBound with the folder" $::folder_bound_seen $FB
 
 # ---- plain select --------------------------------------------------------
 $SL selection_set $a02

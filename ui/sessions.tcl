@@ -112,7 +112,7 @@ oo::class create ::questlog::ui::SessionList {
     variable OnRename         ;# cb: path -> app rename router (dialog + apply + refresh)
     variable OnScanPath       ;# cb: path -> row (synchronous single-file scan)
     variable OnWiden          ;# cb: criterion -> relax it in the toolbar and republish
-    variable OnScopeFolder    ;# cb: folder -> scope the toolbar search to that folder, or ""
+    variable OnFolderBound    ;# cb: folder -> scope the toolbar search to that folder, or ""
     variable OnFilterChange   ;# cb: state -> the app learns a strip filter changed, or ""
     variable Snapshot
     variable CriteriaActive
@@ -162,7 +162,7 @@ oo::class create ::questlog::ui::SessionList {
                  on_scan_path cancel_cb \
                  on_subagents on_subagent_cost \
                  {on_widen ""} {on_status_peek ""} {on_status_unpeek ""} \
-                 {on_scope_folder ""} {on_filter_change ""}} {
+                 {on_folder_bound ""} {on_filter_change ""}} {
         set Top $parent
         set ResolveFolder $resolve_cb
         set OnOpen $on_open
@@ -178,7 +178,7 @@ oo::class create ::questlog::ui::SessionList {
         set OnWiden $on_widen
         set OnStatusPeek $on_status_peek
         set OnStatusUnpeek $on_status_unpeek
-        set OnScopeFolder $on_scope_folder
+        set OnFolderBound $on_folder_bound
         set OnFilterChange $on_filter_change
         set PeekByTag [dict create]
         set StatusVar "Idle"
@@ -862,18 +862,18 @@ oo::class create ::questlog::ui::SessionList {
     # predicate is shared with Scan through ::questlog::scope, so the model and
     # the view never disagree on what the snapshot admits.
     method row_matches_snapshot {row} {
-        return [::questlog::scan::row_matches $Snapshot $row]
+        return [::questlog::scan::row_in_bounds $Snapshot $row]
     }
 
     # The scope-relevant fields of a modelled session, assembled from its node
     # payload into the row shape ::questlog::scope reads. These are exactly the
-    # fields row_subtree_match (folder, folder_cwd, cwd_hint) and row_matches
+    # fields row_subtree_match (folder, folder_cwd, cwd_hint) and row_in_bounds
     # (mtime, nturns) consult; a caller with a modelled path asks the store,
     # never the scanner. mtime and nturns are set-at-scan and go stale for a
     # session still being written, but such a session is running and is retained
     # by that fact before its recency is ever weighed, so the frozen copy
     # decides nothing a fresh read would decide differently.
-    method payload_scope_row {path} {
+    method payload_bounds_row {path} {
         return [dict create \
             folder     [my sget $path folder] \
             folder_cwd [my sget $path folder_cwd] \
@@ -889,7 +889,7 @@ oo::class create ::questlog::ui::SessionList {
     # while search criteria own the list - is retained as a DETACHED node:
     # a real session node, parent "", indexed in DetachedNode instead of
     # PathNode, carrying the same payload an attached node would. Scope
-    # widening replays from these nodes without a disk re-scan (replay_scope);
+    # widening replays from these nodes without a disk re-scan (replay_bounds);
     # every hydration site re-attaches through restore_session. The store is
     # the one in-memory home a session's data has: Scan streams rows, and
     # what this store already knows nothing else remembers.
@@ -1139,7 +1139,7 @@ oo::class create ::questlog::ui::SessionList {
     # nothing attaches (the retention itself is untouched and outlives the
     # search). A retained path whose file is gone (transcript pruning) is
     # dropped here, so a ghost row never outlives its file in the memo.
-    method replay_scope {} {
+    method replay_bounds {} {
         if {$CriteriaActive} return
         set keyed [list]
         dict for {path id} $DetachedNode {
@@ -1148,7 +1148,7 @@ oo::class create ::questlog::ui::SessionList {
             if {![dict exists $Nodes $id]} continue
             if {[my node_field $id kind] ne "session"} continue
             if {![file isfile $path]} { my drop_retained $path; continue }
-            if {![my row_matches_snapshot [my payload_scope_row $path]]} continue
+            if {![my row_matches_snapshot [my payload_bounds_row $path]]} continue
             lappend keyed [list $path [my node_pget $id mtime 0]]
         }
         if {![llength $keyed]} return
@@ -1160,7 +1160,7 @@ oo::class create ::questlog::ui::SessionList {
         my anchor_restore
         $Text configure -state disabled
         my schedule_resort
-        my check_invariant replay_scope
+        my check_invariant replay_bounds
     }
 
     # Forget a retained node outright (its file is gone): the node, its
@@ -2479,17 +2479,17 @@ oo::class create ::questlog::ui::SessionList {
         set cwd [{*}$ResolveFolder $folder]
         $FMenu delete 0 end
         $FMenu add command -label "Search within this folder" \
-            -command [list [self] folder_scope $folder] \
-            -state [expr {$OnScopeFolder eq "" ? "disabled" : "normal"}]
+            -command [list [self] folder_bound $folder] \
+            -state [expr {$OnFolderBound eq "" ? "disabled" : "normal"}]
         $FMenu add command -label "Reveal folder" \
             -command [list [self] folder_reveal $folder] \
             -state [expr {$cwd eq "" ? "disabled" : "normal"}]
         tk_popup $FMenu $X $Y
     }
 
-    method folder_scope {folder} {
-        if {$OnScopeFolder eq ""} return
-        {*}$OnScopeFolder $folder
+    method folder_bound {folder} {
+        if {$OnFolderBound eq ""} return
+        {*}$OnFolderBound $folder
     }
 
     method folder_reveal {folder} {
@@ -3276,7 +3276,7 @@ oo::class create ::questlog::ui::SessionList {
                 # the disk-scan path below.
                 if {[my has_retained $path]} {
                     if {[llength $subtree] > 0 && ![::questlog::scan::row_subtree_match \
-                            [my payload_scope_row $path] $subtree]} continue
+                            [my payload_bounds_row $path] $subtree]} continue
                     my restore_session $path "" 0
                     if {![my sflag $path hidden]} {
                         dict set imported [my sget $path folder] 1
@@ -3329,7 +3329,7 @@ oo::class create ::questlog::ui::SessionList {
             if {!$is_running && ![file isfile $path]} { my forget_session $path; continue }
             # This path is modelled (checked at the loop head), so its scope
             # fields come straight from the store.
-            set row [my payload_scope_row $path]
+            set row [my payload_bounds_row $path]
             # Retain in the model: a matched search row always; a browse row while it is
             # in scope or running. An out-of-scope, non-running browse row leaves.
             if {$CriteriaActive} {
@@ -3756,7 +3756,7 @@ oo::class create ::questlog::ui::SessionList {
         set path [dict get $member path]
         if {[my has_session $path]} {
             return [::questlog::scan::row_subtree_match \
-                        [my payload_scope_row $path] $subtree]
+                        [my payload_bounds_row $path] $subtree]
         }
         return [::questlog::scan::folder_subtree_candidate \
                     [file tail [file dirname $path]] $subtree]

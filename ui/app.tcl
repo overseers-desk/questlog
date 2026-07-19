@@ -102,7 +102,7 @@ proc ::questlog::ui::app::start {root {seed {}}} {
     # No filter is on until the reader flips one on the strip, so the poll gathers
     # no membership until the list hands a filter change back through on_filter_change.
     set FilterState {}
-    set StatusVar [scope_status]
+    set StatusVar [bounds_status]
     set Running [dict create]
     set CurrentQuery {}
     set SidebarCollapsed 0
@@ -195,7 +195,7 @@ proc ::questlog::ui::app::start {root {seed {}}} {
         [namespace code on_widen] \
         [namespace code status_peek] \
         [namespace code status_unpeek] \
-        [namespace code on_scope_folder] \
+        [namespace code on_folder_bound] \
         [namespace code on_filter_change]]
     pack $list_frame.s -side top -fill both -expand 1
     $PW add $list_frame -weight 58
@@ -483,10 +483,10 @@ proc ::questlog::ui::app::on_widen {criterion} {
 
 # Scope the search to one folder (the list's folder right-click): push the
 # folder's project cwd into the toolbar's subtree facet and publish. subtree is
-# one of the keys scope_equal reads, so the new snapshot forces the full rebuild
+# one of the keys bounds_equal reads, so the new snapshot forces the full rebuild
 # in on_filter rather than the view-only fast path. A folder whose directory is
 # gone resolves to "" and scopes nothing.
-proc ::questlog::ui::app::on_scope_folder {folder} {
+proc ::questlog::ui::app::on_folder_bound {folder} {
     variable Toolbar
     set cwd [folder_cwd $folder]
     if {$cwd eq ""} return
@@ -498,7 +498,7 @@ proc ::questlog::ui::app::on_scope_folder {folder} {
 # The snapshot keys that define the search and scope - every key the toolbar now
 # publishes. Two publishes equal across all of them changed nothing that decides
 # which sessions load, so on_filter can skip the rebuild.
-proc ::questlog::ui::app::scope_equal {a b} {
+proc ::questlog::ui::app::bounds_equal {a b} {
     foreach k {search search_case search_regions file tool pattern subtree since until min_turns} {
         if {[dict getdef $a $k {}] ne [dict getdef $b $k {}]} { return 0 }
     }
@@ -525,7 +525,7 @@ proc ::questlog::ui::app::on_filter {snapshot} {
     # reproduce what is already shown. Skip it, keeping the list and its selection.
     # The list-view filters do not ride the snapshot: they live on the list strip
     # and re-filter the loaded rows in place, telling the app through on_filter_change.
-    if {$PrevSnapshot ne {} && [scope_equal $PrevSnapshot $snapshot]} {
+    if {$PrevSnapshot ne {} && [bounds_equal $PrevSnapshot $snapshot]} {
         set PrevSnapshot $snapshot
         return
     }
@@ -549,18 +549,18 @@ proc ::questlog::ui::app::on_filter {snapshot} {
     # snapshot was previously seen (e.g. 24h to 7d) - then extend for
     # newly-windowed files. apply_filter above retired every loaded row into
     # the store's detached retention (its clear runs retire_all, not a wipe);
-    # replay_scope re-attaches the ones the new scope admits, applying the
+    # replay_bounds re-attaches the ones the new scope admits, applying the
     # same pure predicate
-    # (::questlog::scan::row_matches over payload_scope_row's fields) that
+    # (::questlog::scan::row_in_bounds over payload_bounds_row's fields) that
     # on_scan_row applies as its admission gate. No disk: the widget's node
     # store is the memo, session data's one in-memory home. Model membership
     # is the scope's question alone; the list-view filters only decide which
     # in-model rows paint (the engine's attr_admits), so a scope change under
     # running-only repopulates like any other and untoggling shows the full
     # corpus instantly. With criteria active the list is built from matches
-    # (replay_scope attaches nothing), but the scan still runs so Search has
+    # (replay_bounds attaches nothing), but the scan still runs so Search has
     # a corpus to stage rows from.
-    $SessionList replay_scope
+    $SessionList replay_bounds
     set ScanActive 1
     $Scan extend $snapshot
 
@@ -679,7 +679,7 @@ proc ::questlog::ui::app::refresh_status {} {
     switch -- $StatusMode {
         scanning - searching { set StatusVar $ProgressLine }
         search_done - search_cancelled { set StatusVar $SearchSummary }
-        default { set StatusVar [scope_status] }
+        default { set StatusVar [bounds_status] }
     }
 }
 
@@ -731,7 +731,7 @@ proc ::questlog::ui::app::update_spinner {} {
 # read as work in progress (the spinner, not the wording, signals activity). The
 # browse default behind refresh_status. (No "this Mac": the design's wording is
 # from a macOS mock; questlog is the native Linux tool.)
-proc ::questlog::ui::app::scope_status {} {
+proc ::questlog::ui::app::bounds_status {} {
     set pretty [::questlog::path::pretty_home [::questlog::path::projects_root]]
     return "$pretty · Claude Code CLI sessions · [corpus_count] total"
 }

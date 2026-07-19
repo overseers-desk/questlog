@@ -300,8 +300,8 @@ oo::class create ::questlog::Search {
     }
 
     # 1 iff a matched row passes the snapshot's row-level SCOPE - the full
-    # scope::row_matches predicate (subtree scope plus the min-turns floor;
-    # since/until are already pruned by list_paths_for, and row_matches re-checks
+    # scope::row_in_bounds predicate (subtree scope plus the min-turns floor;
+    # since/until are already pruned by list_paths_for, and row_in_bounds re-checks
     # them harmlessly). subtree is the scope bound
     # list_paths_for cannot fully pre-prune: since/until are mtime bounds it
     # already applies, but subtree membership is a per-row question. The GUI
@@ -311,8 +311,8 @@ oo::class create ::questlog::Search {
     # search scope, so they are deliberately not applied here. The row arrives
     # from scan_file without a residence stamp (workers never resolve folders),
     # so stamp it here on the main thread before the predicate reads it.
-    method row_in_scope {row} {
-        return [::questlog::scan::row_matches $Snapshot [$Scan stamp_subtree $row]]
+    method row_in_bounds {row} {
+        return [::questlog::scan::row_in_bounds $Snapshot [$Scan stamp_subtree $row]]
     }
 
     method cancel {} {
@@ -427,7 +427,7 @@ oo::class create ::questlog::Search {
             # A session qualifies only when every clause is satisfied (scan_file
             # returns no matches otherwise); deliver the whole match list at once
             # so the session renders in one pass.
-            if {[llength $matches] > 0 && [my row_in_scope $row] \
+            if {[llength $matches] > 0 && [my row_in_bounds $row] \
                 && ![dict exists $MatchedSessions $path]} {
                 dict set MatchedSessions $path 1
                 dict incr Counts matches [llength $matches]
@@ -531,7 +531,7 @@ oo::class create ::questlog::Search {
             {*}$OnProgress $d $t [dict get $Counts matches]
         }
         if {[llength $matches] == 0} return
-        if {![my row_in_scope $row]} return
+        if {![my row_in_bounds $row]} return
         set path [dict get $row path]
         if {[dict exists $MatchedSessions $path]} return
         dict set MatchedSessions $path 1

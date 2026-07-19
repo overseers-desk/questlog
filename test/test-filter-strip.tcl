@@ -243,7 +243,7 @@ check "bookmarked filter on: only B shows" \
 # snapshot admits from the store, then extend for anything newly in scope.
 set snap2 [dict create since all min_turns 1]
 $SL apply_filter $snap2
-$SL replay_scope
+$SL replay_bounds
 set ::scan_done 0
 $::Scan extend $snap2
 after 300 [list set ::scan_done 1]

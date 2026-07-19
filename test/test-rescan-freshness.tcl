@@ -76,7 +76,7 @@ proc check {name got want} {
 # The app's scope-switch sequence: clear-and-retain, replay, extend.
 proc switch_scope {snap} {
     $::SL apply_filter $snap
-    $::SL replay_scope
+    $::SL replay_bounds
     set ::scan_done 0
     $::Scan extend $snap
     after 300 [list set ::scan_done 1]
