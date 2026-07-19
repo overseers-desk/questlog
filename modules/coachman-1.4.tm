@@ -616,18 +616,31 @@ oo::class create coachman::Harness {
         }
         if {$SleepCoro ne ""} {
             set AbortRequested 1
-            after cancel $SleepTimer
-            # Resume from the event loop, not from inside abort's own
-            # stack; the guard leaves nothing to fire into if the
-            # coroutine was torn down first.
-            after 0 [list apply {co {
-                if {[llength [info commands $co]]} { $co }
-            }} $SleepCoro]
-            set SleepTimer ""
-            set SleepCoro ""
+            my sleep_wake
             return 1
         }
         return 0
+    }
+
+    # sleep_wake - the single wake path for the usage-window sleep: the
+    # reset timer and abort both land here, and the first arrival clears
+    # SleepCoro so the second is a no-op. Without this funnel, a timer
+    # that fired just before an abort would queue a second resume into a
+    # coroutine already moving again, and the stray resume would land on
+    # whatever yield that coroutine parks at next (in a job loop, the
+    # next job's child wait). Resumes from the event loop, not the
+    # caller's stack, and the guard leaves nothing to fire into if the
+    # coroutine was torn down first. Carries no leading underscore:
+    # dispatched from the timer, outside the object.
+    method sleep_wake {} {
+        if {$SleepCoro eq ""} { return }
+        after cancel $SleepTimer
+        set co $SleepCoro
+        set SleepCoro ""
+        set SleepTimer ""
+        after 0 [list apply {co {
+            if {[llength [info commands $co]]} { $co }
+        }} $co]
     }
 
     # finalise_resume - the bounded recovery for a cost-cap kill (a call
@@ -755,19 +768,16 @@ oo::class create coachman::Harness {
             # whole process on a vwait. Outside a coroutine the vwait
             # fallback keeps a standalone run working.
             if {[info coroutine] ne ""} {
-                # The timer and coroutine are held on the instance so
-                # abort can cancel the one and wake the other early;
-                # after the wake, the mark check at the top of the next
-                # iteration's _invoke return is too late (it would
-                # re-invoke first), so check it here.
+                # The sleep state is held on the instance so abort can
+                # end it early; both the reset timer and abort wake
+                # through sleep_wake, the funnel that makes the second
+                # waker a no-op. After the wake, the mark check at the
+                # top of the next iteration's _invoke return is too late
+                # (it would re-invoke first), so check it here.
                 set SleepCoro [info coroutine]
                 set SleepTimer [after [expr {$UsageResetSecs * 1000}] \
-                    [list apply {co {
-                        if {[llength [info commands $co]]} { $co }
-                    }} [info coroutine]]]
+                    [list [self] sleep_wake]]
                 yield
-                set SleepTimer ""
-                set SleepCoro ""
                 if {$AbortRequested} {
                     my _fail "FAIL ($stage: aborted by caller): $Slug"
                     return 2

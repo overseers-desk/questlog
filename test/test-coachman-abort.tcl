@@ -193,6 +193,34 @@ check "the sleep was woken, not slept out" [expr {$elapsed < 5000}] 1
 check "no retry followed the woken abort" \
     [llength [split [string trim [read_file $::env(FAKE_ARGV_LOG)]] \n]] 1
 
+# ---- sleep_wake funnels double wakes ---------------------------------------
+
+# The reset timer and abort can both try to wake the sleeping coroutine
+# (timer fires, queues its callback, abort runs before the callback does);
+# the funnel makes the first arrival clear the state so the second no-ops,
+# instead of a stray resume landing on the coroutine's next yield.
+set h5 [SleepHarness new $pdir3 $logd]
+set ::wakes 0
+coroutine wake_probe apply {{} {
+    yield
+    incr ::wakes
+    yield
+    incr ::wakes
+}}
+oo::objdefine $h5 method arm_sleep {co} {
+    my variable SleepCoro SleepTimer
+    set SleepCoro $co
+    set SleepTimer [after 100000 nothing]
+}
+$h5 arm_sleep wake_probe
+$h5 sleep_wake
+$h5 sleep_wake
+after 50 [list set ::wake_settle 1]
+vwait ::wake_settle
+check "the first wake resumes the coroutine once" $::wakes 1
+check "the second wake is a no-op" $::wakes 1
+rename wake_probe {}
+
 file delete -force $dir
 
 if {$failures == 0} {
