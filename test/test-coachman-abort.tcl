@@ -251,6 +251,34 @@ after 1500 [list set ::teardown_settle 1]
 vwait ::teardown_settle
 check "a pending sleep timer outliving the harness raises no bgerror" $::bg_errors 0
 
+# ---- abort in the wake gap ------------------------------------------------
+
+# sleep_wake clears the sleep state at once but defers the resume; an
+# abort landing in that gap finds no handle and no sleeper, yet the run
+# is live. The in-flight mark keeps it an abort instead of a silently
+# dropped 0 followed by a retry.
+set h7 [TornHarness new $pdir3 $logd]
+set ::env(FAKE_ARGV_LOG) [file join $dir argv-gap.log]
+set ::env(FAKE_SCENARIO) limit
+set ::gap_rc ""
+coroutine gap_runner apply {{h logd} {
+    set ::gap_rc [$h call draft [file join $logd gap.log] "p"]
+    set ::gap_done 1
+}} $h7 $logd
+for {set i 0} {$i < 100 && ![$h7 sleeping]} {incr i} {
+    after 50 [list set ::gap_poll 1]
+    vwait ::gap_poll
+}
+check "the gap test reached the sleep" [$h7 sleeping] 1
+$h7 sleep_wake
+check "abort in the wake gap still returns 1" [$h7 abort] 1
+vwait ::gap_done
+check "the gap-aborted call returns 2" $::gap_rc 2
+check "fail_cause names the abort in the gap" \
+    [string match "*aborted by caller*" [$h7 fail_cause]] 1
+check "no retry followed the gap abort" \
+    [llength [split [string trim [read_file $::env(FAKE_ARGV_LOG)]] \n]] 1
+
 file delete -force $dir
 
 if {$failures == 0} {

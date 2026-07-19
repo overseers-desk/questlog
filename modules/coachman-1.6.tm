@@ -307,7 +307,8 @@ oo::class create coachman::Harness {
     variable Slug LogPrefix CostLog SessionId PromptDir LogDir \
              WorkerCostCapUsd CostKilled \
              StallKilled CallerKilled StallTimeoutMs UsageResetSecs \
-             FailCause DeadmanHandle AbortRequested SleepTimer SleepCoro
+             FailCause DeadmanHandle AbortRequested SleepTimer SleepCoro \
+             RunInFlight
 
     constructor {prompt_dir log_dir} {
         set PromptDir $prompt_dir
@@ -325,6 +326,7 @@ oo::class create coachman::Harness {
         set AbortRequested 0
         set SleepTimer ""
         set SleepCoro ""
+        set RunInFlight 0
         # The per-session cost cap is the sole budget circuit-breaker: it
         # bounds a runaway think/retry loop that spends fast (BOUNDS in
         # the header holds the no-wall-clock rationale). The prompt
@@ -571,7 +573,16 @@ oo::class create coachman::Harness {
     # builds a harness per session, or overrides this method.
     method call {stage log_file prompt args} {
         my _assert_metered
-        set rc [my _with_recovery call $stage $log_file $prompt {*}$args]
+        # RunInFlight is what lets abort mark a run caught BETWEEN waits:
+        # after sleep_wake cleared the sleep state but before the resume
+        # ran, or between the wake and the next invocation. In those gaps
+        # neither a handle nor a sleeper exists, yet the run is live.
+        set RunInFlight 1
+        try {
+            set rc [my _with_recovery call $stage $log_file $prompt {*}$args]
+        } finally {
+            set RunInFlight 0
+        }
         # Capture whenever the stream produced an id (including an incomplete
         # or budget-killed run) so an interrupted call can still be resumed and
         # the cost meter can find the transcript.
@@ -589,25 +600,35 @@ oo::class create coachman::Harness {
             error "coachman::Harness::resume: no session id captured yet - a call must reach one first"
         }
         my _assert_metered
-        return [my _with_recovery resume $stage $log_file $prompt --resume $SessionId {*}$args]
+        set RunInFlight 1
+        try {
+            return [my _with_recovery resume $stage $log_file $prompt --resume $SessionId {*}$args]
+        } finally {
+            set RunInFlight 0
+        }
     }
 
     # abort - cancel the in-flight run: the outside kill path a caller
     # such as a GUI cancel button or a job-loop shutdown would reach
-    # for. Three states answer it. A live child: its group is killed
+    # for. Four states answer it. A live child: its group is killed
     # with cause `caller`, and the abort MARK (AbortRequested), not the
     # recorded cause, is what stops the run - deadman's first-cause-wins
     # rule can hand the kill to a watchdog that fired first, and without
     # the mark the stall-retry loop would run fresh attempts over the
     # caller's abort. A usage-window sleep between attempts: the run is
     # marked and, in coroutine mode, woken at once to fail rather than
-    # sleeping out a reset nobody wants. Idle: a no-op returning 0.
-    # Returns 1 whenever a live run was told to stop; the interrupted
-    # call returns 2 (the validate-the-product path) with fail_cause
-    # naming the abort, unretried. Only a coroutine-driven run holds a
-    # handle or a wakeable sleep: deadman's synchronous mode blocks its
-    # caller until the child is reaped, so a synchronous caller is
-    # itself parked inside the very run it would abort.
+    # sleeping out a reset nobody wants. In flight but between waits
+    # (sleep_wake cleared the sleep and the deferred resume has not run
+    # yet, or the run sits between a wake and its next invocation): no
+    # handle and no sleeper exist, yet the run is live, so the mark
+    # alone is set and the next boundary check honours it. Idle: a
+    # no-op returning 0. Returns 1 whenever a live run was told to
+    # stop; the interrupted call returns 2 (the validate-the-product
+    # path) with fail_cause naming the abort, unretried. Only a
+    # coroutine-driven run holds a handle or a wakeable sleep:
+    # deadman's synchronous mode blocks its caller until the child is
+    # reaped, so a synchronous caller is itself parked inside the very
+    # run it would abort.
     method abort {} {
         if {$DeadmanHandle ne ""} {
             set AbortRequested 1
@@ -617,6 +638,10 @@ oo::class create coachman::Harness {
         if {$SleepCoro ne ""} {
             set AbortRequested 1
             my sleep_wake
+            return 1
+        }
+        if {$RunInFlight} {
+            set AbortRequested 1
             return 1
         }
         return 0
