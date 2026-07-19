@@ -9,10 +9,9 @@
 # into "invalid command name ::oo::ObjNN" (the use-after-free at the level of names
 # that leash-1.0.tm exists to retire). See GitHub issue #40.
 #
-# This test opts into the draft (package prefer latest, so the committed alpha is
-# chosen over the stable release only here), arms both timers, and checks the pair
-# of cases: while the object is alive the arms fire, and once it is destroyed the
-# same arms fire nothing and raise no background error.
+# This test arms both timers and checks the pair of cases: while the object is
+# alive the arms fire, and once it is destroyed the same arms fire nothing and
+# raise no background error.
 
 package require Tcl 9
 package require Tk
@@ -20,8 +19,6 @@ package require Tk
 set ROOT [file dirname [file dirname [file normalize [info script]]]]
 ::tcl::tm::path add [file join $ROOT modules]
 ::tcl::tm::path add [file join $ROOT vendor]
-# Opt into the draft: without this a plain require takes the stable release.
-package prefer latest
 package require leash
 package require streamtree
 
@@ -32,8 +29,6 @@ proc check {name expected actual} {
         incr ::fails
     } else { puts "ok:   $name" }
 }
-
-check "the draft version is loaded" 0.3.0a1 [package present streamtree]
 
 # Background errors (a timer firing into a dead command surfaces here) are captured
 # rather than shown, so the dead-object case can assert none were raised.

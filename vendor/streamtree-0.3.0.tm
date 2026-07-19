@@ -1,7 +1,7 @@
 package require Tcl 9
 package require Tk
 package require leash
-package provide streamtree 0.3.0a1
+package provide streamtree 0.3.0
 
 namespace eval ::streamtree {}
 
