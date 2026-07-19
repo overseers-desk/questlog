@@ -604,12 +604,8 @@ proc ::questlog::cli::main::run {q} {
             set parent_row [$scan scan_path $parent_path]
             if {$parent_row eq ""} continue
         }
-        # A scan_file row carries no slug (the tail-title read is scan_one's);
-        # resolve it so the emitted title is the session's real name.
-        if {![dict exists $parent_row slug]} {
-            set fresh [$scan scan_path $parent_path]
-            if {$fresh ne "" && [dict size $fresh] > 0} { set parent_row $fresh }
-        }
+        # The scan_file row now carries the slug (one extractor, issue #30), so the
+        # emitted title is the session's real name without a second read.
 
         set folder [dict get $parent_row folder]
         set parent_uuid [dict get $parent_row uuid]

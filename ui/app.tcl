@@ -798,15 +798,15 @@ proc ::questlog::ui::app::on_scan_done {scanned} {
 # folder-grouped pass when the event loop next goes idle, so typing always
 # preempts and a broad term cannot freeze the list; immediate renders each
 # session as it arrives (still one anchored pass per session, never per match).
-proc ::questlog::ui::app::on_search_file {matches} {
+proc ::questlog::ui::app::on_search_file {row matches} {
     variable SessionList
     variable SearchPending
     variable SearchFlushTimer
     if {[::questlog::config::get search_render] eq "immediate"} {
-        $SessionList add_session_matches $matches
+        $SessionList add_session_matches $matches $row
         return
     }
-    lappend SearchPending $matches
+    lappend SearchPending [list $row $matches]
     if {$SearchFlushTimer eq ""} {
         set SearchFlushTimer [after idle [namespace code flush_search]]
     }
@@ -828,7 +828,8 @@ proc ::questlog::ui::app::flush_search {} {
     set deadline [expr {[clock milliseconds] + $slice_ms}]
     $SessionList begin_batch
     while {[llength $SearchPending] > 0} {
-        $SessionList render_session_matches [lindex $SearchPending 0]
+        lassign [lindex $SearchPending 0] row matches
+        $SessionList render_session_matches $matches $row
         set SearchPending [lrange $SearchPending 1 end]
         if {$slice_ms > 0 && [clock milliseconds] >= $deadline} break
     }

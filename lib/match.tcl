@@ -53,6 +53,31 @@ proc ::questlog::match::clean_preview {s} {
     return [string trim $s]
 }
 
+# Session origin from a single opening-record line: an sdk-cli spawn (a skill or
+# Agent-SDK run) opens with a queue-operation record, anything else is an
+# interactive cli session. The one home for the queue-operation marker, shared by
+# scan_file's forward pass (which already holds the first line) and Scan's
+# session_kind (which reads just the head of a file). Returns cli|sdk. Lives here
+# so a search worker, which sources match.tcl but not scan.tcl, can classify too.
+proc ::questlog::match::opener_kind {line} {
+    return [expr {[regexp {"type":"queue-operation"} $line] ? "sdk" : "cli"}]
+}
+
+# Read from the channel's current position to EOF and return the LAST agentName
+# and aiTitle seen, as {agent_name ai_title}; "" for either that never appears.
+# The single home for the slug field regexes and their last-wins rule, used by
+# scan_file's browse tail read and its full-file fallback.
+proc ::questlog::match::last_titles {fh} {
+    set agent_name ""
+    set ai_title ""
+    while {[chan gets $fh line] >= 0} {
+        if {$line eq ""} continue
+        if {[regexp {"agentName":"([^"]+)"} $line -> m]} { set agent_name $m }
+        if {[regexp {"aiTitle":"([^"]+)"} $line -> m]} { set ai_title $m }
+    }
+    return [list $agent_name $ai_title]
+}
+
 # A short window of $s that leads with the first match of $pat: snippet_lead
 # characters of context precede the matched span and snippet_trail follow it,
 # with a leading and/or trailing "…" where text is elided. Leading with the hit
@@ -359,15 +384,32 @@ proc ::questlog::match::leaf_name_hit {leaf names nocase} {
     return [dict create sat $sat hits $hits]
 }
 
-# Scan one session file against a built clauses dict. Pure except for reading
-# $path. Returns {row matches}:
-#   row     the publish_row dict (path/mtime/size/folder/uuid/first_ts/
-#           nturns/first_user/bookmarked/cwd_hint), or "" if $path could not
-#           be opened or the scan was cancelled.
-#   matches list of matchcore dicts {path lineoff ts btype content folder} in
-#           line order, non-empty only if the clause tree is satisfied for the
-#           session. is_first is the caller's to derive (per session, across
-#           files), so it is not set here.
+# The one session-row extractor (issue #30), reading a file once for both the
+# browse and the search pass. Returns {row matches}:
+#   row     the unified row dict - path mtime size folder uuid first_ts nturns
+#           kind first_user slug ai_title has_subagents bookmarked cwd_hint
+#           is_child parent_path parent_uuid - or "" if $path could not be opened
+#           or the scan was cancelled. is_first is the caller's to derive (per
+#           session, across files), so it is not set here.
+#   matches list of matchcore dicts {path lineoff ts btype content folder
+#           is_child parent_path parent_uuid agent_id} in line order, non-empty
+#           only when the clause tree is satisfied.
+#
+# One extractor, one row shape: the browse and search passes cannot drift because
+# they build the same dict at the same join. The read strategy branches on
+# whether there are clauses to match:
+#   - Search (leaves present): read the whole file, matching each candidate line
+#     and collecting the name history; the current title (slug/ai_title) falls
+#     out of the last agentName/aiTitle the forward pass sees, for free, so a
+#     search-discovered session's row is complete without a second read.
+#   - Browse (no leaves): stop the forward pass once the row's early fields are in
+#     hand (turn_count_cap turns, cwd, first_ts) and read the title from a tail
+#     window (whole-file fallback), so a large transcript is not read end to end
+#     just to list it. This is the path Scan.scan_one delegates to.
+# turn_count_cap and tail_window_bytes ride in on the clauses dict, built in the
+# main interp where config is reachable, so a search worker - which cannot read
+# config - caps nturns identically. An absent cap (a hand-built empty clauses)
+# means no cap and no early break.
 #
 # tick is an optional command prefix invoked every yield_lines lines with the
 # current line number appended; if it returns truthy the scan aborts and returns
@@ -378,9 +420,11 @@ proc ::questlog::match::scan_file {path clauses {tick ""} {yield_lines 0}} {
     set leaves [dict get $clauses leaves]
     set tree   [dict get $clauses tree]
     set nocase [dict get $clauses nocase]
+    set matching [expr {[llength $leaves] > 0}]
+    set cap [dict getdef $clauses turn_count_cap 0]
 
-    # Per-line pre-gate: a record is parsed only when its raw text could
-    # satisfy at least one leaf. The raw line is JSON-encoded, so only a
+    # Per-line pre-gate (search only): a record is parsed only when its raw text
+    # could satisfy at least one leaf. The raw line is JSON-encoded, so only a
     # needle the encoder never alters - printable ASCII minus `"` and `\` -
     # can be soundly tested against it. A needle outside that class (a quote,
     # a backslash, anything non-ASCII, which the writer may store as \uXXXX)
@@ -395,28 +439,30 @@ proc ::questlog::match::scan_file {path clauses {tick ""} {yield_lines 0}} {
     set lit_substrs [list]   ;# raw-safe tool path/key/name, matched raw
     set always_candidate 0   ;# 1 = a leaf exists that no raw gate can test
     set raw_safe {^[\x20-\x21\x23-\x5B\x5D-\x7E]+$}
-    foreach leaf $leaves {
-        switch -- [dict get $leaf kind] {
-            keyword {
-                set nd [dict get $leaf needle]
-                if {[regexp $raw_safe $nd]} {
-                    lappend kw_needles [expr {$nocase ? [string tolower $nd] : $nd}]
-                } else {
-                    set always_candidate 1
+    if {$matching} {
+        foreach leaf $leaves {
+            switch -- [dict get $leaf kind] {
+                keyword {
+                    set nd [dict get $leaf needle]
+                    if {[regexp $raw_safe $nd]} {
+                        lappend kw_needles [expr {$nocase ? [string tolower $nd] : $nd}]
+                    } else {
+                        set always_candidate 1
+                    }
                 }
-            }
-            regex { set always_candidate 1 }
-            tool {
-                set val [dict get $leaf value]
-                if {[dict get $leaf sel] eq "file"} {
-                    set lit $val
-                } else {
-                    set lit [expr {$val ne "" ? $val : [dict get $leaf spec]}]
-                }
-                if {[regexp $raw_safe $lit]} {
-                    lappend lit_substrs $lit
-                } else {
-                    set always_candidate 1
+                regex { set always_candidate 1 }
+                tool {
+                    set val [dict get $leaf value]
+                    if {[dict get $leaf sel] eq "file"} {
+                        set lit $val
+                    } else {
+                        set lit [expr {$val ne "" ? $val : [dict get $leaf spec]}]
+                    }
+                    if {[regexp $raw_safe $lit]} {
+                        lappend lit_substrs $lit
+                    } else {
+                        set always_candidate 1
+                    }
                 }
             }
         }
@@ -440,6 +486,9 @@ proc ::questlog::match::scan_file {path clauses {tick ""} {yield_lines 0}} {
     set first_user ""
     set cwd_hint ""
     set first_ts ""
+    set kind ""
+    set agent_name ""
+    set ai_title ""
     set lineno 0
     set nleaves [llength $leaves]
     set leafsat [dict create]
@@ -452,19 +501,29 @@ proc ::questlog::match::scan_file {path clauses {tick ""} {yield_lines 0}} {
     while {[chan gets $fh line] >= 0} {
         incr lineno
         if {$line eq ""} continue
+        # Origin from the opening record, via the shared opener_kind rule.
+        if {$kind eq ""} { set kind [::questlog::match::opener_kind $line] }
         if {$cwd_hint eq "" && [regexp {"cwd":"([^"]+)"} $line -> m]} { set cwd_hint $m }
         if {$first_ts eq "" && [regexp {"timestamp":"([^"]+)"} $line -> m]} { set first_ts $m }
-        # The session's worn names accumulate across the whole file (a rename
-        # appends, so the set is only complete at EOF), each kept with the line it
-        # first appeared on so a `names` hit can anchor. The string-first gate keeps
-        # the regex off the lines with no title field; customTitle is skipped - it
-        # feeds Claude Code's own picker, not the name the list shows.
-        if {[string first {"agentName":"} $line] >= 0
-                && [regexp {"agentName":"([^"]+)"} $line -> m]
-                && ![dict exists $names $m]} { dict set names $m $lineno }
-        if {[string first {"aiTitle":"} $line] >= 0
-                && [regexp {"aiTitle":"([^"]+)"} $line -> m]
-                && ![dict exists $names $m]} { dict set names $m $lineno }
+        if {$matching} {
+            # The session's worn names accumulate across the whole file (a rename
+            # appends, so the set is only complete at EOF), each kept with the line
+            # it first appeared on so a `names` hit can anchor; the LAST agentName
+            # and aiTitle are the session's current title (slug > ai_title). The
+            # string-first gate keeps the regex off the lines with no title field;
+            # customTitle is skipped - it feeds Claude Code's own picker, not the
+            # name the list shows.
+            if {[string first {"agentName":"} $line] >= 0
+                    && [regexp {"agentName":"([^"]+)"} $line -> m]} {
+                set agent_name $m
+                if {![dict exists $names $m]} { dict set names $m $lineno }
+            }
+            if {[string first {"aiTitle":"} $line] >= 0
+                    && [regexp {"aiTitle":"([^"]+)"} $line -> m]} {
+                set ai_title $m
+                if {![dict exists $names $m]} { dict set names $m $lineno }
+            }
+        }
         if {[::questlog::jsonl::is_user_turn $line]} {
             incr users
             # First-prompt preview: string content captured with escaped pairs
@@ -475,6 +534,13 @@ proc ::questlog::match::scan_file {path clauses {tick ""} {yield_lines 0}} {
                     regexp {"text":"((?:[^"\\]|\\.)*)"} $line -> first_user
                 }
             }
+        }
+        if {!$matching} {
+            # Browse: the early break scan_one relied on - once turn_count_cap
+            # turns, the cwd and the first timestamp are known, the tail read
+            # below supplies the title, so the middle of a big file is skipped.
+            if {$cap > 0 && $users >= $cap && $cwd_hint ne "" && $first_ts ne ""} break
+            continue
         }
         set candidate $always_candidate
         if {!$candidate && [llength $kw_needles] > 0} {
@@ -511,13 +577,31 @@ proc ::questlog::match::scan_file {path clauses {tick ""} {yield_lines 0}} {
             if {[{*}$tick $lineno]} { close $fh; return [list "" {}] }
         }
     }
+    # Title: the search pass has the current agentName/aiTitle from its whole-file
+    # forward sweep; the browse pass early-broke, so it reads them from a tail
+    # window (with a whole-file fallback when the latest title sits further back
+    # than tail_window_bytes or before the forward break). Slug priority is
+    # agentName over aiTitle, unchanged.
+    if {!$matching} {
+        if {[catch {file size $path} fsz]} { set fsz 0 }
+        set tail_start [expr {$fsz - [dict getdef $clauses tail_window_bytes 0]}]
+        set pos [chan tell $fh]
+        if {$tail_start > $pos} {
+            chan seek $fh $tail_start
+            chan gets $fh _
+        }
+        lassign [::questlog::match::last_titles $fh] agent_name ai_title
+        if {$agent_name eq "" && $ai_title eq ""} {
+            chan seek $fh 0
+            lassign [::questlog::match::last_titles $fh] agent_name ai_title
+        }
+    }
     close $fh
     if {[catch {file mtime $path} mt]} { set mt 0 }
     if {[catch {file size  $path} sz]} { set sz 0 }
-    # Does this session have subagents? Computed here too (not only in
-    # scan_one), so a search row carries the flag: it both drives the chevron on
-    # a session whose subagents did not match (case A) and keeps publish_row from
-    # overwriting the browse flag when search republishes the row.
+    # Does this session have subagents? A cheap directory probe drives the list's
+    # chevron on a session whose subagents did not themselves match (case A), and
+    # keeps a republish from clearing the flag.
     set has_sub 0
     if {!$is_child} {
         set sa_uuid [file rootname [file tail $path]]
@@ -525,6 +609,7 @@ proc ::questlog::match::scan_file {path clauses {tick ""} {yield_lines 0}} {
         set has_sub [expr {[file isdirectory $sa_dir]
             && [llength [glob -nocomplain -directory $sa_dir -- agent-*.jsonl]] > 0}]
     }
+    set slug [expr {$agent_name ne "" ? $agent_name : $ai_title}]
     set row [dict create \
         path $path \
         mtime $mt \
@@ -532,14 +617,19 @@ proc ::questlog::match::scan_file {path clauses {tick ""} {yield_lines 0}} {
         folder $folder \
         uuid [file rootname [file tail $path]] \
         first_ts $first_ts \
-        nturns $users \
+        nturns [expr {$cap > 0 ? min($users, $cap) : $users}] \
+        kind [expr {$kind eq "" ? "cli" : $kind}] \
         first_user [::questlog::match::clean_preview $first_user] \
-        bookmarked [file executable $path] \
+        slug $slug \
+        ai_title $ai_title \
         has_subagents $has_sub \
+        bookmarked [file executable $path] \
         is_child $is_child \
         parent_path $parent_path \
         parent_uuid $parent_uuid \
         cwd_hint $cwd_hint]
+    # Browse: no clauses, so no match walk - the row is the whole answer.
+    if {!$matching} { return [list $row {}] }
     # The name history is a per-session haystack: a leaf whose regions include
     # `names` is satisfied when the needle matches any name the session has worn,
     # scored once now that every worn name is collected. Its positive hits buffer

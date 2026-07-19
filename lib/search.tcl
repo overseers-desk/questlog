@@ -157,9 +157,12 @@ proc ::questlog::search::build_clauses {snapshot} {
         }
         if {[llength $ornodes] > 0} { lappend andnodes [::questlog::match::tnode_or $ornodes] }
     }
+    # turn_count_cap rides on the clause dict so scan_file caps a search row's
+    # nturns exactly as a browse row's, even in a worker that cannot read config.
     return [dict create leaves $leaves \
         tree [::questlog::match::tnode_and $andnodes] \
-        nocase [expr {!$search_case}]]
+        nocase [expr {!$search_case}] \
+        turn_count_cap [::questlog::config::get turn_count_cap]]
 }
 
 proc ::questlog::search::trim_values {vs} {
@@ -431,7 +434,7 @@ oo::class create ::questlog::Search {
                 && ![dict exists $MatchedSessions $path]} {
                 dict set MatchedSessions $path 1
                 dict incr Counts matches [llength $matches]
-                {*}$OnFile $matches
+                {*}$OnFile $row $matches
             }
             incr count
             dict set Counts done $count
@@ -536,7 +539,7 @@ oo::class create ::questlog::Search {
         if {[dict exists $MatchedSessions $path]} return
         dict set MatchedSessions $path 1
         dict incr Counts matches [llength $matches]
-        {*}$OnFile $matches
+        {*}$OnFile $row $matches
     }
 
     method on_worker_done {epoch slice_size slice_matches} {

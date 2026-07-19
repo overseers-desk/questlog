@@ -31,30 +31,6 @@ proc ::questlog::scan::cmp_mtime {a b} {
     return 0
 }
 
-# Read from the channel's current position to EOF and return the LAST agentName
-# and aiTitle seen, as {agent_name ai_title}; "" for either that never appears.
-# The single home for the slug field regexes and their last-wins rule, shared by
-# scan_one's tail read and its full-file fallback.
-proc ::questlog::scan::last_titles {fh} {
-    set agent_name ""
-    set ai_title ""
-    while {[chan gets $fh line] >= 0} {
-        if {$line eq ""} continue
-        if {[regexp {"agentName":"([^"]+)"} $line -> m]} { set agent_name $m }
-        if {[regexp {"aiTitle":"([^"]+)"} $line -> m]} { set ai_title $m }
-    }
-    return [list $agent_name $ai_title]
-}
-
-# Session origin from a single opening-record line: an sdk-cli spawn (a skill
-# or Agent-SDK run) opens with a queue-operation record, anything else is an
-# interactive cli session. The one home for the queue-operation marker, shared
-# by session_kind (which reads the head of a file) and scan_one (which already
-# holds the line in its forward pass). Returns cli|sdk.
-proc ::questlog::scan::opener_kind {line} {
-    return [expr {[regexp {"type":"queue-operation"} $line] ? "sdk" : "cli"}]
-}
-
 # Resume a coroutine from an `after` callback. The coroutine command deletes
 # itself when it returns, so a resume scheduled before a cancel can fire after
 # the coroutine is already gone; skip it then. An error the coroutine itself
@@ -265,11 +241,11 @@ proc ::questlog::scan::in_subtree_of {path subtree_list} {
 # a since/until window means exactly what it says, bookmarked or not, so a
 # CLI cost audit over a window is exact. The
 # min-turns floor drops a session whose recorded nturns is below the threshold
-# (default 1 = no floor). Both row builders record nturns - scan_one (browse,
-# capped at turn_count_cap) and scan_file (search, the full count) - so the floor
-# bounds browse and search alike; a row that somehow lacks nturns defaults to the
-# threshold and passes. The view filters are applied separately, by the list
-# engine's attribute filters.
+# (default 1 = no floor). The one extractor (scan_file, browse and search alike)
+# records nturns capped at turn_count_cap, so the floor bounds both passes
+# identically; a row that somehow lacks nturns defaults to the threshold and
+# passes. The view filters are applied separately, by the list engine's
+# attribute filters.
 proc ::questlog::scan::row_in_bounds {snapshot row} {
     if {[dict get $row mtime] <= [cutoff_for $snapshot]} { return 0 }
     set ceiling [ceiling_for $snapshot]
@@ -342,7 +318,7 @@ oo::class create ::questlog::Scan {
             chan configure $fh -encoding utf-8 -profile replace
             while {[chan gets $fh line] >= 0} {
                 if {$line eq ""} continue
-                set kind [::questlog::scan::opener_kind $line]
+                set kind [::questlog::match::opener_kind $line]
                 break
             }
             close $fh
@@ -552,110 +528,27 @@ oo::class create ::questlog::Scan {
             is_child 1]
     }
 
-    # scan_one path - read the file line by line, extract the multi-turn
-    # predicate, the first user prompt preview, the cwd hint, the first
-    # timestamp, and the slug Claude Code writes for the session. Pure:
-    # no shared state, returns a fresh dict. The caller decides whether
-    # to publish.
+    # The browse row for one session file: the multi-turn count, the first user
+    # prompt preview, the cwd hint, the first timestamp, the origin, and the slug
+    # Claude Code writes for the session. Pure: no shared state, returns a fresh
+    # dict, or an empty dict when the file could not be opened.
     #
-    # The slug read has a fast path and a fallback. The forward scan keeps
-    # its early break on users/cwd/first_ts. The slug (agentName, aiTitle) is
-    # the LAST occurrence, not the first: Claude Code rewrites the title
-    # through a session's life and a rename appends fresh records at EOF, so
-    # only the final occurrence is current. The fast path reads it from a tail
-    # scan over the last ~64 KB, which holds the latest title whenever Claude
-    # wrote one recently. When that window holds no title - a long session
-    # whose last title record is more than ~64 KB back, or a short one whose
-    # only title precedes the forward break - a full forward sweep recovers
-    # it. Slug priority is unchanged: agentName wins over aiTitle.
+    # One extractor serves browse and search (issue #30): this delegates to
+    # ::questlog::match::scan_file with an empty clause set, so the row shape is
+    # built in exactly one place and cannot drift from the search row. An empty
+    # clause set is the browse signal - scan_file then stops its forward pass
+    # early (turn_count_cap turns, cwd, first_ts in hand) and reads the title from
+    # a tail window, the same fast browse read this method used to carry inline,
+    # so a large transcript is not read end to end just to list it. The two caps
+    # ride in on the clause dict because scan_file reads them from there (a search
+    # worker cannot reach config); here config is in hand, so they are stamped on.
     method scan_one {path} {
-        if {[catch {open $path r} fh]} { return [dict create] }
-        # -profile replace: the tail scan below seeks to an arbitrary byte
-        # offset that can split a multibyte character, and a session file may
-        # hold malformed UTF-8; under Tcl 9 strict decoding `chan gets` would
-        # otherwise throw on the partial or invalid sequence and abort the scan.
-        chan configure $fh -encoding utf-8 -profile replace
-        set users 0
-        set first ""
-        set cwd ""
-        set first_ts ""
-        set kind ""
-        set cap [::questlog::config::get turn_count_cap]
-        while {[chan gets $fh line] >= 0} {
-            if {$line eq ""} continue
-            # Origin from the opening record, via the shared opener_kind rule.
-            if {$kind eq ""} {
-                set kind [::questlog::scan::opener_kind $line]
-            }
-            if {$cwd eq "" && [regexp {"cwd":"([^"]+)"} $line -> m]} {
-                set cwd $m
-            }
-            if {$first_ts eq "" && [regexp {"timestamp":"([^"]+)"} $line -> m]} {
-                set first_ts $m
-            }
-            # A real user turn (the shared is_user_turn predicate): count it,
-            # and take the first one's content as the first-prompt preview.
-            if {[::questlog::jsonl::is_user_turn $line]} {
-                incr users
-                # First-prompt preview, the same two-form capture as scan_file:
-                # string content with escaped pairs kept whole, else the first
-                # text block of a block-array prompt.
-                if {$users == 1} {
-                    if {![regexp {"content":"((?:[^"\\]|\\.)*)"} $line -> first]} {
-                        regexp {"text":"((?:[^"\\]|\\.)*)"} $line -> first
-                    }
-                }
-            }
-            if {$users >= $cap && $cwd ne "" && $first_ts ne ""} break
-        }
-        # Tail scan. Seek to max(current_pos, size - 64KB) so a short file
-        # is read whole and a long file pays only the tail. Skip the first
-        # (probably partial) line after the seek when seeking mid-file.
-        if {[catch {file size $path} fsz]} { set fsz 0 }
-        set tail_start [expr {$fsz - [::questlog::config::get tail_window_bytes]}]
-        set pos [chan tell $fh]
-        if {$tail_start > $pos} {
-            chan seek $fh $tail_start
-            chan gets $fh _
-        }
-        lassign [::questlog::scan::last_titles $fh] agent_name ai_title
-        # Fallback: an empty tail window means the latest title sits further
-        # back than tail_window_bytes (a long, busy session) or before the
-        # forward break (a short one). Re-read the whole file for it. Only
-        # sessions the tail missed pay this sweep; a title inside the window
-        # never reaches here.
-        if {$agent_name eq "" && $ai_title eq ""} {
-            chan seek $fh 0
-            lassign [::questlog::scan::last_titles $fh] agent_name ai_title
-        }
-        close $fh
-        if {[catch {file mtime $path} mtime]} { set mtime 0 }
-        set size $fsz
-        set folder [file tail [file dirname $path]]
-        set uuid   [file rootname [file tail $path]]
-        set first_clean [::questlog::match::clean_preview $first]
-        set slug [expr {$agent_name ne "" ? $agent_name : $ai_title}]
-        # Does this session have subagents? A cheap directory probe (no file
-        # reads): the chevron in the list is drawn from this flag, and the
-        # children themselves are enumerated lazily on expand (subagents_for).
-        set subdir [file join [file dirname $path] $uuid subagents]
-        set has_sub [expr {[file isdirectory $subdir]
-            && [llength [glob -nocomplain -directory $subdir -- agent-*.jsonl]] > 0}]
-        return [dict create \
-            path $path \
-            mtime $mtime \
-            size $size \
-            folder $folder \
-            uuid $uuid \
-            first_ts $first_ts \
-            nturns [expr {min($users, $cap)}] \
-            kind [expr {$kind eq "" ? "cli" : $kind}] \
-            first_user $first_clean \
-            slug $slug \
-            ai_title $ai_title \
-            has_subagents $has_sub \
-            bookmarked [file executable $path] \
-            cwd_hint $cwd]
+        set clauses [dict create leaves {} tree {t and nodes {}} nocase 1 \
+            turn_count_cap  [::questlog::config::get turn_count_cap] \
+            tail_window_bytes [::questlog::config::get tail_window_bytes]]
+        lassign [::questlog::match::scan_file $path $clauses] row _
+        if {$row eq ""} { return [dict create] }
+        return $row
     }
 
     # Publish a row into the stream. Used by run_scan and by Search (which

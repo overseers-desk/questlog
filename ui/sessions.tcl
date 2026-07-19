@@ -865,29 +865,33 @@ oo::class create ::questlog::ui::SessionList {
         my schedule_resort
     }
 
-    # A whole found session from Search: its full match list in line order.
-    # Renders the session card, up to snippets_per_session snippets, and the
-    # final match count in one anchored pass - no per-match anchoring or redraw,
-    # which is what kept a broad query from freezing the list. Self-brackets one
-    # session; the batched flush (begin_batch/end_batch) brackets many at once.
-    method add_session_matches {matches} {
+    # A whole found session from Search: its complete row and its full match list
+    # in line order. Renders the session card, up to snippets_per_session
+    # snippets, and the final match count in one anchored pass - no per-match
+    # anchoring or redraw, which is what kept a broad query from freezing the
+    # list. Self-brackets one session; the batched flush (begin_batch/end_batch)
+    # brackets many at once.
+    method add_session_matches {matches {row ""}} {
         if {[llength $matches] == 0} return
         $Text configure -state normal
         my anchor_save
-        my render_session_matches $matches
+        my render_session_matches $matches $row
         my anchor_restore
         $Text configure -state disabled
         my schedule_resort
     }
 
-    # A matched path absent from the model: read its file once through the
-    # scan seam and model it, then price it (the scan stream attaches nothing
-    # under criteria, so this is where a result's row enters the store). A
-    # file that cannot be re-read gets a minimal synthetic row the next scan
+    # A matched path absent from the model: model it and price it (the scan
+    # stream attaches nothing under criteria, so this is where a result's row
+    # enters the store). The search pass already read the file and produced a
+    # complete row, carried here, so a direct-match session is modelled WITHOUT a
+    # second read (issue #30); a caller with no row in hand (a case-B parent that
+    # itself matched nothing) passes "" and pays one read through the scan seam.
+    # A file that cannot be re-read gets a minimal synthetic row the next scan
     # fills. The hidden flag settles inside model_add_session, so a streamed
     # result obeys the view toggles from its first paint.
-    method hydrate_session {path folder} {
-        set row [{*}$OnScanPath $path]
+    method hydrate_session {path folder {row ""}} {
+        if {$row eq "" || ![dict size $row]} { set row [{*}$OnScanPath $path] }
         if {$row eq "" || ![dict size $row]} { set row [dict create folder $folder] }
         if {[my has_session $path]} return
         my model_add_session $path $row
@@ -895,8 +899,11 @@ oo::class create ::questlog::ui::SessionList {
     }
 
     # The render body without the anchor/state bracketing, so a flush can
-    # bracket a whole slice of sessions once (see app.tcl flush_search).
-    method render_session_matches {matches} {
+    # bracket a whole slice of sessions once (see app.tcl flush_search). row is
+    # the session's complete scan_file row, used to model a direct-match session
+    # without a re-read; it defaults "" for a caller with only matches in hand (a
+    # test, or a subagent-only match), which then hydrates through the scan seam.
+    method render_session_matches {matches {row ""}} {
         set first [lindex $matches 0]
         # Subagent matches attach to the parent session (issue #13 cases B and C);
         # a session's own matches take the path below.
@@ -906,7 +913,7 @@ oo::class create ::questlog::ui::SessionList {
         }
         set path  [dict get $first path]
         if {![my has_session $path]} {
-            my hydrate_session $path [dict get $first folder]
+            my hydrate_session $path [dict get $first folder] $row
         }
         # Search folders are expanded, so render the session if it is visible
         # and not yet drawn. A result a filter hides leaves its folder a heading

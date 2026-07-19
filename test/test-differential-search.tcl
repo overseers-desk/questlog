@@ -143,7 +143,7 @@ proc gui_search {snapshot threads} {
     set ::g_hits [dict create]
     set scan   [::questlog::Scan new {} {}]
     set search [::questlog::Search new $scan \
-        [list apply {{matches} {
+        [list apply {{row matches} {
             foreach m $matches {
                 # A subagent match belongs to its parent session, the way the
                 # list groups it (issue #13).
