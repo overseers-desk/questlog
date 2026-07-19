@@ -221,6 +221,36 @@ check "the first wake resumes the coroutine once" $::wakes 1
 check "the second wake is a no-op" $::wakes 1
 rename wake_probe {}
 
+# A harness torn down mid-sleep leaves its reset timer pending; the
+# guarded callback fires into nothing instead of raising a background
+# error in the event loop. The teardown waits until the sleep is
+# actually armed: killing the coroutine earlier, mid child-wait, would
+# instead exercise deadman's completion dispatch, a different property.
+oo::class create TornHarness {
+    superclass SleepHarness
+    method _credit_wait_secs {msg} { return 1 }
+    method sleeping {} {
+        my variable SleepCoro
+        return [expr {$SleepCoro ne ""}]
+    }
+}
+set h6 [TornHarness new $pdir3 $logd]
+set ::bg_errors 0
+interp bgerror {} [list apply {{msg opts} { incr ::bg_errors }}]
+coroutine doomed apply {{h logd} {
+    $h call draft [file join $logd doomed.log] "p"
+}} $h6 $logd
+for {set i 0} {$i < 100 && ![$h6 sleeping]} {incr i} {
+    after 50 [list set ::sleep_poll 1]
+    vwait ::sleep_poll
+}
+check "the sleep was reached before the teardown" [$h6 sleeping] 1
+rename doomed {}
+$h6 destroy
+after 1500 [list set ::teardown_settle 1]
+vwait ::teardown_settle
+check "a pending sleep timer outliving the harness raises no bgerror" $::bg_errors 0
+
 file delete -force $dir
 
 if {$failures == 0} {
