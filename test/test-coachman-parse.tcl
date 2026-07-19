@@ -32,6 +32,7 @@ oo::class create Probe {
     superclass coachman::Harness
     method log_service {} { return $::QUIET }
     method credit_wait {msg} { return [my _credit_wait_secs $msg] }
+    method classify {msg} { return [my _classify_usage_limit $msg] }
     method stream_result {f} { return [my _stream_result $f] }
     method extract_sid {f} { return [my _extract_session_id $f] }
 }
@@ -73,10 +74,35 @@ check "parseable reset waits at least a minute" [expr {$w >= 60}] 1
 check "parseable reset waits at most a day"     [expr {$w <= 86520}] 1
 set w [$h credit_wait "You have hit your usage limit; resets 11:30pm (Australia/Brisbane)"]
 check "minutes and a zone parse"                [expr {$w >= 60 && $w <= 86520}] 1
-check "unparseable message falls back to an hour" \
-    [$h credit_wait "You have hit your limit and that is that"] 3600
-check "unknown zone falls back to an hour" \
-    [$h credit_wait "resets 3am (Neverland/Nowhere)"] 3600
+check "the middot session-limit form parses" \
+    [expr {[set w [$h credit_wait "hit your session limit · resets 10pm (Australia/Brisbane)"]] >= 60 && $w <= 86520}] 1
+check "a 24-hour reset time parses" \
+    [expr {[set w [$h credit_wait "se reinicia 22:00 (Europe/Madrid)"]] >= 60 && $w <= 86520}] 1
+check "a Spanish a.m. reset time parses" \
+    [expr {[set w [$h credit_wait "se reinicia 3 a. m. (UTC)"]] >= 60 && $w <= 86520}] 1
+check "no reset time gives empty, not an hour" \
+    [$h credit_wait "You have hit your limit and that is that"] ""
+check "unknown zone gives empty" \
+    [$h credit_wait "resets 3am (Neverland/Nowhere)"] ""
+
+# ---- _classify_usage_limit ------------------------------------------------
+
+# A parseable reset time is the whole test for waitable: English and
+# Spanish rolling windows wait; a limit-scented message with no clock
+# reset (reworded window, or a monthly/spend/fast limit an hourly retry
+# would never clear) is suspected and fails loud; anything else is none.
+check "English rolling window is waitable" \
+    [lindex [$h classify "5-hour limit reached - resets 3am (UTC)"] 0] wait
+check "Spanish rolling window is waitable" \
+    [lindex [$h classify "Límite de 5 horas alcanzado - se reinicia 3am (UTC)"] 0] wait
+check "a monthly limit is suspected, not waited" \
+    [lindex [$h classify "You've hit your monthly limit, it resets next month."] 0] suspected
+check "a fast limit is suspected" \
+    [lindex [$h classify "You've hit your fast limit"] 0] suspected
+check "a bare Spanish limit is suspected" \
+    [lindex [$h classify "Límite de uso alcanzado"] 0] suspected
+check "an ordinary error is not a limit" \
+    [lindex [$h classify "Error: the file was not found"] 0] none
 
 # ---- stream readers + transcript recovery ---------------------------------
 

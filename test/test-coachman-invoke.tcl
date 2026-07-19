@@ -85,6 +85,10 @@ switch -- $scen {
         puts {{"type":"system","subtype":"init","session_id":"sid-limit"}}
         puts {{"type":"result","subtype":"success","is_error":true,"result":"You have hit your usage limit; resets 3am (UTC)"}}
     }
+    suspected {
+        puts {{"type":"system","subtype":"init","session_id":"sid-susp"}}
+        puts {{"type":"result","subtype":"success","is_error":true,"result":"You've hit your monthly limit."}}
+    }
     stall {
         puts {{"type":"system","subtype":"init","session_id":"sid-stall"}}
         flush stdout
@@ -168,6 +172,25 @@ check "fail_cause names the missing result" \
 set ::env(FAKE_SCENARIO) errshape
 set rc [$h3 call fetch2 [file join $logd fetch2.log] "p"]
 check "a result object without a result field returns 1" $rc 1
+
+# A limit-scented error envelope with no parseable reset fails loud with
+# the stable token, instead of writing the error text out as a product.
+# Subclasses the base directly, not FakeHarness: FakeHarness stubs
+# _credit_wait_secs to 0, which would make every limit-scented message
+# look waitable. (Same scenario-subclass idiom as UnmeteredHarness below.)
+oo::class create SuspectHarness {
+    superclass coachman::Harness
+    method log_service {} { return $::QUIET }
+    method claude_bin {} { return $::FAKE }
+}
+set ::env(FAKE_SCENARIO) suspected
+set h_susp [SuspectHarness new $pdir $logd]
+set susp_log [file join $logd susp.log]
+set rc [$h_susp call fetch3 $susp_log "p"]
+check "a suspected usage limit returns 1" $rc 1
+check "fail_cause carries the halt token" \
+    [string match "*USAGE_LIMIT_UNRECOGNIZED*" [$h_susp fail_cause]] 1
+check "the error text is not written as a product" [file exists $susp_log] 0
 
 # resume before any successful call is a caller error, not a code.
 set h4 [FakeHarness new $pdir $logd]

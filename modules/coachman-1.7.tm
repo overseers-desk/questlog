@@ -87,8 +87,13 @@ package provide coachman 1.7
 #   3  cost cap tripped; the run was killed deliberately
 #      (finalise_resume is the bounded recovery: see that method)
 #
-# A usage-limit block never reaches the caller: it is classified inside,
-# waited out, and retried.
+# A rolling usage-window block never reaches the caller: it is
+# classified inside (a parseable reset time, English or Spanish), waited
+# out, and retried. A limit-scented envelope the harness cannot sleep
+# out (a reworded window, or a monthly/spend/fast limit) instead fails
+# with return 1, its fail_cause carrying the stable token
+# USAGE_LIMIT_UNRECOGNIZED so a batch front-end can halt loudly rather
+# than treat the error text as a product.
 #
 # `abort` cancels an in-flight coroutine-driven run from outside; the
 # killed call returns 2 with its fail_cause naming the abort, and an
@@ -978,15 +983,21 @@ oo::class create coachman::Harness {
 
         if {[dict exists $parsed is_error] && [dict get $parsed is_error] eq "true"} {
             set result_text [dict getdef $parsed result ""]
-            if {[string match -nocase *hit*your*limit*resets* $result_text]} {
-                # Usage-window block. Classify and return 4; _with_recovery
-                # owns the wait and the retry. The reset seconds ride
-                # UsageResetSecs. (The string match and reset-time scrape are
-                # the only prose-dependent code in the harness, kept here in
-                # one place so there is a single home to harden if a future
-                # CLI exposes a structured usage-limit signal.)
-                set UsageResetSecs [my _credit_wait_secs $result_text]
+            lassign [my _classify_usage_limit $result_text] cls secs
+            if {$cls eq "wait"} {
+                # Rolling-window block. Return 4; _with_recovery owns the
+                # wait and the retry. The reset seconds ride UsageResetSecs.
+                set UsageResetSecs $secs
                 return 4
+            }
+            if {$cls eq "suspected"} {
+                # A limit-scented envelope the harness cannot sleep out: a
+                # reworded window whose reset time no longer parses, or a
+                # monthly, spend, or fast limit. Fail loud with a stable
+                # token a batch front-end greps to halt dispatch, rather
+                # than write the error text out as if it were the product.
+                my _fail "FAIL ($stage: USAGE_LIMIT_UNRECOGNIZED, suspected usage limit with no parseable reset (the CLI wording may have drifted): $Slug)"
+                return 1
             }
         }
 
@@ -1150,9 +1161,20 @@ oo::class create coachman::Harness {
     # string does not parse: long enough to be worth waiting, short enough
     # that a wrong guess costs one retry rather than a night.
     method _credit_wait_secs {msg} {
-        if {![regexp {resets (\d{1,2}(?::\d{2})?\s*[ap]m)} $msg -> reset_time]} {
-            return 3600
+        # The reset lead-in is the CLI's own wording: English "resets", the
+        # Spanish "se reinicia" / "se restablece" an operator on a Spanish
+        # locale sees. The time after it is an am/pm clock or a 24-hour
+        # HH:MM; a Spanish "3 a. m." loses its dots and spaces before the
+        # scan. Returns "" when no concrete reset time is found, the signal
+        # _classify_usage_limit reads to tell a waitable window from a
+        # limit the harness cannot sleep out.
+        if {![regexp -nocase \
+                {(?:resets|reinicia|restablece)\s+(\d{1,2}:\d{2}(?::\d{2})?|\d{1,2}(?::\d{2})?\s*[ap]\.?\s*m\.?)} \
+                $msg -> reset_time]} {
+            return ""
         }
+        set reset_time [string tolower $reset_time]
+        regsub -all {[.\s]} $reset_time "" reset_time
         set tzargs {}
         if {[regexp {\(([^)]+)\)} $msg -> found_tz]} {
             set tzargs [list -timezone :$found_tz]
@@ -1161,18 +1183,39 @@ oo::class create coachman::Harness {
         if {[catch {
             set reset_epoch [clock scan "today $reset_time" {*}$tzargs]
         }]} {
-            return 3600
+            return ""
         }
         if {$reset_epoch <= $now_epoch} {
             if {[catch {
                 set reset_epoch [clock scan "tomorrow $reset_time" {*}$tzargs]
             }]} {
-                return 3600
+                return ""
             }
         }
         set wait [expr {$reset_epoch - $now_epoch + 120}]
         if {$wait < 60} { set wait 60 }
         return $wait
+    }
+
+    # _classify_usage_limit - read an is_error envelope's result text.
+    # Returns {wait <secs>} for a rolling-window block the harness can
+    # sleep out and retry, {suspected {}} for a limit-scented message
+    # with no parseable reset time (a reworded window, or a monthly /
+    # spend / fast limit an hourly retry would never clear), or {none {}}
+    # for an ordinary error. A parseable reset time is the whole test for
+    # waitable: it retires any keyword list of window kinds and makes a
+    # future rewording fail loud (suspected) rather than masquerade as a
+    # product. This and _credit_wait_secs are the only prose-dependent
+    # code in the harness, kept here as the single home to harden when the
+    # CLI wording drifts.
+    method _classify_usage_limit {text} {
+        if {![string match -nocase {*limit*} $text]
+                && ![string match -nocase {*límite*} $text]} {
+            return {none {}}
+        }
+        set secs [my _credit_wait_secs $text]
+        if {$secs eq ""} { return {suspected {}} }
+        return [list wait $secs]
     }
 
     # ── Fix loop ──────────────────────────────────────────────────────
