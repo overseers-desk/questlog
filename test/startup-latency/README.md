@@ -4,7 +4,7 @@ Measures how long the GUI takes to show its first row in the session list, and w
 
 The instrument launches the real app, which reads the operator's live `~/.claude/projects` (resolved via `lib/path.tcl`'s `projects_root`, i.e. the home directory of whoever runs it). The corpus is live: it grows between runs and differs across accounts and machines, so absolute numbers travel poorly. Compare before/after pairs taken close together on the same host, not one machine's number against another's.
 
-Host contention inflates the numbers: concurrent Claude Code sessions on the same machine write into the corpus and compete for CPU and disk during a run. There is one known residual stall either way: a single roughly 1.2s pause near the end of the pass (around the 9.5s mark on this corpus), from one heavy file's scan. It appears in every measured configuration and does not affect the first-row reading.
+Host contention inflates the numbers: concurrent Claude Code sessions on the same machine write into the corpus and compete for CPU and disk during a run. A corpus on a network or cloud mount inflates them further and floods the frame log, since every open crosses the mount; readings from such a host measure the mount, not the scanner. (An earlier ~1.2s end-of-pass stall came from the per-row folder re-peek and fell with the negative-resolution memo, issue #45.)
 
 ## Running
 
