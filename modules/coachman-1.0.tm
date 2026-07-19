@@ -15,13 +15,43 @@ package provide coachman 1.0
 # watchdogs via deadman. The verdict rule the harness commits to: the
 # deliverable on disk is the source of truth, not the claude envelope.
 # A killed or truncated turn may still hold real work in its product,
-# and the caller validates that product.
+# and the caller validates that product. Two namespace procs serve that
+# rule from outside the class: coachman::transcript_assistant_text
+# recovers every assistant text block from a stream-json transcript
+# (the envelope's `result` is only the final turn, which a turn after
+# the product displaces), and coachman::extract_between cuts a
+# marker-delimited product out of that text.
+#
+# BOUNDS. Dollars, not time, bound a run. The cost watchdog polls the
+# session's real spend (see COST METER) against a per-session cap, and
+# the stall watchdog kills a child silent past its timeout. There is
+# deliberately no wall-clock cap: a slow turn still paying its way is
+# not a fault, and the two watchdogs cover what a timeout would (the
+# hung child, the runaway spender).
+#
+# COST METER. The cap needs a meter. The default session_cost_usd
+# prices the tracked session (the parent plus its subagents) from the
+# stream transcripts under transcripts_root, using the tallyman module
+# and the anthropic-rates.tcl table beside this file. Both are soft
+# dependencies of the default only: when either is missing the harness
+# logs one warning that the cap is unmetered and runs on, and a host
+# that overrides session_cost_usd needs neither.
+#
+# CONCURRENCY. Harnesses are parallel-safe per instance: each owns its
+# slug's files and ledger, and instances share nothing but the logger
+# service and the rates cache. Every long wait (the child run, the
+# usage-window sleep) is coroutine-aware: inside a coroutine it yields
+# to the event loop, so a job loop can drive many harnesses on one
+# thread; outside one it blocks, so a standalone script needs no event
+# loop of its own.
 #
 # DEPENDENCY. Besides Tcllib (json, json::write, logger), coachman needs
 # `deadman` 1.0 or later on the module path: the process watchdog that
 # owns the child's pipe, stall clock, and group kill. deadman's home,
 # man page, and test suite are in the teatotal module shelf; vendor a
 # copy beside this file. `package require coachman` fails without it.
+# The default cost meter additionally wants `tallyman` (authored beside
+# this module) and anthropic-rates.tcl; both optional, see COST METER.
 #
 # SYNOPSIS. Subclass, point the injections at your own services, drive:
 #
@@ -53,6 +83,7 @@ package provide coachman 1.0
 #   2  external kill, stall, or truncated turn - the product on disk may
 #      still hold real work, so validate it rather than discard it
 #   3  cost cap tripped; the run was killed deliberately
+#      (finalise_resume is the bounded recovery: see that method)
 #
 # A usage-limit block never reaches the caller: it is classified inside,
 # waited out, and retried.
@@ -80,10 +111,20 @@ package provide coachman 1.0
 #                      directory) suits only a caller that puts templates
 #                      beside it.
 #   claude_bin       - path to the claude CLI
-#                      (default: `claude`, resolved on PATH)
+#                      (default: `claude`, resolved on PATH). Also the
+#                      test seam: pointed at a fake that speaks
+#                      stream-json, the whole harness runs without the
+#                      real CLI.
 #   session_cost_usd - USD spent so far by a session; feeds the cost cap.
-#                      Default 0.0, which reports no spend, so the cap
-#                      never trips until a subclass supplies real figures.
+#                      Default: the tallyman-backed transcript meter
+#                      (see COST METER), dormant with one warning when
+#                      tallyman or the rates table is absent.
+#   transcripts_root - where the claude CLI writes session transcripts
+#                      (default ~/.claude/projects); the default meter
+#                      globs it by session id.
+#   cost_rates       - the tallyman rates dict the default meter prices
+#                      with (default: anthropic-rates.tcl beside this
+#                      module; {} leaves the meter dormant).
 #   permission_args  - the claude permission flags the session runs under.
 #                      The default suits unattended batch runs and grants
 #                      the session broad tool access; an interactive or
@@ -97,11 +138,19 @@ package provide coachman 1.0
 
 namespace eval coachman {
     # The module's own directory, captured at load time: the default
-    # prompt_root, under which load_prompt resolves prompts/<name>.txt.
+    # prompt_root, under which load_prompt resolves prompts/<name>.txt,
+    # and where cost_rates looks for anthropic-rates.tcl.
     variable module_dir [file dirname [file normalize [info script]]]
     # Default logger service; created on first use by log_service and
     # cached here so every harness in the process shares one.
     variable log ""
+    # Default rates table, lazily sourced from anthropic-rates.tcl by
+    # cost_rates and cached; rates_loaded discriminates not-yet-read
+    # from read-and-absent.
+    variable rates {}
+    variable rates_loaded 0
+    # One warning per process when the default meter runs unmetered.
+    variable meter_warned 0
 }
 
 # Lightweight file helpers.
@@ -116,6 +165,77 @@ proc coachman::_write_file {path content} {
     set fd [open $path w]
     puts -nonewline $fd $content
     close $fd
+}
+
+# extract_between - the text between two marker lines, exclusive of the
+# markers. Companion to transcript_assistant_text for a product the
+# prompt asked to be delimited (PRODUCT_START/PRODUCT_END, say).
+proc coachman::extract_between {text start_marker end_marker} {
+    set lines [split $text \n]
+    set collecting 0
+    set result {}
+    foreach line $lines {
+        if {$line eq $end_marker && $collecting} {
+            break
+        }
+        if {$collecting} {
+            lappend result $line
+        }
+        if {$line eq $start_marker} {
+            set collecting 1
+        }
+    }
+    return [join $result \n]
+}
+
+# transcript_assistant_text - every assistant text block from a
+# stream-json transcript, in order, newline-separated. The envelope's
+# `result` is only the final turn's text, which a turn after the
+# product (a Stop hook's reply, say) displaces; reading the whole
+# transcript recovers a marker-delimited product regardless of what was
+# said after it. Returns "" when the file is absent or holds no
+# assistant text.
+proc coachman::transcript_assistant_text {json_file} {
+    if {![file exists $json_file]} { return "" }
+    set chunks {}
+    set fd [open $json_file r]
+    try {
+        while {[gets $fd line] >= 0} {
+            set line [string trim $line]
+            if {$line eq ""} continue
+            if {[catch {set obj [::json::json2dict $line]}]} continue
+            if {![dict exists $obj type] || [dict get $obj type] ne "assistant"} continue
+            if {![dict exists $obj message]} continue
+            set msg [dict get $obj message]
+            if {![dict exists $msg content]} continue
+            foreach block [dict get $msg content] {
+                if {[dict exists $block type] && [dict get $block type] eq "text" \
+                        && [dict exists $block text]} {
+                    lappend chunks [dict get $block text]
+                }
+            }
+        }
+    } finally {
+        close $fd
+    }
+    return [join $chunks \n]
+}
+
+# _session_files - the transcript files of session $sid under $root:
+# the parent JSONL plus any subagent transcripts beside it. Empty list
+# before the transcript appears. Globbed by session id rather than by
+# reconstructing the project directory from a cwd (the caller's cwd is
+# not deterministic here; UUID collision risk is negligible).
+proc coachman::_session_files {sid root} {
+    set parents [glob -nocomplain -directory $root -types f -- */${sid}.jsonl]
+    if {[llength $parents] == 0} { return {} }
+    set parent [lindex $parents 0]
+    set files [list $parent]
+    set subdir [file join [file dirname $parent] $sid subagents]
+    foreach sub [glob -nocomplain -directory $subdir -types f -- *.jsonl] {
+        lappend files $sub
+    }
+    return $files
 }
 
 oo::class create coachman::Harness {
@@ -136,12 +256,11 @@ oo::class create coachman::Harness {
         set UsageResetSecs 0
         set FailCause ""
         # The per-session cost cap is the sole budget circuit-breaker: it
-        # bounds a runaway think/retry loop that spends fast. There is
-        # deliberately no wall-clock cap: dollars, not time, is the
-        # bound. The prompt dir's meta.env tunes the default per run (key
-        # WORKER_COST_CAP_USD). Zero disables the watchdog; so does the
-        # default session_cost_usd, until a subclass supplies a real
-        # meter.
+        # bounds a runaway think/retry loop that spends fast (BOUNDS in
+        # the header holds the no-wall-clock rationale). The prompt
+        # dir's meta.env tunes the default per run (key
+        # WORKER_COST_CAP_USD). Zero disables the watchdog; so does an
+        # unmetered session_cost_usd (see that method).
         set WorkerCostCapUsd 10.0
         # Per-session stall watchdog: SIGTERM a child that has emitted no
         # stdout for STALL_TIMEOUT_SECS, catching a hung tool call that the
@@ -205,12 +324,82 @@ oo::class create coachman::Harness {
         return claude
     }
 
+    # transcripts_root - where the claude CLI writes session transcripts;
+    # the default meter globs it by session id. A host overrides this
+    # when its CLI is configured elsewhere; tests point it at fixtures.
+    method transcripts_root {} {
+        return [file join $::env(HOME) .claude projects]
+    }
+
+    # cost_rates - the tallyman rates dict the default meter prices
+    # with. Default: anthropic-rates.tcl beside this module (generated
+    # from the anthropic-rates.csv source of truth), sourced once per
+    # process and cached. Returns {} when the file is absent, which
+    # leaves the meter dormant.
+    method cost_rates {} {
+        if {!$::coachman::rates_loaded} {
+            set path [file join $::coachman::module_dir anthropic-rates.tcl]
+            if {[file exists $path]} {
+                set ::coachman::rates [source $path]
+            }
+            set ::coachman::rates_loaded 1
+        }
+        return $::coachman::rates
+    }
+
     # session_cost_usd - USD spent so far by session $sid (the parent
-    # session plus its subagents). Feeds budget_poll. The default 0.0
-    # never crosses the cap, so the cost watchdog stays dormant until a
-    # host overrides this with a real meter.
+    # session plus its subagents), priced from the stream transcripts
+    # by tallyman. Feeds budget_poll. Reads 0.0 before the transcript
+    # appears, so the watchdog can call it from the first poll. When
+    # tallyman or the rates table is absent the meter is dormant: it
+    # reads 0.0, says so once, and the cap never trips.
     method session_cost_usd {sid} {
-        return 0.0
+        set rates [my cost_rates]
+        if {[llength $rates] == 0} {
+            my _meter_dormant "no anthropic-rates.tcl beside the module"
+            return 0.0
+        }
+        if {[catch {package require tallyman}]} {
+            my _meter_dormant "tallyman not on the module path"
+            return 0.0
+        }
+        set files [coachman::_session_files $sid [my transcripts_root]]
+        if {[llength $files] == 0} { return 0.0 }
+        # Sum token usage per model across the parent and every subagent
+        # file, then price once. Reading each file's lines is ours
+        # (tallyman does no I/O); the dedup of a request split across
+        # stream records is tallyman's.
+        set per_model [dict create]
+        foreach f $files {
+            if {[catch {open $f r} fd]} continue
+            fconfigure $fd -encoding utf-8 -profile replace
+            set lines [split [read $fd] "\n"]
+            close $fd
+            set res [tallyman::parse_lines $lines]
+            dict for {m c} [dict get $res per_model] {
+                lassign $c i o w r
+                lassign [dict getdef $per_model $m {0 0 0 0}] pi po pw pr
+                dict set per_model $m [list [expr {$pi+$i}] [expr {$po+$o}] \
+                    [expr {$pw+$w}] [expr {$pr+$r}]]
+            }
+        }
+        # The session is spending now, so today's date selects the rate
+        # era. compute_usd returns -1.0 when no model matched any rate
+        # (an unpriced local model, or usage not yet landed); the meter
+        # reads that as 0.
+        set today [clock format [clock seconds] -format %Y-%m-%d]
+        set usd [tallyman::compute_usd $per_model $rates $today]
+        return [expr {$usd < 0 ? 0.0 : $usd}]
+    }
+
+    # _meter_dormant - one warning per process that the cost cap is
+    # running unmetered, then silence: the condition is environmental,
+    # and repeating it on every poll would drown the log.
+    method _meter_dormant {why} {
+        if {$::coachman::meter_warned} { return }
+        set ::coachman::meter_warned 1
+        [my log_service]::warn \
+            "Cost cap unmetered ($why): session_cost_usd reads 0 and the cap will not trip"
     }
 
     # ──────────────────────────────────────────────────────────────────
@@ -306,6 +495,33 @@ oo::class create coachman::Harness {
             error "coachman::Harness::resume: no session_id — call must succeed first"
         }
         return [my _with_recovery resume $stage $log_file $prompt --resume $SessionId {*}$args]
+    }
+
+    # finalise_resume - the bounded recovery for a cost-cap kill (a call
+    # that returned 3). The budget SIGTERM typically lands after the
+    # expensive work and its product are on disk but before the cheap
+    # closing steps the prompt orders last, so discarding the session
+    # loses near-all the spend. Resume it once with a finalise-only
+    # prompt (host-supplied; it opens no new expensive work), under the
+    # old cap plus $headroom. The bump is the trap this method encodes:
+    # the meter prices the resumed session CUMULATIVELY, so a fresh
+    # small cap would re-trip on the first poll; the new cap sits above
+    # the spend already booked. Returns the resume's code (1 when no
+    # session id was ever captured, so there is nothing to resume); the
+    # caller validates the on-disk product either way.
+    method finalise_resume {stage log_file prompt {headroom 2.0}} {
+        if {$SessionId eq ""} {
+            [my log_service]::warn \
+                "\[$Slug\] Cost cap fired before a session_id was captured - cannot resume to finalise"
+            return 1
+        }
+        my set_worker_cost_cap [expr {$WorkerCostCapUsd + $headroom}]
+        set rc [my resume $stage $log_file $prompt]
+        if {$rc != 0} {
+            [my log_service]::warn \
+                "\[$Slug\] Finalise resume did not close cleanly (rc=$rc); validate the on-disk product anyway"
+        }
+        return $rc
     }
 
     # cost_total - sum `cost` fields across the JSONL ledger.
@@ -515,10 +731,10 @@ oo::class create coachman::Harness {
         # work: resuming that work re-spends the very budget the cap
         # exists to bound. The cost watchdog SIGTERM (CostKilled) is that
         # kill: it fails the run with return 3 to mark the cap tripped.
-        # A subclass's pipeline may read return 3 as a signal to resume
-        # once for a finalise-only pass under a small extra cap
-        # (recovering the spend without re-opening the expensive work), or
-        # treat it as a terminal fail. An external kill or a truncated-
+        # A subclass's pipeline may read return 3 as a signal to recover
+        # the spend via finalise_resume (a single bounded finalise-only
+        # resume; see that method), or treat it as a terminal fail. An
+        # external kill or a truncated-
         # but-incomplete stream is a different animal (the turn may have
         # done real work the disk product still holds), so that path keeps
         # return 2, the validate-the-product / resume route.
