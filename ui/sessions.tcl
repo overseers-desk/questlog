@@ -259,11 +259,6 @@ oo::class create ::questlog::ui::SessionList {
         if {![dict exists $PathNode $path]} { return "" }
         return [my node_payload [dict get $PathNode $path]]
     }
-    method folder_payload {folder} {
-        if {![dict exists $FolderNode $folder]} { return "" }
-        return [my node_payload [dict get $FolderNode $folder]]
-    }
-
     # ---- domain invariant audit ----------------------------------------
     #
     # The whole-store consistency check over the session domain, the
@@ -335,7 +330,6 @@ oo::class create ::questlog::ui::SessionList {
     # speak the domain vocabulary and never touch node ids directly.
 
     method has_session {path} { return [dict exists $PathNode $path] }
-    method has_child {path}   { return [dict exists $PathNode $path] }
     method has_folder {folder} { return [dict exists $FolderNode $folder] }
 
     # The store node holding this path, or "" when the store has never seen it.
@@ -376,9 +370,6 @@ oo::class create ::questlog::ui::SessionList {
     method sset {path key value} { my node_pset [my sid $path] $key $value }
     method sflag {path field} { my node_field [my sid $path] $field }
     method sflagset {path field value} { my node_set [my sid $path] $field $value }
-
-    method cget_field {path key {dflt ""}} { my node_pget [my sid $path] $key $dflt }
-    method cset {path key value} { my node_pset [my sid $path] $key $value }
 
     # ---- engine lifecycle hooks --------------------------------------
     #
@@ -826,23 +817,17 @@ oo::class create ::questlog::ui::SessionList {
         my check_invariant freshen_attached
     }
 
-    # Both child rosters a session node carries: all_child_paths (the enumerated
-    # set) plus the attached children list, since a match-attached child can
-    # predate or outgrow the enumeration (add_subagent_matches seeds it
-    # directly). The union every child-walking site iterates.
-    method child_paths_union {sid} {
-        set cps [my node_pget $sid all_child_paths]
-        foreach cid [my node_field $sid children] {
+    # Drop a session node's subagent child nodes and their indices - the
+    # stale-children half of freshen_attached. Walks both child rosters:
+    # all_child_paths (the enumerated set) plus the attached children list,
+    # since a match-attached child can predate or outgrow the enumeration.
+    method drop_child_nodes {id} {
+        set cps [my node_pget $id all_child_paths]
+        foreach cid [my node_field $id children] {
             set cp [my node_field $cid key]
             if {$cp ni $cps} { lappend cps $cp }
         }
-        return $cps
-    }
-
-    # Drop a session node's subagent child nodes and their indices. The
-    # stale-children half of freshen_attached.
-    method drop_child_nodes {id} {
-        foreach cp [my child_paths_union $id] {
+        foreach cp $cps {
             set cid [my session_node $cp]
             if {$cid eq ""} continue
             dict unset Nodes $cid
@@ -1339,7 +1324,7 @@ oo::class create ::questlog::ui::SessionList {
         my anchor_save
         if {[my node_field $sid expanded]} {
             my node_set $sid expanded 0
-            my collapse_subagents $path
+            my detach_session_children $path
         } else {
             # The engine primitive: populate realizes the children, then the
             # engine lays them at the session's append point.
@@ -1383,10 +1368,6 @@ oo::class create ::questlog::ui::SessionList {
         foreach cp [my sget $path all_child_paths] { my attach_child $path $cp }
     }
 
-    method collapse_subagents {path} {
-        my detach_session_children $path
-    }
-
     # Detach every rendered subagent of a session: each child node's region spans
     # its header and its matched-line content, so detaching the children removes
     # the whole subagent block while leaving the session's own match snippets in
@@ -1394,7 +1375,7 @@ oo::class create ::questlog::ui::SessionList {
     # are loose content, swept after.
     method detach_session_children {path} {
         foreach cp [my session_child_paths $path] {
-            if {[my has_child $cp] && [my node_field [my sid $cp] rendered]} {
+            if {[my has_session $cp] && [my node_field [my sid $cp] rendered]} {
                 my detach [my sid $cp]
             }
         }
@@ -1421,7 +1402,7 @@ oo::class create ::questlog::ui::SessionList {
     # re-enumeration cannot wipe hits already attached from a match.
     method child_add_model {parent crow} {
         set cp [dict get $crow path]
-        if {[my has_child $cp]} return
+        if {[my has_session $cp]} return
         set label [dict getdef $crow description ""]
         if {$label eq ""} { set label [dict getdef $crow agent_type ""] }
         if {$label eq ""} {
@@ -1446,7 +1427,7 @@ oo::class create ::questlog::ui::SessionList {
     method render_children {path} {
         if {![my sflag $path rendered]} return
         foreach cp [my session_child_paths $path] {
-            if {![my has_child $cp]} continue
+            if {![my has_session $cp]} continue
             if {[my node_field [my sid $cp] rendered]} continue
             my render_child $path $cp
         }
@@ -1467,7 +1448,7 @@ oo::class create ::questlog::ui::SessionList {
     # pinned in the parent's columns; then, in search, its matched lines as
     # full-width snippet rows beneath (capped at snippets_per_subagent already).
     method render_child {path cp} {
-        if {![my has_child $cp]} return
+        if {![my has_session $cp]} return
         set cid [my sid $cp]
         if {[my node_field $cid rendered]} return
         # A subagent is a node nested under its session: render_row lays its
@@ -1587,8 +1568,8 @@ oo::class create ::questlog::ui::SessionList {
     method on_child_open_at {cp lineoff} { {*}$OnOpen $cp $lineoff }
 
     method on_child_release {cp} {
-        if {![my has_child $cp]} return
-        {*}$OnOpen $cp [my cget_field $cp open_lineoff 0]
+        if {![my has_session $cp]} return
+        {*}$OnOpen $cp [my sget $cp open_lineoff 0]
     }
 
     # The reduced menu for a subagent child row: a subagent is not a resumable
@@ -1677,23 +1658,23 @@ oo::class create ::questlog::ui::SessionList {
             my render_session $parent
         }
         my ensure_children_enumerated $parent
-        if {![my has_child $cp]} {
+        if {![my has_session $cp]} {
             my child_add_model $parent [dict create path $cp parent_path $parent \
                 folder $folder agent_id [dict getdef $first agent_id ""]]
         }
         set cap [::questlog::config::get snippets_per_subagent]
-        set hits [my cget_field $cp hits]
+        set hits [my sget $cp hits]
         foreach m $matches {
             my sset $parent sub_total [expr {[my sget $parent sub_total] + 1}]
             # The child's own total (for its "N more matches" overflow line); its
             # shown snippets are capped at $cap, its count is not.
-            my cset $cp count [expr {[my cget_field $cp count 0] + 1}]
+            my sset $cp count [expr {[my sget $cp count 0] + 1}]
             if {[llength $hits] < $cap} {
                 lappend hits [list [dict get $m btype] \
                     [dict get $m content] [dict get $m lineoff]]
             }
         }
-        my cset $cp hits $hits
+        my sset $cp hits $hits
         my attach_child $parent $cp
         # Case B (no direct hit in the parent) auto-expands so the matched
         # subagents are visible; case C keeps the parent collapsed with the pip.
@@ -2347,14 +2328,14 @@ oo::class create ::questlog::ui::SessionList {
     # session level. Redraws the parent's children block and updates the parent
     # row.
     method refresh_child_cost {cp cost_dict} {
-        if {![my has_child $cp]} return
-        my cset $cp cost [dict get $cost_dict cost_usd]
-        my cset $cp turns [dict getdef $cost_dict turns ""]
-        my cset $cp duration_secs [dict getdef $cost_dict duration_secs ""]
-        my cset $cp human_secs [dict getdef $cost_dict human_secs ""]
-        my cset $cp model [dict getdef $cost_dict model ""]
-        my cset $cp context_pct [dict getdef $cost_dict context_pct ""]
-        set parent [my cget_field $cp parent_path]
+        if {![my has_session $cp]} return
+        my sset $cp cost [dict get $cost_dict cost_usd]
+        my sset $cp turns [dict getdef $cost_dict turns ""]
+        my sset $cp duration_secs [dict getdef $cost_dict duration_secs ""]
+        my sset $cp human_secs [dict getdef $cost_dict human_secs ""]
+        my sset $cp model [dict getdef $cost_dict model ""]
+        my sset $cp context_pct [dict getdef $cost_dict context_pct ""]
+        set parent [my sget $cp parent_path]
         if {[my has_session $parent]} {
             set folder [my sget $parent folder]
             set old_cost [my sget $parent cost]

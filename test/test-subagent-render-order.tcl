@@ -92,7 +92,7 @@ proc check {name got want} {
 }
 proc sline {p} {
     global SL TX
-    if {![$SL has_session $p] && ![$SL has_child $p]} { return -1 }
+    if {![$SL has_session $p]} { return -1 }
     set st [$SL node_field [$SL sid $p] start]
     if {$st eq ""} { return -1 }
     return [lindex [split [$TX index $st] .] 0]
