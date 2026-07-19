@@ -4,7 +4,7 @@ package require logger
 package require json
 package require json::write
 package require deadman
-package provide coachman 1.6
+package provide coachman 1.7
 
 # coachman - drives one harnessed `claude -p` CLI session.
 #
