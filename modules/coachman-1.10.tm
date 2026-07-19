@@ -1213,9 +1213,9 @@ oo::class create coachman::Harness {
         if {$secs ne "" && ([string match -nocase {*limit*} $text]
                 || [string match -nocase {*límite*} $text])} {
             # A reset clock beside a limit word is the strong signal: a
-            # per-request tool error carries neither a timezone-stamped
-            # reset time nor "limit" together, so this stays waitable even
-            # if the window's wording drifts.
+            # per-request tool error rarely carries both a timezone-stamped
+            # reset time and the word "limit", so this combination stays a
+            # reliable waitable read even if the window's wording drifts.
             return [list wait $secs]
         }
         # No waitable reset. Only a subscription-window marker makes this a
@@ -1227,11 +1227,12 @@ oo::class create coachman::Harness {
     }
 
     # _usage_window_marker - true when the text names a claude subscription
-    # window (English "usage/session/monthly/spend/fast/N-hour limit", the
-    # Spanish "límite de ..." an operator on a Spanish locale sees), the
-    # family a monthly/spend/fast limit or a reworded window belongs to. It
-    # deliberately does not match a bare "limit": that is the false-positive
-    # that would cancel a campaign on an unrelated tool error.
+    # window: English "usage/session/monthly/spend/fast/N-hour limit", or
+    # the Spanish "límite de ..." an operator on a Spanish locale sees.
+    # This is the family a monthly/spend/fast limit or a reworded window
+    # belongs to. It deliberately does not match a bare "limit": that is
+    # the false-positive that would cancel a campaign on an unrelated tool
+    # error.
     method _usage_window_marker {text} {
         foreach m [list {*usage limit*} {*session limit*} {*monthly limit*} \
                         {*spend limit*} {*fast limit*} {*hour limit*} \
