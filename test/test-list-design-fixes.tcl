@@ -156,7 +156,16 @@ check "cost-outlier is bold" [$TX tag cget cost-outlier -font] QLBold
 
 # ---- B3/C4: Cancel rests disabled, live only during a search --------------
 check "cancel disabled at rest" [.s.bar.cancel cget -state] disabled
-set ${NS}::TotalCost 1.50
+# A non-zero model cost gives the strip a figure to mark "and counting". The
+# total derives from the store now (issue #64), so stream a real session and
+# price it rather than poke a running sum. The search flow below re-applies the
+# filter (clearing this), so it does not disturb the later checks.
+$SL apply_filter [dict create since all]
+set ::scan_done 0
+$::Scan extend [dict create since all]
+after 200 [list set ::scan_done 1]
+vwait ::scan_done
+$SL refresh_cost $S1 [dict create cost_usd 1.50 turns 1 duration_secs 5 model_breakdown {}]
 $SL set_progress 2 10 1
 check "cancel enabled while searching"  [.s.bar.cancel cget -state] normal
 check "strip reads 'and counting' mid-search" \

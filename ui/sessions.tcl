@@ -136,7 +136,6 @@ oo::class create ::questlog::ui::SessionList {
     variable CMenu            ;# the reduced right-click menu for subagent child rows
     variable ChildMenuPath    ;# child path the child menu acts on
     variable MenuIndices      ;# entry indices returned by session_actions::populate
-    variable TotalCost        ;# running sum of per-session cost in the model
     variable StatusBase       ;# last text set by set_progress/set_done
     variable Busy             ;# 1 while a search is in flight (set_progress..set_done/cancel)
     variable ScanBusy         ;# 1 while the corpus scan is in flight (scan_begin..scan_end)
@@ -178,7 +177,6 @@ oo::class create ::questlog::ui::SessionList {
         set StatusBase ""
         set Busy 0
         set ScanBusy 0
-        set TotalCost 0.0
         set Snapshot [dict create]
         set CriteriaActive 0
         set RunningSet [dict create]
@@ -669,7 +667,6 @@ oo::class create ::questlog::ui::SessionList {
         set SelectedSet [dict create]
         set SelectAnchor ""
         set SelectedFolder ""
-        set TotalCost 0.0
         set StatusBase ""
         # The pinned sessions were pulled in past the old search; the new one
         # has its own answer. The filter membership survives, but its cut is
@@ -786,7 +783,6 @@ oo::class create ::questlog::ui::SessionList {
         if {[dict getdef $row mtime 0] == [my sget $path mtime 0]} return
         set sid [my sid $path]
         set folder [my sget $path folder]
-        set old_cost [my node_pget $sid cost]
         $Text configure -state normal
         my anchor_save
         my detach_session_children $path
@@ -794,10 +790,6 @@ oo::class create ::questlog::ui::SessionList {
         my drop_child_nodes $sid
         dict set Nodes $sid payload [my row_payload $path $row]
         my redraw_folder_heading $folder
-        if {$old_cost ne "" && $old_cost > 0} {
-            set TotalCost [expr {$TotalCost - $old_cost}]
-            my refresh_status
-        }
         my node_set $sid hidden [expr {![my attr_admits $sid]}]
         if {[my sflag $path hidden]} {
             my schedule_view_rebuild
@@ -1016,7 +1008,6 @@ oo::class create ::questlog::ui::SessionList {
     method model_add_session {path row} {
         set folder [dict get $row folder]
         my ensure_folder $folder
-        set cost [dict getdef $row cost_usd ""]
         set fid [my fid $folder]
         set sid [my node_new session $fid $path [my row_payload $path $row]]
         dict set PathNode $path $sid
@@ -1029,14 +1020,9 @@ oo::class create ::questlog::ui::SessionList {
         if {[dict getdef $row has_subagents 0]} {
             my ensure_children_enumerated $path
             my recompute_parent_totals $path
-            set cost [my sget $path cost]
         }
 
         my redraw_folder_heading $folder
-        if {$cost ne "" && $cost > 0} {
-            set TotalCost [expr {$TotalCost + $cost}]
-            my refresh_status
-        }
         my check_invariant model_add_session
     }
 
@@ -2272,24 +2258,36 @@ oo::class create ::questlog::ui::SessionList {
     }
 
     # Apply a batch of buffered cost results in one pass (see app.tcl
-    # flush_cost). Each is routed through refresh_cost; grouping them into one
-    # event-loop turn keeps a flood of worker results from churning the list
-    # while the user interacts.
+    # flush_cost). Each row's model and render work runs through apply_cost;
+    # the status line's grand total derives from the whole store, so it is
+    # refreshed once here after the loop rather than per row - a thousand-session
+    # flush would otherwise re-walk the store a thousand times (issue #64).
+    # Grouping the render into one event-loop turn also keeps a flood of worker
+    # results from churning the list while the user interacts.
     method refresh_cost_batch {batch} {
         dict for {path cost_dict} $batch {
-            my refresh_cost $path $cost_dict
+            my apply_cost $path $cost_dict
         }
+        my refresh_status
     }
 
-    # Late arrival from the cost-pass worker. Diffs the new cost against the
-    # cached one (so a retry on a re-scanned file does not double-count),
-    # updates the Sessions cell and the running total, then redraws the row's
-    # meta region and its folder heading in place.
+    # A single cost result, model and render and status. The batch path calls
+    # apply_cost directly and refreshes the status once for the whole flush.
     method refresh_cost {path cost_dict} {
+        my apply_cost $path $cost_dict
+        my refresh_status
+    }
+
+    # Late arrival from the cost-pass worker, without the status refresh (its
+    # caller owns that). Diffs the new cost against the cached one (so a retry on
+    # a re-scanned file does not double-count) to decide whether the folder
+    # heading changed, then redraws the row's meta region and its folder heading
+    # in place. The status line's total is derived, not maintained here.
+    method apply_cost {path cost_dict} {
         if {![dict exists $PathNode $path]} return
         # A subagent's cost lands on its child row, not a session row.
         if {[my node_field [my sid $path] kind] eq "subagent"} {
-            my refresh_child_cost $path $cost_dict
+            my apply_child_cost $path $cost_dict
             return
         }
         set folder [my sget $path folder]
@@ -2304,11 +2302,7 @@ oo::class create ::questlog::ui::SessionList {
 
         # Heading and session line both re-lay through the item primitive,
         # which owns its own widget state, so this method holds none.
-        if {$delta != 0} {
-            my redraw_folder_heading $folder
-            set TotalCost [expr {$TotalCost + $delta}]
-            my refresh_status
-        }
+        if {$delta != 0} { my redraw_folder_heading $folder }
         if {[my sflag $path rendered]} { my redraw_header $path }
         # The worker result can change cost-, turns-, duration-, A/H- or
         # context-sorted order.
@@ -2335,8 +2329,8 @@ oo::class create ::questlog::ui::SessionList {
     # A subagent's cost/turns/duration arriving from the second pass. Stored on
     # the child and shown on its own row, but also folded up to the parent
     # session level. Redraws the parent's children block and updates the parent
-    # row.
-    method refresh_child_cost {cp cost_dict} {
+    # row. No status refresh (its caller owns that); the grand total is derived.
+    method apply_child_cost {cp cost_dict} {
         if {![my has_session $cp]} return
         my sset $cp cost [dict get $cost_dict cost_usd]
         my sset $cp turns [dict getdef $cost_dict turns ""]
@@ -2357,11 +2351,7 @@ oo::class create ::questlog::ui::SessionList {
             set delta [expr {$new_cost - $old_cost}]
 
             $Text configure -state normal
-            if {$delta != 0} {
-                my redraw_folder_heading $folder
-                set TotalCost [expr {$TotalCost + $delta}]
-                my refresh_status
-            }
+            if {$delta != 0} { my redraw_folder_heading $folder }
             if {[my sflag $parent rendered]} {
                 my redraw_header $parent
             }
@@ -3059,17 +3049,12 @@ oo::class create ::questlog::ui::SessionList {
         my folder_after_leave $fid $folder
     }
 
-    # A session leaving the store: subtract its cost from the running total
-    # (its node is still present, so the value is exact), then drop its path
-    # index, its selection membership, and the indices of any enumerated
-    # subagents the rendered-children subtree did not already cover.
+    # A session leaving the store: drop its path index, its selection
+    # membership, and the indices of any enumerated subagents the
+    # rendered-children subtree did not already cover. The status line's grand
+    # total is derived from the surviving nodes, so nothing to subtract here.
     method forget_session_domain {id} {
         set path [my node_field $id key]
-        set cost [my node_pget $id cost]
-        if {$cost ne "" && $cost > 0} {
-            set TotalCost [expr {$TotalCost - $cost}]
-            my refresh_status
-        }
         foreach cp [my node_pget $id all_child_paths] {
             if {[dict exists $PathNode $cp]} {
                 catch {dict unset Nodes [dict get $PathNode $cp]}
@@ -3589,16 +3574,34 @@ oo::class create ::questlog::ui::SessionList {
         set parts [list]
         if {$StatusBase ne ""} { lappend parts $StatusBase }
         if {$FilterNote ne ""} { lappend parts $FilterNote }
-        if {$TotalCost > 0} {
+        set total [my total_cost]
+        if {$total > 0} {
             # While a search or the corpus scan is still landing, the total is
             # provisional: mark it "and counting…" so a mid-flight figure does not
             # read as the final tally. Cleared when both settle (set_done/cancel
             # drops Busy, scan_end drops ScanBusy).
-            set cost [::questlog::cost::format_usd $TotalCost]
+            set cost [::questlog::cost::format_usd $total]
             if {$Busy || $ScanBusy} { append cost " and counting…" }
             lappend parts $cost
         }
         set StatusVar [join $parts " · "]
+    }
+
+    # The whole model's spend, summed from every session's aggregated cost at
+    # render time (issue #64) - the folder_totals treatment applied to the status
+    # line's grand total, so no arrival, freshen or forget has to keep a running
+    # sum in step. Subagent spend is already folded into each parent's cost, and
+    # subagent nodes are children of a session rather than a folder, so summing
+    # the folders' session children neither misses nor double-counts it.
+    method total_cost {} {
+        set cst 0.0
+        foreach fid $Roots {
+            foreach sid [my node_field $fid children] {
+                set c [my node_pget $sid cost]
+                if {$c ne "" && $c > 0} { set cst [expr {$cst + $c}] }
+            }
+        }
+        return $cst
     }
 
     # ---- formatting helpers ------------------------------------------

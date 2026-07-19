@@ -114,8 +114,9 @@ check "parent aggregated turns summed up" [dict get $s turns] 2
 check "parent duration stays own, subagent durations not summed" [dict get $s duration_secs] 5
 check "parent human time stays own, subagent human time not summed" [dict get $s human_secs] 3
 
-# Check running total Cost
-check "running TotalCost summed up" [set ${ns}::TotalCost] 0.00285
+# The grand total derives from the store at render (issue #64): the parent's
+# aggregated cost (own plus subagent) is the model's whole spend here.
+check "derived total cost summed up" [$SL total_cost] 0.00285
 
 # Check folder cost
 check "folder cost summed up" [dict get [$SL folder_totals $FOLDER] cost] 0.00285
