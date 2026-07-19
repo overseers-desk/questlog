@@ -120,7 +120,7 @@ $SL selection_set $a01
 check "a session gesture clears the folder highlight" [$SL is_folder_selected $FA] 0
 check "the session selection stands after clearing the folder" [sel] [list $a01]
 
-# ---- scope-to-folder invokes the owner callback --------------------------
+# ---- folder-bound invokes the owner callback --------------------------
 set ::folder_bound_seen ""
 $SL folder_bound $FB
 check "folder_bound calls OnFolderBound with the folder" $::folder_bound_seen $FB

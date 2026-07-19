@@ -13,7 +13,7 @@ package require Tcl 9
 # touching Tk or a node.
 #
 # A namespace of pure functions over that state, not a class: the same issue-67
-# reasoning as ::questlog::scope - no joint state, no named global, tell-don't-ask
+# reasoning as ::questlog::scan - no joint state, no named global, tell-don't-ask
 # all fail.
 
 namespace eval ::questlog::listfilter {

@@ -93,7 +93,7 @@ set ss [exec env HOME=$HOME $QL --shortstat --accrued-cost --since 2026-06-01 --
 regexp {sessions\s+(\d+)} $ss -> n_sess
 regexp {total cost\s+\$([0-9.]+)} $ss -> tot
 check "clause narrows to the one matching session" $n_sess 1
-check "clause-scoped windowed total = \$5" [near $tot 5.0] 1
+check "clause-bounded windowed total = \$5" [near $tot 5.0] 1
 
 file delete -force $HOME
 if {$failures == 0} {

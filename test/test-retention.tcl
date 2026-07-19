@@ -1,7 +1,7 @@
 #!/usr/bin/env wish9.0
 # The store is the memo for scanned-but-not-shown rows. A session that leaves
-# the current scope - the window narrows, a running import stops - is retained
-# as a detached node, not forgotten; widening the scope replays it from the
+# the current bounds - the window narrows, a running import stops - is retained
+# as a detached node, not forgotten; widening the bounds replays it from the
 # store with NO disk re-scan, and every hydration site (search results, the
 # running import) re-attaches the retained copy. This test instruments
 # scan_one to prove the negative (no disk read), and drives the audit after
@@ -82,7 +82,7 @@ proc check {name got want} {
     }
 }
 
-# The app's scope-switch sequence (on_filter): clear-and-retain, replay the
+# The app's bounds-switch sequence (on_filter): clear-and-retain, replay the
 # retained rows the snapshot admits from the store, then extend for
 # newly-windowed files.
 proc switch_scope {snap} {
@@ -95,7 +95,7 @@ proc switch_scope {snap} {
     update
 }
 
-# --- 1. Wide scope: everything streams in from disk.
+# --- 1. Wide bounds: everything streams in from disk.
 switch_scope [dict create since 30d]
 check "three sessions scanned from disk" $::SCANS 3
 check "A attached" [$SL has_session $Ap] 1
@@ -155,7 +155,7 @@ check "all three back in browse" \
 check "replayed row carries no stale match count" [$SL sget $Bp count] 0
 check "audit clean after the search clears" [$SL audit] {}
 
-# --- 7. The running import under a narrow scope restores from the store, and
+# --- 7. The running import under narrow bounds restores from the store, and
 # a session that stops running retires back into it.
 set ::SCANS 0
 switch_scope [dict create since 24h]

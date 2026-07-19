@@ -70,18 +70,18 @@ proc ::questlog::resume_coro {co} {
 
 # ---- bounds ----
 
-# ::questlog::scope - the single home for snapshot row-level matching.
+# ::questlog::scan - the single home for snapshot row-level matching.
 #
-# Whether a session row passes the toolbar's snapshot SCOPE - the since/until
-# recency bounds, the subtree scope, and the min-turns floor - is one
+# Whether a session row passes the toolbar's snapshot BOUNDS - the since/until
+# recency bounds, the subtree bound, and the min-turns floor - is one
 # question with one answer, asked by both the model (Scan, when it decides
 # which memoised rows the snapshot admits) and the view (SessionList, when it
 # reconciles which rows stay shown). These procs are that one answer; Scan and
 # SessionList call them rather than each carrying a copy of the cutoff
 # computation and the subtree predicate. The view filters (running, bookmarked,
 # model) are a separate question with a separate home, the list engine's
-# attribute filters: they shape which in-scope rows the list shows, not which
-# rows are in scope at all.
+# attribute filters: they shape which in-bounds rows the list shows, not which
+# rows are in bounds at all.
 #
 # A namespace of pure predicates, not a class: the snapshot is an immutable
 # dict the toolbar publishes and the row is a dict passed in, so there is no
@@ -153,7 +153,7 @@ proc ::questlog::scan::cutoff_for {snapshot} {
 # before the next local midnight (clock add ... 1 day is DST-safe, unlike a flat
 # +86400). A datetime until is the exact named instant, kept whole - no day
 # expansion - which is what brackets a precise window. Unlike cutoff_for there is no
-# config default: the upper bound is a CLI-only scope bound, absent by default rather
+# config default: the upper bound is a CLI-only bound, absent by default rather
 # than falling back to a configured one.
 proc ::questlog::scan::ceiling_for {snapshot} {
     set until [dict getdef $snapshot until ""]
@@ -228,10 +228,10 @@ proc ::questlog::scan::folder_subtree_candidate {fname subtree_list} {
 # decides: folder_cwd - the directory the row's project folder resolves to,
 # stamped by Scan's stamp_subtree, since the resolver and its cache live there -
 # is compared against each subtree dir. When residence is known it is
-# authoritative: a session moved into an out-of-scope project folder is out
-# even though its recorded cwd is in scope, and one moved into an in-scope
-# folder is in - the move feature files sessions, and filing is what the scope
-# reads. Fallbacks, each naming its fault:
+# authoritative: a session moved into an out-of-bounds project folder is out
+# even though its recorded cwd is in bounds, and one moved into an in-bounds
+# folder is in - the move feature files sessions, and filing is what the bounds
+# read. Fallbacks, each naming its fault:
 #   - folder_cwd "" or absent (the project directory no longer exists, or the
 #     encoded basename is ambiguous, so residence is unknowable): the recorded
 #     cwd_hint decides - this keeps sessions of a deleted repo findable by
@@ -264,15 +264,15 @@ proc ::questlog::scan::in_subtree_of {path subtree_list} {
     return 0
 }
 
-# 1 iff a row is in a snapshot's row-level SCOPE: the since cutoff, the until
-# ceiling, the subtree scope, and the min-turns floor. A bookmark is a session
+# 1 iff a row is in a snapshot's row-level BOUNDS: the since cutoff, the until
+# ceiling, the subtree bound, and the min-turns floor. A bookmark is a session
 # attribute the bookmarked view filter reads, never a window exemption:
 # a since/until window means exactly what it says, bookmarked or not, so a
 # CLI cost audit over a window is exact. The
 # min-turns floor drops a session whose recorded nturns is below the threshold
 # (default 1 = no floor). Both row builders record nturns - scan_one (browse,
 # capped at turn_count_cap) and scan_file (search, the full count) - so the floor
-# scopes browse and search alike; a row that somehow lacks nturns defaults to the
+# bounds browse and search alike; a row that somehow lacks nturns defaults to the
 # threshold and passes. The view filters are applied separately, by the list
 # engine's attribute filters.
 proc ::questlog::scan::row_in_bounds {snapshot row} {
@@ -449,7 +449,7 @@ oo::class create ::questlog::Scan {
         set ceiling [::questlog::scan::ceiling_for $snapshot]
         # `subtree` is the scan's root, not an after-the-fact cut: when it is set, walk
         # only the folders whose encoded name places them at or below a subtree
-        # directory, so sessions outside the scope are never enumerated or opened.
+        # directory, so sessions outside the bounds are never enumerated or opened.
         # The name test can over-include a hyphenated sibling (encode_cwd is
         # lossy); row_subtree_match confirms each kept row. An empty subtree
         # walks every folder (the show-all path).
@@ -685,11 +685,11 @@ oo::class create ::questlog::Scan {
 
     # Stamp a row with folder_cwd: the directory its project folder resolves
     # to, normalized so a symlinked recorded spelling compares equal to a
-    # canon_dir-normalized subtree scope, or "" when the folder is
+    # canon_dir-normalized subtree bound, or "" when the folder is
     # unresolvable (its directory is gone, or the encoded basename is
     # ambiguous). row_subtree_match reads the field as the residence
     # authority; the stamping lives here because Scan owns the resolver and
-    # its cache, which keeps ::questlog::scope pure over its dicts. A ""
+    # its cache, which keeps ::questlog::scan pure over its dicts. A ""
     # stamp is not re-tried until the file is rescanned - resolve_folder
     # itself never caches a failure, so a directory restored later heals on
     # the next scan of the row.

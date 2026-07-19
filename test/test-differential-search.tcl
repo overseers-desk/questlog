@@ -6,13 +6,13 @@
 # CLI engine (the real ./questlog --json subprocess) - over one fixture corpus
 # with known properties. Each case asserts BOTH engines return the exact
 # expected session set. They share lib/ but diverge in orchestration, so a
-# scope filter the GUI search forgets (the `subtree` row-scope, which lives in
+# bounds filter the GUI search forgets (the `subtree` row bound, which lives in
 # filter::row_in_bounds and the CLI applies but the GUI search corpus does not)
 # shows up as a GUI-vs-truth and GUI-vs-CLI mismatch, not a silent pass.
 #
 # Pure Tcl, no Tk: each case runs the GUI engine through BOTH search paths - the
 # single-thread coroutine (QUESTLOG_THREADS=0) and the worker-thread
-# fan-out the app uses by default - so a scope filter dropped in either delivery
+# fan-out the app uses by default - so a bounds filter dropped in either delivery
 # path is caught. Both run headless under one vwait. Fixture mtimes are relative
 # to now, so the since-bound cases never rot.
 
@@ -108,8 +108,8 @@ proc write_subagent {folder parent_uuid agent_id needle age_days} {
     return $path
 }
 
-# Two project folders. PROJA is the in-scope project; PROJB stands in for the
-# other project whose sessions a `subtree PROJA` scope must exclude.
+# Two project folders. PROJA is the in-bounds project; PROJB stands in for the
+# other project whose sessions a `subtree PROJA` bound must exclude.
 set PROJA /home/test/code/proja
 set PROJB /home/test/code/projb
 
@@ -207,7 +207,7 @@ proc run_case {name search since subtree truth} {
 
 # ---- truth table ----------------------------------------------------
 #
-# A: no scope            -> every shimmer session (sN has no needle).
+# A: no bounds           -> every shimmer session (sN has no needle).
 # B: subtree proja       -> only sA; sB/sC are in projb. (THE subtree-in-search case)
 # C: since 7d            -> sA, sB; sC is 40d old, pruned by the corpus bound.
 # D: since 7d + subtree projb -> only sB; sA is in proja, sC is too old.

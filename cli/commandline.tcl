@@ -123,7 +123,7 @@ $::questlog::cli::commandline::CL section clause {clauses:} -note {
 }
 
 # The GUI's search box splits its text on space and quotes a phrase with '"', and
-# its scope selector is one setting for the whole box, so a needle carrying a
+# its bounds selector is one setting for the whole box, so a needle carrying a
 # quote and a per-clause region each have nowhere in the window to live.
 $::questlog::cli::commandline::CL option --keyword -section clause -repeat -tag clause \
     -suffix regions -arg needle \
@@ -261,7 +261,7 @@ proc ::questlog::cli::commandline::check_count {flag value allow_all} {
     return ""
 }
 
-# Canonicalise (tilde-expanded, absolute) so the scope predicates compare
+# Canonicalise (tilde-expanded, absolute) so the bounds predicates compare
 # against the form Claude records as a cwd; an inexpandible ~user fails loud
 # instead of matching nothing.
 proc ::questlog::cli::commandline::check_subtree {value} {
@@ -274,7 +274,7 @@ proc ::questlog::cli::commandline::check_subtree {value} {
 proc ::questlog::cli::commandline::regions_restriction {suffix} {
     if {$suffix eq "" || ![llength [::questlog::search::parse_regions $suffix]]} { return {} }
     return [dict create subject "a :regions suffix" modes {json markdown shortstat} \
-        because "the GUI's scope covers the whole search"]
+        because "the GUI's bounds cover the whole search"]
 }
 
 proc ::questlog::cli::commandline::keyword_restriction {value suffix} {

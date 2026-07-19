@@ -169,11 +169,11 @@ $sr destroy
 ::questlog::path::_real_file delete -force [file join /tmp/questlog-test-projects $wf]
 ::questlog::path::_real_file delete -force [file join /tmp/questlog-test-projects $movedf]
 
-# min_turns is scope: the scanner records each row's nturns (capped), and
+# min_turns is bounds: the scanner records each row's nturns (capped), and
 # filter::row_in_bounds drops a row below the floor. The 3-turn aaa session records
-# nturns 3; the single-turn bbb-2 records nturns 1. A min_turns 2 scope keeps the
+# nturns 3; the single-turn bbb-2 records nturns 1. A min_turns 2 bound keeps the
 # two multi-turn rows (aaa 3, ccc 2) and drops bbb-2. The published stream is
-# the rows' one delivery; scope questions are asked of the row dicts it carried.
+# the rows' one delivery; bounds questions are asked of the row dicts it carried.
 set snap1 [dict create since all min_turns 2]
 set qrows $::rows
 check stream_rows_all 3 [llength $qrows]
@@ -248,7 +248,7 @@ set lp [$s2 list_paths_for [dict create since 7d]]
 check enum_bookmark_obeys_window 0 [expr {$bbb in $lp}]
 check enum_old_plain_dropped 0 [expr {$ccc in $lp}]
 
-# The Bookmarked filter is a view filter, not a scope bound: the stream
+# The Bookmarked filter is a view filter, not a bound: the stream
 # carries every in-window row regardless of the bookmark, and the +x bit the
 # filter reads rides on the row. Exactly one row (bbb) carries it, so a
 # bookmark-agnostic stream still hands the filter what it needs to keep just

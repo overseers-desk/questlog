@@ -10,7 +10,7 @@
 # than poking the label; this drives that seam end to end over a one-session
 # sandbox: the wired <Enter> binding carries only the reveal tag (the text
 # waits in the registry), a progress write
-# arriving mid-peek is not lost when <Leave> restores, and the resting scope
+# arriving mid-peek is not lost when <Leave> restores, and the resting bounds
 # line returns.
 
 package require Tcl 9
@@ -131,10 +131,10 @@ set NS [info object namespace $SL]
 check "the registry resolves the tag to the full model text" \
     [string match "*$LONG*" [dict get [set ${NS}::PeekByTag] $ntag]] 1
 
-# --- Standing text before any hover: the resting scope line. start() seeds the
+# --- Standing text before any hover: the resting bounds line. start() seeds the
 #     bar from the machine once at launch; do the same before asserting on it.
 ::questlog::ui::app::refresh_status
-check "resting bar is the scope line" [statusvar] [::questlog::ui::app::bounds_status]
+check "resting bar is the bounds line" [statusvar] [::questlog::ui::app::bounds_status]
 
 # --- <Enter>: the strip shows the badge kind then the whole snippet line.
 eval $enter
@@ -154,13 +154,13 @@ eval $leave
 check "unpeek surfaces the mid-peek progress (not a stale snapshot)" \
     [statusvar] "Searching 5 / 10 · 3 matches"
 
-# --- Back to browse, hover then leave: the resting scope line returns.
+# --- Back to browse, hover then leave: the resting bounds line returns.
 set ::questlog::ui::app::StatusMode browse
 set ::questlog::ui::app::ProgressLine ""
 eval $enter
 check "peek again while browsing" [statusvar] "tool_use · $LONG"
 eval $leave
-check "leave restores the standing scope line" \
+check "leave restores the standing bounds line" \
     [statusvar] [::questlog::ui::app::bounds_status]
 
 # --- Percent-laden content survives verbatim: the very characters bind's

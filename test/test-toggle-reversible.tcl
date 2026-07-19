@@ -3,7 +3,7 @@
 # rows in place without re-scanning, without dropping them from the model, and
 # without losing the selection.
 #
-# Invariant under test: MODEL membership is scope (a browse row that passes
+# Invariant under test: MODEL membership is bounds (a browse row that passes
 # row_in_bounds), independent of the view toggles. A toggle sets a per-session
 # `hidden` flag and re-renders the affected folders via collapse+expand; the
 # row stays in the model (model total unchanged, so the toggle is reversible),

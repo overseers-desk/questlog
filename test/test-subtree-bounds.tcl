@@ -1,6 +1,6 @@
 #!/usr/bin/env tclsh9.0
 # `subtree` is the scan's enumeration root: list_paths_for walks only the folders
-# at or below the scoped directory, so out-of-scope sessions are never opened.
+# at or below the bounded directory, so out-of-bounds sessions are never opened.
 # Because encode_cwd is lossy (every non-alphanumeric -> -), the folder-name test
 # can pull in a hyphenated sibling (.../proj-x looks like a child of .../proj);
 # row_subtree_match confirms each kept row. This pins the enumeration
@@ -84,7 +84,7 @@ check gone_blank_other       0 [::questlog::scan::row_subtree_match \
 
 # ---- canon_dir: the entry-point canonicaliser both the toolbar's folder
 # editor and the CLI's --subtree run a typed path through. Tcl 9 expands ~
-# nowhere, so without it a typed ~/x scope compares literally and matches
+# nowhere, so without it a typed ~/x bound compares literally and matches
 # nothing (the bug this pins). ----
 set home [file home]
 check canon_tilde      $home/code/proj [::questlog::path::canon_dir ~/code/proj]
@@ -93,14 +93,14 @@ check canon_absolute   /home/test/code/proj [::questlog::path::canon_dir /home/t
 check canon_trailing   /home/test/code/proj [::questlog::path::canon_dir /home/test/code/proj/]
 check canon_empty      {} [::questlog::path::canon_dir {}]
 check canon_bad_user   1  [catch {::questlog::path::canon_dir ~nosuchuser/x}]
-# The canonicalised form is what the predicates see: a tilde scope, once
-# expanded, admits the exact dir and its subtree like any absolute scope.
+# The canonicalised form is what the predicates see: a tilde bound, once
+# expanded, admits the exact dir and its subtree like any absolute bound.
 set UT [list [::questlog::path::canon_dir ~/../../home/test/code/proj]]
 check canon_feeds_confirm_exact 1 [::questlog::scan::row_subtree_match $rp $UT]
 check canon_feeds_confirm_child 1 [::questlog::scan::row_subtree_match $rc $UT]
 
 # ---- residence: real directories, so folders resolve and residence decides.
-# The move feature files a session into a project folder; the scope reads that
+# The move feature files a session into a project folder; the bounds read that
 # filing, not the cwd recorded in the transcript. ----
 set BASE /tmp/questlog-subtree-test-src
 ::questlog::path::_real_file delete -force $BASE
@@ -137,12 +137,12 @@ check moved_in_not_old_cwd  0 [::questlog::scan::row_subtree_match $r_min [list 
 check moved_out_gone        0 [::questlog::scan::row_subtree_match $r_mout [list $P]]
 check moved_out_new_home    1 [::questlog::scan::row_subtree_match $r_mout [list $BASE/other]]
 # Glob metacharacters in a directory name are characters, not patterns: the
-# scope we\[i\]rd matches only that directory, never its glob-shadow weird.
+# bound we\[i\]rd matches only that directory, never its glob-shadow weird.
 check metachar_self         1 [::questlog::scan::row_subtree_match $r_wb [list $BASE/we\[i\]rd]]
 check metachar_no_shadow    0 [::questlog::scan::row_subtree_match $r_wp [list $BASE/we\[i\]rd]]
 
 # ---- stream agreement: the row predicate over published rows admits exactly
-# what a fresh walk admits, so a warm GUI and a fresh scan answer the scope
+# what a fresh walk admits, so a warm GUI and a fresh scan answer the bounds
 # alike ----
 set ::pub [list]
 foreach f [glob -directory $root -- */*.jsonl] { lappend ::pub [$s2 scan_path $f] }
@@ -154,7 +154,7 @@ check stream_residence {mv01 r001 r002} $got
 $s2 destroy
 ::questlog::path::_real_file delete -force $BASE
 
-# ---- no subtree scope: every folder is walked (show-all) ----
+# ---- no subtree bound: every folder is walked (show-all) ----
 set all_folders [lsort -unique [lmap p [$s list_paths_for [dict create since all]] \
                                     {file tail [file dirname $p]}]]
 check no_scope_walks_other 1 [expr {"-home-test-code-other" in $all_folders}]

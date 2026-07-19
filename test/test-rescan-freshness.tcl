@@ -73,7 +73,7 @@ proc check {name got want} {
     }
 }
 
-# The app's scope-switch sequence: clear-and-retain, replay, extend.
+# The app's bounds-switch sequence: clear-and-retain, replay, extend.
 proc switch_scope {snap} {
     $::SL apply_filter $snap
     $::SL replay_bounds
@@ -120,7 +120,7 @@ namespace eval $NS { dict set Pinned $::Ap 1 }
 check "A selected before the freshen" [$SL is_selected $Ap] 1
 check "A pinned before the freshen" [dict exists [slvar Pinned] $Ap] 1
 check "A is the anchor before the freshen" [slvar SelectAnchor] $Ap
-# The trigger is a periodic rescan on the unchanged snapshot - no scope switch,
+# The trigger is a periodic rescan on the unchanged snapshot - no bounds switch,
 # so no clear - and A is already attached, so its changed file streams straight
 # into freshen_attached's retire/restore trip.
 write_session $Ap {a-first a-second a-third a-fourth} [expr {$NOW - 2000}]

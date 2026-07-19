@@ -103,7 +103,7 @@ check names_nocase_hit   1 [nmatches [kw_clauses DESPERATE names 1]]
 check names_case_miss    0 [nmatches [kw_clauses DESPERATE names 0]]
 check names_case_exact   1 [nmatches [kw_clauses desperate names 0]]
 
-# ---- a regex leaf scopes to names too --------------------------------------
+# ---- a regex leaf narrows to names too --------------------------------------
 check names_regex_hit    1 [nmatches [rx_clauses {desp.*-user} names 1]]
 check names_regex_miss   0 [nmatches [rx_clauses {^nomatch$}   names 1]]
 

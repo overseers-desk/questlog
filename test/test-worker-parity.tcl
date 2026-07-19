@@ -62,7 +62,7 @@ proc mk_clauses {args} {
             patterns { dict set snap pattern $v }
             files    { dict set snap file $v }
             tools    { dict set snap tool $v }
-            scope    { dict set snap search_regions $v }
+            regions  { dict set snap search_regions $v }
         }
     }
     return [::questlog::search::build_clauses $snap]

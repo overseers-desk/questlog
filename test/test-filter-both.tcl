@@ -84,10 +84,10 @@ proc write_session {path cwd prompts ts} {
 }
 
 # The corpus, and what each session is:
-#   A  bookmarked, not running     inside the scope, loaded
-#   B  running, not bookmarked     inside the scope, loaded
-#   C  running AND bookmarked      inside the scope, loaded - the row both filters admit
-#   D  running AND bookmarked      another project: the folder scope cuts it
+#   A  bookmarked, not running     inside the bounds, loaded
+#   B  running, not bookmarked     inside the bounds, loaded
+#   C  running AND bookmarked      inside the bounds, loaded - the row both filters admit
+#   D  running AND bookmarked      another project: the folder bound cuts it
 #   E  running, not bookmarked     a third project: cut too, but no member of the
 #                                  pair of filters, and so no part of what they claim
 set Ap [file join $PROJDIR  aaaa.jsonl]
@@ -169,7 +169,7 @@ proc snap {} {
     return [dict create since all min_turns 1 search "" subtree [list $::INSIDE]]
 }
 
-# --- 1. Browse, scoped to one project: A, B and C load; D and E never do.
+# --- 1. Browse, bounded to one project: A, B and C load; D and E never do.
 $SL apply_filter [snap]
 set ::scan_done 0
 $::Scan extend [snap]
@@ -220,7 +220,7 @@ check "both: the strip counts the intersection, not either filter" \
 check "both: the banner names the cut member and says both filters" \
     [banner] \
     "1 running and bookmarked session outside your criteria: $OUTSIDE.\
-     The folder scope excluded it."
+     The folder bound excluded it."
 check "both: the filters loaded nothing" \
     [llength [$SL all_session_paths]] $loaded_before
 check "both: the selection survives a filter that hides its row" \
@@ -281,7 +281,7 @@ check "exclusion beside Running: the strip names Running alone" \
 check "exclusion beside Running: the banner names Running alone" \
     [banner] \
     "1 running session outside your criteria: $ELSEWHERE.\
-     The folder scope excluded it."
+     The folder bound excluded it."
 
 # Now shut off the label every loaded row carries, so the model filter hides every
 # row the Running filter admits. Only `showing` may move: it is the rows on
@@ -301,7 +301,7 @@ check "the carried label shut off: the strip still names Running, counts Running
 check "the carried label shut off: the cut is Running's, the banner says only running" \
     [banner] \
     "1 running session outside your criteria: $ELSEWHERE.\
-     The folder scope excluded it."
+     The folder bound excluded it."
 check "the model filter loaded nothing" \
     [llength [$SL all_session_paths]] [expr {$loaded_before + 1}]
 

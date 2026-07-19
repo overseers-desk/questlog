@@ -9,7 +9,7 @@
 # selection): it is to count the omission, say it, and offer the way out.
 #
 # Two searches genuinely cut a running session, and both are exercised here:
-# the folder scope (hard even for a live session, see reconcile_running) and a
+# the folder bound (hard even for a live session, see reconcile_running) and a
 # content search (with one active, the matches decide what loads). A recency
 # window alone does not: the reconciler already imports a live session that is
 # only out of the window, which is why the window is not what is tested.
@@ -20,7 +20,7 @@
 #   3. the banner names the missing session and the criterion that excluded it;
 #   4. "show it" reads that one session in, pins it, and the cut closes;
 #   5. the pin survives the next reconcile, which would otherwise drop a row the
-#      scope does not admit;
+#      the bounds do not admit;
 #   6. "widen" hands the blamed criterion back to the caller;
 #   7. the filter stays a pure UI operation: toggling it loads nothing;
 #   8. a member no criterion excluded is worded as one, and not as a session with
@@ -68,7 +68,7 @@ proc write_session {path cwd prompts ts} {
     close $fh
 }
 
-# A sits inside the folder scope. B runs in another project: the scope keeps it
+# A sits inside the folder bound. B runs in another project: the bounds keep it
 # out of the list however live it is, so only the registry knows it is there.
 set Ap [file join $PROJDIR aaaa.jsonl]
 set Bp [file join $OTHERDIR bbbb.jsonl]
@@ -116,7 +116,7 @@ proc snap {args} {
         subtree [list $::INSIDE]] $args]
 }
 
-# --- 1. Browse, scoped to one project. B runs in another, so it never loads.
+# --- 1. Browse, bounded to one project. B runs in another, so it never loads.
 $SL apply_filter [snap]
 set ::scan_done 0
 $::Scan extend [snap]
@@ -125,8 +125,8 @@ vwait ::scan_done
 $SL toggle_folder $FOLDER
 $SL reconcile_running $LIVE
 update
-check "A loaded (inside the scope)"        [$SL has_session $Ap] 1
-check "B not loaded (outside the scope)"   [$SL has_session $Bp] 0
+check "A loaded (inside the bounds)"        [$SL has_session $Ap] 1
+check "B not loaded (outside the bounds)"   [$SL has_session $Bp] 0
 check "no filter on: the strip claims nothing about one" [strip] ""
 
 # --- 2. The Running filter goes on and the poll pushes in the membership. The list
@@ -141,9 +141,9 @@ check "the strip counts the cut" \
     [strip] "Running · showing 0 of 1 · 1 outside your criteria"
 check "the banner names it and why" \
     [banner] \
-    "1 running session outside your criteria: $OUTSIDE. The folder scope excluded it."
+    "1 running session outside your criteria: $OUTSIDE. The folder bound excluded it."
 check "the banner offers to load it"       [.s.cut.show cget -text] "Show it"
-check "the banner offers to widen"         [.s.cut.widen cget -text] "Clear the folder scope"
+check "the banner offers to widen"         [.s.cut.widen cget -text] "Clear the folder bound"
 
 # --- 3. Widen hands the blamed criterion back to the caller. It reads nothing.
 .s.cut.widen invoke
@@ -159,7 +159,7 @@ check "and painted it"                     [$SL sflag $Bp rendered] 1
 check "the strip has nothing left to report" [strip] "Running · showing 1 of 1"
 check "the banner is gone"                 [winfo manager .s.cut] ""
 
-# --- 5. The next reconcile must not undo it: B is outside the scope, so nothing
+# --- 5. The next reconcile must not undo it: B is outside the bounds, so nothing
 #        but the pin keeps it in the list.
 $SL reconcile_running $LIVE
 settle
@@ -196,7 +196,7 @@ check "and offers to clear it"              [.s.cut.widen cget -text] "Clear the
 check "widen names the search"              $::widened search
 
 # --- 8. A cut member that NO criterion excluded. A bookmarked session sits on
-#        disk inside the scope, the search carries no criterion at all, and the
+#        disk inside the bounds, the search carries no criterion at all, and the
 #        list has not loaded it. The banner may not say there is nothing to load -
 #        the "Show it" button beside that sentence would be offering to load
 #        exactly what the sentence denies exists. It is not the same state as a

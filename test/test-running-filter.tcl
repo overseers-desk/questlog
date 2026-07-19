@@ -96,7 +96,7 @@ check "A hidden (filter on, not live)" [$SL sflag $Ap rendered] 0
 check "B hidden (filter on, not live)" [$SL sflag $Bp rendered] 0
 
 # --- 3. The live poll reports C running while the filter is on. Membership
-#        is scope-or-running: C imports (running bypasses the min-turns floor
+#        is bounds-or-running: C imports (running bypasses the min-turns floor
 #        here exactly as it does in plain browse) and paints, because
 #        the running filter's job is to show live sessions - it hides rows,
 #        it never blocks liveness from arriving. Only running sessions can

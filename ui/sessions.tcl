@@ -112,7 +112,7 @@ oo::class create ::questlog::ui::SessionList {
     variable OnRename         ;# cb: path -> app rename router (dialog + apply + refresh)
     variable OnScanPath       ;# cb: path -> row (synchronous single-file scan)
     variable OnWiden          ;# cb: criterion -> relax it in the toolbar and republish
-    variable OnFolderBound    ;# cb: folder -> scope the toolbar search to that folder, or ""
+    variable OnFolderBound    ;# cb: folder -> bound the toolbar search to that folder, or ""
     variable OnFilterChange   ;# cb: state -> the app learns a strip filter changed, or ""
     variable Snapshot
     variable CriteriaActive
@@ -131,8 +131,8 @@ oo::class create ::questlog::ui::SessionList {
     variable FolderNode       ;# folder name -> node id
     variable PathNode         ;# session path OR subagent path -> node id (attached)
     variable DetachedNode     ;# path -> node id: scanned rows retained out of the
-                              ;# tree (scope-narrowed, search-suppressed), the
-                              ;# store's memo a scope widen replays without disk
+                              ;# tree (bounds-narrowed, search-suppressed), the
+                              ;# store's memo a bounds widen replays without disk
     variable TagNode          ;# folder node.tag -> node id, for drop hit-testing
     variable SelectedSet      ;# ordered set (dict path->1) of selected sessions
     variable SelectAnchor     ;# path a Shift-range extends from, or ""
@@ -752,7 +752,7 @@ oo::class create ::questlog::ui::SessionList {
     method clear {} {
         # A snapshot change is a new view, not new knowledge: the buffer, the
         # folders and the tree structure go, but every scanned session is
-        # retained detached so the replay that follows (and any later scope
+        # retained detached so the replay that follows (and any later bounds
         # widen) fills from the store instead of disk. The loose snippet/match
         # tags the buffer wipe leaves empty are swept after.
         my retire_all
@@ -776,7 +776,7 @@ oo::class create ::questlog::ui::SessionList {
 
     method apply_filter {snapshot} {
         set Snapshot $snapshot
-        # The arriving snapshot is search and scope only; the engine owns the
+        # The arriving snapshot is search and bounds only; the engine owns the
         # filters and holds them across the change, so a refill honours a filter
         # still pressed on the strip with nothing here to re-graft.
         set CriteriaActive [::questlog::ui::any_criteria $snapshot]
@@ -859,14 +859,14 @@ oo::class create ::questlog::ui::SessionList {
     # ---- snapshot membership -----------------------------------------
 
     # Whether a row passes the current snapshot's row-level filters. The
-    # predicate is shared with Scan through ::questlog::scope, so the model and
+    # predicate is shared with Scan through ::questlog::scan, so the model and
     # the view never disagree on what the snapshot admits.
     method row_matches_snapshot {row} {
         return [::questlog::scan::row_in_bounds $Snapshot $row]
     }
 
-    # The scope-relevant fields of a modelled session, assembled from its node
-    # payload into the row shape ::questlog::scope reads. These are exactly the
+    # The bounds-relevant fields of a modelled session, assembled from its node
+    # payload into the row shape ::questlog::scan reads. These are exactly the
     # fields row_subtree_match (folder, folder_cwd, cwd_hint) and row_in_bounds
     # (mtime, nturns) consult; a caller with a modelled path asks the store,
     # never the scanner. mtime and nturns are set-at-scan and go stale for a
@@ -885,10 +885,10 @@ oo::class create ::questlog::ui::SessionList {
     # ---- retention: scanned-but-not-shown rows -----------------------
     #
     # The store is the memo for every scanned row, shown or not. A row the
-    # current view does not hold - out of the snapshot's scope, or streamed in
+    # current view does not hold - out of the snapshot's bounds, or streamed in
     # while search criteria own the list - is retained as a DETACHED node:
     # a real session node, parent "", indexed in DetachedNode instead of
-    # PathNode, carrying the same payload an attached node would. Scope
+    # PathNode, carrying the same payload an attached node would. Bounds
     # widening replays from these nodes without a disk re-scan (replay_bounds);
     # every hydration site re-attaches through restore_session. The store is
     # the one in-memory home a session's data has: Scan streams rows, and
@@ -1052,7 +1052,7 @@ oo::class create ::questlog::ui::SessionList {
         my check_invariant retire_all
     }
 
-    # A session leaving the current scope: out of the view and its folder's
+    # A session leaving the current bounds: out of the view and its folder's
     # books, into the retention index - the counterpart of forget_session that
     # keeps the scanned copy. The folder-level arithmetic is forget_session's
     # exactly; the node and its subagent subtree survive detached.
@@ -1134,7 +1134,7 @@ oo::class create ::questlog::ui::SessionList {
     # Replay the retained rows the current snapshot admits, mtime-descending
     # so folders arrive in the streaming order a fresh scan would produce.
     # This is the snapshot-change fill that needs no disk: apply_filter
-    # retired every loaded row, and the ones the new scope admits come
+    # retired every loaded row, and the ones the new bounds admit come
     # straight back. Under active criteria the list is built from matches, so
     # nothing attaches (the retention itself is untouched and outlives the
     # search). A retained path whose file is gone (transcript pruning) is
@@ -1177,13 +1177,13 @@ oo::class create ::questlog::ui::SessionList {
 
     # Browse-mode row from Scan. Skipped when criteria are active (the result
     # index is built from matches, not the scan stream). The view filters do
-    # not gate the stream: every in-scope row enters the model, and the engine's
+    # not gate the stream: every in-bounds row enters the model, and the engine's
     # attr_admits settles its hidden flag, so a filter only chooses what paints.
     method on_scan_row {row} {
         # A row the view does not attach still lands in the store: under
         # active criteria the result index owns the list (the scan stream only
-        # feeds the memo), and an out-of-scope row is the memo's whole point -
-        # widening the scope replays it from here without a re-scan.
+        # feeds the memo), and an out-of-bounds row is the memo's whole point -
+        # widening the bounds replays it from here without a re-scan.
         if {$CriteriaActive} { my stage_row $row; return }
         if {![my row_matches_snapshot $row]} { my stage_row $row; return }
         set path [dict get $row path]
@@ -1194,7 +1194,7 @@ oo::class create ::questlog::ui::SessionList {
         $Text configure -state normal
         my anchor_save
         my model_add_session $path $row
-        # The model holds every in-scope session; the filters decide only whether it is
+        # The model holds every in-bounds session; the filters decide only whether it is
         # drawn (model_add_session flagged it), so a later filter hides/shows it in
         # place without a re-scan.
         if {[my sflag $path hidden]} {
@@ -1385,7 +1385,7 @@ oo::class create ::questlog::ui::SessionList {
         # the folder heading below is redrawn from it: a row added hidden and
         # flagged after the fact is counted into a heading that then shows nothing
         # under it, and the heading reads "(1)" over an empty folder. The model
-        # holds every in-scope session either way; the flag only decides what
+        # holds every in-bounds session either way; the flag only decides what
         # paints. attr_admits reads the node just created above, so the node is
         # asked, never the scanner's cache.
         my node_set $sid hidden [expr {![my attr_admits $sid]}]
@@ -2465,7 +2465,7 @@ oo::class create ::questlog::ui::SessionList {
     }
 
     # The folder heading's right-click menu. Kept small and folder-shaped (a
-    # scope action and a reveal), not the session action set, which is built for
+    # bounds action and a reveal), not the session action set, which is built for
     # a session target. Reveal opens the project's real working directory; a
     # folder whose directory is gone resolves to "" and the entry greys out.
     method build_folder_menu {} {
@@ -2667,7 +2667,7 @@ oo::class create ::questlog::ui::SessionList {
     method refresh_cost {path cost_dict} {
         if {![dict exists $PathNode $path]} {
             # A retained (detached) row's cost still lands: the store is the
-            # memo, and a scope widen must bring the cost back with the row.
+            # memo, and a bounds widen must bring the cost back with the row.
             # No folder books, no total, no redraw - the row is in no view.
             # A detached subagent's arrival is dropped; its cost pass re-fires
             # when the restored parent renders it (wire_subagent_row).
@@ -3258,9 +3258,9 @@ oo::class create ::questlog::ui::SessionList {
     # missed tick self-corrects on the next.
     method reconcile_running {running} {
         set RunningSet $running
-        # The subtree scope is hard, even for a running session: a live session in
-        # another project must not surface under a folder scope. The recency bound
-        # is the only thing a running session bypasses, not the folder scope.
+        # The subtree bound is hard, even for a running session: a live session in
+        # another project must not surface under a folder bound. The recency bound
+        # is the only thing a running session bypasses, not the folder bound.
         set subtree [dict getdef $Snapshot subtree {}]
         set before [my session_count]
 
@@ -3270,9 +3270,9 @@ oo::class create ::questlog::ui::SessionList {
         if {!$CriteriaActive} {
             dict for {uuid path} $running {
                 if {[my has_session $path]} continue
-                # Store first: a running session the scope narrowed out is
+                # Store first: a running session the bounds narrowed out is
                 # sitting retained, and re-attaching it is an import with no
-                # read at all. The subtree scope stays hard over it, same as
+                # read at all. The subtree bound stays hard over it, same as
                 # the disk-scan path below.
                 if {[my has_retained $path]} {
                     if {[llength $subtree] > 0 && ![::questlog::scan::row_subtree_match \
@@ -3304,7 +3304,7 @@ oo::class create ::questlog::ui::SessionList {
                 # not add it a second time. A running session that on_scan_row
                 # filtered out (out of window / below the min-turns floor) is
                 # still absent here and is added below, so a running session in
-                # scope surfaces in plain browse.
+                # bounds surfaces in plain browse.
                 if {[my has_session $path]} continue
                 if {[llength $subtree] > 0 \
                     && ![::questlog::scan::row_subtree_match $row $subtree]} continue
@@ -3327,27 +3327,27 @@ oo::class create ::questlog::ui::SessionList {
             # Phantom: not running and the backing jsonl is gone (a Resume-fork that quit
             # before any input). Drop it from every mode.
             if {!$is_running && ![file isfile $path]} { my forget_session $path; continue }
-            # This path is modelled (checked at the loop head), so its scope
+            # This path is modelled (checked at the loop head), so its bounds
             # fields come straight from the store.
             set row [my payload_bounds_row $path]
             # Retain in the model: a matched search row always; a browse row while it is
-            # in scope or running. An out-of-scope, non-running browse row leaves.
+            # in bounds or running. An out-of-bounds, non-running browse row leaves.
             if {$CriteriaActive} {
                 set retained 1
             } else {
-                # The subtree scope is hard; within it a running session bypasses the
+                # The subtree bound is hard; within it a running session bypasses the
                 # recency / min-turns bounds (it always surfaces), but a running
-                # session OUTSIDE the subtree scope does not.
+                # session OUTSIDE the subtree bound does not.
                 set in_subtree [expr {[llength $subtree] == 0 || $row eq "" \
                     || [::questlog::scan::row_subtree_match $row $subtree]}]
                 # A session the reader pulled in through the cut banner stays,
-                # whatever the scope says: they named it and asked for it, and
+                # whatever the bounds say: they named it and asked for it, and
                 # dropping it on the next tick would answer them by taking it away.
                 set retained [expr {[dict exists $Pinned $path] || ($in_subtree \
                     && (($row ne "" && [my row_matches_snapshot $row]) || $is_running))}]
             }
-            # Out of scope is not forgotten: the row leaves the tree into the
-            # store's retention, so a scope widen brings it back without disk.
+            # Out of bounds is not forgotten: the row leaves the tree into the
+            # store's retention, so a bounds widen brings it back without disk.
             if {!$retained} { my retire_session $path; continue }
             set now_hidden [expr {![my attr_admits [my sid $path]]}]
             if {$now_hidden != [my sflag $path hidden]} {
@@ -3414,7 +3414,7 @@ oo::class create ::questlog::ui::SessionList {
         # bookmarked field (session_bookmarked), so refresh it from the bit
         # before the redraw: this one write is what lets the glyph follow a
         # toggle without a re-scan. A retained row (toggled from the viewer
-        # while scoped out) takes the field write and has no marker.
+        # while bounded out) takes the field write and has no marker.
         my sset $path bookmarked [file executable $path]
         if {![my has_session $path]} return
         $Text configure -state normal
@@ -3687,7 +3687,7 @@ oo::class create ::questlog::ui::SessionList {
         }
         set CutReason ""
         if {[llength $CutMembers]} {
-            # "criteria", not "search": the time window, the folder scope or the
+            # "criteria", not "search": the time window, the folder bound or the
             # min-turns floor can be what cut a member, and the banner's next
             # sentence names which one - so the clause must not claim the search did.
             append FilterNote " · [llength $CutMembers] outside your criteria"
@@ -3730,7 +3730,7 @@ oo::class create ::questlog::ui::SessionList {
     #
     # Collapsing the two would put "no transcript on disk to load yet" next to a
     # button offering to load it. Otherwise the criteria are asked in the order
-    # they bind: the subtree scope is hard (even a running session outside it never
+    # they bind: the subtree bound is hard (even a running session outside it never
     # surfaces, see reconcile_running), then the content criteria (with a search
     # active the matches decide what loads, and a session with no hit is not among
     # them), then the recency window, then the min-turns floor.
@@ -3746,7 +3746,7 @@ oo::class create ::questlog::ui::SessionList {
         return unloaded
     }
 
-    # Is the member inside the folder scope? The live registry records the cwd the
+    # Is the member inside the folder bound? The live registry records the cwd the
     # session runs in, which answers it outright; a member with no cwd (a bookmark
     # sweep records none) falls back to its row if the model has one, and finally
     # to its encoded folder name, the same evidence the scanner's walk uses.
@@ -3888,7 +3888,7 @@ oo::class create ::questlog::ui::SessionList {
     # not take it, and the "Show it" button beside this sentence will.
     method reason_phrase {reason it} {
         switch -- $reason {
-            subtree   { return "The folder scope excluded $it." }
+            subtree   { return "The folder bound excluded $it." }
             search    { return "Your search terms excluded $it." }
             since     { return "The time window excluded $it." }
             min_turns { return "The min-turns floor excluded $it." }
@@ -3899,7 +3899,7 @@ oo::class create ::questlog::ui::SessionList {
 
     method widen_label {reason} {
         return [dict getdef {
-            subtree   "Clear the folder scope"
+            subtree   "Clear the folder bound"
             search    "Clear the search"
             since     "Clear the time window"
             min_turns "Clear the min-turns floor"
@@ -3909,7 +3909,7 @@ oo::class create ::questlog::ui::SessionList {
     # The escape that reads disk, and the only one here that does: load exactly the
     # sessions the search left behind, because the reader asked for them by name.
     # Each is scanned in (a single-file read), pinned so the next reconcile does
-    # not put it back out of scope, and drawn in its folder. The filter is not
+    # not put it back out of bounds, and drawn in its folder. The filter is not
     # touched and needs no exemption: a running session admitted under the Running
     # filter passes attr_admits on its own.
     method show_excluded {} {

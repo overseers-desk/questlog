@@ -230,17 +230,17 @@ $SL close_enum_popover
 check "no filter click ran a scan_path" $::scan_path_calls $base_scans
 check "A survived the whole filter sequence selected" [$SL is_selected $Ap] 1
 
-# --- 8. A filter survives a scope change. The toolbar's snapshot carries search
-#        and scope only; the engine owns the filter and holds it across the change,
-#        with no copy to wipe. With bookmarked pressed, a scope change (apply_filter,
+# --- 8. A filter survives a bounds change. The toolbar's snapshot carries search
+#        and bounds only; the engine owns the filter and holds it across the change,
+#        with no copy to wipe. With bookmarked pressed, a bounds change (apply_filter,
 #        clear, refill) must re-insert rows that still honour the filter, and the
 #        strip control must still read as pressed.
 $SL attr_filter_set bookmarked 1
 update
 check "bookmarked filter on: only B shows" \
     [list [$SL sflag $Ap rendered] [$SL sflag $Bp rendered] [$SL sflag $Cp rendered]] {0 1 0}
-# Mirror the app's scope-switch sequence: replay the retained rows the new
-# snapshot admits from the store, then extend for anything newly in scope.
+# Mirror the app's bounds-switch sequence: replay the retained rows the new
+# snapshot admits from the store, then extend for anything newly in bounds.
 set snap2 [dict create since all min_turns 1]
 $SL apply_filter $snap2
 $SL replay_bounds
@@ -250,7 +250,7 @@ after 300 [list set ::scan_done 1]
 vwait ::scan_done
 $SL toggle_folder $FOLDER
 update
-check "the engine still holds the filter across the scope change" \
+check "the engine still holds the filter across the bounds change" \
     [$SL attr_filter_get bookmarked] 1
 check "the refilled list still honours the filter" \
     [list [$SL sflag $Ap rendered] [$SL sflag $Bp rendered] [$SL sflag $Cp rendered]] {0 1 0}

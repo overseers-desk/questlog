@@ -50,7 +50,7 @@ foreach d {lib cli} {
 # answers to the same rule. The set is read from their `package require` lines
 # rather than listed here, so a module added to the path is checked without this
 # test being told about it. A module only the GUI requires (a Tk widget, say) is
-# named in no headless file and stays out of scope.
+# named in no headless file and stays out of bounds.
 foreach f $lib_files {
     foreach pkg [regexp -all -inline -line {^\s*package require (\w+)} [slurp $f]] {
         # -inline interleaves each whole match with its capture; the whole match

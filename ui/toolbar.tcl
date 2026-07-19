@@ -6,7 +6,7 @@ package require searchfield
 # ::questlog::ui::Toolbar - the top-of-window controls.
 #
 # The search row is a ::searchfield::SearchField: the entry, the typing
-# grammar, the live debounce, the Return publish, the scope menubutton and the
+# grammar, the live debounce, the Return publish, the bounds menubutton and the
 # Aa toggle are the module's, and questlog hands it the region vocabulary
 # lib/search.tcl parses (the names below) with the friendly labels the menu
 # shows. `snapshot` reads the field's fragment back into the search keys every
@@ -37,7 +37,7 @@ package require searchfield
 #   tool             list of {name key} pairs (key matches the invocation text;
 #                    empty key = any use of the tool)
 #   pattern          list of regex strings   (case-sensitive, always)
-#   min_turns        the minimum-turns scope floor (1 = include all). A scope
+#   min_turns        the minimum-turns bounds floor (1 = include all). A bounds
 #                    filter alongside since/subtree: a session below the floor leaves
 #                    the corpus, not just the view - see.
 #   cwd              launch cwd, constant after startup
@@ -48,7 +48,7 @@ package require searchfield
 
 # any_criteria snapshot - true iff the snapshot carries a content-matching
 # clause (search text, regex pattern, or a file/tool clause). The `subtree`
-# clause is a row-level scope, not a content match, so it does not count here;
+# clause is a row-level bound, not a content match, so it does not count here;
 # treating it as a criterion flips sessions.tcl into result-index mode and
 # Search.start returns immediately because there is nothing to match, leaving
 # the list empty. Shared by app.tcl (search start/cancel) and sessions.tcl
@@ -130,7 +130,7 @@ oo::class create ::questlog::ui::Toolbar {
         # file chip is questlog's own widget, in the op_<op>_{bg,fg} colours.
 
         # Search row: a ::searchfield::SearchField in a frame the toolbar owns.
-        # The entry, the scope picker and the Aa toggle are the module's; the
+        # The entry, the bounds picker and the Aa toggle are the module's; the
         # region names are the region-spec vocabulary lib/search.tcl
         # parse_regions reads out of the snapshot, and the labels are the
         # menu's friendly words for them. Live mode searches as typing pauses,
@@ -586,7 +586,7 @@ oo::class create ::questlog::ui::Toolbar {
     }
 
     # The field's one callback: a user gesture in it changed the query - the
-    # debounce's lapse, Return, the Aa toggle, a scope pick. The whole
+    # debounce's lapse, Return, the Aa toggle, a region pick. The whole
     # snapshot goes out, as it does for every other control here, so a
     # subscriber never has to know which of the two halves of the toolbar
     # moved; the fragment the module appends is unread, since snapshot
@@ -751,8 +751,8 @@ oo::class create ::questlog::ui::Toolbar {
 
     # ---- the min-turns facet's editor ---------------------------------------
 
-    # The minimum-turns scope floor: a spinbox over 1..turn_count_cap. 1 includes
-    # all; a higher floor drops shorter sessions from the corpus (it is scope, not
+    # The minimum-turns bounds floor: a spinbox over 1..turn_count_cap. 1 includes
+    # all; a higher floor drops shorter sessions from the corpus (it is a bound, not
     # a view toggle - see). set_min_turns clamps to the valid range
     # and reports, so a bad keystroke can never leave an out-of-range value; it is
     # wired to the buttons (-command, <<Increment>>/<<Decrement>>) and to

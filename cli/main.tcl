@@ -337,7 +337,7 @@ proc ::questlog::cli::main::resolve_session {arg} {
 
 # The snapshot used for file/row SELECTION in accrued mode: the original with the
 # until ceiling cleared, so a session revived after the ceiling (yet holding
-# pre-ceiling, in-window messages) is not pruned. The since floor and subtree scope
+# pre-ceiling, in-window messages) is not pruned. The since floor and subtree bound
 # stay - a file with mtime <= floor holds no in-window message, so it is a safe,
 # tight pre-gate. Pure, so a test can drive it.
 proc ::questlog::cli::main::selection_snapshot_for {snapshot} {
@@ -355,7 +355,7 @@ proc ::questlog::cli::main::has_window_spend {cost_info} {
 
 # Answer the query on stdout. q is the neutral dict cli/commandline.tcl parsed
 # from the command line; its clause groups become the matcher's boolean tree and
-# its bounds ride outside as global scope bounds.
+# its bounds ride outside as global bounds.
 proc ::questlog::cli::main::run {q} {
     variable ::ROOT
     if {![info exists ROOT]} {
@@ -382,9 +382,9 @@ proc ::questlog::cli::main::run {q} {
         set sub_limit $limit_matches
     }
 
-    # 2. The row-level scope snapshot: since, until, subtree. These ride outside
-    # the boolean algebra as global scope bounds. The CLI has no session-list view, so
-    # it carries no view filters; row_in_bounds applies scope only.
+    # 2. The row-level bounds snapshot: since, until, subtree. These ride outside
+    # the boolean algebra as global bounds. The CLI has no session-list view, so
+    # it carries no view filters; row_in_bounds applies bounds only.
     set snapshot [dict create \
         subtree [expr {$subtree eq "" ? {} : [list $subtree]}] \
         since $since \
@@ -439,12 +439,12 @@ proc ::questlog::cli::main::run {q} {
         lassign [::questlog::match::scan_file $path $clauses] row matches
         if {$row eq ""} continue
         
-        # Apply the snapshot's row scope (recency bound and subtree).
+        # Apply the snapshot's row bounds (recency bound and subtree).
         # Stamp residence first: scan_file rows carry no folder_cwd, and the
         # subtree predicate reads it as the authority. A subagent's corpus
         # membership is its parent's (list_paths_for admits children with
         # their parent), so its own mtime is not re-tested against the window;
-        # the subtree scope and floors still apply to it.
+        # the subtree bound and floors still apply to it.
         set row [$scan stamp_subtree $row]
         set row_snapshot [expr {$is_child \
             ? [dict replace $sel_snapshot since all until all] : $sel_snapshot}]

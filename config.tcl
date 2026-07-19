@@ -119,7 +119,7 @@ namespace eval ::questlog::config {
     dict set Config since_default 7d
 
     # ---- minimum turns -----------------------------------------------------
-    # The "min turns" scope filter. The scanner counts a session's user turns
+    # The "min turns" bounds filter. The scanner counts a session's user turns
     # up to turn_count_cap (so a row's recorded nturns saturates there, and the
     # spinbox max is this cap); the spinbox spans 1..turn_count_cap.
     # min_turns_default is the GUI's startup value - 2 excludes one-turn

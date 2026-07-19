@@ -86,7 +86,7 @@ proc ::questlog::search::search_terms {s} {
 # including the system/compaction blocks the four named regions exclude). An
 # unknown token, or an ambiguous prefix (t, to, tool, tool-, a), throws and names
 # the candidates - never a silent default. The one home for the region
-# vocabulary the CLI colon-qualifier and the GUI scope selector both parse; the
+# vocabulary the CLI colon-qualifier and the GUI bounds selector both parse; the
 # transcript tokens map to jsonl block types, while `names` is not a block type
 # but the session's name history, matched per-session in scan_file.
 proc ::questlog::search::parse_regions {spec} {
@@ -119,7 +119,7 @@ proc ::questlog::search::parse_regions {spec} {
 
 # build_clauses snapshot - normalise the toolbar's snapshot into the matcher's
 # {leaves tree nocase} form. The search terms become keyword leaves carrying the
-# scope's region set, ANDed together; the regex patterns, the {op path} file
+# region set, ANDed together; the regex patterns, the {op path} file
 # values and the {name key} tool values each become a leaf, ORed within their
 # kind, and those OR-groups AND with the terms. This is the GUI's existing
 # meaning - all terms, and one of each filled-in clause - expressed as one tree.
@@ -283,7 +283,7 @@ oo::class create ::questlog::Search {
     variable Workers           ;# tids of in-flight worker threads
     variable WorkersRemaining  ;# slices yet to report on_worker_done
     variable YieldClock        ;# clock-ms of the coroutine path's last yield
-    variable Snapshot          ;# the snapshot this run searches under (scope gate)
+    variable Snapshot          ;# the snapshot this run searches under (bounds gate)
 
     constructor {scan on_file on_progress on_done} {
         set Scan $scan
@@ -299,16 +299,16 @@ oo::class create ::questlog::Search {
         set Snapshot [dict create]
     }
 
-    # 1 iff a matched row passes the snapshot's row-level SCOPE - the full
-    # scope::row_in_bounds predicate (subtree scope plus the min-turns floor;
+    # 1 iff a matched row passes the snapshot's row-level BOUNDS - the full
+    # row_in_bounds predicate (subtree bound plus the min-turns floor;
     # since/until are already pruned by list_paths_for, and row_in_bounds re-checks
-    # them harmlessly). subtree is the scope bound
+    # them harmlessly). subtree is the bound
     # list_paths_for cannot fully pre-prune: since/until are mtime bounds it
     # already applies, but subtree membership is a per-row question. The GUI
-    # search corpus once skipped this, so a subtree-scoped search
+    # search corpus once skipped this, so a subtree-bounded search
     # returned sessions from other folders. Bookmarked, running, and the
     # bookmarked-only/running-only toggles are session-list view toggles, not
-    # search scope, so they are deliberately not applied here. The row arrives
+    # search bounds, so they are deliberately not applied here. The row arrives
     # from scan_file without a residence stamp (workers never resolve folders),
     # so stamp it here on the main thread before the predicate reads it.
     method row_in_bounds {row} {

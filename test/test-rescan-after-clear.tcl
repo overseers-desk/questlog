@@ -1,9 +1,9 @@
 #!/usr/bin/env wish9.0
-# Switching the recency scope (e.g. 7-day to 30-day) clears the list and
+# Switching the recency bounds (e.g. 7-day to 30-day) clears the list and
 # re-runs the scan. clear wipes the engine's node store; the session-domain
 # reverse indices (FolderNode/PathNode/TagNode) into that store must be wiped
-# with it. If they are not, a wider scope that brings a fresh session into a
-# folder already seen under the narrower scope hits a stale FolderNode whose
+# with it. If they are not, wider bounds that bring a fresh session into a
+# folder already seen under the narrower bounds hits a stale FolderNode whose
 # node id was deleted from the store, and node_field throws
 # "key nodeN not known" from inside the scan coroutine.
 #
@@ -81,7 +81,7 @@ proc check {name got want} {
     }
 }
 
-# Mirror the app's scope-switch sequence: replay the retained rows the
+# Mirror the app's bounds-switch sequence: replay the retained rows the
 # snapshot admits from the store, then extend for any newly-windowed file.
 proc scan_now {snap} {
     $::SL replay_bounds
@@ -92,7 +92,7 @@ proc scan_now {snap} {
     update
 }
 
-# --- 1. Seven-day scope: the folder streams in with session A only.
+# --- 1. Seven-day bounds: the folder streams in with session A only.
 set snap7 [dict create since 7d]
 $SL apply_filter $snap7
 scan_now $snap7
@@ -104,10 +104,10 @@ check "session B outside 7-day window" [$SL has_session $Bp] 0
 # alongside the node store, or extend's discovery of B crashes the coroutine.
 set snap30 [dict create since 30d]
 $SL apply_filter $snap30
-check "folder index reset on scope switch" [$SL has_folder -tmp-rc-p1] 0
+check "folder index reset on bounds switch" [$SL has_folder -tmp-rc-p1] 0
 scan_now $snap30
 check "no background error on rescan" $::bgerr ""
-check "folder re-added after scope switch" [$SL has_folder -tmp-rc-p1] 1
+check "folder re-added after bounds switch" [$SL has_folder -tmp-rc-p1] 1
 check "session A re-added" [$SL has_session $Ap] 1
 check "session B now in 30-day window" [$SL has_session $Bp] 1
 

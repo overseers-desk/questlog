@@ -173,7 +173,7 @@ proc ::questlog::ui::app::start {root {seed {}}} {
     pack $PW -side top -fill both -expand 1
 
     # List column: the search/criteria toolbar above the session list. The
-    # toolbar scopes the list (master), not the viewer (detail), so it lives
+    # toolbar bounds the list (master), not the viewer (detail), so it lives
     # inside this column rather than spanning the window.
     set list_frame $PW.list
     set ListFrame $list_frame
@@ -279,11 +279,11 @@ proc ::questlog::ui::app::start {root {seed {}}} {
     # window then appears all at once, finished. This one pump maps it first.
     update idletasks
 
-    # No default `subtree`: the list opens across every project, and a scope is
-    # added only when the user asks for one. A launch-cwd default scoped the list
+    # No default `subtree`: the list opens across every project, and a bound is
+    # added only when the user asks for one. A launch-cwd default bounded the list
     # to wherever questlog happened to be started - often the home directory, a
     # parent of everything - which both assumed the user keeps code under home and
-    # silenced any scope they then added (subtree entries are OR'd, so a home
+    # silenced any bound they then added (subtree entries are OR'd, so a home
     # entry kept the whole corpus in view until it was removed).
     $Toolbar publish
 
@@ -443,7 +443,7 @@ proc ::questlog::ui::app::refresh_filter_members {} {
 # A strip filter moved. The list has already re-derived the view in place and
 # handed the new filter state back here; remember it so the poll gathers
 # membership for the same filters, then gather now so the count lands with the
-# toggle. No scope or search changed, so nothing re-scans.
+# toggle. No bounds or search changed, so nothing re-scans.
 proc ::questlog::ui::app::on_filter_change {state} {
     variable FilterState
     set FilterState $state
@@ -481,11 +481,11 @@ proc ::questlog::ui::app::on_widen {criterion} {
     $Toolbar widen $criterion
 }
 
-# Scope the search to one folder (the list's folder right-click): push the
+# Bound the search to one folder (the list's folder right-click): push the
 # folder's project cwd into the toolbar's subtree facet and publish. subtree is
 # one of the keys bounds_equal reads, so the new snapshot forces the full rebuild
 # in on_filter rather than the view-only fast path. A folder whose directory is
-# gone resolves to "" and scopes nothing.
+# gone resolves to "" and bounds nothing.
 proc ::questlog::ui::app::on_folder_bound {folder} {
     variable Toolbar
     set cwd [folder_cwd $folder]
@@ -495,7 +495,7 @@ proc ::questlog::ui::app::on_folder_bound {folder} {
 
 # ---- toolbar callback --------------------------------------------------
 
-# The snapshot keys that define the search and scope - every key the toolbar now
+# The snapshot keys that define the search and bounds - every key the toolbar now
 # publishes. Two publishes equal across all of them changed nothing that decides
 # which sessions load, so on_filter can skip the rebuild.
 proc ::questlog::ui::app::bounds_equal {a b} {
@@ -520,7 +520,7 @@ proc ::questlog::ui::app::on_filter {snapshot} {
     variable SearchActive
     variable PrevSnapshot
 
-    # A republish whose scope and search keys all match the last one changed
+    # A republish whose bounds and search keys all match the last one changed
     # nothing that decides which sessions load, so the rebuild below would only
     # reproduce what is already shown. Skip it, keeping the list and its selection.
     # The list-view filters do not ride the snapshot: they live on the list strip
@@ -549,13 +549,13 @@ proc ::questlog::ui::app::on_filter {snapshot} {
     # snapshot was previously seen (e.g. 24h to 7d) - then extend for
     # newly-windowed files. apply_filter above retired every loaded row into
     # the store's detached retention (its clear runs retire_all, not a wipe);
-    # replay_bounds re-attaches the ones the new scope admits, applying the
+    # replay_bounds re-attaches the ones the new bounds admit, applying the
     # same pure predicate
     # (::questlog::scan::row_in_bounds over payload_bounds_row's fields) that
     # on_scan_row applies as its admission gate. No disk: the widget's node
     # store is the memo, session data's one in-memory home. Model membership
-    # is the scope's question alone; the list-view filters only decide which
-    # in-model rows paint (the engine's attr_admits), so a scope change under
+    # is the bounds' question alone; the list-view filters only decide which
+    # in-model rows paint (the engine's attr_admits), so a bounds change under
     # running-only repopulates like any other and untoggling shows the full
     # corpus instantly. With criteria active the list is built from matches
     # (replay_bounds attaches nothing), but the scan still runs so Search has
@@ -593,7 +593,7 @@ proc ::questlog::ui::app::on_filter {snapshot} {
     refresh_status
     update_spinner
     set PrevSnapshot $snapshot
-    # A new scope or search loads a different set of rows, so what the filter is
+    # A new bounds or search loads a different set of rows, so what the filter is
     # missing has changed even though the filter has not.
     refresh_filter_members
 }
@@ -653,7 +653,7 @@ proc ::questlog::ui::app::flush_cost {} {
 # everything; then an opened session's path; otherwise the text follows
 # StatusMode: the in-flight ProgressLine
 # while scanning or searching, the persistent SearchSummary once a search has
-# finished or been cancelled, and the resting scope line while browsing. Every
+# finished or been cancelled, and the resting bounds line while browsing. Every
 # callback that changes a mode or a stored line ends by calling this, so the bar
 # is always whatever the current state says it is and nothing leaks across.
 proc ::questlog::ui::app::refresh_status {} {
@@ -726,7 +726,7 @@ proc ::questlog::ui::app::update_spinner {} {
 }
 
 # The bottom status bar's resting line: where questlog reads from and how many
-# sessions sit on disk in scope, so a first-time reader never has to ask where
+# sessions sit on disk in bounds, so a first-time reader never has to ask where
 # the list comes from. A noun phrase, not a verb, so the resting bar does not
 # read as work in progress (the spinner, not the wording, signals activity). The
 # browse default behind refresh_status. (No "this Mac": the design's wording is
@@ -773,7 +773,7 @@ proc ::questlog::ui::app::on_scan_progress {done total} {
     update idletasks
 }
 
-# Scan finished. While browsing, return to the resting scope line; under active
+# Scan finished. While browsing, return to the resting bounds line; under active
 # criteria leave the mode (searching/search_done) untouched so a background-scan
 # completion never wipes the search summary.
 proc ::questlog::ui::app::on_scan_done {scanned} {
