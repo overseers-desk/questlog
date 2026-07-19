@@ -409,24 +409,15 @@ proc ::questlog::ui::app::run_tick {} {
 
 # ---- what the active filters hold, beyond what the search loaded ----------
 
-# The membership the active filters claim, gathered outside the search and handed
-# to the list, which counts it against the rows it did load and says the cut (see
-# the filter-cut section of ui/sessions.tcl). Running is free: the live registry
-# knows every session running on this machine, whatever window the search ran
-# with. Bookmarked is the file's +x bit, so its membership is a stat sweep of the
-# corpus - cheap, but never on the filter's own path: it runs here, on the poll and
-# on a filter change, so toggling a filter stays an instant in-place re-filter and
-# the count lands a moment behind it. The model filter has no membership outside the
-# loaded rows (a row's model is known only once its transcript is parsed), so
-# member_filters leaves it out and the strip claims nothing for it.
-#
-# Each filter gathers its own set; filter_members reduces them to the membership the
-# filters jointly claim, which with both on is the intersection - the sessions the
-# list would show if the search had loaded them, and nothing else.
-#
-# Which filters are on comes from FilterState, the strip state the list hands
-# back through on_filter_change: the filters are the strip's now, not the toolbar's,
-# so the toolbar's published snapshot carries none of them.
+# The membership the active filters claim, gathered outside the search and
+# handed to the list, which counts it against the rows it did load and says
+# the cut (the filter-cut section of ui/sessions.tcl). Running comes free from
+# the live registry; Bookmarked is a stat sweep of the corpus - cheap, but
+# never on the filter's own path, so toggling stays an instant in-place
+# re-filter and the count lands a moment behind it. The model filter has no
+# membership outside the loaded rows, so member_filters leaves it out.
+# filter_members reduces the sets to what the filters jointly claim (the
+# intersection when both are on).
 proc ::questlog::ui::app::refresh_filter_members {} {
     variable SessionList
     variable FilterState
@@ -450,15 +441,11 @@ proc ::questlog::ui::app::on_filter_change {state} {
     refresh_filter_members
 }
 
-# Every bookmarked session on disk, uuid -> {path}: one glob per project folder
-# and one stat per session file. The +x bit is the bookmark, so this is the
-# Bookmarked filter's whole membership, window or no window.
-#
-# It opens nothing and resolves no folder. This runs on the filter fast path and
-# again on every poll tick while the filter is on, and a filter may not read a
-# transcript - so no cwd is stamped here. The one or two members the banner
-# NAMES get their project out of the no-read resolver, and only then (member_name
-# in ui/sessions.tcl).
+# Every bookmarked session on disk, uuid -> {path}: one glob per project
+# folder and one stat per file, window or no window. It opens nothing and
+# resolves no folder - this runs on the filter fast path and every poll tick,
+# and a filter may not read a transcript; the one or two members the banner
+# NAMES resolve later through the no-read resolver (member_name).
 proc ::questlog::ui::app::bookmarked_members {} {
     set out [dict create]
     set root [::questlog::path::projects_root]

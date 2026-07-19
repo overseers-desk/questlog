@@ -13,11 +13,8 @@ package require leash
 # folder->cwd resolver cache (Folders) and the session-origin cache (Kind),
 # both used headlessly by the CLI.
 #
-# Single-instance by current convention, not by structural constraint.
-# The class earns its existence under issue 67 on (a) named globals absorbed
-# (Folders, Kind, Epoch, Snapshot, callbacks), (b) joint state (the epoch and
-# the in-flight coroutine co-evolve as it drains), (c) tell-don't-ask (rows
-# leave through publish_row's stream, never through a table a caller pokes).
+# A class under the issue-67 trial: named globals absorbed, joint
+# epoch/coroutine state, and rows leave tell-don't-ask through publish_row.
 #
 # Cancellation uses a generation token. `incr Epoch` invalidates any
 # in-flight coroutine; the coroutine compares its captured epoch after
@@ -25,7 +22,6 @@ package require leash
 
 namespace eval ::questlog::scan {}
 
-# Comparator for lsort -command. Sorts row-dict elements by mtime.
 proc ::questlog::scan::cmp_mtime {a b} {
     set ma [dict get $a mtime]
     set mb [dict get $b mtime]
@@ -83,10 +79,8 @@ proc ::questlog::resume_coro {co} {
 # attribute filters: they shape which in-bounds rows the list shows, not which
 # rows are in bounds at all.
 #
-# A namespace of pure predicates, not a class: the snapshot is an immutable
-# dict the toolbar publishes and the row is a dict passed in, so there is no
-# joint state that co-evolves and no named global to absorb - the issue-67
-# criteria all fail, and a few procs over two dicts beat a class.
+# A namespace of pure predicates, not a class: the issue-67 criteria all
+# fail, and a few procs over two dicts beat a class.
 
 # The one home that interprets a since or until value, for every consumer (the
 # headless CLI, the GUI time row, cutoff_for, ceiling_for, and since_label).
@@ -341,15 +335,12 @@ oo::class create ::questlog::Scan {
         return $kind
     }
 
-    # Cancel any in-flight scan. Stale coroutine drains itself at the
-    # next yield boundary.
+    # A stale coroutine drains itself at its next yield boundary.
     method cancel {} {
         incr Epoch
         set Active 0
     }
 
-    # extend snapshot - start a new scan coroutine. Cancels any previous
-    # coroutine via the epoch token.
     method extend {snapshot} {
         my cancel
         set Snapshot $snapshot
@@ -375,10 +366,9 @@ oo::class create ::questlog::Scan {
         foreach path $paths {
             if {$my_epoch != $Epoch} return
             # The differential skip's memory is the consumer's: KnownMtime asks
-            # the row's retained home (the session list's store in the GUI;
-            # tests inject their own) what mtime it holds for this path, and an
-            # unchanged file is not re-read. Scan itself remembers nothing
-            # row-shaped, so without the callback every path scans.
+            # what mtime it holds for this path, and an unchanged file is not
+            # re-read. Scan itself remembers nothing row-shaped, so without the
+            # callback every path scans.
             set existing_mtime ""
             if {$KnownMtime ne ""} {
                 set existing_mtime [{*}$KnownMtime $path]
@@ -477,7 +467,6 @@ oo::class create ::questlog::Scan {
                 }
             }
         }
-        # Sort by mtime DESC.
         set sorted [lsort -integer -decreasing -index 1 $pairs]
         set out [list]
         foreach p $sorted { lappend out [lindex $p 0] }
@@ -652,12 +641,10 @@ oo::class create ::questlog::Scan {
 
     # Publish a row into the stream. Used by run_scan and by Search (which
     # produces row data as a free side-effect of its own pass). The row's one
-    # retained home is the consumer's (OnRow lands it in the session list's
-    # store, whose staging keeps a fresher copy over a republished stale one);
-    # here the row only feeds the two disk-derived memos on its way out. A
-    # scan_file republish (the search path) computes neither the cost fields
-    # nor the tail-read identity fields (slug, ai_title, kind) - the store's
-    # retained copy holds those for an unchanged file.
+    # retained home is the consumer's; here the row only feeds the two
+    # disk-derived memos on its way out. A scan_file republish (the search
+    # path) carries neither the cost fields nor the tail-read identity fields
+    # (slug, ai_title, kind).
     method publish_row {row} {
         set row [my stamp_subtree $row]
         set path [dict get $row path]

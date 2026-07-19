@@ -1,10 +1,8 @@
 package require Tcl 9
 package require Tk
 
-# Glyphs for the status markers, and the model filter at rest. The single home
-# for each: the glyphs mark running and bookmarked rows in the list, and
-# MODEL_ANY is the word the model filter carries when no model is chosen (read by
-# the strip's model control below for its rest label).
+# MODEL_ANY is the word the model filter carries when no model is chosen
+# (read by the strip's model control for its rest label).
 namespace eval ::questlog::ui {
     variable GLYPH_RUNNING  ●
     variable GLYPH_BOOKMARK ★
@@ -12,12 +10,9 @@ namespace eval ::questlog::ui {
     variable MODEL_ANY "any model"
 }
 
-# The session list's metadata columns, in render order. This is the single
-# place that decides which columns appear, their order, the sort-header label,
-# the sample string each column's width is measured from, the alignment, and
-# whether its header sorts. The tab stops, the cost-tier cell, and the sortable
-# header all derive from this list, so reordering or extending it is the one
-# edit that moves a column. Each row is {id label sample align sortable}.
+# The one place that decides which columns appear, their order, the header
+# label, the width sample, the alignment, and whether the header sorts. Each
+# row is {id label sample align sortable}.
 #
 # The row reads subject-on-the-left, metadata right-pinned: the subject (glyphs,
 # slug, preview, match count) fills from the left and the columns below sit in a
@@ -251,11 +246,8 @@ oo::class create ::questlog::ui::SessionList {
         set PathNode [dict create]
         set TagNode [dict create]
         # A wholesale clear can delete the hovered snippet out from under a
-        # parked pointer (a streaming search's clear-and-fill); a peek must
-        # not outlive its row, and relying on Tk to synthesize the <Leave> is
-        # a bet this line does not take. Same invalidation family as the
-        # viewer's hover-copy cache. The reveal registry dies with the rows
-        # it describes.
+        # parked pointer; a peek must not outlive its row, and Tk is not
+        # guaranteed to synthesize the <Leave>.
         set PeekByTag [dict create]
         if {$OnStatusUnpeek ne ""} { {*}$OnStatusUnpeek }
     }
@@ -690,18 +682,15 @@ oo::class create ::questlog::ui::SessionList {
         # wipe leaves empty are swept after.
         my reset
         my sweep_loose_tags
-        # A fresh filter/search is a new view; drop the selection (the node store
-        # is empty now, and a later rebuild repaints from it).
         set SelectedSet [dict create]
         set SelectAnchor ""
         set SelectedFolder ""
         set TotalCost 0.0
         set StatusBase ""
-        # The pinned sessions were pulled in past the old search; the new one has
-        # its own answer. The filter membership survives (it is gathered outside the
-        # search), but its cut cannot be recounted against a list that has not
-        # been filled yet - the reconcile that follows the fill recounts it, so the
-        # banner never flashes a cut that the new search does load.
+        # The pinned sessions were pulled in past the old search; the new one
+        # has its own answer. The filter membership survives, but its cut is
+        # recounted only by the reconcile that follows the fill, so the banner
+        # never flashes a cut that the new search does load.
         set Pinned [dict create]
         my drop_filter_note
         my refresh_status
@@ -716,13 +705,10 @@ oo::class create ::questlog::ui::SessionList {
         my clear
     }
 
-    # The models the loaded rows carry: every distinct, non-empty model label in
-    # the list, hidden rows included, sorted so the filter does not reorder itself
-    # with the scan. Hidden rows count because a row the model filter is hiding is
-    # exactly the row whose entry must stay in the menu for the filter to be widened
-    # back off it. A row whose cost pass has not landed yet has no label and is
-    # simply not named; the model filter admits such a row (its value is absent),
-    # so it never disappears for want of an entry.
+    # Every distinct, non-empty model label in the list, sorted. Hidden rows
+    # count: a row the model filter is hiding is exactly the row whose entry
+    # must stay in the menu for the filter to be widened back off it. A row
+    # whose cost pass has not landed has no label yet; the filter admits it.
     method loaded_models {} {
         set seen [dict create]
         foreach path [my all_session_paths] {
@@ -738,15 +724,10 @@ oo::class create ::questlog::ui::SessionList {
 
     # ---- declarative-attribute hooks (the engine's filter and glyph facility) --
 
-    # The value of a declared attribute on a node (engine hook). The engine reads
-    # every attribute only through here, so it filters and glyphs the three filters
-    # without ever looking inside a payload. Only a session answers: a folder or a
-    # subagent returns "" for all three, so a container is never glyphed and never
-    # filtered (a bool absent shows and draws no mark, an enum empty always shows),
-    # exactly as the filters only ever touch session rows.
-    #   running    live iff the row's uuid is in the poll-derived running set.
-    #   bookmarked the row's +x bit (session_bookmarked), the same the filter reads.
-    #   model      the row's model label, "" until the cost pass fills it.
+    # The value of a declared attribute on a node (engine hook). Only a
+    # session answers: a folder or subagent returns "" for all three, so a
+    # container is never glyphed and never filtered (a bool absent shows and
+    # draws no mark, an enum empty always shows).
     method attr_value {node id} {
         if {[my node_field $node kind] ne "session"} { return "" }
         switch -- $id {
@@ -757,18 +738,12 @@ oo::class create ::questlog::ui::SessionList {
         }
     }
 
-    # Apply the engine's active attribute filters to the list (engine method,
-    # overridden). The base walks each node through the hide/unhide primitives and
-    # keeps its own ledger; that cannot compose with this list's folder-drop
-    # rebuild, whose render_skip takes an emptied folder out of the view, because
-    # the base unhide would try to render a row back into a folder heading that is
-    # no longer drawn. So derive each session's hidden flag from attr_admits (the
-    # engine's live filter state) and rebuild instead: the rebuild is hidden-aware,
-    # drops and restores folders by their viewable count, and keeps the selection
-    # (path-keyed, re-applied on paint) and the scroll. Only sessions carry the
-    # attributes (attr_value answers "" for folders and subagents), so a container
-    # is never filtered. This is what the strip controls drive, and what
-    # reconcile_running re-applies when the running set changes.
+    # Apply the engine's active attribute filters (engine method, overridden).
+    # The base's hide/unhide ledger cannot compose with this list's
+    # folder-drop rebuild: the base unhide would render a row back into a
+    # folder heading render_skip no longer draws. So derive each session's
+    # hidden flag from attr_admits and rebuild - hidden-aware, folder-aware,
+    # selection and scroll kept.
     method apply_attr_filters {} {
         set st [$Text cget -state]
         $Text configure -state normal
@@ -895,12 +870,10 @@ oo::class create ::questlog::ui::SessionList {
         $Text configure -state normal
         my anchor_save
         my model_add_session $path $row
-        # The model holds every in-bounds session; the filters decide only whether it is
-        # drawn (model_add_session flagged it), so a later filter hides/shows it in
-        # place without a re-scan.
+        # The model holds every in-bounds session; the filters decide only
+        # what paints. A row that lands hidden may leave its folder a heading
+        # over nothing; the debounced rebuild settles that.
         if {[my sflag $path hidden]} {
-            # It landed hidden under a filter, so its folder may now be a heading
-            # over nothing; the debounced rebuild settles that.
             my schedule_view_rebuild
         } elseif {[my folder_expanded [dict get $row folder]]} {
             my render_session $path
@@ -910,10 +883,8 @@ oo::class create ::questlog::ui::SessionList {
         my schedule_resort
     }
 
-    # Match record from Search. The first match for a session creates its
-    # card; later matches bump the count and add a snippet (capped at three).
-    # Bracket a slice of render_session_matches calls so a whole idle flush does
-    # one anchor_save/restore and one schedule_resort, not per session.
+    # Bracket a slice of render_session_matches calls so a whole idle flush
+    # does one anchor_save/restore and one schedule_resort, not per session.
     method begin_batch {} {
         $Text configure -state normal
         my anchor_save
@@ -1030,10 +1001,8 @@ oo::class create ::questlog::ui::SessionList {
         set hsecs [dict getdef $row human_secs ""]
         set model [dict getdef $row model ""]
         set ctxp  [dict getdef $row context_pct ""]
-        # Scan's row fields the store answers session questions from directly,
-        # so a modelled session is never looked up anywhere else to be asked
-        # about. bookmarked defaults to the on-disk +x bit for a synthetic row
-        # that omits it; the rest default empty. The token fields and
+        # bookmarked defaults to the on-disk +x bit for a synthetic row that
+        # omits it; the rest default empty. The token fields and
         # model_breakdown arrive with cost and are kept fresh by refresh_cost,
         # bookmarked by reconcile_one; the rest are set-at-scan and static.
         set bkmk  [dict getdef $row bookmarked [file executable $path]]
@@ -1070,23 +1039,15 @@ oo::class create ::questlog::ui::SessionList {
         set folder [dict get $row folder]
         my ensure_folder $folder
         set cost [dict getdef $row cost_usd ""]
-        # The session node: payload carries the per-session domain dict; the
-        # node's expanded/rendered flags, start/end marks, tag and children
-        # (the attached subagent nodes) live alongside it in the store.
         set fid [my fid $folder]
         set sid [my node_new session $fid $path [my row_payload $path $row]]
         dict set PathNode $path $sid
         my node_set $fid children [linsert [my node_field $fid children] end $sid]
-        # Whether the filters admit this row is settled here by the engine, before
-        # the folder heading below is redrawn from it: a row added hidden and
-        # flagged after the fact is counted into a heading that then shows nothing
-        # under it, and the heading reads "(1)" over an empty folder. The model
-        # holds every in-bounds session either way; the flag only decides what
-        # paints. attr_admits reads the node just created above, so the node is
-        # asked, never the scanner's cache.
+        # The filters settle the hidden flag before the heading below is
+        # redrawn from it: a row added hidden and flagged after the fact reads
+        # "(1)" over an empty folder.
         my node_set $sid hidden [expr {![my attr_admits $sid]}]
 
-        # Enumerate and trigger subagents' cost if there are any
         if {[dict getdef $row has_subagents 0]} {
             my ensure_children_enumerated $path
             my recompute_parent_totals $path
@@ -1106,11 +1067,6 @@ oo::class create ::questlog::ui::SessionList {
     method render_session {path} {
         set sid [my sid $path]
         if {[my node_field $sid rendered]} return
-        # The render_row primitive lays the header at the folder's append point,
-        # owns the start/end marks (start right gravity per start_gravity, so the
-        # mark follows its own header down when a sibling above expands) and
-        # advances the folder end. on_row_rendered then wires this row's
-        # bindings, stored snippets, subagents and selection.
         my render_row $sid
     }
 
@@ -1370,10 +1326,10 @@ oo::class create ::questlog::ui::SessionList {
     # A session with subagents shows a chevron; expanding renders its subagents
     # as indented child rows under its header, pinned to the same metadata
     # columns. In browse the children are enumerated on demand (all of them); in
-    # search the matched children attach as their matches arrive (sub_paths), and
-    # the parent auto-expands when only its subagents matched (case B). Children
-    # live in their own model (Children), under their parent's node; their cost
-    # rides the same second pass as a session's, triggered when first drawn.
+    # search the matched children attach as their matches arrive, and the
+    # parent auto-expands when only its subagents matched (case B). Children
+    # are subagent nodes under their parent's; their cost rides the same
+    # second pass as a session's, triggered when first drawn.
 
     method toggle_subagents {path} {
         if {![my has_session $path]} return
@@ -1394,11 +1350,8 @@ oo::class create ::questlog::ui::SessionList {
         $Text configure -state disabled
     }
 
-    # Render a session's children. With no attached set yet (browse, or a search
-    # case-A session whose subagents did not match), enumerate them all; otherwise
-    # render the attached set (sub_paths, the matched children in search).
-    # The attached subagent subset, as child paths in render order, derived from
-    # the session node's children (the node ids of the attached subagents).
+    # The attached subagent subset, as child paths in render order, derived
+    # from the session node's children.
     method session_child_paths {path} {
         set out [list]
         foreach cid [my node_field [my sid $path] children] {
@@ -2057,11 +2010,8 @@ oo::class create ::questlog::ui::SessionList {
         # collapsed folder draws only its heading - its sessions live in the
         # model and are rendered lazily on expand, so there are no hidden lines.
         set expanded [expr {$CriteriaActive ? 1 : 0}]
-        # A folder is a root: the insert primitive owns the TailMark re-anchor,
-        # the heading insert and the start/end marks; the on_row_rendered hook
-        # binds the heading toggle and registers it for drop hit-testing. The
-        # heading is drawn collapsed by default, so flip the open ones and redraw
-        # the marker in place.
+        # The heading is drawn collapsed by default, so flip the open ones and
+        # redraw the marker in place.
         set fid [my insert "" folder $folder [dict create label $label]]
         if {$expanded} { my node_set $fid expanded 1; my item $fid }
     }
@@ -2203,11 +2153,8 @@ oo::class create ::questlog::ui::SessionList {
         }
     }
 
-    # The expand-all button: open every folder one level, in one batch so the
-    # reader's scroll position anchors once for the whole sweep. Folders render
-    # through expand_folder, which sorts at expand time; the engine's store
-    # order can lag the display order while streamed results await the
-    # debounced resort.
+    # Open every folder one level, in one batch so the reader's scroll
+    # position anchors once for the whole sweep.
     method expand_all_folders {} {
         my batch {
             foreach fid [my roots] {
@@ -2330,10 +2277,6 @@ oo::class create ::questlog::ui::SessionList {
     # render marks; the sessions remain in the model and redraw on the next
     # expand. No hidden text is left behind.
     method collapse_folder {folder} {
-        # The collapse primitive deletes the folder's body, resets the end mark
-        # to just past the heading, and clears every descendant session's and
-        # subagent's render marks (their text just went). It drops the emptied
-        # node tags; the loose snippet/match tags are swept separately.
         my collapse [my fid $folder]
         my sweep_loose_tags
     }
