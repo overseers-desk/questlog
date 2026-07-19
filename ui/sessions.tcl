@@ -348,15 +348,6 @@ oo::class create ::questlog::ui::SessionList {
         return [my node_pget $id mtime 0]
     }
 
-    # The cost the store holds for a path, or "" when none has landed (or the
-    # path is unknown). The app's cost gate reads it, so an already-priced row
-    # does not re-enter the cost pass on a republish.
-    method stored_cost {path} {
-        set id [my session_node $path]
-        if {$id eq ""} { return "" }
-        return [my node_pget $id cost ""]
-    }
-
     # sid raises on a path the store has never seen: that is a caller error
     # here, not an empty node.
     method sid {path} {

@@ -582,7 +582,7 @@ proc ::questlog::ui::app::on_scan_row {row} {
     if {$CriteriaActive} return
     set path [dict get $row path]
     if {![dict exists $row cost_usd] && [$SessionList has_session $path] \
-        && [$SessionList stored_cost $path] eq ""} {
+        && [$SessionList sget $path cost] eq ""} {
         start_cost_one $path
     }
 }
