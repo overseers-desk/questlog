@@ -109,6 +109,12 @@ namespace eval ::questlog::config {
     # Re-poll interval for the live-session registry (running markers). The cost
     # is O(running sessions), independent of the on-disk corpus.
     dict set Config running_poll_ms 2000
+    # Re-stat interval for the open session's file, so an external writer's
+    # appends (a claude process running outside questlog, or a syncthing
+    # replace) reach the view. One stat per tick while quiescent; a tail read
+    # only on growth. Distinct from the 300 ms resume-stream cadence, which
+    # serves an interactive turn summoned from inside questlog.
+    dict set Config viewer_watch_ms 2000
 
     # ---- recency ----------------------------------------------------------
     # The recency filter. The toolbar's time row offers two typed windows, a

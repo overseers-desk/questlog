@@ -158,6 +158,9 @@ oo::class create ::questlog::ui::Viewer {
     variable OnRefresh        ;# cb: path -> app re-scans the row after a streamed turn lands
     variable Pipe             ;# the running claude -p pipe channel, "" when idle
     variable Tick             ;# leash token of the jsonl tail tick while streaming
+    variable WatchTok         ;# leash token of the file-growth watch tick (empty until shown)
+    variable WatchSize        ;# file size at the last settled look, so growth is a bare stat compare
+    variable WatchDirty       ;# 1 while external growth has landed but the catch-up index pass has not
     variable Running          ;# 1 while a streamed turn renders into the current view
     variable Detached         ;# 1 when the user navigated away mid-stream (drain only, do not render)
     variable RunPath          ;# the jsonl the running turn targets, for the row refresh
@@ -210,6 +213,9 @@ oo::class create ::questlog::ui::Viewer {
         set PermVar readonly
         set Pipe ""
         set Tick ""
+        set WatchTok ""
+        set WatchSize 0
+        set WatchDirty 0
         set Running 0
         set Detached 0
         set RunPath ""
@@ -268,6 +274,12 @@ oo::class create ::questlog::ui::Viewer {
         $IdLabel configure -text \
             "[string range $Uuid 0 3]…[string range $Uuid end-3 end]"
         my find_hide 0
+        # Seed the growth watch from the size load is about to read. Taken
+        # before load so under-reading is the safe direction: the next watch
+        # tick pays one idempotent zero-record append_new rather than missing
+        # a byte a slow disk had not flushed yet.
+        set WatchSize [expr {[catch {file size $Path} sz] ? 0 : $sz}]
+        set WatchDirty 0
         my load
         my render
         my index_matches $query
@@ -280,6 +292,12 @@ oo::class create ::questlog::ui::Viewer {
         } else {
             $Text see 1.0
         }
+        # Arm (or re-arm) the growth watch for this session. Forgetting any
+        # prior token before arming leaves exactly one live watch after a
+        # session switch.
+        if {$WatchTok ne ""} { my forget $WatchTok }
+        set WatchTok [my later [::questlog::config::get viewer_watch_ms] \
+            [list [self] watch_tick]]
     }
 
     method build {} {
@@ -1437,6 +1455,76 @@ oo::class create ::questlog::ui::Viewer {
         } else {
             set Tick ""
         }
+    }
+
+    # The file-growth watch: one stat per tick against the open session's file,
+    # so an external writer (a claude process outside questlog, a syncthing
+    # replace) reaches the view without a switch away and back. Distinct from
+    # resume_tick's 300 ms interactive cadence; while that pipe owns the tail
+    # (Running, not Detached) this steps aside and only re-arms.
+    method watch_tick {} {
+        if {$Running && !$Detached} {
+            set WatchTok [my later [::questlog::config::get viewer_watch_ms] \
+                [list [self] watch_tick]]
+            return
+        }
+        if {[catch {file size $Path} size]} {
+            # The file may be mid-replace; a genuine deletion is the session
+            # list's phantom sweep to notice, not this tick's. Just re-arm.
+            set WatchTok [my later [::questlog::config::get viewer_watch_ms] \
+                [list [self] watch_tick]]
+            return
+        }
+        if {$size > $WatchSize} {
+            # Growth: tail the new records. Advance the settled size first, so a
+            # newline-less partial tail (append_new leaves it uncounted, growing
+            # the size but yielding zero records) does not re-run every tick.
+            # Only a nonzero append marks the catch-up index pass as owed.
+            set WatchSize $size
+            if {[my append_new] > 0} { set WatchDirty 1 }
+        } elseif {$size == $WatchSize && $WatchDirty} {
+            # Quiescence after growth: run the same catch-up pass resume_finish
+            # runs, so the match/tool/quote/turn indexes and the endhint track
+            # the appended records, and refresh the session's list row.
+            my index_matches $Query
+            my index_tool_calls
+            my refresh_quote_control
+            my index_turns
+            my add_endhint
+            if {$OnRefresh ne ""} { {*}$OnRefresh $Path }
+            set WatchDirty 0
+        } elseif {$size < $WatchSize} {
+            # The file shrank: it was replaced or truncated (a sync). Reload it
+            # under the reader, keeping the prompt bar and session identity.
+            my reload
+            set WatchSize $size
+            set WatchDirty 0
+        }
+        set WatchTok [my later [::questlog::config::get viewer_watch_ms] \
+            [list [self] watch_tick]]
+    }
+
+    # Re-read the open session's file after an external replace or truncate.
+    # The document-path work of `show` without its session-switch resets, so
+    # PromptVar, the prompt bar state, Uuid and Cwd survive a file swapped under
+    # the reader. render begins by resetting the engine, so re-entry is safe;
+    # the quote lists, RenderTs/RenderInSection and LineMap it also wipes need
+    # no separate reset here. The scroll position is preserved across the swap.
+    method reload {} {
+        my copy_hide
+        set yv [lindex [$Text yview] 0]
+        my find_hide 0
+        set Records [list]
+        set LineMap [dict create]
+        set LoadedLines 0
+        my load
+        my render
+        my index_matches $Query
+        my index_tool_calls
+        my refresh_quote_control
+        my index_turns
+        my add_endhint
+        $Text yview moveto $yv
     }
 
     # Stop rendering a running stream into this view without killing claude: the
