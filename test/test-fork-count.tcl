@@ -64,13 +64,14 @@ set fails 0
 proc check {label expected} {
     global SL FOLDER fails
     # The folder's session paths come from its node's children (the public
-    # folder_session_paths accessor); its count from folder_payload.
+    # folder_session_paths accessor); its count from the derived totals.
     set l [$SL folder_session_paths $FOLDER]
     set n [llength $l]
     set d [llength [lsort -unique $l]]
     set c 0
-    set fp [$SL folder_payload $FOLDER]
-    if {$fp ne ""} { set c [dict get $fp count] }
+    if {[$SL has_folder $FOLDER]} {
+        set c [dict get [$SL folder_totals $FOLDER] count]
+    }
     set ok [expr {$n == $d && $d == $c && $c == $expected}]
     if {!$ok} { incr fails }
     puts [format "%s %-34s entries=%s distinct=%s count=%s (want %s)" \

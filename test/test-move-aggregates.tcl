@@ -7,7 +7,7 @@
 # old totals over the wrong set of rows.
 #
 # This drives real moves and asserts the store stays a bijection with correct
-# aggregates: one node for the moved path, both folders' totals right, an emptied
+# derived totals: one node for the moved path, both folders' headings right, an emptied
 # source folder dropped whole, and move_one's same-folder no-op leaving the store
 # untouched. The whole-store domain audit is the referee at every step.
 
@@ -104,12 +104,13 @@ $::Scan extend [dict create since all]
 after 300 [list set ::scan_done 1]
 vwait ::scan_done
 update
-check "A holds two sessions" [$SL fget $FA count] 2
-check "B holds one session"  [$SL fget $FB count] 1
+proc ftot {f k} { global SL; return [dict get [$SL folder_totals $f] $k] }
+check "A holds two sessions" [ftot $FA count] 2
+check "B holds one session"  [ftot $FB count] 1
 check "store clean before any move" [$SL audit] {}
 
-# A cost lands on the session about to move, so its move exercises the cost
-# branch of the aggregate carry, not only count and size.
+# A cost lands on the session about to move, so the derived totals cover
+# cost as well as count and size.
 $SL refresh_cost $a2 [dict create cost_usd 2.50 turns 4 duration_secs 40 \
     human_secs 12 model "claude-3-5-sonnet-20241022"]
 update
@@ -124,10 +125,10 @@ set szMoved  [$SL sget $a2 size]
 check "store's bookmarked is stale before the move" [$SL sget $a2 bookmarked] 0
 check "store's folder_cwd is the source folder's before the move" \
     [$SL sget $a2 folder_cwd] $CWDA
-set aSize0   [$SL fget $FA size 0]
-set bSize0   [$SL fget $FB size 0]
-set aCost0   [$SL fget $FA cost 0.0]
-set bCost0   [$SL fget $FB cost 0.0]
+set aSize0   [ftot $FA size]
+set bSize0   [ftot $FB size]
+set aCost0   [ftot $FA cost]
+set bCost0   [ftot $FB cost]
 check "the moving session's cost sits in A" [expr {abs($aCost0 - 2.50) < 1e-6}] 1
 
 # --- Move a2 from A to B through the real GUI path.
@@ -137,12 +138,12 @@ update
 check "moved path has exactly one node" [nodes_for $a2_new] 1
 check "old path is gone from the store"  [$SL has_session $a2] 0
 check "moved path is registered"         [$SL has_session $a2_new] 1
-check "A count down to one"              [$SL fget $FA count] 1
-check "B count up to two"                [$SL fget $FB count] 2
-check "A size lost the moved session"    [$SL fget $FA size 0] [expr {$aSize0 - $szMoved}]
-check "B size gained the moved session"  [$SL fget $FB size 0] [expr {$bSize0 + $szMoved}]
-check "A cost lost the moved session"    [expr {abs([$SL fget $FA cost 0.0] - ($aCost0 - 2.50)) < 1e-6}] 1
-check "B cost gained the moved session"  [expr {abs([$SL fget $FB cost 0.0] - ($bCost0 + 2.50)) < 1e-6}] 1
+check "A count down to one"              [ftot $FA count] 1
+check "B count up to two"                [ftot $FB count] 2
+check "A size lost the moved session"    [ftot $FA size] [expr {$aSize0 - $szMoved}]
+check "B size gained the moved session"  [ftot $FB size] [expr {$bSize0 + $szMoved}]
+check "A cost lost the moved session"    [expr {abs([ftot $FA cost] - ($aCost0 - 2.50)) < 1e-6}] 1
+check "B cost gained the moved session"  [expr {abs([ftot $FB cost] - ($bCost0 + 2.50)) < 1e-6}] 1
 check "no path is painted twice"         [$SL audit] {}
 check "bookmarked re-read from disk on move" [$SL sget $a2_new bookmarked] 1
 check "folder_cwd re-stamped for the new residence" [$SL sget $a2_new folder_cwd] $CWDB
@@ -152,16 +153,16 @@ check "folder_cwd re-stamped for the new residence" [$SL sget $a2_new folder_cwd
 ::questlog::ui::app::move_one $a1 $CWDB
 update
 check "A is dropped once it is empty"    [$SL has_folder $FA] 0
-check "B now holds all three"            [$SL fget $FB count] 3
+check "B now holds all three"            [ftot $FB count] 3
 check "store clean after A empties"      [$SL audit] {}
 
 # --- move_one into the folder a session already lives in is a silent no-op:
 #     nothing relocates, and the store is untouched.
-set bCountBefore [$SL fget $FB count]
+set bCountBefore [ftot $FB count]
 ::questlog::ui::app::move_one $b1 $CWDB
 update
 check "no-op leaves the session in place" [$SL has_session $b1] 1
-check "no-op changes no count"            [$SL fget $FB count] $bCountBefore
+check "no-op changes no count"            [ftot $FB count] $bCountBefore
 check "no-op leaves the store clean"      [$SL audit] {}
 
 ::questlog::path::_real_file delete -force $SAND

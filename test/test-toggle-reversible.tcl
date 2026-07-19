@@ -96,7 +96,7 @@ check "A in model"   [$SL has_session $Ap] 1
 check "B in model"   [$SL has_session $Bp] 1
 check "A rendered"   [$SL sflag $Ap rendered] 1
 check "B rendered"   [$SL sflag $Bp rendered] 1
-check "folder count = 2 (model total)" [$SL fget $FOLDER count] 2
+check "folder count = 2 (model total)" [dict get [$SL folder_totals $FOLDER] count] 2
 
 # --- 2. Select the NON-bookmarked session A (the gesture the click uses).
 $SL selection_set $Ap
@@ -112,7 +112,7 @@ update
 check "A not rendered (hidden)"   [$SL sflag $Ap rendered] 0
 check "A still in model"          [$SL has_session $Ap] 1
 check "B still rendered"          [$SL sflag $Bp rendered] 1
-check "model total unchanged"     [$SL fget $FOLDER count] 2
+check "model total unchanged"     [dict get [$SL folder_totals $FOLDER] count] 2
 check "viewable count drops to 1" [$SL folder_visible_count $FOLDER] 1
 check "A selection retained"      [$SL is_selected $Ap] 1
 

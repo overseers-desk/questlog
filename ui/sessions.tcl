@@ -278,7 +278,7 @@ oo::class create ::questlog::ui::SessionList {
     # counterpart to the engine's structural check_invariant (which guards the
     # marks). It returns a list of human-readable violation strings, empty when
     # clean, so a test asserts `check audit [$SL audit] {}` and the soak calls
-    # it after every operation. Three invariants:
+    # it after every operation. Two invariants:
     #   (a) PathNode and the session/subagent nodes' key fields are a bijection,
     #       and FolderNode likewise over folder keys: every registered key
     #       resolves to a node carrying it, and every keyed node is registered
@@ -286,11 +286,6 @@ oo::class create ::questlog::ui::SessionList {
     #       shows here as a node absent from its own reverse index.
     #   (b) no node's children list names a child twice, the fault that paints a
     #       row twice when sort_siblings maps a repeated key back through sid.
-    #   (c) each folder's stored count/size/cost equal a fresh sum over its
-    #       member sessions' payloads. The stored count tracks total membership;
-    #       a view toggle changes only what the heading displays
-    #       (folder_visible_count), not what is stored, so the stored value is
-    #       compared against the full member count.
     method audit {} {
         set probs [list]
         # (a) reverse indices are a bijection with the keyed nodes.
@@ -335,26 +330,6 @@ oo::class create ::questlog::ui::SessionList {
                     lappend probs "[my node_field $id key] children repeat $c"
                 }
                 dict set seen $c 1
-            }
-        }
-        # (c) folder aggregates equal a fresh sum over member sessions.
-        dict for {folder fid} $FolderNode {
-            set n 0; set sz 0; set cst 0.0
-            foreach sid [my node_field $fid children] {
-                if {[my node_field $sid kind] ne "session"} continue
-                incr n
-                set sz [expr {$sz + [my node_pget $sid size 0]}]
-                set c [my node_pget $sid cost]
-                if {$c ne "" && $c > 0} { set cst [expr {$cst + $c}] }
-            }
-            if {[my fget $folder count] != $n} {
-                lappend probs "folder $folder count [my fget $folder count] != $n members"
-            }
-            if {[my fget $folder size 0] != $sz} {
-                lappend probs "folder $folder size [my fget $folder size 0] != $sz members"
-            }
-            if {abs([my fget $folder cost 0.0] - $cst) > 1e-6} {
-                lappend probs "folder $folder cost [my fget $folder cost 0.0] != $cst members"
             }
         }
         return $probs
@@ -412,9 +387,6 @@ oo::class create ::questlog::ui::SessionList {
 
     method cget_field {path key {dflt ""}} { my node_pget [my sid $path] $key $dflt }
     method cset {path key value} { my node_pset [my sid $path] $key $value }
-
-    method fget {folder key {dflt ""}} { my node_pget [my fid $folder] $key $dflt }
-    method fset {folder key value} { my node_pset [my fid $folder] $key $value }
 
     # ---- engine lifecycle hooks --------------------------------------
     #
@@ -855,7 +827,6 @@ oo::class create ::questlog::ui::SessionList {
         if {[dict getdef $row mtime 0] == [my sget $path mtime 0]} return
         set sid [my sid $path]
         set folder [my sget $path folder]
-        set old_size [my node_pget $sid size 0]
         set old_cost [my node_pget $sid cost]
         $Text configure -state normal
         my anchor_save
@@ -863,11 +834,8 @@ oo::class create ::questlog::ui::SessionList {
         my node_set $sid expanded 0
         my drop_child_nodes $sid
         dict set Nodes $sid payload [my row_payload $path $row]
-        my fset $folder size \
-            [expr {[my fget $folder size 0] + [my node_pget $sid size 0] - $old_size}]
         my redraw_folder_heading $folder
         if {$old_cost ne "" && $old_cost > 0} {
-            my bump_folder_cost $folder [expr {-$old_cost}]
             set TotalCost [expr {$TotalCost - $old_cost}]
             my refresh_status
         }
@@ -1107,7 +1075,6 @@ oo::class create ::questlog::ui::SessionList {
         # (the attached subagent nodes) live alongside it in the store.
         set fid [my fid $folder]
         set sid [my node_new session $fid $path [my row_payload $path $row]]
-        set size [my node_pget $sid size 0]
         dict set PathNode $path $sid
         my node_set $fid children [linsert [my node_field $fid children] end $sid]
         # Whether the filters admit this row is settled here by the engine, before
@@ -1126,13 +1093,8 @@ oo::class create ::questlog::ui::SessionList {
             set cost [my sget $path cost]
         }
 
-        # Count and size accrue together (size is known at scan time); fold both
-        # into one heading redraw. Cost arrives later, on its own redraw.
-        my fset $folder count [expr {[my fget $folder count] + 1}]
-        my fset $folder size [expr {[my fget $folder size 0] + $size}]
         my redraw_folder_heading $folder
         if {$cost ne "" && $cost > 0} {
-            my bump_folder_cost $folder $cost
             set TotalCost [expr {$TotalCost + $cost}]
             my refresh_status
         }
@@ -1876,14 +1838,14 @@ oo::class create ::questlog::ui::SessionList {
     method cell_values {node} {
         set kind [my node_field $node kind]
         if {$kind eq "folder"} {
-            set f [my node_payload $node]
-            set n [dict get $f count]
+            set tot [my folder_totals [my node_field $node key]]
             set size_sum ""
             set cost_sum ""
-            if {$n > 0} {
-                set size_sum [my fmt_size [dict getdef $f size 0]]
-                set fc [dict getdef $f cost 0.0]
-                if {$fc > 0} { set cost_sum [::questlog::cost::format_usd $fc] }
+            if {[dict get $tot count] > 0} {
+                set size_sum [my fmt_size [dict get $tot size]]
+                if {[dict get $tot cost] > 0} {
+                    set cost_sum [::questlog::cost::format_usd [dict get $tot cost]]
+                }
             }
             return [list [list date ""] [list size $size_sum] [list cost $cost_sum]]
         }
@@ -1908,7 +1870,7 @@ oo::class create ::questlog::ui::SessionList {
             switch -- $col {
                 size { return {meta foldagg} }
                 cost {
-                    set fc [dict getdef [my node_payload $node] cost 0.0]
+                    set fc [dict get [my folder_totals [my node_field $node key]] cost]
                     set ctag meta
                     if {$fc >= 1.0} {
                         set ctag cost-outlier
@@ -2100,8 +2062,7 @@ oo::class create ::questlog::ui::SessionList {
         # binds the heading toggle and registers it for drop hit-testing. The
         # heading is drawn collapsed by default, so flip the open ones and redraw
         # the marker in place.
-        set fid [my insert "" folder $folder \
-            [dict create label $label count 0 cost 0.0 size 0]]
+        set fid [my insert "" folder $folder [dict create label $label]]
         if {$expanded} { my node_set $fid expanded 1; my item $fid }
     }
 
@@ -2327,12 +2288,28 @@ oo::class create ::questlog::ui::SessionList {
     # a toggle). This is the count the heading displays and the value that, at
     # zero, detaches the folder from the view.
     method folder_visible_count {folder} {
-        if {![my any_view_toggle]} { return [my fget $folder count] }
+        if {![my any_view_toggle]} {
+            return [llength [my folder_session_paths $folder]]
+        }
         set n 0
         foreach path [my folder_session_paths $folder] {
             if {![my sflag $path hidden]} { incr n }
         }
         return $n
+    }
+
+    # A folder's count/size/cost, summed from its member sessions' payloads at
+    # ask time (issue #60): nothing is stored, so a move, forget or freshen
+    # cannot leave a heading's totals behind.
+    method folder_totals {folder} {
+        set n 0; set sz 0; set cst 0.0
+        foreach sid [my node_field [my fid $folder] children] {
+            incr n
+            set sz [expr {$sz + [my node_pget $sid size 0]}]
+            set c [my node_pget $sid cost]
+            if {$c ne "" && $c > 0} { set cst [expr {$cst + $c}] }
+        }
+        return [dict create count $n size $sz cost $cst]
     }
 
     # Drop the per-snippet / per-child-snippet tags ("n#" / "c#") left empty by a
@@ -2361,18 +2338,6 @@ oo::class create ::questlog::ui::SessionList {
         my sweep_loose_tags
     }
 
-    method bump_folder_count {folder delta} {
-        if {![my has_folder $folder]} return
-        my fset $folder count [expr {[my fget $folder count] + $delta}]
-        my redraw_folder_heading $folder
-    }
-
-    method bump_folder_cost {folder delta} {
-        if {![my has_folder $folder]} return
-        my fset $folder cost [expr {[my fget $folder cost 0.0] + $delta}]
-        my redraw_folder_heading $folder
-    }
-
     # Apply a batch of buffered cost results in one pass (see app.tcl
     # flush_cost). Each is routed through refresh_cost; grouping them into one
     # event-loop turn keeps a flood of worker results from churning the list
@@ -2385,8 +2350,8 @@ oo::class create ::questlog::ui::SessionList {
 
     # Late arrival from the cost-pass worker. Diffs the new cost against the
     # cached one (so a retry on a re-scanned file does not double-count),
-    # updates the Sessions cell, bumps the folder aggregate and the running
-    # total, then redraws the row's meta region in place.
+    # updates the Sessions cell and the running total, then redraws the row's
+    # meta region and its folder heading in place.
     method refresh_cost {path cost_dict} {
         if {![dict exists $PathNode $path]} return
         # A subagent's cost lands on its child row, not a session row.
@@ -2404,11 +2369,10 @@ oo::class create ::questlog::ui::SessionList {
         if {$new_cost eq "" || $new_cost < 0} { set new_cost 0.0 }
         set delta [expr {$new_cost - $old_cost}]
 
-        # bump_folder_cost rewrites the heading line and redraw_header the
-        # session line; both go through the item primitive, which owns its own
-        # widget state, so this method holds none.
+        # Heading and session line both re-lay through the item primitive,
+        # which owns its own widget state, so this method holds none.
         if {$delta != 0} {
-            my bump_folder_cost $folder $delta
+            my redraw_folder_heading $folder
             set TotalCost [expr {$TotalCost + $delta}]
             my refresh_status
         }
@@ -2461,7 +2425,7 @@ oo::class create ::questlog::ui::SessionList {
 
             $Text configure -state normal
             if {$delta != 0} {
-                my bump_folder_cost $folder $delta
+                my redraw_folder_heading $folder
                 set TotalCost [expr {$TotalCost + $delta}]
                 my refresh_status
             }
@@ -3123,16 +3087,14 @@ oo::class create ::questlog::ui::SessionList {
 
     # ---- removal / relocation ----------------------------------------
 
-    # The folder-level settle after one session leaves it, shared by every
-    # departure: an emptied folder is dropped whole, else
-    # it loses the session's size and one from its count. The node must already
-    # be off the folder's children list (deleted or detached) when this runs.
-    method folder_after_leave {fid folder size} {
+    # The folder-level settle after one session leaves it: an emptied folder is
+    # dropped whole, else its heading re-derives. The node must already be off
+    # the folder's children list (deleted or detached) when this runs.
+    method folder_after_leave {fid folder} {
         if {[llength [my node_field $fid children]] == 0} {
             my forget_folder $folder
         } else {
-            my fset $folder size [expr {[my fget $folder size 0] - $size}]
-            my bump_folder_count $folder -1
+            my redraw_folder_heading $folder
         }
     }
 
@@ -3141,26 +3103,23 @@ oo::class create ::questlog::ui::SessionList {
         set sid [my sid $path]
         set fid [my node_field $sid parent]
         set folder [my node_field $fid key]
-        set size [my sget $path size 0]
         # The delete primitive removes the row and its subagent rows in one cut
         # and unregisters the subtree, running on_before_delete on each node:
         # forget_session_domain subtracts this session's cost and drops its
         # domain indices (its own and its subagents'). The folder-level
         # bookkeeping that depends on whether the folder is now empty stays here.
         my delete $sid
-        my folder_after_leave $fid $folder $size
+        my folder_after_leave $fid $folder
     }
 
-    # A session leaving the store: subtract its cost from the folder aggregate
-    # and the running total (its node is still present, so the value is exact),
-    # then drop its path index, its selection membership, and the indices of any
-    # enumerated subagents the rendered-children subtree did not already cover.
+    # A session leaving the store: subtract its cost from the running total
+    # (its node is still present, so the value is exact), then drop its path
+    # index, its selection membership, and the indices of any enumerated
+    # subagents the rendered-children subtree did not already cover.
     method forget_session_domain {id} {
         set path [my node_field $id key]
-        set folder [my node_pget $id folder]
         set cost [my node_pget $id cost]
         if {$cost ne "" && $cost > 0} {
-            my bump_folder_cost $folder [expr {-$cost}]
             set TotalCost [expr {$TotalCost - $cost}]
             my refresh_status
         }
@@ -3191,13 +3150,8 @@ oo::class create ::questlog::ui::SessionList {
     method relocate_card {old_path new_path new_folder new_cwd} {
         if {![my has_session $old_path]} return
         set sid [my sid $old_path]
-        # The session's own size and cost move with it; capture them and the
-        # source folder before the node is re-keyed and reparented, so the two
-        # folders' aggregates can be settled below.
         set src_fid [my node_field $sid parent]
         set src_folder [my node_field $src_fid key]
-        set size [my node_pget $sid size 0]
-        set cost [my node_pget $sid cost]
         my node_pset $sid folder $new_folder
         my node_set $sid key $new_path
         dict unset PathNode $old_path
@@ -3215,8 +3169,7 @@ oo::class create ::questlog::ui::SessionList {
         # Create the destination folder in the store when new (no draw; the
         # move's rebuild draws it).
         if {![my has_folder $new_folder]} {
-            set new_fid [my node_new folder "" $new_folder \
-                [dict create label "" count 0 cost 0.0 size 0]]
+            set new_fid [my node_new folder "" $new_folder [dict create label ""]]
             my node_set $new_fid expanded [expr {$CriteriaActive ? 1 : 0}]
             dict set FolderNode $new_folder $new_fid
             lappend Roots $new_fid
@@ -3226,21 +3179,11 @@ oo::class create ::questlog::ui::SessionList {
             dict set SelectedSet $new_path 1
         }
         if {$SelectAnchor eq $old_path} { set SelectAnchor $new_path }
+        # The move's rebuild re-lays both headings from the derived totals; an
+        # emptied source folder is dropped whole (the rule forget_session applies).
         my move $sid [my fid $new_folder]
-        # Carry the aggregates across: the destination gains the session's size,
-        # cost and one to its count; the source loses them, or is dropped whole
-        # when the move emptied it (the same rule forget_session applies). Cost
-        # stays in TotalCost throughout - the session left neither folder's app,
-        # only its heading.
-        my fset $new_folder size [expr {[my fget $new_folder size 0] + $size}]
-        my bump_folder_count $new_folder 1
-        if {$cost ne "" && $cost > 0} { my bump_folder_cost $new_folder $cost }
         if {[llength [my node_field $src_fid children]] == 0} {
             my forget_folder $src_folder
-        } else {
-            my fset $src_folder size [expr {[my fget $src_folder size 0] - $size}]
-            my bump_folder_count $src_folder -1
-            if {$cost ne "" && $cost > 0} { my bump_folder_cost $src_folder [expr {-$cost}] }
         }
     }
 
@@ -3256,7 +3199,10 @@ oo::class create ::questlog::ui::SessionList {
                 set order [lmap id $ids { my node_field $id key }]
                 if {$SortKey eq "cost"} {
                     set valmap [dict create]
-                    foreach id $ids { dict set valmap [my node_field $id key] [my node_pget $id cost 0.0] }
+                    foreach id $ids {
+                        set k [my node_field $id key]
+                        dict set valmap $k [dict get [my folder_totals $k] cost]
+                    }
                     set order [my sort_folders $order $valmap -real]
                 } elseif {$SortKey eq "path"} {
                     set valmap [dict create]
