@@ -1,10 +1,11 @@
 # anthropic-rates.tcl - Claude model token rates, as a tallyman rates dict.
 #
-# GENERATED from the anthropic-rates.csv rate table maintained upstream in the
-# questlog repository, which is the source of truth for these figures. When a
-# rate changes there, regenerate this file and re-vendor it, then diff. Do not
-# hand-edit: a rate typed here that disagrees with the upstream table is a
-# silent mispricing.
+# DERIVED from the anthropic-rates.csv table in the questlog repository's
+# data/, the source of truth for these figures. There is no generator
+# script: when a rate changes there, the dict below is retyped from the
+# table by hand, and copies vendored beside coachman elsewhere are
+# refreshed from this file, then diffed. Do not edit a rate here alone:
+# a figure that disagrees with the CSV is a silent mispricing.
 #
 # Shape: model -> sorted list of {effective_from input output cache_write
 # cache_read}, each rate a price per million tokens, rows ordered by
