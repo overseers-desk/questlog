@@ -2541,11 +2541,6 @@ oo::class create ::questlog::ui::SessionList {
         my set_selection [lrange $ordered $ia $ib]
     }
 
-    method selection_clear {} {
-        my set_selection [list]
-        set SelectAnchor ""
-    }
-
     # Opening a session lands at its start unless the caller names a line: the
     # deep links that know a match (a snippet click, the menu's Open at this
     # match) pass its lineoff, and every general "open" verb reads from the top.
