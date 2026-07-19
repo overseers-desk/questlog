@@ -267,7 +267,7 @@ oo::class create ::questlog::ui::Viewer {
         my elide_cwd
         $IdLabel configure -text \
             "[string range $Uuid 0 3]…[string range $Uuid end-3 end]"
-        my find_hide
+        my find_hide 0
         my load
         my render
         my index_matches $query
@@ -1877,12 +1877,21 @@ oo::class create ::questlog::ui::Viewer {
         focus $Find.e
     }
 
-    method find_hide {} {
+    method find_hide {{restore 1}} {
         pack forget $Find
         $Text tag remove find 1.0 end
         set FindMatches [list]
         set FindCur -1
         set FindPos ""
+        # Closing the overlay ends the transient Ctrl-F term. A term other than
+        # the opening search retargets all three readers while it is live (issue
+        # #51); once it is gone the two persistent readers - the Matches band and
+        # the head-strip count - return to the session's own search set, so the
+        # accepted costs of a retarget hold only while a different term is live.
+        # Re-applying the opening query is the one act that refills them both. The
+        # load path passes restore 0: it clears leftover find state before it
+        # renders and re-indexes the new session itself.
+        if {$restore} { my index_matches $Query }
     }
 
     method find_next {} {
@@ -1890,6 +1899,14 @@ oo::class create ::questlog::ui::Viewer {
             set FindMatches [my collect_matches $FindVar]
             set FindCur -1
             my mark_find_var $FindVar
+            # A term other than the one the band shows recollected a different
+            # population: retarget all three readers on it (issue #51). Refilling
+            # the Matches band rows and the head-strip count from the recollected
+            # set makes the band's rows the live set, so select_band_row's
+            # exact-set gate then passes and its highlight tracks the step. An
+            # identical set (a first Next on the search term already shown) leaves
+            # the band untouched, keeping its rarest-first order and open state.
+            if {$FindMatches ne $BandMatchSet} { my refill_match_band }
         }
         if {[llength $FindMatches] == 0} {
             set FindCur -1
@@ -1928,11 +1945,12 @@ oo::class create ::questlog::ui::Viewer {
     }
 
     # Move the docked match band's highlight to the hit we stepped to. Act only
-    # when the band's rows are the very set we are stepping: the Ctrl-F overlay
-    # can collect a different population into FindMatches without refilling the
-    # band (its rows come from index_matches through refresh_match_control, which
-    # records the set it filled from in BandMatchSet), and moving the selection
-    # then would land the highlight on an unrelated row. The selection is set
+    # when the band's rows are the very set we are stepping: a Ctrl-F retarget
+    # refills the band from the recollected set before stepping (find_next), so
+    # the gate normally passes and the highlight tracks. It stays as a guard for
+    # any moment the band's rows (BandMatchSet, recorded by refresh_match_control)
+    # and FindMatches fall out of step, when moving the selection would land the
+    # highlight on an unrelated row. The selection is set
     # programmatically, which does not fire <<ListboxSelect>>, so a band click
     # still drives one jump and stepping still moves the highlight once, with no
     # feedback loop between the two.
@@ -1974,6 +1992,18 @@ oo::class create ::questlog::ui::Viewer {
     variable LastFindVar
     method last_find_var {}    { return [expr {[info exists LastFindVar] ? $LastFindVar : ""}] }
     method mark_find_var {v}   { set LastFindVar $v }
+
+    # Re-fill the Matches band and the head-strip count from the current
+    # FindMatches (a Ctrl-F recollect, not a search): rebuild the parallel
+    # per-match excerpts in document order, then hand to refresh_match_control,
+    # which records the band's set (BandMatchSet), fills the rows and sizes the
+    # count. An empty set collapses the band and hides the count, so the readers
+    # follow a term that matched nothing as faithfully as one that matched.
+    method refill_match_band {} {
+        set MatchLabels [list]
+        foreach m $FindMatches { lappend MatchLabels [my match_context $m] }
+        my refresh_match_control
+    }
 
     # ---- match index (seeded from the search query) ------------------
 
