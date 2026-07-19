@@ -39,7 +39,7 @@ package require searchfield
 #   pattern          list of regex strings   (case-sensitive, always)
 #   min_turns        the minimum-turns scope floor (1 = include all). A scope
 #                    filter alongside since/subtree: a session below the floor leaves
-#                    the corpus, not just the view - see lib/scope.tcl.
+#                    the corpus, not just the view - see.
 #   cwd              launch cwd, constant after startup
 #
 # The view filters (running, bookmarked, model) are not here: they live
@@ -304,7 +304,7 @@ oo::class create ::questlog::ui::Toolbar {
     # this accepts exactly what the headless CLI does. A bad spec is ignored with
     # a warning, falling back to the default rather than leaving nothing selected.
     method set_window {opt} {
-        if {[catch {::questlog::scope::parse_since $opt}]} {
+        if {[catch {::questlog::scan::parse_since $opt}]} {
             puts stderr "questlog: ignoring invalid --since '$opt'"
             return
         }
@@ -330,7 +330,7 @@ oo::class create ::questlog::ui::Toolbar {
             pack $cf.open -side left
             return
         }
-        ttk::radiobutton $cf.r -text [::questlog::scope::since_label $CustomSpec] \
+        ttk::radiobutton $cf.r -text [::questlog::scan::since_label $CustomSpec] \
             -variable [my varname WindowVar] -value $CustomSpec \
             -command [list [self] set_since]
         pack $cf.r -side left
@@ -369,7 +369,7 @@ oo::class create ::questlog::ui::Toolbar {
         set PopDate $today
         set CalMonth "[string range $today 0 6]-01"
         if {$CustomSpec ne ""} {
-            lassign [::questlog::scope::parse_since $CustomSpec] kind val
+            lassign [::questlog::scan::parse_since $CustomSpec] kind val
             if {$kind eq "rel"} {
                 foreach {word secs} {weeks 604800 days 86400 hours 3600 minutes 60} {
                     if {$val % $secs == 0} {
@@ -455,7 +455,7 @@ oo::class create ::questlog::ui::Toolbar {
     method build_mini_calendar {} {
         set cal $PopTop.f.cal
         foreach c [winfo children $cal] { destroy $c }
-        set loc [::questlog::scope::time_locale]
+        set loc [::questlog::scan::time_locale]
         set anchor [clock scan $CalMonth -format %Y-%m-%d]
         set monthlabel [clock format $anchor -format "%B %Y" -locale $loc]
         set first_wd [scan [clock format $anchor -format %w] %d]
@@ -536,7 +536,7 @@ oo::class create ::questlog::ui::Toolbar {
         } else {
             set spec $PopDate
         }
-        if {[catch {::questlog::scope::parse_since $spec}]} { bell; return }
+        if {[catch {::questlog::scan::parse_since $spec}]} { bell; return }
         set CustomSpec $spec
         my close_time_popover
         $Bar set_values since [my since_vals $spec]
@@ -558,7 +558,7 @@ oo::class create ::questlog::ui::Toolbar {
     # so a term holding a literal quote does not survive the crossing. The six
     # criteria come out of the bar's model the same way: the two facets that
     # hold no value at their floor (an "all" time bound, a one-turn floor)
-    # publish that floor, since lib/scope.tcl reads a value there and not an
+    # publish that floor, since reads a value there and not an
     # absence.
     method snapshot {} {
         set m [$Bar model]
@@ -680,7 +680,7 @@ oo::class create ::questlog::ui::Toolbar {
         return [expr {$n <= 1 ? {} : [list $n]}]
     }
 
-    # The two floors, read back for the snapshot: the keys lib/scope.tcl reads
+    # The two floors, read back for the snapshot: the keys reads
     # carry a value even where the facet holds none.
     method since_value {} {
         set v [lindex [$Bar values since] 0]
@@ -706,7 +706,7 @@ oo::class create ::questlog::ui::Toolbar {
     # ---- the time facet's editor -------------------------------------------
 
     method since_chip {crit} {
-        return [::questlog::scope::since_label [dict get $crit value]]
+        return [::questlog::scan::since_label [dict get $crit value]]
     }
 
     # The time row's whole editor: the preset radios, then the custom member. It
@@ -753,7 +753,7 @@ oo::class create ::questlog::ui::Toolbar {
 
     # The minimum-turns scope floor: a spinbox over 1..turn_count_cap. 1 includes
     # all; a higher floor drops shorter sessions from the corpus (it is scope, not
-    # a view toggle - see lib/scope.tcl). set_min_turns clamps to the valid range
+    # a view toggle - see). set_min_turns clamps to the valid range
     # and reports, so a bad keystroke can never leave an out-of-range value; it is
     # wired to the buttons (-command, <<Increment>>/<<Decrement>>) and to
     # <Return>/<FocusOut> for typed edits.

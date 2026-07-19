@@ -24,7 +24,6 @@ set ROOT [file dirname [file dirname [file normalize [info script]]]]
 package require leash
 source [file join $ROOT config.tcl]
 source [file join $ROOT lib path.tcl]
-source [file join $ROOT lib scope.tcl]
 source [file join $ROOT lib listfilter.tcl]
 source [file join $ROOT lib jsonl.tcl]
 source [file join $ROOT lib match.tcl]

@@ -862,7 +862,7 @@ oo::class create ::questlog::ui::SessionList {
     # predicate is shared with Scan through ::questlog::scope, so the model and
     # the view never disagree on what the snapshot admits.
     method row_matches_snapshot {row} {
-        return [::questlog::scope::row_matches $Snapshot $row]
+        return [::questlog::scan::row_matches $Snapshot $row]
     }
 
     # The scope-relevant fields of a modelled session, assembled from its node
@@ -3275,7 +3275,7 @@ oo::class create ::questlog::ui::SessionList {
                 # read at all. The subtree scope stays hard over it, same as
                 # the disk-scan path below.
                 if {[my has_retained $path]} {
-                    if {[llength $subtree] > 0 && ![::questlog::scope::row_subtree_match \
+                    if {[llength $subtree] > 0 && ![::questlog::scan::row_subtree_match \
                             [my payload_scope_row $path] $subtree]} continue
                     my restore_session $path "" 0
                     if {![my sflag $path hidden]} {
@@ -3307,7 +3307,7 @@ oo::class create ::questlog::ui::SessionList {
                 # scope surfaces in plain browse.
                 if {[my has_session $path]} continue
                 if {[llength $subtree] > 0 \
-                    && ![::questlog::scope::row_subtree_match $row $subtree]} continue
+                    && ![::questlog::scan::row_subtree_match $row $subtree]} continue
                 my model_add_session $path $row
                 # Drawing is the dirty pass's job below: rebuild is
                 # hidden-aware and creates the folder heading, which this
@@ -3339,7 +3339,7 @@ oo::class create ::questlog::ui::SessionList {
                 # recency / min-turns bounds (it always surfaces), but a running
                 # session OUTSIDE the subtree scope does not.
                 set in_subtree [expr {[llength $subtree] == 0 || $row eq "" \
-                    || [::questlog::scope::row_subtree_match $row $subtree]}]
+                    || [::questlog::scan::row_subtree_match $row $subtree]}]
                 # A session the reader pulled in through the cut banner stays,
                 # whatever the scope says: they named it and asked for it, and
                 # dropping it on the next tick would answer them by taking it away.
@@ -3741,7 +3741,7 @@ oo::class create ::questlog::ui::SessionList {
             return subtree
         }
         if {$CriteriaActive} { return search }
-        if {[::questlog::scope::cutoff_for $Snapshot] > 0} { return since }
+        if {[::questlog::scan::cutoff_for $Snapshot] > 0} { return since }
         if {[dict getdef $Snapshot min_turns 1] > 1} { return min_turns }
         return unloaded
     }
@@ -3752,13 +3752,13 @@ oo::class create ::questlog::ui::SessionList {
     # to its encoded folder name, the same evidence the scanner's walk uses.
     method member_in_subtree {member subtree} {
         set cwd [dict getdef $member cwd ""]
-        if {$cwd ne ""} { return [::questlog::scope::in_subtree_of $cwd $subtree] }
+        if {$cwd ne ""} { return [::questlog::scan::in_subtree_of $cwd $subtree] }
         set path [dict get $member path]
         if {[my has_session $path]} {
-            return [::questlog::scope::row_subtree_match \
+            return [::questlog::scan::row_subtree_match \
                         [my payload_scope_row $path] $subtree]
         }
-        return [::questlog::scope::folder_subtree_candidate \
+        return [::questlog::scan::folder_subtree_candidate \
                     [file tail [file dirname $path]] $subtree]
     }
 

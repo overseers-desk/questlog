@@ -395,8 +395,8 @@ proc ::questlog::cli::main::run {q} {
     # still hold in-window messages); the since floor is kept as a safe pre-gate.
     # The window edges [acc_lo, acc_hi] come from the original bounds.
     if {$accrued} {
-        set acc_lo [::questlog::scope::cutoff_for $snapshot]
-        set acc_hi [::questlog::scope::ceiling_for $snapshot]
+        set acc_lo [::questlog::scan::cutoff_for $snapshot]
+        set acc_hi [::questlog::scan::ceiling_for $snapshot]
         set sel_snapshot [::questlog::cli::main::selection_snapshot_for $snapshot]
     } else {
         set sel_snapshot $snapshot
@@ -448,7 +448,7 @@ proc ::questlog::cli::main::run {q} {
         set row [$scan stamp_subtree $row]
         set row_snapshot [expr {$is_child \
             ? [dict replace $sel_snapshot since all until all] : $sel_snapshot}]
-        if {![::questlog::scope::row_matches $row_snapshot $row]} {
+        if {![::questlog::scan::row_matches $row_snapshot $row]} {
             continue
         }
 

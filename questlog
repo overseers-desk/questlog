@@ -54,7 +54,6 @@ if {[::questlog::cli::commandline::asks $argv] eq ""} { ::questlog::claude::refr
 source [file join $ROOT config.tcl]
 source [file join $ROOT lib debug.tcl]
 source [file join $ROOT lib path.tcl]
-source [file join $ROOT lib scope.tcl]
 source [file join $ROOT lib listfilter.tcl]
 source [file join $ROOT lib jsonl.tcl]
 source [file join $ROOT lib match.tcl]
@@ -77,7 +76,7 @@ if {$SUBCOMMAND ne ""} {
 }
 
 # The query. Parsing calls into lib/search.tcl's region and tool-selector
-# vocabulary and lib/scope.tcl's time-spec grammar, so it runs once those are in
+# vocabulary and lib/scan.tcl's time-spec grammar, so it runs once those are in
 # hand, and before either answer is prepared.
 set Query [::questlog::cli::commandline::run $argv]
 

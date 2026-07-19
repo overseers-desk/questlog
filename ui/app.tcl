@@ -551,7 +551,7 @@ proc ::questlog::ui::app::on_filter {snapshot} {
     # the store's detached retention (its clear runs retire_all, not a wipe);
     # replay_scope re-attaches the ones the new scope admits, applying the
     # same pure predicate
-    # (::questlog::scope::row_matches over payload_scope_row's fields) that
+    # (::questlog::scan::row_matches over payload_scope_row's fields) that
     # on_scan_row applies as its admission gate. No disk: the widget's node
     # store is the memo, session data's one in-memory home. Model membership
     # is the scope's question alone; the list-view filters only decide which

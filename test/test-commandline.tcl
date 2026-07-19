@@ -11,11 +11,11 @@ set ROOT [file dirname [file dirname [file normalize [info script]]]]
 package require leash
 set QUESTLOG_VERSION 0
 source [file join $ROOT config.tcl]
-source [file join $ROOT lib scope.tcl]
 # --subtree canonicalises its directory through lib/path.tcl, which wraps `file`
 # to guard deletes under the projects store. This test writes nothing, so the
 # guard costs it nothing.
 source [file join $ROOT lib path.tcl]
+source [file join $ROOT lib scan.tcl]
 source [file join $ROOT lib match.tcl]
 source [file join $ROOT lib search.tcl]
 source [file join $ROOT cli commandline.tcl]

@@ -16,7 +16,6 @@ set ROOT [file dirname [file dirname [file normalize [info script]]]]
 package require leash
 source [file join $ROOT config.tcl]
 source [file join $ROOT lib path.tcl]
-source [file join $ROOT lib scope.tcl]
 source [file join $ROOT lib jsonl.tcl]
 source [file join $ROOT lib match.tcl]
 source [file join $ROOT lib scan.tcl]
@@ -53,10 +52,10 @@ mkf -home-test-code-other     /home/test/code/other     dddd
 set U [list /home/test/code/proj]
 
 # ---- folder_subtree_candidate: the enumeration test (name only, no read) ----
-check cand_exact      1 [::questlog::scope::folder_subtree_candidate -home-test-code-proj $U]
-check cand_child      1 [::questlog::scope::folder_subtree_candidate -home-test-code-proj-sub $U]
-check cand_hyphen_sib 1 [::questlog::scope::folder_subtree_candidate -home-test-code-proj-x $U]
-check cand_other      0 [::questlog::scope::folder_subtree_candidate -home-test-code-other $U]
+check cand_exact      1 [::questlog::scan::folder_subtree_candidate -home-test-code-proj $U]
+check cand_child      1 [::questlog::scan::folder_subtree_candidate -home-test-code-proj-sub $U]
+check cand_hyphen_sib 1 [::questlog::scan::folder_subtree_candidate -home-test-code-proj-x $U]
+check cand_other      0 [::questlog::scan::folder_subtree_candidate -home-test-code-other $U]
 
 # ---- list_paths_for walks only candidate folders (other never enumerated) ----
 set s [::questlog::Scan new {} {}]
@@ -74,13 +73,13 @@ set rp [$s stamp_subtree [$s scan_one /tmp/questlog-subtree-test/-home-test-code
 set rc [$s stamp_subtree [$s scan_one /tmp/questlog-subtree-test/-home-test-code-proj-sub/bbbb.jsonl]]
 set rx [$s stamp_subtree [$s scan_one /tmp/questlog-subtree-test/-home-test-code-proj-x/cccc.jsonl]]
 check gone_stamp_empty       {} [dict get $rp folder_cwd]
-check gone_exact             1 [::questlog::scope::row_subtree_match $rp $U]
-check gone_child             1 [::questlog::scope::row_subtree_match $rc $U]
-check gone_hyphen_sibling    0 [::questlog::scope::row_subtree_match $rx $U]
+check gone_exact             1 [::questlog::scan::row_subtree_match $rp $U]
+check gone_child             1 [::questlog::scan::row_subtree_match $rc $U]
+check gone_hyphen_sibling    0 [::questlog::scan::row_subtree_match $rx $U]
 # cwd_hint also empty: the encoded folder name is the last evidence.
 set rblank [dict create folder -home-test-code-proj-sub cwd_hint "" folder_cwd ""]
-check gone_blank_by_name     1 [::questlog::scope::row_subtree_match $rblank $U]
-check gone_blank_other       0 [::questlog::scope::row_subtree_match \
+check gone_blank_by_name     1 [::questlog::scan::row_subtree_match $rblank $U]
+check gone_blank_other       0 [::questlog::scan::row_subtree_match \
                                     [dict create folder -home-test-code-other cwd_hint ""] $U]
 
 # ---- canon_dir: the entry-point canonicaliser both the toolbar's folder
@@ -97,8 +96,8 @@ check canon_bad_user   1  [catch {::questlog::path::canon_dir ~nosuchuser/x}]
 # The canonicalised form is what the predicates see: a tilde scope, once
 # expanded, admits the exact dir and its subtree like any absolute scope.
 set UT [list [::questlog::path::canon_dir ~/../../home/test/code/proj]]
-check canon_feeds_confirm_exact 1 [::questlog::scope::row_subtree_match $rp $UT]
-check canon_feeds_confirm_child 1 [::questlog::scope::row_subtree_match $rc $UT]
+check canon_feeds_confirm_exact 1 [::questlog::scan::row_subtree_match $rp $UT]
+check canon_feeds_confirm_child 1 [::questlog::scan::row_subtree_match $rc $UT]
 
 # ---- residence: real directories, so folders resolve and residence decides.
 # The move feature files a session into a project folder; the scope reads that
@@ -126,21 +125,21 @@ set r_wb   [$s2 stamp_subtree [$s2 scan_one $root/[::questlog::path::encode_cwd 
 set r_wp   [$s2 stamp_subtree [$s2 scan_one $root/[::questlog::path::encode_cwd $BASE/weird]/w002.jsonl]]
 
 check res_stamp             $P [dict get $r_res folder_cwd]
-check res_exact             1 [::questlog::scope::row_subtree_match $r_res [list $P]]
-check res_ancestor          1 [::questlog::scope::row_subtree_match $r_res [list $BASE]]
-check res_subdir            1 [::questlog::scope::row_subtree_match $r_sub [list $P]]
+check res_exact             1 [::questlog::scan::row_subtree_match $r_res [list $P]]
+check res_ancestor          1 [::questlog::scan::row_subtree_match $r_res [list $BASE]]
+check res_subdir            1 [::questlog::scan::row_subtree_match $r_sub [list $P]]
 # The moved-in session answers to its new home at every level of its tree,
 # and no longer to the directory recorded in its transcript.
-check moved_in_new_home     1 [::questlog::scope::row_subtree_match $r_min [list $P]]
-check moved_in_ancestor     1 [::questlog::scope::row_subtree_match $r_min [list $BASE]]
-check moved_in_not_old_cwd  0 [::questlog::scope::row_subtree_match $r_min [list $BASE/other]]
+check moved_in_new_home     1 [::questlog::scan::row_subtree_match $r_min [list $P]]
+check moved_in_ancestor     1 [::questlog::scan::row_subtree_match $r_min [list $BASE]]
+check moved_in_not_old_cwd  0 [::questlog::scan::row_subtree_match $r_min [list $BASE/other]]
 # The moved-out session left proj's tree even though its transcript ran there.
-check moved_out_gone        0 [::questlog::scope::row_subtree_match $r_mout [list $P]]
-check moved_out_new_home    1 [::questlog::scope::row_subtree_match $r_mout [list $BASE/other]]
+check moved_out_gone        0 [::questlog::scan::row_subtree_match $r_mout [list $P]]
+check moved_out_new_home    1 [::questlog::scan::row_subtree_match $r_mout [list $BASE/other]]
 # Glob metacharacters in a directory name are characters, not patterns: the
 # scope we\[i\]rd matches only that directory, never its glob-shadow weird.
-check metachar_self         1 [::questlog::scope::row_subtree_match $r_wb [list $BASE/we\[i\]rd]]
-check metachar_no_shadow    0 [::questlog::scope::row_subtree_match $r_wp [list $BASE/we\[i\]rd]]
+check metachar_self         1 [::questlog::scan::row_subtree_match $r_wb [list $BASE/we\[i\]rd]]
+check metachar_no_shadow    0 [::questlog::scan::row_subtree_match $r_wp [list $BASE/we\[i\]rd]]
 
 # ---- stream agreement: the row predicate over published rows admits exactly
 # what a fresh walk admits, so a warm GUI and a fresh scan answer the scope
@@ -149,7 +148,7 @@ set ::pub [list]
 foreach f [glob -directory $root -- */*.jsonl] { lappend ::pub [$s2 scan_path $f] }
 set snapP [dict create since all subtree [list $P]]
 set got [lsort [lmap r $::pub {expr {
-    [::questlog::scope::row_matches $snapP $r]
+    [::questlog::scan::row_matches $snapP $r]
         ? [file rootname [file tail [dict get $r path]]] : [continue]}}]]
 check stream_residence {mv01 r001 r002} $got
 $s2 destroy

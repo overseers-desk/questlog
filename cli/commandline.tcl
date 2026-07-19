@@ -243,7 +243,7 @@ proc ::questlog::cli::commandline::check_pattern {value suffix} {
 # --since and --until share one time-spec grammar; "" and 'all' mean no bound.
 proc ::questlog::cli::commandline::check_when {flag value} {
     if {$value eq "all"} { return "" }
-    if {[catch {::questlog::scope::parse_since $value}]} {
+    if {[catch {::questlog::scan::parse_since $value}]} {
         return "$flag: invalid '$value' (want 24h/7d/2w, 2026-04-01, 2026-04-01T13:37\[:SS\], or 'all')"
     }
     return ""
@@ -358,8 +358,8 @@ proc ::questlog::cli::commandline::parse {argv} {
     # --accrued-cost windows the spend, so it has no meaning without a window:
     # require a real --since or --until ("" and "all" both parse to {none}).
     if {$accrued
-        && [lindex [::questlog::scope::parse_since $since] 0] eq "none"
-        && [lindex [::questlog::scope::parse_since $until] 0] eq "none"} {
+        && [lindex [::questlog::scan::parse_since $since] 0] eq "none"
+        && [lindex [::questlog::scan::parse_since $until] 0] eq "none"} {
         $CL fail "--accrued-cost needs a time bound (--since and/or --until)"
     }
 

@@ -18,7 +18,7 @@ package require leash
 set QUESTLOG_VERSION 0
 
 source [file join $ROOT config.tcl]
-source [file join $ROOT lib scope.tcl]
+source [file join $ROOT lib scan.tcl]
 source [file join $ROOT lib jsonl.tcl]
 source [file join $ROOT lib match.tcl]
 source [file join $ROOT lib search.tcl]
