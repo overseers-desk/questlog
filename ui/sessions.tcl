@@ -1417,6 +1417,22 @@ oo::class create ::questlog::ui::SessionList {
         {*}$OnSubagentCost $cp
     }
 
+    # Engine override for a rebuild's recursion. A session's subagents are drawn
+    # by wire_session_row (via render_children) as the session row is re-laid, so
+    # descending into them here would draw each a second time (issue #52). Stop at
+    # a session and let render_children be the one writer; folders still recurse
+    # into their sessions, which no wire step draws.
+    method render_subtree {id} {
+        my render_row $id
+        if {[my node_field $id kind] eq "session"} return
+        if {[my node_field $id expanded]} {
+            foreach c [my node_field $id children] {
+                if {[my node_field $c hidden]} continue
+                my render_subtree $c
+            }
+        }
+    }
+
     method render_children {path} {
         if {![my sflag $path rendered]} return
         foreach cp [my session_child_paths $path] {
