@@ -395,7 +395,15 @@ proc ::questlog::ui::app::run_tick {} {
     variable SessionList
     variable Running
     variable RunTimer
+    variable Scan
     set Running [::questlog::ui::live::running_uuids]
+    # Poll the projects tree for arrivals the live registry never reports,
+    # BEFORE reconcile. The poll publishes through on_scan_row, whose tail
+    # leaves the list widget -state disabled (the widget-state trap at
+    # sessions.tcl:2856), so it must not run nested inside reconcile; and
+    # running it first lets an imported row settle its running glyph and
+    # phantom sweep in the same tick.
+    $Scan poll_arrivals
     $SessionList reconcile_running $Running
     # The same tick refreshes the membership the active filters claim, so a session
     # that starts running outside the search's window is counted (and named) within

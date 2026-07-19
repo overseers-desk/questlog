@@ -11,8 +11,8 @@ package require leash
 # through the known_mtime callback, so an unchanged corpus re-extends without
 # re-reading a file. Scan keeps only disk-derived memos of its own: the
 # folder->cwd resolver cache (Folders) with its per-pass negative twin
-# (NegFolders), and the session-origin cache (Kind), all used headlessly
-# by the CLI.
+# (NegFolders), the session-origin cache (Kind), both used headlessly by
+# the CLI, and the arrival poll's directory-mtime memo (DirMtime).
 #
 # A class under the issue-67 trial: named globals absorbed, joint
 # epoch/coroutine state, and rows leave tell-don't-ask through publish_row.
@@ -306,6 +306,10 @@ oo::class create ::questlog::Scan {
                           ;# (the reconciler, the CLI gap-fill): those repeat, and
                           ;# a per-call reset would hand the per-row peek cost back
                           ;# to them; their heal arrives with the next pass.
+    variable DirMtime     ;# dict: dir path -> last-seen mtime; the arrival
+                          ;# poll's disk-derived memo. An absent entry (or "")
+                          ;# reads as changed, so a folder learned this tick is
+                          ;# globbed next tick.
 
     constructor {on_row on_done {on_progress {}} {is_typing {}} {known_mtime {}}} {
         set Folders [dict create]
@@ -319,6 +323,7 @@ oo::class create ::questlog::Scan {
         set KnownMtime $known_mtime
         set Kind [dict create]
         set NegFolders [dict create]
+        set DirMtime [dict create]
     }
 
     # Session origin from the opening record, classified by the shared
@@ -784,6 +789,74 @@ oo::class create ::questlog::Scan {
             my publish_row $row
         }
         return $row
+    }
+
+    # Poll the projects tree for jsonl files that appeared without a live-
+    # registry entry - a session started under a different CLAUDE_CONFIG_DIR,
+    # or a file synced in by syncthing - which the running reconciler never
+    # sees. Detection comes from the tree itself, cheaply, and each in-window
+    # arrival is published through scan_path -> on_scan_row like any browse row.
+    # Returns the number of files scanned.
+    #
+    # Cost bound per tick: one stat of the projects root plus one stat per
+    # project folder; a glob plus one stat per jsonl only in a folder whose
+    # mtime changed; a file read only for an in-window file the store lacks at
+    # that mtime. K simultaneous in-window arrivals cost K synchronous single-
+    # file scans in one tick (about 13 ms each), accepted until observed
+    # otherwise.
+    method poll_arrivals {} {
+        # Never interleave with the running scan coroutine; a missed tick self-
+        # corrects because absent memo entries read as changed next time.
+        if {$Active} { return 0 }
+        set root [::questlog::path::projects_root]
+        if {![file isdirectory $root]} { return 0 }
+        set cutoff [::questlog::scan::cutoff_for $Snapshot]
+        set ceiling [::questlog::scan::ceiling_for $Snapshot]
+        set scanned 0
+        # Root pass: the root's mtime moves when a project folder is added or
+        # removed. On a change (or a never-seen root), learn the new folders
+        # (an absent memo reads as changed, so the folder pass globs them) and
+        # forget folders that no longer stat. The same-second clause matches
+        # the folder pass: a folder created in the same second the root memo
+        # was taken leaves the root's second-granular mtime equal to the memo,
+        # and without it that folder stays unknown until the root moves again.
+        set rootm ""
+        catch {file mtime $root} rootm
+        if {![dict exists $DirMtime $root] || [dict get $DirMtime $root] ne $rootm
+            || $rootm >= [clock seconds] - 2} {
+            foreach child [glob -nocomplain -directory $root -type d -- *] {
+                if {![dict exists $DirMtime $child]} { dict set DirMtime $child "" }
+            }
+            foreach dir [dict keys $DirMtime] {
+                if {$dir eq $root} continue
+                if {[catch {file mtime $dir}]} { dict unset DirMtime $dir }
+            }
+            dict set DirMtime $root $rootm
+        }
+        # Folder pass: a folder counts as changed when its mtime moved OR is
+        # within the same-second guard window. File mtimes are second-granular,
+        # so a second file landing in the same second as the memoised stat would
+        # otherwise stay invisible forever; re-globbing a just-hot dir once more
+        # per tick costs one glob.
+        foreach dir [dict keys $DirMtime] {
+            if {$dir eq $root} continue
+            if {[catch {file mtime $dir} m]} { dict unset DirMtime $dir; continue }
+            set memo [dict get $DirMtime $dir]
+            if {$m eq $memo && $m < [clock seconds] - 2} continue
+            foreach f [glob -nocomplain -directory $dir -- *.jsonl] {
+                if {[catch {file mtime $f} fm]} continue
+                if {$fm <= $cutoff} continue
+                if {$ceiling ne "" && $fm > $ceiling} continue
+                set known ""
+                if {[llength $KnownMtime]} { set known [{*}$KnownMtime $f] }
+                if {$known eq "" || $known ne $fm} {
+                    my scan_path $f
+                    incr scanned
+                }
+            }
+            dict set DirMtime $dir $m
+        }
+        return $scanned
     }
 
 }
