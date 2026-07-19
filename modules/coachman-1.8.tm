@@ -96,9 +96,11 @@ package provide coachman 1.8
 # than treat the error text as a product.
 #
 # `abort` cancels an in-flight coroutine-driven run from outside; the
-# killed call returns 2 with its fail_cause naming the abort, and an
-# abort during the usage-window sleep wakes and ends the run at once.
-# See the method for the synchronous-mode limit and intended callers.
+# killed call returns 2 with its fail_cause naming the abort, an abort
+# during the usage-window sleep wakes and ends the run at once, and the
+# mark is sticky, so every later stage of the same harness returns 2
+# too. See the method for the synchronous-mode limit and intended
+# callers.
 #
 # FILES per call, given `log_file`:
 #   $log_file           the product (the turn's result text)
@@ -577,6 +579,10 @@ oo::class create coachman::Harness {
     # its context instead, silently. A caller that wants every call tracked
     # builds a harness per session, or overrides this method.
     method call {stage log_file prompt args} {
+        if {$AbortRequested} {
+            my _fail "FAIL ($stage: aborted by caller): $Slug"
+            return 2
+        }
         my _assert_metered
         # RunInFlight is what lets abort mark a run caught BETWEEN waits:
         # after sleep_wake cleared the sleep state but before the resume
@@ -601,6 +607,10 @@ oo::class create coachman::Harness {
     # Fails while no call has captured a session id (capture also happens
     # on an interrupted or budget-killed call whose init event landed).
     method resume {stage log_file prompt args} {
+        if {$AbortRequested} {
+            my _fail "FAIL ($stage: aborted by caller): $Slug"
+            return 2
+        }
         if {$SessionId eq ""} {
             error "coachman::Harness::resume: no session id captured yet - a call must reach one first"
         }
@@ -613,44 +623,35 @@ oo::class create coachman::Harness {
         }
     }
 
-    # abort - cancel the in-flight run: the outside kill path a caller
-    # such as a GUI cancel button or a job-loop shutdown would reach
-    # for. Four states answer it. A live child: its group is killed
-    # with cause `caller`, and the abort MARK (AbortRequested), not the
-    # recorded cause, is what stops the run - deadman's first-cause-wins
-    # rule can hand the kill to a watchdog that fired first, and without
-    # the mark the stall-retry loop would run fresh attempts over the
-    # caller's abort. A usage-window sleep between attempts: the run is
-    # marked and, in coroutine mode, woken at once to fail rather than
-    # sleeping out a reset nobody wants. In flight but between waits
-    # (sleep_wake cleared the sleep and the deferred resume has not run
-    # yet, or the run sits between a wake and its next invocation): no
-    # handle and no sleeper exist, yet the run is live, so the mark
-    # alone is set; the AbortRequested check after the wake honours
-    # it. Idle: a
-    # no-op returning 0. Returns 1 whenever a live run was told to
-    # stop; the interrupted call returns 2 (the validate-the-product
-    # path) with fail_cause naming the abort, unretried. Only a
-    # coroutine-driven run holds a handle or a wakeable sleep:
-    # deadman's synchronous mode blocks its caller until the child is
-    # reaped, so a synchronous caller is itself parked inside the very
-    # run it would abort.
+    # abort - end the run, and the whole harness: the outside kill path a
+    # caller such as a GUI cancel button or a job-loop shutdown reaches
+    # for. The abort MARK (AbortRequested) is set unconditionally and is
+    # STICKY: a caller drives one harness through several call/resume
+    # stages, and each checks the mark at entry, so an abort between
+    # stages ends the next call (a return-2 no-op) instead of letting a
+    # fix-loop resume re-spend over the cancel. Beyond the mark, abort
+    # interrupts whatever the run is parked on now: a live child's group
+    # is killed with cause `caller` (the mark, not deadman's
+    # first-cause-wins cause, is what actually stops the retry loop); a
+    # usage-window sleep is woken at once through sleep_wake rather than
+    # slept out. The return value reports only whether there was a live
+    # wait to interrupt (handle, sleep, or a call between waits), 1, or
+    # nothing running this instant, 0; either way the mark stands and the
+    # next stage honours it. Only a coroutine-driven run holds a handle
+    # or a wakeable sleep: deadman's synchronous mode blocks its caller
+    # until the child is reaped, so a synchronous caller is itself parked
+    # inside the very run it would abort.
     method abort {} {
+        set AbortRequested 1
         if {$DeadmanHandle ne ""} {
-            set AbortRequested 1
             deadman::kill $DeadmanHandle caller
             return 1
         }
         if {$SleepCoro ne ""} {
-            set AbortRequested 1
             my sleep_wake
             return 1
         }
-        if {$RunInFlight} {
-            set AbortRequested 1
-            return 1
-        }
-        return 0
+        return [expr {$RunInFlight ? 1 : 0}]
     }
 
     # sleep_wake - the single wake path for the usage-window sleep: the
@@ -737,7 +738,6 @@ oo::class create coachman::Harness {
     #     with the original prompt+args, clearing SessionId so the new session
     #     is metered by its own init event, not the dead one.
     method _with_recovery {entry stage log_file prompt args} {
-        set AbortRequested 0
         set max_retries 5
         # A stall kill is a recoverable interruption, not a verdict on the
         # work: a session that emitted only thinking tokens then fell silent

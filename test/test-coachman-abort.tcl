@@ -97,7 +97,11 @@ set h [AbortHarness new $pdir $logd]
 $h set_stall_timeout 30
 $h set_worker_cost_cap 0
 
-check "abort with nothing running is a no-op" [$h abort] 0
+# A throwaway instance for the idle-abort return: abort now marks the
+# mark sticky, so a harness aborted while idle would no-op its next call.
+# Keep $h unmarked for the live-abort run below.
+set h_idle [AbortHarness new $pdir $logd]
+check "abort with nothing running returns 0" [$h_idle abort] 0
 
 # Drive the call in a coroutine so _invoke holds the deadman handle and
 # the event loop stays free for the after-event that aborts it.
@@ -277,6 +281,32 @@ check "the gap-aborted call returns 2" $::gap_rc 2
 check "fail_cause names the abort in the gap" \
     [string match "*aborted by caller*" [$h7 fail_cause]] 1
 check "no retry followed the gap abort" \
+    [llength [split [string trim [read_file $::env(FAKE_ARGV_LOG)]] \n]] 1
+
+# ---- the mark is sticky across a harness's stages -------------------------
+
+# A caller drives one harness through several call/resume stages; an
+# abort during one must end the next too, or a fix-loop resume would
+# re-spend over the cancel. The mark persists, so a second stage on an
+# aborted instance returns 2 without invoking claude at all.
+set h8 [AbortHarness new $pdir $logd]
+set ::env(FAKE_ARGV_LOG) [file join $dir argv-sticky.log]
+set ::env(FAKE_SCENARIO) hang
+$h8 set_stall_timeout 30
+$h8 set_worker_cost_cap 0
+set ::sticky_rc1 ""
+set ::sticky_rc2 ""
+coroutine sticky_runner apply {{h logd} {
+    set ::sticky_rc1 [$h call stage1 [file join $logd s1.log] "p"]
+    # A second stage, as a harness's run() would issue after a stage fails.
+    set ::sticky_rc2 [$h call stage2 [file join $logd s2.log] "p"]
+    set ::sticky_done 1
+}} $h8 $logd
+after 300 [list apply {h { $h abort }} $h8]
+vwait ::sticky_done
+check "the aborted first stage returns 2" $::sticky_rc1 2
+check "the next stage returns 2 on the sticky mark" $::sticky_rc2 2
+check "the aborted harness invokes claude only for the first stage" \
     [llength [split [string trim [read_file $::env(FAKE_ARGV_LOG)]] \n]] 1
 
 file delete -force $dir
