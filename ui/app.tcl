@@ -417,7 +417,8 @@ proc ::questlog::ui::app::run_tick {} {
 # re-filter and the count lands a moment behind it. The model filter has no
 # membership outside the loaded rows, so member_filters leaves it out.
 # filter_members reduces the sets to what the filters jointly claim (the
-# intersection when both are on).
+# intersection when both are on). Which filters are on comes from FilterState
+# (set by on_filter_change), not the toolbar's published snapshot.
 proc ::questlog::ui::app::refresh_filter_members {} {
     variable SessionList
     variable FilterState
