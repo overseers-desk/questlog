@@ -1,4 +1,4 @@
-# anthropic-rates.tcl — Claude model token rates, as a tallyman rates dict.
+# anthropic-rates.tcl - Claude model token rates, as a tallyman rates dict.
 #
 # GENERATED from the anthropic-rates.csv rate table maintained upstream in the
 # questlog repository, which is the source of truth for these figures. When a
