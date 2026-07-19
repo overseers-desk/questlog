@@ -51,7 +51,7 @@ proc ::questlog::ui::session_actions::populate {menu ctx} {
         bookmark_index -1]
 
     if {[dict exists $ctx on_open]} {
-        $menu add command -label "Open in viewer" \
+        $menu add command -label "Open in viewer" -accelerator "Return" \
             -command [concat [dict get $ctx on_open] [list [tget $ctx path]]]
         # A right-click on a search hit can open the session deep-linked to that
         # match's line - the same open the badge's left-click performs. Present
@@ -64,7 +64,7 @@ proc ::questlog::ui::session_actions::populate {menu ctx} {
         $menu add separator
     }
 
-    $menu add command -label "Copy resume command" \
+    $menu add command -label "Copy resume command" -accelerator "Ctrl+R" \
         -command [list [namespace current]::act_copy_resume $ctx]
     dict lappend indices resume_indices [$menu index end]
     $menu add command -label "Copy session id" \

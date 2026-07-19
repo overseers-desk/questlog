@@ -268,6 +268,12 @@ proc ::questlog::ui::app::start {root {seed {}}} {
 
     bind . <Control-q> [namespace code quit]
     bind . <Control-b> [namespace code toggle_sidebar]
+    # The menu's advertised keys (issue #53): Return opens the selected session,
+    # Ctrl+R copies its resume command. Ctrl+R is the chosen copy-resume key -
+    # the app's keys are all Control-based, and R reads as "resume". Both honour
+    # the sole selection and no-op otherwise, so the accelerator hints stay true.
+    bind . <Return> [list $SessionList open_selected]
+    bind . <Control-r> [list $SessionList copy_selected_resume]
 
     maybe_show_onboarding
 

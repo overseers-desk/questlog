@@ -2566,6 +2566,25 @@ oo::class create ::questlog::ui::SessionList {
         {*}$OnOpen $path $lineno
     }
 
+    # The keyboard verbs the context menu advertises (issue #53). Both act on a
+    # lone selection and no-op otherwise: the single-session menu is the only one
+    # carrying "Open in viewer" / "Copy resume command", so a multi-selection has
+    # no single target for either.
+    method open_selected {} {
+        if {[my selection_count] != 1} return
+        my open_session [lindex [my selection_paths] 0] 0
+    }
+    method copy_selected_resume {} {
+        if {[my selection_count] != 1} return
+        set path [lindex [my selection_paths] 0]
+        if {![my has_session $path]} return
+        set folder [my sget $path folder]
+        set cwd [expr {$folder ne "" ? [{*}$ResolveFolder $folder] : ""}]
+        if {$cwd eq ""} return
+        my clipboard_set \
+            [::questlog::ui::terminal::resume_command $cwd [my sget $path uuid]]
+    }
+
     # A plain click selects and opens the session in the viewer. A click that
     # moved the pointer is a drag (armed on press) and wins instead, so the
     # reading view loads only on a click that stayed put. Selecting and showing
