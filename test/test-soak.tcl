@@ -94,7 +94,7 @@ foreach folder {proj-a proj-b proj-c} {
 }
 update
 
-set uuids [lmap p $paths { $SL sget $p uuid }]
+set uuids [lmap p $paths { file rootname [file tail $p] }]
 set n [llength $paths]
 set widths {1500 900 1200 700 1400}
 set sorts {date cost turns date duration}

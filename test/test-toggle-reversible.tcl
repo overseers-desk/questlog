@@ -130,7 +130,7 @@ check "B still rendered"        [$SL sflag $Bp rendered] 1
 #        in the model; it does not paint it.
 $SL attr_filter_set bookmarked 1
 update
-set Auuid [$SL sget $Ap uuid]
+set Auuid [file rootname [file tail $Ap]]
 $SL reconcile_running [dict create $Auuid $Ap]
 update
 check "running A still hidden under the bookmarked filter" [$SL sflag $Ap rendered] 0

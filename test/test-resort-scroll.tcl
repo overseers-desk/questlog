@@ -177,7 +177,7 @@ $SL reconcile_running [dict create]
 check "an idle tick redraws no headers" $::headers 0
 $SL reconcile_running [dict create]
 check "a second identical tick redraws no headers" $::headers 0
-set u [$SL sget [lindex $PATHS 0] uuid]
+set u [file rootname [file tail [lindex $PATHS 0]]]
 $SL reconcile_running [dict create $u [lindex $PATHS 0]]
 check "one session entering redraws exactly one header" $::headers 1
 

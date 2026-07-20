@@ -88,7 +88,7 @@ check "A rendered (filter off)" [$SL sflag $Ap rendered] 1
 check "B rendered (filter off)" [$SL sflag $Bp rendered] 1
 check "C not loaded"                  [$SL has_session $Cp] 0
 
-set Buuid [$SL sget $Bp uuid]
+set Buuid [file rootname [file tail $Bp]]
 
 # --- 2. Turn the running filter ON with an empty running set: both loaded rows hide.
 $SL attr_filter_set running 1

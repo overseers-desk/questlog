@@ -137,7 +137,7 @@ $SL attr_filter_set bookmarked 0
 # Mark A and B running. Running-only keeps both; excluding Sonnet then drops B,
 # and A (running, not excluded) stays. C is neither running nor excluded, but the
 # running filter alone already hides it.
-$SL reconcile_running [dict create [$SL sget $Ap uuid] $Ap [$SL sget $Bp uuid] $Bp]
+$SL reconcile_running [dict create [file rootname [file tail $Ap]] $Ap [file rootname [file tail $Bp]] $Bp]
 $SL attr_filter_set running 1
 check run_keeps_live_a  [admits $Ap] 1
 check run_keeps_live_b  [admits $Bp] 1

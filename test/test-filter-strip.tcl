@@ -111,7 +111,7 @@ check "all three rendered before any filter" \
 #         attr-running, a bookmarked row prefixes ★ under attr-bookmarked, each
 #         dressed in its theme colour. Mark A running for the check, then clear it.
 set T .s.body.t
-$SL reconcile_running [dict create [$SL sget $Ap uuid] $Ap]
+$SL reconcile_running [dict create [file rootname [file tail $Ap]] $Ap]
 update
 check "running glyph rendered under attr-running" ● \
     [$T get [lindex [$T tag ranges attr-running] 0] [lindex [$T tag ranges attr-running] 1]]
@@ -145,7 +145,7 @@ check "A is selected" [$SL is_selected $Ap] 1
 
 # --- 4. Running filter. Mark B running, then flip "running only": B stays, A and C
 #        hide in place. The selection on the hidden A is retained (path-keyed).
-set Buuid [$SL sget $Bp uuid]
+set Buuid [file rootname [file tail $Bp]]
 $SL reconcile_running [dict create $Buuid $Bp]
 $SL attr_filter_set running 1
 update

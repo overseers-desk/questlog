@@ -709,7 +709,7 @@ oo::class create ::questlog::ui::SessionList {
     method attr_value {node id} {
         if {[my node_field $node kind] ne "session"} { return "" }
         switch -- $id {
-            running    { return [expr {[dict exists $RunningSet [my node_pget $node uuid]] ? 1 : 0}] }
+            running    { return [expr {[dict exists $RunningSet [file rootname [file tail [my node_field $node key]]]] ? 1 : 0}] }
             bookmarked { return [my session_bookmarked [my node_field $node key]] }
             model      { return [my node_pget $node model ""] }
             default    { return [my node_pget $node $id] }
@@ -968,7 +968,6 @@ oo::class create ::questlog::ui::SessionList {
         set mtime [dict getdef $row mtime 0]
         set when  [my fmt_time $mtime]
         set size  [dict getdef $row size 0]
-        set uuid  [dict getdef $row uuid [file rootname [file tail $path]]]
         set cost  [dict getdef $row cost_usd ""]
         set turns [dict getdef $row turns ""]
         set dsecs [dict getdef $row duration_secs ""]
@@ -992,7 +991,7 @@ oo::class create ::questlog::ui::SessionList {
         set mbrk  [dict getdef $row model_breakdown ""]
         return [dict create \
             folder [dict get $row folder] label $label slug $slug ai_title $aitt \
-            when $when mtime $mtime size $size uuid $uuid cost $cost \
+            when $when mtime $mtime size $size cost $cost \
             turns $turns duration_secs $dsecs human_secs $hsecs model $model \
             context_pct $ctxp \
             bookmarked $bkmk first_user $fuser kind $okind folder_cwd $fcwd \
@@ -2576,7 +2575,7 @@ oo::class create ::questlog::ui::SessionList {
         set cwd [expr {$folder ne "" ? [{*}$ResolveFolder $folder] : ""}]
         if {$cwd eq ""} return
         my clipboard_set \
-            [::questlog::ui::terminal::resume_command $cwd [my sget $path uuid]]
+            [::questlog::ui::terminal::resume_command $cwd [file rootname [file tail $path]]]
     }
 
     # A plain click selects and opens the session in the viewer. A click that
@@ -2783,7 +2782,6 @@ oo::class create ::questlog::ui::SessionList {
         set cwd ""
         if {[my has_session $path]} {
             set folder [my sget $path folder]
-            set uuid [my sget $path uuid $uuid]
         }
         if {$folder ne ""} { set cwd [{*}$ResolveFolder $folder] }
         set MenuPath $path
@@ -2925,7 +2923,7 @@ oo::class create ::questlog::ui::SessionList {
         set dirty $imported
         foreach path [my all_session_paths] {
             if {![my has_session $path]} continue
-            set uuid [my sget $path uuid]
+            set uuid [file rootname [file tail $path]]
             set is_running [dict exists $running $uuid]
             # Phantom: not running and the backing jsonl is gone (a Resume-fork that quit
             # before any input). Drop it from every mode.
@@ -3250,7 +3248,7 @@ oo::class create ::questlog::ui::SessionList {
         set shown 0
         set loaded [dict create]
         foreach path [my all_session_paths] {
-            dict set loaded [my sget $path uuid] 1
+            dict set loaded [file rootname [file tail $path]] 1
             if {[my attr_admits [my sid $path]]} { incr shown }
         }
         set FilterNote "[my filter_phrase $filters] · showing $shown\

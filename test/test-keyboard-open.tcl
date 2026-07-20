@@ -104,7 +104,7 @@ $SL selection_set $s02
 clipboard clear
 clipboard append "sentinel"
 $SL copy_selected_resume
-set want [::questlog::ui::terminal::resume_command /tmp/proj [$SL sget $s02 uuid]]
+set want [::questlog::ui::terminal::resume_command /tmp/proj [file rootname [file tail $s02]]]
 check "copy_selected_resume puts the resume command on the clipboard" \
     [clipboard get] $want
 
