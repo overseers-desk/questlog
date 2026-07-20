@@ -49,7 +49,7 @@ namespace eval ::questlog::ui::app {
     variable ScanActive       ;# 1 while the corpus scan coroutine is in flight
     variable SearchActive     ;# 1 while a search is in flight
     variable CostOutstanding  ;# cost jobs posted but not yet returned (the cost pass is live when > 0)
-    variable PrevSnapshot     ;# the last published snapshot, to skip a rebuild on a no-op republish
+    variable PrevSnapshot     ;# the last published snapshot: skips a no-op rebuild, and is what the scan callbacks read any_criteria against
 }
 
 proc ::questlog::ui::app::start {root {seed {}}} {
@@ -405,7 +405,7 @@ proc ::questlog::ui::app::run_tick {} {
     # Poll the projects tree for arrivals the live registry never reports,
     # BEFORE reconcile. The poll publishes through on_scan_row, whose tail
     # leaves the list widget -state disabled (the widget-state trap at
-    # sessions.tcl:2856), so it must not run nested inside reconcile; and
+    # sessions.tcl:2882), so it must not run nested inside reconcile; and
     # running it first lets an imported row settle its running glyph and
     # phantom drop in the same tick.
     $Scan poll_arrivals

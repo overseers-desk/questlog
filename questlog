@@ -193,8 +193,8 @@ proc ::questlog::config::get {key} {
 # The suite and the isolated CLI workers need these defaults without running the
 # app: each sets ::questlog_config_only and sources this file, taking the config
 # namespace and stopping here. The guard is the price of config having no home
-# but the entry script (the order that dissolved config.tcl); nothing above it
-# starts the app, so a config-only source gets the numbers and nothing more.
+# but the entry script: nothing above it starts the app, so a config-only source
+# gets the numbers and nothing more.
 if {[info exists ::questlog_config_only]} return
 
 # A headless run prints to stdout and raises no window. Tk enters the process
