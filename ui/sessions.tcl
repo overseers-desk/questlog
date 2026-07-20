@@ -2859,6 +2859,11 @@ oo::class create ::questlog::ui::SessionList {
 
     # ---- running / bookmark reconciliation ---------------------------
 
+    # Whether the session with this uuid is in the live running set. The app
+    # keeps no running mirror; this is the uuid-keyed reader its move and rename
+    # guards ask, over the set reconcile_running writes each poll tick.
+    method is_running {uuid} { return [dict exists $RunningSet $uuid] }
+
     # Re-derive the running glyph for every shown session from a fresh
     # running set and re-apply the running-only / bookmarked-only filter to
     # the loaded model (hiding rows that no longer pass, showing rows that

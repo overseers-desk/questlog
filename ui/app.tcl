@@ -24,7 +24,6 @@ namespace eval ::questlog::ui::app {
     variable PW            ;# the horizontal paned window
     variable ListFrame     ;# the list column, forgotten/re-inserted on fold
     variable ViewFrame     ;# the viewer's container, present in the PW from launch
-    variable Running       ;# last polled uuid -> path running set
     variable RunTimer      ;# after-id of the running-poll loop
     variable RenamePoll    ;# after-id of the rename dialog's running-state poll
     variable RenameEntry   ;# -textvariable backing the rename dialog's entry
@@ -64,7 +63,6 @@ proc ::questlog::ui::app::start {root {seed {}}} {
     variable PW
     variable ListFrame
     variable ViewFrame
-    variable Running
     variable RunTimer
     variable CurrentQuery
     variable SidebarCollapsed
@@ -101,7 +99,6 @@ proc ::questlog::ui::app::start {root {seed {}}} {
     # The first publish has nothing to diff against, so it always takes the heavy path.
     set PrevSnapshot {}
     set StatusVar [bounds_status]
-    set Running [dict create]
     set CurrentQuery {}
     set SidebarCollapsed 0
     set SidebarSash 0.58
@@ -402,10 +399,9 @@ proc ::questlog::ui::app::init_sash {pw} {
 # the cost is O(running sessions), independent of the on-disk corpus.
 proc ::questlog::ui::app::run_tick {} {
     variable SessionList
-    variable Running
     variable RunTimer
     variable Scan
-    set Running [::questlog::ui::live::running_uuids]
+    set running [::questlog::ui::live::running_uuids]
     # Poll the projects tree for arrivals the live registry never reports,
     # BEFORE reconcile. The poll publishes through on_scan_row, whose tail
     # leaves the list widget -state disabled (the widget-state trap at
@@ -413,7 +409,7 @@ proc ::questlog::ui::app::run_tick {} {
     # running it first lets an imported row settle its running glyph and
     # phantom drop in the same tick.
     $Scan poll_arrivals
-    $SessionList reconcile_running $Running
+    $SessionList reconcile_running $running
     # The same tick refreshes the membership the active filters claim, so a session
     # that starts running outside the search's window is counted (and named) within
     # one poll of starting, rather than staying silently absent.
@@ -512,7 +508,6 @@ proc ::questlog::ui::app::on_filter {snapshot} {
     variable Scan
     variable Search
     variable SessionList
-    variable Running
     variable CurrentQuery
     variable StatusMode
     variable SearchSummary
@@ -556,7 +551,7 @@ proc ::questlog::ui::app::on_filter {snapshot} {
 
     # Seed running markers now, in the same event-loop turn, so there is no
     # flash of the pre-reconcile state.
-    $SessionList reconcile_running $Running
+    $SessionList reconcile_running [::questlog::ui::live::running_uuids]
 
     if {$has_criteria} {
         set terms [::questlog::ui::highlight_terms $snapshot]
@@ -932,14 +927,13 @@ proc ::questlog::ui::app::on_picker_done {paths dst_cwd} {
 }
 
 # The display names of the would-be-moved sessions that are running right now,
-# re-read from the live set each call so the move dialog re-enables when one
-# quits. A live session cannot be moved; the move dialog blocks on this.
+# re-read from the list's running set each call so the move dialog re-enables
+# when one quits. A live session cannot be moved; the move dialog blocks on this.
 proc ::questlog::ui::app::live_move_names {paths} {
-    variable Running
     variable SessionList
     set out [list]
     foreach p $paths {
-        if {![dict exists $Running [file rootname [file tail $p]]]} continue
+        if {![$SessionList is_running [file rootname [file tail $p]]]} continue
         set name ""
         if {[$SessionList session_node $p] ne ""} {
             set name [$SessionList sget $p slug]
@@ -988,11 +982,10 @@ proc ::questlog::ui::app::do_move_batch {paths dst_cwd} {
 # reaches do_move_batch).
 proc ::questlog::ui::app::move_one {src_path dst_cwd} {
     variable SessionList
-    variable Running
     # A live session must not be moved: renaming its jsonl out from under the
     # running process splits the transcript. The move dialog disables Move while
     # any are live; this guards the drag path too (and a race in either).
-    if {[dict exists $Running [file rootname [file tail $src_path]]]} {
+    if {[$SessionList is_running [file rootname [file tail $src_path]]]} {
         error "session is live; close it before moving"
     }
     set src_basename [file tail [file dirname $src_path]]
@@ -1129,15 +1122,15 @@ proc ::questlog::ui::app::prompt_rename {current uuid} {
 }
 
 # Keep the rename dialog's OK button in step with the live running state,
-# rescheduling until the dialog is destroyed. Running is the app's running set,
-# replaced wholesale each poll tick, so re-reading it here picks up a session
-# that quits while the dialog is open and re-enables OK (and the Return
-# accelerator) with no reopen.
+# rescheduling until the dialog is destroyed. The list's running set is replaced
+# wholesale each poll tick, so re-reading it here picks up a session that quits
+# while the dialog is open and re-enables OK (and the Return accelerator) with
+# no reopen.
 proc ::questlog::ui::app::track_rename_ok {dlg uuid} {
-    variable Running
+    variable SessionList
     variable RenamePoll
     if {![winfo exists $dlg]} { set RenamePoll ""; return }
-    if {[dict exists $Running $uuid]} {
+    if {[$SessionList is_running $uuid]} {
         $dlg.bf.ok state disabled
         bind $dlg.ent <Return> {}
     } else {
