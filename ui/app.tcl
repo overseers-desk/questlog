@@ -45,7 +45,6 @@ namespace eval ::questlog::ui::app {
     variable StatusMode       ;# browse|scanning|searching|search_done|search_cancelled
     variable SearchSummary    ;# persistent terminal search line, "" when no criteria active
     variable ViewerPath       ;# opened-session path line; overrides every mode, "" when none
-    variable CriteriaActive   ;# 1 while search criteria are active (mirror of the snapshot)
     variable ProgressLine     ;# in-flight "Scanning…" / "Searching…" text, owned by the mode
     variable PeekText         ;# a hover reveal that overrides the mode until unpeeked, "" at rest
     variable ScanActive       ;# 1 while the corpus scan coroutine is in flight
@@ -83,7 +82,6 @@ proc ::questlog::ui::app::start {root {seed {}}} {
     variable StatusMode
     variable SearchSummary
     variable ViewerPath
-    variable CriteriaActive
     variable ProgressLine
     variable PeekText
     variable ScanActive
@@ -95,7 +93,6 @@ proc ::questlog::ui::app::start {root {seed {}}} {
     set StatusMode browse
     set SearchSummary ""
     set ViewerPath ""
-    set CriteriaActive 0
     set ProgressLine ""
     set PeekText ""
     set ScanActive 0
@@ -520,7 +517,6 @@ proc ::questlog::ui::app::on_filter {snapshot} {
     variable StatusMode
     variable SearchSummary
     variable ViewerPath
-    variable CriteriaActive
     variable ProgressLine
     variable ScanActive
     variable SearchActive
@@ -538,10 +534,13 @@ proc ::questlog::ui::app::on_filter {snapshot} {
 
     set has_criteria [::questlog::ui::any_criteria $snapshot]
     ::questlog::debug::log search "on_filter begin: search='[dict get $snapshot search]' has_criteria=$has_criteria"
-    # A new filter or search supersedes the opened-session path on the bar and
-    # records whether the search modes own it (the scan-progress clobber guard).
+    # A new filter or search supersedes the opened-session path on the bar.
     set ViewerPath ""
-    set CriteriaActive $has_criteria
+    # Record the snapshot this load is based on before the scan starts, so the
+    # scan callbacks that ask whether criteria are active (any_criteria on
+    # PrevSnapshot, the scan-progress clobber guard) read this snapshot, not the
+    # one it replaced.
+    set PrevSnapshot $snapshot
 
     # A new filter/search invalidates the previous result set; drop any buffered
     # per-file results and cancel a pending flush before the list is cleared, so
@@ -583,7 +582,6 @@ proc ::questlog::ui::app::on_filter {snapshot} {
     }
     refresh_status
     update_spinner
-    set PrevSnapshot $snapshot
     # A new bounds or search loads a different set of rows, so what the filter is
     # missing has changed even though the filter has not.
     refresh_filter_members
@@ -593,13 +591,13 @@ proc ::questlog::ui::app::on_filter {snapshot} {
 
 proc ::questlog::ui::app::on_scan_row {row} {
     variable SessionList
-    variable CriteriaActive
+    variable PrevSnapshot
     $SessionList on_scan_row $row
     # Under criteria the stream attaches nothing (hydration prices what it
     # models); otherwise queue a cost task only when the store does not
     # already price this row - a changed file re-enters costless and is
     # re-priced.
-    if {$CriteriaActive} return
+    if {[::questlog::ui::any_criteria $PrevSnapshot]} return
     set path [dict get $row path]
     if {![dict exists $row cost_usd] && [$SessionList has_session $path] \
         && [$SessionList sget $path cost] eq ""} {
@@ -748,8 +746,8 @@ proc ::questlog::ui::app::corpus_count {} {
 proc ::questlog::ui::app::on_scan_progress {done total} {
     variable StatusMode
     variable ProgressLine
-    variable CriteriaActive
-    if {$CriteriaActive} return
+    variable PrevSnapshot
+    if {[::questlog::ui::any_criteria $PrevSnapshot]} return
     if {$done < $total} {
         set StatusMode scanning
         set ProgressLine "Scanning $done / $total…"
@@ -771,12 +769,12 @@ proc ::questlog::ui::app::on_scan_progress {done total} {
 # completion never wipes the search summary.
 proc ::questlog::ui::app::on_scan_done {scanned} {
     variable StatusMode
-    variable CriteriaActive
+    variable PrevSnapshot
     variable ScanActive
     variable SessionList
     set ScanActive 0
     $SessionList scan_end
-    if {!$CriteriaActive} { set StatusMode browse }
+    if {![::questlog::ui::any_criteria $PrevSnapshot]} { set StatusMode browse }
     refresh_status
     update_spinner
     # The loaded set is final, so recount what the filter is missing from it now,

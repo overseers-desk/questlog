@@ -52,8 +52,8 @@ package require searchfield
 # clause is a row-level bound, not a content match, so it does not count here;
 # treating it as a criterion flips sessions.tcl into result-index mode and
 # Search.start returns immediately because there is nothing to match, leaving
-# the list empty. Shared by app.tcl (search start/cancel) and sessions.tcl
-# (CriteriaActive flag: browse versus result-index mode).
+# the list empty. Called on the held snapshot (app's PrevSnapshot, the list's
+# Snapshot) wherever browse versus result-index mode is decided.
 proc ::questlog::ui::any_criteria {snapshot} {
     # A search counts only when it tokenises to at least one term: a
     # whitespace-only or quotes-only box is no criterion, and treating it as

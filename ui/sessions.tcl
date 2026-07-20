@@ -110,7 +110,6 @@ oo::class create ::questlog::ui::SessionList {
     variable OnFolderBound    ;# cb: folder -> bound the toolbar search to that folder, or ""
     variable OnFilterChange   ;# cb: state -> the app learns a strip filter changed, or ""
     variable Snapshot
-    variable CriteriaActive
     variable RunningSet       ;# dict uuid -> 1, replaced wholesale each tick
     variable PrevRunning      ;# the prior tick's running set, to redraw only the rows that flipped
     variable FilterMembers    ;# dict uuid -> {path ?cwd?}: what the active filters jointly claim
@@ -178,7 +177,6 @@ oo::class create ::questlog::ui::SessionList {
         set Busy 0
         set ScanBusy 0
         set Snapshot [dict create]
-        set CriteriaActive 0
         set RunningSet [dict create]
         set PrevRunning [dict create]
         set FilterMembers [dict create]
@@ -682,7 +680,6 @@ oo::class create ::questlog::ui::SessionList {
         # The arriving snapshot is search and bounds only; the engine owns the
         # filters and holds them across the change, so a refill honours a filter
         # still pressed on the strip with nothing here to re-graft.
-        set CriteriaActive [::questlog::ui::any_criteria $snapshot]
         my clear
     }
 
@@ -830,7 +827,7 @@ oo::class create ::questlog::ui::SessionList {
     method on_scan_row {row} {
         # Under active criteria the result index owns the list, so the scan
         # stream attaches nothing; an out-of-bounds row is simply not modelled.
-        if {$CriteriaActive} return
+        if {[::questlog::ui::any_criteria $Snapshot]} return
         if {![my row_matches_snapshot $row]} return
         set path [dict get $row path]
         if {[dict exists $PathNode $path]} {
@@ -1992,7 +1989,7 @@ oo::class create ::questlog::ui::SessionList {
         # opens them expanded so the matches under each folder are visible. A
         # collapsed folder draws only its heading - its sessions live in the
         # model and are rendered lazily on expand, so there are no hidden lines.
-        set expanded [expr {$CriteriaActive ? 1 : 0}]
+        set expanded [expr {[::questlog::ui::any_criteria $Snapshot] ? 1 : 0}]
         # The heading is drawn collapsed by default, so flip the open ones and
         # redraw the marker in place.
         set fid [my insert "" folder $folder [dict create label $label]]
@@ -2882,7 +2879,7 @@ oo::class create ::questlog::ui::SessionList {
         $Text configure -state normal
         my anchor_save
         set imported [dict create]
-        if {!$CriteriaActive} {
+        if {![::questlog::ui::any_criteria $Snapshot]} {
             dict for {uuid path} $running {
                 if {[my has_session $path]} continue
                 if {![file isfile $path]} continue
@@ -2933,7 +2930,7 @@ oo::class create ::questlog::ui::SessionList {
             set row [my payload_bounds_row $path]
             # Retain in the model: a matched search row always; a browse row while it is
             # in bounds or running. An out-of-bounds, non-running browse row leaves.
-            if {$CriteriaActive} {
+            if {[::questlog::ui::any_criteria $Snapshot]} {
                 set retained 1
             } else {
                 # The subtree bound is hard; within it a running session bypasses the
@@ -3109,7 +3106,7 @@ oo::class create ::questlog::ui::SessionList {
         # move's rebuild draws it).
         if {![my has_folder $new_folder]} {
             set new_fid [my node_new folder "" $new_folder [dict create label ""]]
-            my node_set $new_fid expanded [expr {$CriteriaActive ? 1 : 0}]
+            my node_set $new_fid expanded [expr {[::questlog::ui::any_criteria $Snapshot] ? 1 : 0}]
             dict set FolderNode $new_folder $new_fid
             lappend Roots $new_fid
         }
@@ -3314,7 +3311,7 @@ oo::class create ::questlog::ui::SessionList {
         if {[llength $subtree] > 0 && ![my member_in_subtree $member $subtree]} {
             return subtree
         }
-        if {$CriteriaActive} { return search }
+        if {[::questlog::ui::any_criteria $Snapshot]} { return search }
         if {[::questlog::scan::cutoff_for $Snapshot] > 0} { return since }
         if {[dict getdef $Snapshot min_turns 1] > 1} { return min_turns }
         return unloaded
