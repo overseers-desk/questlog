@@ -1,14 +1,10 @@
 # questlog: agent notes
 
-## Invariants
-
-- A module's folder names its home and its rule: `vendor/` holds pure copies whose home is the teatotal collection, so keep each synced to teatotal's latest and land any change there first; `modules/` holds modules authored here, so changes land here, and where another project vendors one, re-vendor it there in the same act so the copies never diverge. Publishing a module to teatotal moves it from `modules/` to `vendor/` and reverses which way its changes flow, because teatotal is then the one stable place its updates arrive from.
-- A released `vendor/` file (`module-<version>.tm`) is edited in place only to test, and that edit is never committed; committable work-in-progress lives in a draft beside it, the next version with an alpha marker (`module-1.2a1.tm`). Tcl prefers the stable release, so a committed draft changes no normal run, and a test opts in with `package prefer latest` or an explicit version. Finalising strips the marker: the change lands at the module's home as the bumped release, the release file replaces the copy here, and the draft is deleted in the same act, so a released file's history holds only whole-file adds, deletes, and replacements mirroring the home.
-- Session data has one in-memory home, the session list's node store; the scanner is a stream producer whose only retained state is disk-derived memos (the folder-to-cwd resolver, the session-origin cache, and the arrival poll's directory mtimes), so a scanned row lives in exactly one place and every mutation is one store operation, not a multi-store transaction.
+The invariants live in [`INVARIANTS.md`](INVARIANTS.md): read them before moving a module between `vendor/` and `modules/`, touching a released `.tm`, adding session state, or wiring tests. A change that breaks one is a design change, the owner's to make.
 
 ## Test conventions
 
-Tests are standalone `test/test-*.tcl` scripts; `test/run-audit.sh` globs them, so a new file needs no wiring. Each locates the repo root from `info script`, adds `modules/` and `vendor/` to the tm path, carries its own `check` proc, and exits with its failure count. The coachman module's tests drive the harness against a fake claude binary through the `claude_bin` seam; nothing in the suite needs the real CLI.
+Each test locates the repo root from `info script`, adds `modules/` and `vendor/` to the tm path, carries its own `check` proc, and exits with its failure count. The coachman module's tests drive the harness against a fake claude binary through the `claude_bin` seam; nothing in the suite needs the real CLI.
 
 ## Verifying GUI changes
 
