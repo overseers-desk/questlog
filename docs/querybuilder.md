@@ -25,7 +25,7 @@ $qb add_criterion colour red         ;# returns the criterion's stable id
 
 A filter bar assembled by hand from comboboxes and entries has no owner: what is applied lives scattered across the widgets, folding the bar away hides values the user can no longer count or remove, and every new criterion type is another bespoke row of glue. querybuilder is the owner. It holds a set of criteria - each an applied instance of a *facet* the consumer declares - and draws each one as a chip with a live delete affordance. Expanded, it shows one editor row per facet and an add rail offering the optional facets not yet in use; collapsed, it shows just the chips. Every criterion carries a stable integer id assigned at add time: removal never renumbers the survivors and an edit preserves the id, so an id held across either stays good. What the criteria are *for* - what they select, restrict or colour - is the consumer's business entirely: values are opaque, the widget stores them, prints them through the caller's formatter, and hands them back.
 
-It is one half of the shared query contract at [../../query-contract.md](../../query-contract.md): the builder owns the `criteria` key of the query dict, and the sibling [searchfield](../searchfield/searchfield.md) owns `terms`, `case` and `region`. Neither knows the other, deliberately: each publishes a fragment, and the consumer merges the two dicts into one query and answers it at whatever cost its data demands. The pairing is a page of consumer code, not a megawidget; the contract file shows the whole merge.
+It is one half of the shared query contract at [query-contract.md](query-contract.md): the builder owns the `criteria` key of the query dict, and the sibling [searchfield](searchfield.md) owns `terms`, `case` and `region`. Neither knows the other, deliberately: each publishes a fragment, and the consumer merges the two dicts into one query and answers it at whatever cost its data demands. The pairing is a page of consumer code, not a megawidget; the contract file shows the whole merge.
 
 ## FACETS ARE DATA, NOT SUBCLASSES
 
@@ -99,7 +99,7 @@ Every value can be removed and every facet can be edited: there is no locked val
 
 ## REQUIREMENTS
 
-Tcl and Tk 8.6 or better. The structured half of the query contract; [searchfield](../searchfield/searchfield.md) is the typed half.
+Tcl and Tk 8.6 or better. The structured half of the query contract; [searchfield](searchfield.md) is the typed half.
 
 ## KEYWORDS
 

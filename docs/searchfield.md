@@ -22,7 +22,7 @@ $sf set_fragment {terms {foo "bar baz"} case 1}
 
 A search entry wired straight to the answer path scans the corpus on every keystroke; one wired to a button loses the live feel. And the entry never stays alone: a case toggle appears beside it, then a scope picker, then pills for applied filters, then `from:ana` syntax - each a fresh piece of ad hoc glue holding query state in widget variables. searchfield owns that one line. It tokenizes what is typed under a fixed grammar (whitespace separates terms, double quotes make a phrase ONE term, a backslashed quote is a literal), publishes on a debounced cadence while the user types, and carries the case toggle, the region picker, and a strip of consumer-supplied pills. What the terms are matched *against* - which corpus, at what cost, on which thread - is the owner's business entirely: the field hands the fragment over and asks nothing about it.
 
-It is one half of the shared query contract at [../../query-contract.md](../../query-contract.md): the field owns the `terms`, `case` and `region` keys of the query dict, and the sibling [querybuilder](../querybuilder/querybuilder.md) owns `criteria`. Neither knows the other, deliberately: each publishes a fragment, and the consumer merges the two dicts into one query and answers it. The pairing is a page of consumer code, not a megawidget; the contract file shows the whole merge, and the field's demo shows it running.
+It is one half of the shared query contract at [query-contract.md](query-contract.md): the field owns the `terms`, `case` and `region` keys of the query dict, and the sibling [querybuilder](querybuilder.md) owns `criteria`. Neither knows the other, deliberately: each publishes a fragment, and the consumer merges the two dicts into one query and answers it. The pairing is a page of consumer code, not a megawidget; the contract file shows the whole merge, and the field's demo shows it running.
 
 The grammar lives in two plain procs, `::searchfield::split_terms` and `::searchfield::join_terms`, exact inverses, so a consumer tokenizes or reassembles exactly as the field does and nowhere keeps a second grammar in sync.
 
@@ -62,7 +62,7 @@ The shared idiom - **fragment**, **set_fragment** *frag*, **reset**, **publish**
 
 ## REQUIREMENTS
 
-Tcl 9 and Tk. The floor comes from [leash](../leash/leash.md), this repository's own module, which the field uses so its debounce dies with the field; the field's own code asks no more than 8.6. The `-placeholder` hint is Tk 9's ttk entry option, and a Tk without it goes without the hint. The typed half of the query contract; [querybuilder](../querybuilder/querybuilder.md) is the structured half.
+Tcl 9 and Tk. The floor comes from [leash](leash.md), this repository's own module, which the field uses so its debounce dies with the field; the field's own code asks no more than 8.6. The `-placeholder` hint is Tk 9's ttk entry option, and a Tk without it goes without the hint. The typed half of the query contract; [querybuilder](querybuilder.md) is the structured half.
 
 ## KEYWORDS
 
