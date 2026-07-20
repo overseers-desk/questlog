@@ -123,7 +123,7 @@ proc ::questlog::ui::app::start {root {seed {}}} {
 
     # The <<ContextMenu>> virtual event already covers Button-2 on Aqua and
     # Button-3 on X11/Windows. Tk does not include Control-Click in it on
-    # macOS, so opt in here — Finder treats Ctrl+click as a secondary click,
+    # macOS, so opt in here - Finder treats Ctrl+click as a secondary click,
     # and users expect the same in this app.
     if {[tk windowingsystem] eq "aqua"} {
         event add <<ContextMenu>> <Control-Button-1>
