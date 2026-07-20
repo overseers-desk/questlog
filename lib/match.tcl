@@ -1,5 +1,6 @@
 package require Tcl 9
 package require json
+package require must
 
 # ::questlog::match - the pure record-matching and snippet-formatting logic of
 # search, shared verbatim by the main interpreter and the search worker threads.
@@ -398,10 +399,14 @@ proc ::questlog::match::leaf_name_hit {leaf names nocase} {
 # One extractor, one row shape: the browse and search passes cannot drift because
 # they build the same dict at the same join. The read strategy branches on
 # whether there are clauses to match:
-#   - Search (leaves present): read the whole file, matching each candidate line
-#     and collecting the name history; the current title (slug/ai_title) falls
-#     out of the last agentName/aiTitle the forward pass sees, for free, so a
-#     search-discovered session's row is complete without a second read.
+#   - Search (leaves present): a row pass reads the whole file, collecting the
+#     name history (the current title falls out of the last agentName/aiTitle
+#     it sees) and, under the file-level pre-gate, which gate literals the file
+#     holds. The parse pass covers the candidate lines: combined with the row
+#     pass when the gate cannot exclude, as a seek-0 re-read inside the same
+#     call for a file the gate keeps, and not at all in a file it rules out -
+#     which is most of a big corpus when a rare literal sits under AND. The
+#     caller still gets a complete row from the one call either way.
 #   - Browse (no leaves): stop the forward pass once the row's early fields are in
 #     hand (turn_count_cap turns, cwd, first_ts) and read the title from a tail
 #     window (whole-file fallback), so a large transcript is not read end to end
@@ -428,29 +433,68 @@ proc ::questlog::match::scan_file {path clauses {tick ""} {yield_lines 0}} {
     # needle the encoder never alters - printable ASCII minus `"` and `\` -
     # can be soundly tested against it. A needle outside that class (a quote,
     # a backslash, anything non-ASCII, which the writer may store as \uXXXX)
-    # and any regex pattern (whose anchors and classes would see the encoded
-    # text, not the content) instead make every line a candidate. Correctness
-    # over the fast path: gating on an untestable leaf produced silent false
-    # negatives, and a --not over one inverted them into false positives.
+    # makes every line a candidate. A regex leaf is gated by its required
+    # literal factor (must::factor); a pattern yielding none, or a factor
+    # outside the raw-safe class, also makes every line a candidate, and a
+    # (?i) factor is tested against the lowered line whatever the global
+    # case mode, since a regex carries its own case.
+    # Correctness over the fast path: gating on an untestable leaf produced
+    # silent false negatives, and a --not over one inverted them into false
+    # positives - which is why a negated leaf's literal still joins the gate.
     # A keyword leaf contributes its needle; a tool leaf its path/key, or its
     # tool name when the key is empty (the name appears verbatim in the
     # tool_use JSON).
+    # The same literals drive the file-level pre-gate: each file must satisfy
+    # the whole tree by itself (the caller drops a matchless file when clauses
+    # are active), so a positive leaf whose literal appears on no raw line of
+    # the file cannot be satisfied here, and when that already fails the tree
+    # the parse pass is skipped for the file wholesale. leafgate maps each
+    # leaf to its {literal fold} pair in glits, -1 when it has none; a negated
+    # leaf stays possible whatever the file shows, since absence of its
+    # literal argues for it, not against.
     set kw_needles  [list]   ;# raw-safe keyword needles, lowercased when nocase
-    set lit_substrs [list]   ;# raw-safe tool path/key/name, matched raw
+    set lit_substrs [list]   ;# raw-safe tool path/key/name and case-exact
+                             ;# regex factors, matched raw
+    set fold_lits   [list]   ;# (?i) regex factors, matched on the lowered line
     set always_candidate 0   ;# 1 = a leaf exists that no raw gate can test
+    set leafgate [list]      ;# per leaf: its glits index, -1 = untestable
+    set glits [list]         ;# distinct {literal fold} pairs the file gate seeks
+    set gidx [dict create]
     set raw_safe {^[\x20-\x21\x23-\x5B\x5D-\x7E]+$}
     if {$matching} {
         foreach leaf $leaves {
+            set glit ""
+            set gfold 0
             switch -- [dict get $leaf kind] {
                 keyword {
                     set nd [dict get $leaf needle]
                     if {[regexp $raw_safe $nd]} {
-                        lappend kw_needles [expr {$nocase ? [string tolower $nd] : $nd}]
+                        set glit [expr {$nocase ? [string tolower $nd] : $nd}]
+                        set gfold $nocase
+                        lappend kw_needles $glit
                     } else {
                         set always_candidate 1
                     }
                 }
-                regex { set always_candidate 1 }
+                regex {
+                    # must's contract leaves the haystack's representation to
+                    # the caller: the factor is sought in the JSON-encoded
+                    # raw line, so only one the encoder writes verbatim can
+                    # gate here.
+                    lassign [::must::factor [dict get $leaf needle]] fac ffold
+                    if {$fac ne "" && ![regexp $raw_safe $fac]} { set fac "" }
+                    if {$fac eq ""} {
+                        set always_candidate 1
+                    } else {
+                        set glit $fac
+                        set gfold $ffold
+                        if {$ffold} {
+                            lappend fold_lits $fac
+                        } else {
+                            lappend lit_substrs $fac
+                        }
+                    }
+                }
                 tool {
                     set val [dict get $leaf value]
                     if {[dict get $leaf sel] eq "file"} {
@@ -459,12 +503,32 @@ proc ::questlog::match::scan_file {path clauses {tick ""} {yield_lines 0}} {
                         set lit [expr {$val ne "" ? $val : [dict get $leaf spec]}]
                     }
                     if {[regexp $raw_safe $lit]} {
+                        set glit $lit
                         lappend lit_substrs $lit
                     } else {
                         set always_candidate 1
                     }
                 }
             }
+            if {$glit eq ""} {
+                lappend leafgate -1
+            } else {
+                set pair [list $glit $gfold]
+                if {![dict exists $gidx $pair]} {
+                    dict set gidx $pair [llength $glits]
+                    lappend glits $pair
+                }
+                lappend leafgate [dict get $gidx $pair]
+            }
+        }
+    }
+    # The gate can only exclude when some positive leaf is testable.
+    set gate_on 0
+    for {set lid 0} {$lid < [llength $leaves]} {incr lid} {
+        if {[lindex $leafgate $lid] >= 0
+                && ![dict get [lindex $leaves $lid] neg]} {
+            set gate_on 1
+            break
         }
     }
 
@@ -498,84 +562,140 @@ proc ::questlog::match::scan_file {path clauses {tick ""} {yield_lines 0}} {
     set names [dict create]
     if {[catch {open $path r} fh]} { return [list "" {}] }
     chan configure $fh -encoding utf-8 -profile replace
-    while {[chan gets $fh line] >= 0} {
-        incr lineno
-        if {$line eq ""} continue
-        # Origin from the opening record, via the shared opener_kind rule.
-        if {$kind eq ""} { set kind [::questlog::match::opener_kind $line] }
-        if {$cwd_hint eq "" && [regexp {"cwd":"([^"]+)"} $line -> m]} { set cwd_hint $m }
-        if {$first_ts eq "" && [regexp {"timestamp":"([^"]+)"} $line -> m]} { set first_ts $m }
-        if {$matching} {
-            # The session's worn names accumulate across the whole file (a rename
-            # appends, so the set is only complete at EOF), each kept with the line
-            # it first appeared on so a `names` hit can anchor; the LAST agentName
-            # and aiTitle are the session's current title (slug > ai_title). The
-            # string-first gate keeps the regex off the lines with no title field;
-            # customTitle is skipped - it feeds Claude Code's own picker, not the
-            # name the list shows.
-            if {[string first {"agentName":"} $line] >= 0
-                    && [regexp {"agentName":"([^"]+)"} $line -> m]} {
-                set agent_name $m
-                if {![dict exists $names $m]} { dict set names $m $lineno }
-            }
-            if {[string first {"aiTitle":"} $line] >= 0
-                    && [regexp {"aiTitle":"([^"]+)"} $line -> m]} {
-                set ai_title $m
-                if {![dict exists $names $m]} { dict set names $m $lineno }
-            }
-        }
-        if {[::questlog::jsonl::is_user_turn $line]} {
-            incr users
-            # First-prompt preview: string content captured with escaped pairs
-            # kept whole (clean_preview unescapes them); a block-array prompt
-            # carries its words in its first text block instead.
-            if {$users == 1} {
-                if {![regexp {"content":"((?:[^"\\]|\\.)*)"} $line -> first_user]} {
-                    regexp {"text":"((?:[^"\\]|\\.)*)"} $line -> first_user
+    # The row work and the leaf work share one loop body, driven by do_row /
+    # do_leaves. One combined pass is the norm; under the file gate the row
+    # pass runs first alone, noting which gate literals the file holds, and
+    # the parse pass runs (a seek-0 second read) only when the tree is still
+    # satisfiable - so a hopeless file is read once, with no json2dict at all.
+    set do_row 1
+    set do_leaves [expr {$matching && !$gate_on}]
+    set gfound [lrepeat [llength $glits] 0]
+    set gremain [llength $glits]
+    while 1 {
+        while {[chan gets $fh line] >= 0} {
+            incr lineno
+            if {$line eq ""} continue
+            # Origin from the opening record, via the shared opener_kind rule.
+            if {$do_row && $kind eq ""} { set kind [::questlog::match::opener_kind $line] }
+            if {$do_row && $cwd_hint eq ""
+                    && [regexp {"cwd":"([^"]+)"} $line -> m]} { set cwd_hint $m }
+            if {$do_row && $first_ts eq ""
+                    && [regexp {"timestamp":"([^"]+)"} $line -> m]} { set first_ts $m }
+            if {$do_row && $gate_on && $gremain > 0} {
+                set lhay ""
+                for {set gi 0} {$gi < [llength $glits]} {incr gi} {
+                    if {[lindex $gfound $gi]} continue
+                    lassign [lindex $glits $gi] glit gfold
+                    if {$gfold} {
+                        if {$lhay eq ""} { set lhay [string tolower $line] }
+                        set ghit [expr {[string first $glit $lhay] >= 0}]
+                    } else {
+                        set ghit [expr {[string first $glit $line] >= 0}]
+                    }
+                    if {$ghit} {
+                        lset gfound $gi 1
+                        incr gremain -1
+                    }
                 }
             }
-        }
-        if {!$matching} {
-            # Browse: the early break scan_one relied on - once turn_count_cap
-            # turns, the cwd and the first timestamp are known, the tail read
-            # below supplies the title, so the middle of a big file is skipped.
-            if {$cap > 0 && $users >= $cap && $cwd_hint ne "" && $first_ts ne ""} break
-            continue
-        }
-        set candidate $always_candidate
-        if {!$candidate && [llength $kw_needles] > 0} {
-            set hay [expr {$nocase ? [string tolower $line] : $line}]
-            foreach n $kw_needles {
-                if {[string first $n $hay] >= 0} { set candidate 1; break }
-            }
-        }
-        if {!$candidate} {
-            foreach s $lit_substrs {
-                if {[string first $s $line] >= 0} { set candidate 1; break }
-            }
-        }
-        if {$candidate && ![catch {::json::json2dict $line} rec]} {
-            # Each leaf is session-satisfied once any record matches it in its
-            # regions; buffer the snippets only of positively-used leaves, so a
-            # negated leaf's incidental matches never pollute the result pane.
-            for {set lid 0} {$lid < $nleaves} {incr lid} {
-                set leaf [lindex $leaves $lid]
-                set lr [::questlog::match::leaf_record_hit $leaf $rec $nocase]
-                if {![dict get $lr sat]} continue
-                dict set leafsat $lid 1
-                if {[dict get $leaf neg]} continue
-                foreach hit [dict get $lr hits] {
-                    lassign $hit btype content
-                    set key "$lineno $btype $content"
-                    if {[dict exists $seen $key]} continue
-                    dict set seen $key 1
-                    lappend buffer [list $lineno $btype $content]
+            if {$do_row && $matching} {
+                # The session's worn names accumulate across the whole file (a rename
+                # appends, so the set is only complete at EOF), each kept with the line
+                # it first appeared on so a `names` hit can anchor; the LAST agentName
+                # and aiTitle are the session's current title (slug > ai_title). The
+                # string-first gate keeps the regex off the lines with no title field;
+                # customTitle is skipped - it feeds Claude Code's own picker, not the
+                # name the list shows.
+                if {[string first {"agentName":"} $line] >= 0
+                        && [regexp {"agentName":"([^"]+)"} $line -> m]} {
+                    set agent_name $m
+                    if {![dict exists $names $m]} { dict set names $m $lineno }
+                }
+                if {[string first {"aiTitle":"} $line] >= 0
+                        && [regexp {"aiTitle":"([^"]+)"} $line -> m]} {
+                    set ai_title $m
+                    if {![dict exists $names $m]} { dict set names $m $lineno }
                 }
             }
+            if {$do_row && [::questlog::jsonl::is_user_turn $line]} {
+                incr users
+                # First-prompt preview: string content captured with escaped pairs
+                # kept whole (clean_preview unescapes them); a block-array prompt
+                # carries its words in its first text block instead.
+                if {$users == 1} {
+                    if {![regexp {"content":"((?:[^"\\]|\\.)*)"} $line -> first_user]} {
+                        regexp {"text":"((?:[^"\\]|\\.)*)"} $line -> first_user
+                    }
+                }
+            }
+            if {!$matching} {
+                # Browse: the early break scan_one relied on - once turn_count_cap
+                # turns, the cwd and the first timestamp are known, the tail read
+                # below supplies the title, so the middle of a big file is skipped.
+                if {$cap > 0 && $users >= $cap && $cwd_hint ne "" && $first_ts ne ""} break
+                continue
+            }
+            if {$do_leaves} {
+                set candidate $always_candidate
+                if {!$candidate && [llength $kw_needles] > 0} {
+                    set hay [expr {$nocase ? [string tolower $line] : $line}]
+                    foreach n $kw_needles {
+                        if {[string first $n $hay] >= 0} { set candidate 1; break }
+                    }
+                }
+                if {!$candidate} {
+                    foreach s $lit_substrs {
+                        if {[string first $s $line] >= 0} { set candidate 1; break }
+                    }
+                }
+                if {!$candidate && [llength $fold_lits] > 0} {
+                    set fhay [string tolower $line]
+                    foreach s $fold_lits {
+                        if {[string first $s $fhay] >= 0} { set candidate 1; break }
+                    }
+                }
+                if {$candidate && ![catch {::json::json2dict $line} rec]} {
+                    # Each leaf is session-satisfied once any record matches it in
+                    # its regions; buffer the snippets only of positively-used
+                    # leaves, so a negated leaf's incidental matches never pollute
+                    # the result pane.
+                    for {set lid 0} {$lid < $nleaves} {incr lid} {
+                        set leaf [lindex $leaves $lid]
+                        set lr [::questlog::match::leaf_record_hit $leaf $rec $nocase]
+                        if {![dict get $lr sat]} continue
+                        dict set leafsat $lid 1
+                        if {[dict get $leaf neg]} continue
+                        foreach hit [dict get $lr hits] {
+                            lassign $hit btype content
+                            set key "$lineno $btype $content"
+                            if {[dict exists $seen $key]} continue
+                            dict set seen $key 1
+                            lappend buffer [list $lineno $btype $content]
+                        }
+                    }
+                }
+            }
+            if {$tick ne "" && $yield_lines > 0 && $lineno % $yield_lines == 0} {
+                if {[{*}$tick $lineno]} { close $fh; return [list "" {}] }
+            }
         }
-        if {$tick ne "" && $yield_lines > 0 && $lineno % $yield_lines == 0} {
-            if {[{*}$tick $lineno]} { close $fh; return [list "" {}] }
+        if {!$gate_on || $do_leaves} break
+        # End of the gated row pass: a positive leaf whose literal the file never
+        # showed cannot be satisfied; when that already fails the tree, the parse
+        # pass has nothing to find and the loop ends with the row alone. The tail
+        # below then evaluates the tree over untouched leafsat and yields no
+        # matches - the same {row {}} a scanned-and-unsatisfied file returns.
+        set possible [dict create]
+        for {set lid 0} {$lid < $nleaves} {incr lid} {
+            set gi [lindex $leafgate $lid]
+            dict set possible $lid [expr {$gi < 0
+                || [dict get [lindex $leaves $lid] neg] || [lindex $gfound $gi]}]
         }
+        if {![::questlog::match::eval_tree $tree $possible]} break
+        chan seek $fh 0
+        set lineno 0
+        set do_row 0
+        set do_leaves 1
     }
     # Title: the search pass has the current agentName/aiTitle from its whole-file
     # forward sweep; the browse pass early-broke, so it reads them from a tail

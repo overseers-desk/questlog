@@ -48,7 +48,10 @@ proc ::questlog::search::dispatch {obj_cmd args} {
 # set_caps snapshot, since it cannot reach ::questlog::config itself, which
 # stays the one home for the numbers; the worker carries a derived copy.
 proc ::questlog::search::worker_prelude {root} {
-    return "source [list [file join $root lib jsonl.tcl]]
+    return "foreach d [list [list [file join $root modules] [file join $root vendor]]] {
+    if {\$d ni \[::tcl::tm::path list]} { ::tcl::tm::path add \$d }
+}
+source [list [file join $root lib jsonl.tcl]]
 source [list [file join $root lib match.tcl]]
 ::questlog::match::set_caps [list [dict create \
     content_cap     [::questlog::config::get content_cap] \
@@ -258,10 +261,13 @@ set ::questlog::search::WorkerScript {
 # (empty key = any use).
 #
 # Per file: pre-gate each raw line by any leaf's literal (the needle for a
-# keyword, the pattern run for regex, the path/key/name for a tool leaf) so the
-# JSON parse is skipped on lines that cannot contribute; on a candidate line,
-# parse once and score each leaf via leaf_record_hit, marking leaves satisfied
-# and buffering the snippets of positively-used leaves. At end of file, if the
+# keyword, the required factor for a regex - none extracted leaves it
+# ungated - or the path/key/name for a tool leaf) so the JSON parse is
+# skipped on lines that cannot contribute; on a candidate line, parse once and
+# score each leaf via leaf_record_hit, marking leaves satisfied and buffering
+# the snippets of positively-used leaves. A file-level gate over the same
+# literals sits above this one, inside scan_file: a file that cannot satisfy
+# the clause tree at all skips its parse work wholesale. At end of file, if the
 # tree holds, deliver the file's row and its match list (in line order) together
 # through OnFile; each match is a dict {path lineoff ts btype content folder}.
 #
