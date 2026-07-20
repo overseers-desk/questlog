@@ -17,7 +17,7 @@ package require leash
 # only, which no case here exercises.
 set QUESTLOG_VERSION 0
 
-source [file join $ROOT config.tcl]
+set ::questlog_config_only 1; source [file join $ROOT questlog]
 source [file join $ROOT lib scan.tcl]
 source [file join $ROOT lib jsonl.tcl]
 source [file join $ROOT lib match.tcl]

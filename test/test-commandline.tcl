@@ -10,7 +10,7 @@ set ROOT [file dirname [file dirname [file normalize [info script]]]]
 ::tcl::tm::path add [file join $ROOT vendor]
 package require leash
 set QUESTLOG_VERSION 0
-source [file join $ROOT config.tcl]
+set ::questlog_config_only 1; source [file join $ROOT questlog]
 # --subtree canonicalises its directory through lib/path.tcl, which wraps `file`
 # to guard deletes under the projects store. This test writes nothing, so the
 # guard costs it nothing.

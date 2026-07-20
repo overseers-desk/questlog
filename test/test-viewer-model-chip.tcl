@@ -26,7 +26,8 @@ package require streamtree
 # and the Tk-free libs it reads (including cost.tcl, whose model_family/fmt_model
 # the chip resolves the family and label through), the theme (named fonts +
 # palette, where the model_* roles live), then the class itself.
-foreach f {config.tcl lib/debug.tcl lib/path.tcl lib/jsonl.tcl lib/match.tcl \
+set ::questlog_config_only 1; source [file join $ROOT questlog]
+foreach f {lib/debug.tcl lib/path.tcl lib/jsonl.tcl lib/match.tcl \
            lib/cost.tcl ui/theme.tcl ui/viewer.tcl} {
     source [file join $ROOT $f]
 }

@@ -1,7 +1,7 @@
 #!/usr/bin/env tclsh9.0
 # A GUI dialog popping up during a headless run was a recurring annoyance. Tk
 # enters the process only through the ui/ layer, so the command-line path (the
-# launcher, config.tcl, lib/, cli/) must stay Tk-free: no `package require Tk`,
+# launcher, lib/, cli/) must stay Tk-free: no `package require Tk`,
 # and no library sourcing a ui/ file. This test reads those files and fails if
 # either creeps back in. The launcher is the one legitimate sourcer of ui/ (its
 # GUI branch), so it is checked only for the require.
@@ -42,7 +42,7 @@ proc sources_ui {body} {
 set launcher [file join $ROOT questlog]
 check "questlog launcher: no 'package require Tk'" 0 [requires_tk [slurp $launcher]]
 
-set lib_files [list [file join $ROOT config.tcl]]
+set lib_files [list]
 foreach d {lib cli} {
     lappend lib_files {*}[lsort [glob -nocomplain [file join $ROOT $d *.tcl]]]
 }

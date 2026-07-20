@@ -16,7 +16,6 @@ override_dh_auto_install:
 	cp ui/*.tcl  $(SHARE)/ui/
 	cp cli/*.tcl $(SHARE)/cli/
 	cp data/*.csv $(SHARE)/data/
-	cp config.tcl $(SHARE)/
 	cp modules/*.tm $(SHARE)/modules/
 	cp vendor/*.tm $(SHARE)/vendor/
 	cp assets/questlog.svg $(SHARE)/assets/

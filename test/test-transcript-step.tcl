@@ -9,7 +9,7 @@
 #   tclsh9.0 test/test-transcript-step.tcl
 package require Tcl 9
 set ROOT [file dirname [file dirname [file normalize [info script]]]]
-source [file join $ROOT config.tcl]
+set ::questlog_config_only 1; source [file join $ROOT questlog]
 source [file join $ROOT lib jsonl.tcl]
 # extract_text routes tool_use blocks through ::questlog::match; source it and
 # inject the caps the launcher does so a body drawn from a tool call would render

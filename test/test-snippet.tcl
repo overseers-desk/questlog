@@ -4,7 +4,7 @@
 #   tclsh9.0 test/test-snippet.tcl
 
 set ROOT [file dirname [file dirname [file normalize [info script]]]]
-source [file join $ROOT config.tcl]
+set ::questlog_config_only 1; source [file join $ROOT questlog]
 source [file join $ROOT lib match.tcl]
 ::questlog::match::set_caps [dict create \
     content_cap     [::questlog::config::get content_cap] \

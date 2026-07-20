@@ -1,7 +1,7 @@
 #!/usr/bin/env tclsh9.0
 package require Tcl 9
 set ROOT [file dirname [file dirname [file normalize [info script]]]]
-source [file join $ROOT config.tcl]
+set ::questlog_config_only 1; source [file join $ROOT questlog]
 source [file join $ROOT lib jsonl.tcl]
 # extract_blocks/leaf_record_hit live in ::questlog::match, which reads the
 # display caps from ::questlog::config; source it and inject the caps the way the

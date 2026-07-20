@@ -23,7 +23,8 @@ package require streamtree
 # Mirror the launcher's GUI source order for the subset the Viewer needs: config
 # and the Tk-free libs it reads, the theme (named fonts + palette), then the
 # class itself.
-foreach f {config.tcl lib/debug.tcl lib/path.tcl lib/jsonl.tcl lib/match.tcl \
+set ::questlog_config_only 1; source [file join $ROOT questlog]
+foreach f {lib/debug.tcl lib/path.tcl lib/jsonl.tcl lib/match.tcl \
            lib/cost.tcl ui/theme.tcl ui/viewer.tcl} {
     source [file join $ROOT $f]
 }

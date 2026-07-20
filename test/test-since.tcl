@@ -5,7 +5,7 @@ set ROOT [file dirname [file dirname [file normalize [info script]]]]
 ::tcl::tm::path add [file join $ROOT modules]
 ::tcl::tm::path add [file join $ROOT vendor]
 package require leash
-source [file join $ROOT config.tcl]
+set ::questlog_config_only 1; source [file join $ROOT questlog]
 source [file join $ROOT lib path.tcl]
 source [file join $ROOT lib jsonl.tcl]
 source [file join $ROOT lib match.tcl]

@@ -392,7 +392,7 @@ proc ::questlog::cli::main::worker_pool {n} {
     set root $::ROOT
     set initcmd "::tcl::tm::path add [list [file join $root modules]]
 ::tcl::tm::path add [list [file join $root vendor]]
-source [list [file join $root config.tcl]]
+set ::questlog_config_only 1; source [list [file join $root questlog]]
 [::questlog::search::worker_prelude $root]
 source [list [file join $root lib cost.tcl]]
 source [list [file join $root cli cost.tcl]]

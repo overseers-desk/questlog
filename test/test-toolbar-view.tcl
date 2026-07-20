@@ -13,7 +13,8 @@ set ROOT [file dirname [file dirname [file normalize [info script]]]]
 ::tcl::tm::path add [file join $ROOT modules]
 ::tcl::tm::path add [file join $ROOT vendor]
 package require leash
-foreach f {config.tcl lib/debug.tcl lib/cost.tcl ui/theme.tcl lib/path.tcl \
+set ::questlog_config_only 1; source [file join $ROOT questlog]
+foreach f {lib/debug.tcl lib/cost.tcl ui/theme.tcl lib/path.tcl \
            lib/scan.tcl lib/listfilter.tcl lib/search.tcl ui/toolbar.tcl} {
     source [file join $ROOT $f]
 }

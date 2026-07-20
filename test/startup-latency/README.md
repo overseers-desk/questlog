@@ -30,7 +30,7 @@ Measured with this instrument on 2026-07-17:
 | First row visible | 0.78-0.85s on a busy host, 0.79-0.83s on a quiet one |
 | Rows | stream in as the scan progresses |
 
-The cost column keeps filling for tens of seconds after the first rows appear, which is expected. The scan coroutine yields every 20 files (`scan_yield_files` in `config.tcl`) and each chunk boundary paints what it added (`update idletasks` in `on_scan_progress`, `ui/app.tcl`), so the list stays live throughout.
+The cost column keeps filling for tens of seconds after the first rows appear, which is expected. The scan coroutine yields every 20 files (`scan_yield_files`, a tunable at the top of `questlog`) and each chunk boundary paints what it added (`update idletasks` in `on_scan_progress`, `ui/app.tcl`), so the list stays live throughout.
 
 ## Why the instrument exists
 

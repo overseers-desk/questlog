@@ -33,7 +33,6 @@ cp lib/*.tcl %{buildroot}%{_datadir}/%{name}/lib/
 cp ui/*.tcl  %{buildroot}%{_datadir}/%{name}/ui/
 cp cli/*.tcl %{buildroot}%{_datadir}/%{name}/cli/
 cp data/*.csv %{buildroot}%{_datadir}/%{name}/data/
-cp config.tcl %{buildroot}%{_datadir}/%{name}/
 cp modules/*.tm %{buildroot}%{_datadir}/%{name}/modules/
 cp vendor/*.tm %{buildroot}%{_datadir}/%{name}/vendor/
 cp assets/questlog.svg %{buildroot}%{_datadir}/%{name}/assets/

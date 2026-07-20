@@ -1,7 +1,7 @@
 #!/usr/bin/env tclsh9.0
 package require Tcl 9
 set ROOT [file dirname [file dirname [file normalize [info script]]]]
-source [file join $ROOT config.tcl]
+set ::questlog_config_only 1; source [file join $ROOT questlog]
 source [file join $ROOT lib jsonl.tcl]
 # extract_blocks routes tool_use blocks through ::questlog::match; source it and
 # inject the caps the launcher does, so the redacted_thinking assertion below
