@@ -52,7 +52,6 @@ namespace eval ::questlog::ui::app {
     variable SearchActive     ;# 1 while a search is in flight
     variable CostOutstanding  ;# cost jobs posted but not yet returned (the cost pass is live when > 0)
     variable PrevSnapshot     ;# the last published snapshot, to skip a rebuild on a no-op republish
-    variable FilterState      ;# the strip's filter state, as the list last handed it back; the poll gathers membership for these filters
 }
 
 proc ::questlog::ui::app::start {root {seed {}}} {
@@ -91,7 +90,6 @@ proc ::questlog::ui::app::start {root {seed {}}} {
     variable SearchActive
     variable CostOutstanding
     variable PrevSnapshot
-    variable FilterState
 
     set Root $root
     set StatusMode browse
@@ -105,9 +103,6 @@ proc ::questlog::ui::app::start {root {seed {}}} {
     set CostOutstanding 0
     # The first publish has nothing to diff against, so it always takes the heavy path.
     set PrevSnapshot {}
-    # No filter is on until the reader flips one on the strip, so the poll gathers
-    # no membership until the list hands a filter change back through on_filter_change.
-    set FilterState {}
     set StatusVar [bounds_status]
     set Running [dict create]
     set CurrentQuery {}
@@ -442,13 +437,12 @@ proc ::questlog::ui::app::run_tick {} {
 # re-filter and the count lands a moment behind it. The model filter has no
 # membership outside the loaded rows, so member_filters leaves it out.
 # filter_members reduces the sets to what the filters jointly claim (the
-# intersection when both are on). Which filters are on comes from FilterState
-# (set by on_filter_change), not the toolbar's published snapshot.
+# intersection when both are on). Which filters are on comes from the list's own
+# filter state (attr_filter_all), not the toolbar's published snapshot.
 proc ::questlog::ui::app::refresh_filter_members {} {
     variable SessionList
-    variable FilterState
     set sets [list]
-    foreach f [::questlog::listfilter::member_filters $FilterState] {
+    foreach f [::questlog::listfilter::member_filters [$SessionList attr_filter_all]] {
         switch -- $f {
             running    { lappend sets [::questlog::ui::live::running_sessions] }
             bookmarked { lappend sets [bookmarked_members] }
@@ -458,12 +452,11 @@ proc ::questlog::ui::app::refresh_filter_members {} {
 }
 
 # A strip filter moved. The list has already re-derived the view in place and
-# handed the new filter state back here; remember it so the poll gathers
-# membership for the same filters, then gather now so the count lands with the
-# toggle. No bounds or search changed, so nothing re-scans.
+# holds the new filter state; gather membership now so the count lands with the
+# toggle. No bounds or search changed, so nothing re-scans. The handback carries
+# the state, but refresh_filter_members reads it from the list (the poll and the
+# scan-done recount call it with no state in hand), so the arg is unused here.
 proc ::questlog::ui::app::on_filter_change {state} {
-    variable FilterState
-    set FilterState $state
     refresh_filter_members
 }
 
