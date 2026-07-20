@@ -45,7 +45,7 @@ proc ::questlog::search::dispatch {obj_cmd args} {
 # root are reachable. A worker is a separate interp; it sources the same
 # lib/jsonl.tcl and lib/match.tcl the main interp uses (so the matching logic
 # has one home, not a hand-synced copy) and then receives the display caps as a
-# set_caps snapshot, since it cannot reach ::questlog::config itself. config.tcl
+# set_caps snapshot, since it cannot reach ::questlog::config itself, which
 # stays the one home for the numbers; the worker carries a derived copy.
 proc ::questlog::search::worker_prelude {root} {
     return "source [list [file join $root lib jsonl.tcl]]

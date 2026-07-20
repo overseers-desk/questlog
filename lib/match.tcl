@@ -13,7 +13,7 @@ package require json
 # The five display caps the matchers honour live in ::questlog::config, which a
 # worker cannot read, so they are injected once through set_caps - from config
 # in the main interp, from prelude literals in a worker - and read back through
-# cap. config.tcl stays the authored home; Caps is a derived snapshot.
+# cap. ::questlog::config stays the authored home; Caps is a derived snapshot.
 
 namespace eval ::questlog::match {
     variable Caps [dict create]

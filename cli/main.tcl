@@ -358,7 +358,7 @@ proc ::questlog::cli::main::has_window_spend {cost_info} {
 # Worker count for the CLI's file pool: 0 when Thread is unavailable or
 # QUESTLOG_THREADS=0 (the single-thread fallback), the env override when set,
 # else a core-based default. Same formula and config band as the search
-# fan-out's picker (config.tcl stays the one home for the numbers).
+# fan-out's picker (::questlog::config stays the one home for the numbers).
 proc ::questlog::cli::main::worker_count {} {
     if {![::questlog::search::thread_available]} { return 0 }
     set v [::questlog::search::env_threads]
