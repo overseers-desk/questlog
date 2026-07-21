@@ -1,6 +1,7 @@
 package require Tcl 9
 package require json
-package provide tallyman 1.0
+package require logman
+package provide tallyman 1.1
 
 # tallyman - prices a Claude Code session's token usage.
 #
@@ -44,22 +45,6 @@ package provide tallyman 1.0
 # unpriced session reads as a blank figure rather than a false zero.
 
 namespace eval tallyman {}
-
-# ── transcript predicate ───────────────────────────────────────────────────
-
-# 1 iff this raw line is a real user turn: a user record carrying a typed
-# prompt, not a harness-written echo. The message holds "role":"user" with
-# either a string "content" or a block array whose FIRST block is a prompt
-# block (text or image, the forms a typed prompt with a pasted image takes) - a
-# tool_result record is also role:user but its array opens with a tool_result
-# block, so it stays excluded. The string content must not be one of the
-# harness echoes the user never typed - a slash-command expansion, its captured
-# stdout or caveat, or a background-task notification. A line-level regex, no
-# parse: it runs over every line of every session file.
-proc tallyman::_is_user_turn {line} {
-    return [expr {[regexp {"role":"user","content":(?:"|\[\{"type":"(?:text|image)")} $line] \
-        && ![regexp {"content":"<(?:command-name|local-command-stdout|local-command-caveat|task-notification)>} $line]}]
-}
 
 # ── rates ──────────────────────────────────────────────────────────────────
 
@@ -295,7 +280,7 @@ proc tallyman::parse_lines {lines} {
         # conversation timeline, so skip outright.
         if {[regexp {"type":"file-history-snapshot"} $line]} continue
         # A turn is a prompt the user actually wrote.
-        if {[_is_user_turn $line]} { incr turns }
+        if {[::logman::is_user_turn $line]} { incr turns }
         if {[regexp {"timestamp":"([^"]+)"} $line -> m]} {
             if {$first_ts eq ""} { set first_ts $m }
             set last_ts $m
@@ -454,7 +439,7 @@ proc tallyman::accrue_lines {lines lo hi rates cap} {
         if {[regexp {"timestamp":"([^"]+)"} $line -> m]} { set e [_iso_to_epoch $m] }
         set in_win [expr {$e ne "" && $e > $lo && ($hi eq "" || $e <= $hi)}]
 
-        if {$in_win && [_is_user_turn $line]} {
+        if {$in_win && [::logman::is_user_turn $line]} {
             incr turns
         }
         if {$in_win} { lappend stamps [list $e [_classify_stamp $line $ask_ids]] }
