@@ -1,6 +1,7 @@
 package require Tcl 9
 package require json
-package provide linesman 1.0
+package require logman
+package provide linesman 1.1
 
 # linesman - rules on assertions of fact about one finished Claude Code
 # session, read from its .jsonl transcript after the whistle.
@@ -146,8 +147,7 @@ proc linesman::sweep {sid root} {
                 lappend gaps [dict create kind $kind file $f line $n]
                 continue
             }
-            if {[dict getdef $d isCompactSummary 0] ||
-                [dict getdef $d isVisibleInTranscriptOnly 0]} continue
+            if {[::logman::is_hidden_record $d]} continue
             set t [dict getdef $d type ""]
             if {$t eq "assistant"} {
                 if {[dict getdef $d isApiErrorMessage 0]} {
