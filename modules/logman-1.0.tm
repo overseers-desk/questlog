@@ -75,8 +75,8 @@ proc ::logman::is_tool_result_record {rec} {
 
 # 1 iff a parsed record is hidden from the transcript reading: a compact
 # summary, or a record the harness marks isVisibleInTranscriptOnly (shown in
-# the live UI, not part of the conversation). The skip a record-and-act
-# consumer applies before classifying anything else.
+# the live UI, not part of the conversation). Callers that walk records skip
+# this before classifying anything else.
 proc ::logman::is_hidden_record {rec} {
     return [expr {[dict getdef $rec isCompactSummary 0] ||
                   [dict getdef $rec isVisibleInTranscriptOnly 0]}]
