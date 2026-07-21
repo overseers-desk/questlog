@@ -1,5 +1,5 @@
 #!/usr/bin/env tclsh9.0
-# Direct unit tests for ::questlog::jsonl::transcript_step, the one shared
+# Direct unit tests for ::logman::transcript_step, the one shared
 # per-record segmenter the markdown export and the session viewer both fold over
 # (issue #31). The cues under test: a compaction boundary resets the clock and is
 # the sole event; an empty-body record emits nothing but advances the clock when
@@ -10,7 +10,7 @@
 package require Tcl 9
 set ROOT [file dirname [file dirname [file normalize [info script]]]]
 set ::questlog_config_only 1; source [file join $ROOT questlog]
-source [file join $ROOT lib jsonl.tcl]
+package require logman
 # extract_text routes tool_use blocks through ::questlog::match; source it and
 # inject the caps the launcher does so a body drawn from a tool call would render
 # the same text the app exports. The cases here carry string bodies, but the
@@ -39,8 +39,8 @@ proc check {name expected actual} {
 # record (0 for none), and the idle-gap threshold in minutes; it returns
 # {events new_last_ts}. Feed it literal JSON through parse_line.
 proc step {json last_ts idle} {
-    return [::questlog::jsonl::transcript_step \
-        [::questlog::jsonl::parse_line $json] $last_ts $idle]
+    return [::logman::transcript_step \
+        [::logman::parse_line $json] $last_ts $idle]
 }
 # A stamped user prompt whose extract_text body is "hi" - one content record.
 proc user_at {ts} {
@@ -49,9 +49,9 @@ proc user_at {ts} {
 
 # Base clock and three offsets from it, parsed through the same parser the step
 # uses so the epoch assertions below cannot drift from its arithmetic.
-set e0  [::questlog::jsonl::parse_iso "2026-01-01T00:00:00.000Z"]  ;# base
-set e30 [::questlog::jsonl::parse_iso "2026-01-01T00:30:00.000Z"]  ;# +30 min
-set e45 [::questlog::jsonl::parse_iso "2026-01-01T00:45:00.000Z"]  ;# +45 min
+set e0  [::logman::parse_iso "2026-01-01T00:00:00.000Z"]  ;# base
+set e30 [::logman::parse_iso "2026-01-01T00:30:00.000Z"]  ;# +30 min
+set e45 [::logman::parse_iso "2026-01-01T00:45:00.000Z"]  ;# +45 min
 
 # ---- compact boundary: sole event, clock reset ----------------------------
 # A compaction boundary emits {compact} and nothing else, and returns a clock of

@@ -2,7 +2,7 @@
 package require Tcl 9
 set ROOT [file dirname [file dirname [file normalize [info script]]]]
 set ::questlog_config_only 1; source [file join $ROOT questlog]
-source [file join $ROOT lib jsonl.tcl]
+package require logman
 # extract_blocks routes tool_use blocks through ::questlog::match; source it and
 # inject the caps the launcher does, so the redacted_thinking assertion below
 # exercises the same extract_blocks the app runs.
@@ -28,7 +28,7 @@ proc check {name expected actual} {
 
 # is_turn_start takes a PARSED record; feed it literal JSON through parse_line.
 proc ts {json} {
-    return [::questlog::jsonl::is_turn_start [::questlog::jsonl::parse_line $json]]
+    return [::logman::is_turn_start [::logman::parse_line $json]]
 }
 
 # ---- is_turn_start: the viewer's turn predicate ----------------------------
@@ -95,7 +95,7 @@ check turn_user_no_message 0 [ts {{"type":"user"}}]
 # A redacted_thinking block now emits a thinking pair with the placeholder,
 # parity with extract_array_text; the block was silently dropped before.
 check blocks_assistant_redacted_thinking {thinking {[redacted thinking]}} \
-    [::questlog::jsonl::extract_blocks [::questlog::jsonl::parse_line \
+    [::logman::extract_blocks [::logman::parse_line \
         {{"type":"assistant","message":{"content":[{"type":"redacted_thinking"}]}}}]]
 
 if {$fails > 0} {

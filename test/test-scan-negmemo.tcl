@@ -7,7 +7,7 @@
 # nothing was cached, so a folder of N such rows read all N files N times (N^2
 # transcript reads). The fix memoises the negative resolution for the pass.
 #
-# peek_folder_cwd is the only caller of ::questlog::jsonl::first_cwd, so counting
+# peek_folder_cwd is the only caller of ::logman::first_cwd, so counting
 # first_cwd calls isolates peek reads from scan_one's own row reads: one peek of
 # a fully-unresolvable N-file folder makes exactly N first_cwd calls, so a pass
 # that reads the folder once totals N, and the unfixed once-per-row behaviour
@@ -21,7 +21,7 @@ package require leash
 set ::questlog_config_only 1; source [file join $ROOT questlog]
 source [file join $ROOT lib path.tcl]
 source [file join $ROOT lib listfilter.tcl]
-source [file join $ROOT lib jsonl.tcl]
+package require logman
 source [file join $ROOT lib match.tcl]
 source [file join $ROOT lib scan.tcl]
 source [file join $ROOT lib cost.tcl]
@@ -56,10 +56,10 @@ for {set i 1} {$i <= $N} {incr i} {
 }
 
 # Count peek reads by wrapping first_cwd, peek_folder_cwd's only file reader.
-rename ::questlog::jsonl::first_cwd ::questlog::jsonl::_real_first_cwd
-proc ::questlog::jsonl::first_cwd {path} {
+rename ::logman::first_cwd ::logman::_real_first_cwd
+proc ::logman::first_cwd {path} {
     incr ::first_cwd_calls
-    return [::questlog::jsonl::_real_first_cwd $path]
+    return [::logman::_real_first_cwd $path]
 }
 
 # No known_mtime callback: every path is scanned on every pass, so each pass
@@ -91,8 +91,8 @@ check pass2_one_peek_again $N $::first_cwd_calls
 
 $s destroy
 
-rename ::questlog::jsonl::first_cwd {}
-rename ::questlog::jsonl::_real_first_cwd ::questlog::jsonl::first_cwd
+rename ::logman::first_cwd {}
+rename ::logman::_real_first_cwd ::logman::first_cwd
 ::questlog::path::_real_file delete -force $PROOT
 
 if {$fails > 0} {

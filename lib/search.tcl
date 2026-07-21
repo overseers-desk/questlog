@@ -42,16 +42,17 @@ proc ::questlog::search::dispatch {obj_cmd args} {
 }
 
 # The worker init prelude, built in the main interp where config and the repo
-# root are reachable. A worker is a separate interp; it sources the same
-# lib/jsonl.tcl and lib/match.tcl the main interp uses (so the matching logic
-# has one home, not a hand-synced copy) and then receives the display caps as a
-# set_caps snapshot, since it cannot reach ::questlog::config itself, which
-# stays the one home for the numbers; the worker carries a derived copy.
+# root are reachable. A worker is a separate interp; it requires the same
+# logman module and sources the same lib/match.tcl the main interp uses (so
+# the matching logic has one home, not a hand-synced copy) and then receives
+# the display caps as a set_caps snapshot, since it cannot reach
+# ::questlog::config itself, which stays the one home for the numbers; the
+# worker carries a derived copy.
 proc ::questlog::search::worker_prelude {root} {
     return "foreach d [list [list [file join $root modules] [file join $root vendor]]] {
     if {\$d ni \[::tcl::tm::path list]} { ::tcl::tm::path add \$d }
 }
-source [list [file join $root lib jsonl.tcl]]
+package require logman
 source [list [file join $root lib match.tcl]]
 ::questlog::match::set_caps [list [dict create \
     content_cap     [::questlog::config::get content_cap] \
@@ -210,7 +211,7 @@ proc ::questlog::search::clauses_any {clauses} {
 }
 
 # Body sourced into each worker thread. A worker is a separate interp, so it
-# sources lib/jsonl.tcl and lib/match.tcl (prepended by worker_prelude) and
+# loads the logman module and lib/match.tcl (prepended by worker_prelude) and
 # calls the same matching procs the main interp does; only worker_run, which
 # fans results back over thread::send, is worker-specific.
 set ::questlog::search::WorkerScript {

@@ -10,7 +10,7 @@ package require Tcl 9
 set ROOT [file dirname [file dirname [file normalize [info script]]]]
 set ::questlog_config_only 1; source [file join $ROOT questlog]
 source [file join $ROOT lib path.tcl]
-source [file join $ROOT lib jsonl.tcl]
+package require logman
 source [file join $ROOT lib match.tcl]
 source [file join $ROOT lib markdown.tcl]
 source [file join $ROOT cli main.tcl]

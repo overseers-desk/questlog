@@ -160,7 +160,7 @@ proc ::questlog::ui::session_actions::act_copy_path {ctx} {
 }
 proc ::questlog::ui::session_actions::act_copy_last_assistant {ctx} {
     {*}[dict get $ctx clipboard] \
-        [::questlog::jsonl::last_assistant_text [tget $ctx path]]
+        [::logman::last_assistant_text [tget $ctx path]]
 }
 # The matched snippet the hit right-click carried: the model's full stored match
 # text, resolved from the reveal registry before it reached the ctx.

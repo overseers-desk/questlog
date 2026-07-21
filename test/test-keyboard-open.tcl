@@ -17,7 +17,7 @@ set ROOT [file dirname [file dirname [file normalize [info script]]]]
 package require leash
 package require streamtree
 set ::questlog_config_only 1; source [file join $ROOT questlog]
-foreach f {lib/cost.tcl ui/theme.tcl lib/path.tcl lib/listfilter.tcl lib/jsonl.tcl \
+foreach f {lib/cost.tcl ui/theme.tcl lib/path.tcl lib/listfilter.tcl \
            lib/match.tcl ui/terminal.tcl ui/live.tcl lib/scan.tcl lib/search.tcl \
            ui/drag.tcl ui/toolbar.tcl ui/sessions.tcl} {
     source [file join $ROOT $f]

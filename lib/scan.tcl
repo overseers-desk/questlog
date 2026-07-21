@@ -663,7 +663,7 @@ oo::class create ::questlog::Scan {
         set dir [file join [::questlog::path::projects_root] $folder]
         if {![file isdirectory $dir]} { return "" }
         foreach f [glob -nocomplain -directory $dir -- *.jsonl] {
-            set cwd [::questlog::jsonl::first_cwd $f]
+            set cwd [::logman::first_cwd $f]
             if {$cwd ne "" && [::questlog::path::encode_cwd $cwd] eq $folder} {
                 return $cwd
             }

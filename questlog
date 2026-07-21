@@ -236,7 +236,7 @@ if {[::questlog::cli::commandline::asks $argv] eq ""} { ::questlog::claude::refr
 source [file join $ROOT lib debug.tcl]
 source [file join $ROOT lib path.tcl]
 source [file join $ROOT lib listfilter.tcl]
-source [file join $ROOT lib jsonl.tcl]
+package require logman
 source [file join $ROOT lib match.tcl]
 source [file join $ROOT lib scan.tcl]
 source [file join $ROOT lib cost.tcl]

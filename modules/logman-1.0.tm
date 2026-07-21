@@ -1,15 +1,25 @@
+# logman - the record semantics of Claude Code session transcripts (JSONL).
+# The one home for what a line of the stream means: which role:user records
+# are typed prompts and which are harness echoes, where a turn starts, which
+# records are hidden from the transcript, tool uses, models, timestamps,
+# compaction boundaries, and the canonical text body of a record. Two faces
+# on purpose: line-level regexes (is_user_turn, first_cwd) for consumers that
+# run over every line of every file without parsing, and parsed-dict twins
+# (is_turn_start, record_role_label, ...) for consumers that hold a record.
+# Everything is record-at-a-time with no whole-file state, so a consumer can
+# stream a transcript through it line by line.
 package require Tcl 9
 package require json
 
-namespace eval ::questlog::jsonl {
+namespace eval ::logman {
     namespace export extract_text extract_blocks record_tool_uses \
         is_compact_boundary record_timestamp parse_iso fmt_gap first_cwd \
-        is_user_turn \
+        is_user_turn is_hidden_record format_tool_use_full order_tool_keys \
         is_turn_start record_role_label record_model context_window transcript_step
 }
 
 # Parse one JSONL line into a Tcl dict. Returns "" on parse failure.
-proc ::questlog::jsonl::parse_line {line} {
+proc ::logman::parse_line {line} {
     if {[catch {::json::json2dict $line} d]} { return "" }
     return $d
 }
@@ -26,7 +36,7 @@ proc ::questlog::jsonl::parse_line {line} {
 # counts turns with it, so the min-turns floor and the displayed Turns count
 # agree. A line-level regex, no parse: it runs over every line of every
 # session file.
-proc ::questlog::jsonl::is_user_turn {line} {
+proc ::logman::is_user_turn {line} {
     return [expr {[regexp {"role":"user","content":(?:"|\[\{"type":"(?:text|image)")} $line] \
         && ![regexp {"content":"<(?:command-name|local-command-stdout|local-command-caveat|task-notification)>} $line]}]
 }
@@ -41,7 +51,7 @@ proc ::questlog::jsonl::is_user_turn {line} {
 # ponytail: the other harness echoes is_user_turn also excludes (<command-name>,
 # <local-command-stdout>, caveats, <task-notification>) still read USER; add one
 # string-prefix branch here if that is ever wanted - one fix serves both surfaces.
-proc ::questlog::jsonl::record_role_label {rec} {
+proc ::logman::record_role_label {rec} {
     switch -- [dict getdef $rec type ""] {
         user      { return [expr {[is_tool_result_record $rec] ? "TOOL RESULT" : "USER"}] }
         assistant { return "ASSISTANT" }
@@ -53,7 +63,7 @@ proc ::questlog::jsonl::record_role_label {rec} {
 # content whose first block type is tool_result. The parsed-dict counterpart of
 # the regex in is_user_turn; reuses is_string_content to tell an array from a
 # plain string, the same discrimination extract_blocks makes.
-proc ::questlog::jsonl::is_tool_result_record {rec} {
+proc ::logman::is_tool_result_record {rec} {
     if {[dict getdef $rec type ""] ne "user"} { return 0 }
     if {![dict exists $rec message]}          { return 0 }
     set msg [dict get $rec message]
@@ -61,6 +71,15 @@ proc ::questlog::jsonl::is_tool_result_record {rec} {
     set c [dict get $msg content]
     if {[is_string_content $c]}               { return 0 }
     return [expr {[dict getdef [lindex $c 0] type ""] eq "tool_result"}]
+}
+
+# 1 iff a parsed record is hidden from the transcript reading: a compact
+# summary, or a record the harness marks isVisibleInTranscriptOnly (shown in
+# the live UI, not part of the conversation). The skip a record-and-act
+# consumer applies before classifying anything else.
+proc ::logman::is_hidden_record {rec} {
+    return [expr {[dict getdef $rec isCompactSummary 0] ||
+                  [dict getdef $rec isVisibleInTranscriptOnly 0]}]
 }
 
 # 1 iff a parsed record starts a turn in the double-ESC-rollback sense: one
@@ -76,7 +95,7 @@ proc ::questlog::jsonl::is_tool_result_record {rec} {
 # the authority; origin is not consulted, because claude >=2.1.177 writes
 # promptSource with no origin key on some genuine typed prompts. Absent
 # promptSource (old jsonl) falls back to record shape.
-proc ::questlog::jsonl::is_turn_start {rec} {
+proc ::logman::is_turn_start {rec} {
     if {[dict getdef $rec type ""] ne "user"} { return 0 }
     if {![dict exists $rec message]}          { return 0 }
     set msg [dict get $rec message]
@@ -104,8 +123,7 @@ proc ::questlog::jsonl::is_turn_start {rec} {
     return [expr {$bt eq "text" || $bt eq "image"}]
 }
 
-# Extract the canonical text body of a record. Mirrors the jq pipeline
-# in the user's cs-grep alias (~/.bash_aliases:724-738).
+# Extract the canonical text body of a record.
 #
 #   user/assistant: .message.content if string,
 #                   else for each array element: .text if .type=="text",
@@ -114,7 +132,7 @@ proc ::questlog::jsonl::is_turn_start {rec} {
 #   last-prompt:    .lastPrompt
 #   system:         .content (catches "Conversation compacted")
 #   anything else:  ""
-proc ::questlog::jsonl::extract_text {rec} {
+proc ::logman::extract_text {rec} {
     set t [dict getdef $rec type ""]
     switch -- $t {
         user - assistant {
@@ -141,7 +159,7 @@ proc ::questlog::jsonl::extract_text {rec} {
 # Tcl string; a JSON array is a Tcl list of dict-shaped strings. Tell them
 # apart by the test "the value, treated as a list, has at least one element
 # that is a valid dict with a 'type' key".
-proc ::questlog::jsonl::is_string_content {c} {
+proc ::logman::is_string_content {c} {
     if {$c eq ""} { return 1 }
     # If it is not a well-formed list, it is a string.
     if {[catch {llength $c} n]} { return 1 }
@@ -153,7 +171,7 @@ proc ::questlog::jsonl::is_string_content {c} {
     return 0
 }
 
-proc ::questlog::jsonl::extract_array_text {blocks} {
+proc ::logman::extract_array_text {blocks} {
     set out [list]
     foreach blk $blocks {
         set bt [dict getdef $blk type ""]
@@ -170,7 +188,7 @@ proc ::questlog::jsonl::extract_array_text {blocks} {
             tool_use {
                 set name  [dict getdef $blk name ""]
                 set input [dict getdef $blk input [dict create]]
-                lappend out [::questlog::match::format_tool_use_full $name $input]
+                lappend out [format_tool_use_full $name $input]
             }
             thinking {
                 set tx [dict getdef $blk thinking ""]
@@ -199,11 +217,11 @@ proc ::questlog::jsonl::extract_array_text {blocks} {
 #   last-prompt:                          {user $lastPrompt}
 #   anything else (attachment, file-history-snapshot, etc.): empty list.
 #
-# tool_use blocks pass through ::questlog::match::format_tool_use_full, the
-# uncapped renderer in the match namespace; the search snippet and the viewer
-# body agree character-for-character. thinking/image blocks emit their own
+# tool_use blocks pass through format_tool_use_full, the uncapped renderer;
+# the search snippet and the viewer body agree character-for-character.
+# thinking/image blocks emit their own
 # btypes so search regions can be extended to them later.
-proc ::questlog::jsonl::extract_blocks {rec} {
+proc ::logman::extract_blocks {rec} {
     set out [list]
     set t [dict getdef $rec type ""]
     switch -- $t {
@@ -243,7 +261,7 @@ proc ::questlog::jsonl::extract_blocks {rec} {
                     } elseif {$bt eq "tool_use"} {
                         set name  [dict getdef $blk name ""]
                         set input [dict getdef $blk input [dict create]]
-                        lappend out tool_use [::questlog::match::format_tool_use_full $name $input]
+                        lappend out tool_use [format_tool_use_full $name $input]
                     } elseif {$bt eq "thinking"} {
                         set tx [dict getdef $blk thinking ""]
                         if {$tx ne ""} { lappend out thinking $tx }
@@ -267,7 +285,7 @@ proc ::questlog::jsonl::extract_blocks {rec} {
     return $out
 }
 
-proc ::questlog::jsonl::tool_result_text {blk} {
+proc ::logman::tool_result_text {blk} {
     set is_err [dict getdef $blk is_error 0]
     if {![dict exists $blk content]} {
         return [expr {$is_err ? "ERROR:" : ""}]
@@ -304,8 +322,9 @@ proc ::questlog::jsonl::tool_result_text {blk} {
 # suffix. `text` is the uncapped join of the input values, which the `tool`
 # criterion matches a key against by substring - so a key past tool_render_cap
 # is still found, and a path inside a Bash redirect (`gen.py > out.json`) is
-# caught. `rendered` is the capped display form. Empty for non-assistant records.
-proc ::questlog::jsonl::record_tool_uses {rec} {
+# caught. `rendered` is the format_tool_use_full display form. Empty for
+# non-assistant records.
+proc ::logman::record_tool_uses {rec} {
     set out [list]
     if {[dict getdef $rec type ""] ne "assistant"} { return $out }
     if {![dict exists $rec message]} { return $out }
@@ -333,21 +352,67 @@ proc ::questlog::jsonl::record_tool_uses {rec} {
             }
         }
         lappend out [dict create name $name path $path \
-                         rendered [::questlog::match::format_tool_use $name $input] \
+                         rendered [format_tool_use_full $name $input] \
                          text [string trim [join $vals " "]]]
     }
     return $out
 }
 
+# The uncapped one-line rendering of a tool_use block: NAME(key=value, ...),
+# whitespace-collapsed, keys in order_tool_keys order. The one renderer the
+# search snippet, the reading body and the markdown export share, so a tool
+# call reads character-for-character the same on every surface. A capped
+# display variant belongs to the consumer (questlog's match layer keeps one);
+# it should call order_tool_keys so the two forms order keys identically.
+proc ::logman::format_tool_use_full {name input} {
+    if {[catch {dict size $input}]} { return "${name}()" }
+    set keys [dict keys $input]
+    if {[llength $keys] == 0} { return "${name}()" }
+    set ordered [order_tool_keys $name $keys]
+    set parts [list]
+    foreach k $ordered {
+        set v [dict get $input $k]
+        set v [regsub -all {[\s]+} $v " "]
+        lappend parts "${k}=${v}"
+    }
+    return "${name}([join $parts {, }])"
+}
+
+# The display order of a tool_use input's keys: the identifying argument first
+# (Bash's command, Read's file_path, ...), then the rest in stream order. An
+# unlisted tool keeps stream order whole.
+proc ::logman::order_tool_keys {name keys} {
+    set preferred [dict create \
+        Bash       {command} \
+        Read       {file_path} \
+        Edit       {file_path old_string new_string} \
+        Write      {file_path content} \
+        Grep       {pattern path} \
+        Glob       {pattern path} \
+        Task       {subagent_type prompt} \
+        Agent      {subagent_type prompt} \
+        TaskCreate {subject description} \
+        TaskUpdate {taskId status}]
+    if {![dict exists $preferred $name]} { return $keys }
+    set out [list]
+    foreach k [dict get $preferred $name] {
+        if {$k in $keys} { lappend out $k }
+    }
+    foreach k $keys {
+        if {$k ni $out} { lappend out $k }
+    }
+    return $out
+}
+
 # 1 iff this is a compaction boundary: type=system AND subtype=compact_boundary.
-proc ::questlog::jsonl::is_compact_boundary {rec} {
+proc ::logman::is_compact_boundary {rec} {
     if {[dict getdef $rec type ""] ne "system"} { return 0 }
     if {[dict getdef $rec subtype ""] ne "compact_boundary"} { return 0 }
     return 1
 }
 
 # ISO timestamp string from a record (.timestamp). Empty if absent.
-proc ::questlog::jsonl::record_timestamp {rec} {
+proc ::logman::record_timestamp {rec} {
     return [dict getdef $rec timestamp ""]
 }
 
@@ -355,7 +420,7 @@ proc ::questlog::jsonl::record_timestamp {rec} {
 # chip. Only an assistant record carries a model; a sidechain (subagent) record
 # and a harness-written <synthetic> filler are excluded, mirroring the cost
 # pass's last_model guard, so neither ever chips in the viewer.
-proc ::questlog::jsonl::record_model {rec} {
+proc ::logman::record_model {rec} {
     if {[dict getdef $rec type ""] ne "assistant"} { return "" }
     if {[dict getdef $rec isSidechain 0]}          { return "" }
     if {![dict exists $rec message]}               { return "" }
@@ -370,7 +435,7 @@ proc ::questlog::jsonl::record_model {rec} {
 # Claude stamps millisecond precision (2026-05-24T22:29:21.279Z); clock scan
 # has no fractional-second specifier, so the fraction is dropped before the Z
 # and the second-resolution remainder is parsed as UTC.
-proc ::questlog::jsonl::parse_iso {ts_iso} {
+proc ::logman::parse_iso {ts_iso} {
     if {$ts_iso eq ""} { return 0 }
     regsub {\.[0-9]+Z$} $ts_iso {Z} ts_iso
     if {[catch {clock scan $ts_iso -format "%Y-%m-%dT%H:%M:%SZ" -gmt 1} e]} {
@@ -382,7 +447,7 @@ proc ::questlog::jsonl::parse_iso {ts_iso} {
 # A silence span in minutes rendered for an idle-gap divider ("12 min",
 # "2 hr 5 min", "3 day(s)"). Shared by the viewer's divider and the markdown
 # export so a gap reads identically in both.
-proc ::questlog::jsonl::fmt_gap {minutes} {
+proc ::logman::fmt_gap {minutes} {
     if {$minutes < 60} { return "${minutes} min" }
     if {$minutes < 60*24} {
         set h [expr {$minutes / 60}]
@@ -428,7 +493,7 @@ proc ::questlog::jsonl::fmt_gap {minutes} {
 # concerns stay upstream too: the viewer drops last-prompt records (the
 # markdown export instead renders them as SYSTEM turns) and tracks an
 # in_section flag before ever reaching here; this step is agnostic to both.
-proc ::questlog::jsonl::transcript_step {rec last_ts idle_gap} {
+proc ::logman::transcript_step {rec last_ts idle_gap} {
     set events [list]
     set ts_epoch [parse_iso [record_timestamp $rec]]
 
@@ -465,7 +530,7 @@ proc ::questlog::jsonl::transcript_step {rec last_ts idle_gap} {
 # the file holds no parseable assistant record with renderable content. A
 # final turn consisting solely of tool_use blocks now returns the rendered
 # Tool(args) line(s), since extract_array_text emits those too.
-proc ::questlog::jsonl::last_assistant_text {path} {
+proc ::logman::last_assistant_text {path} {
     set last ""
     if {[catch {open $path r} fh]} { return "" }
     chan configure $fh -encoding utf-8 -profile replace
@@ -485,7 +550,7 @@ proc ::questlog::jsonl::last_assistant_text {path} {
 # file cannot be opened or holds no record with a cwd. A line-level
 # regex, not a full parse: cwd appears on most record types and the
 # first hit is enough.
-proc ::questlog::jsonl::first_cwd {path} {
+proc ::logman::first_cwd {path} {
     if {[catch {open $path r} fh]} { return "" }
     chan configure $fh -encoding utf-8 -profile replace
     set cwd ""
@@ -506,7 +571,7 @@ proc ::questlog::jsonl::first_cwd {path} {
 # record), which the reading-view export skips too, so it is not a context
 # "message". match is 0 for a neighbour; the hit's own record is built inline in
 # context_window with match 1.
-proc ::questlog::jsonl::turn_at {line lineno match} {
+proc ::logman::turn_at {line lineno match} {
     set rec [parse_line $line]
     if {$rec eq ""} { return "" }
     set body [extract_text $rec]
@@ -526,7 +591,7 @@ proc ::questlog::jsonl::turn_at {line lineno match} {
 # parse_line/record_role_label/extract_text primitives as the whole-session
 # export, so a windowed turn reads as it does in `questlog show`. Empty list if
 # the file cannot be opened.
-proc ::questlog::jsonl::context_window {path hitline before after} {
+proc ::logman::context_window {path hitline before after} {
     if {[catch {open $path r} fh]} { return [list] }
     chan configure $fh -encoding utf-8 -profile replace
     set lineno 0

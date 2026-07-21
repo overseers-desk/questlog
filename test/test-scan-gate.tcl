@@ -11,7 +11,7 @@ set ROOT [file dirname [file dirname [file normalize [info script]]]]
 ::tcl::tm::path add [file join $ROOT vendor]
 package require leash
 set ::questlog_config_only 1; source [file join $ROOT questlog]
-source [file join $ROOT lib jsonl.tcl]
+package require logman
 source [file join $ROOT lib match.tcl]
 ::questlog::match::set_caps [dict create \
     content_cap     [::questlog::config::get content_cap] \

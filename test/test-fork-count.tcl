@@ -31,7 +31,7 @@ package require streamtree
 # the Scan/Search/SessionList filter path reads ::questlog::config; source both
 # and create the fonts before constructing any widget.
 set ::questlog_config_only 1; source [file join $ROOT questlog]
-foreach f {ui/theme.tcl lib/path.tcl lib/listfilter.tcl lib/jsonl.tcl \
+foreach f {ui/theme.tcl lib/path.tcl lib/listfilter.tcl \
            lib/match.tcl ui/terminal.tcl ui/live.tcl lib/scan.tcl lib/search.tcl \
            ui/drag.tcl ui/toolbar.tcl ui/sessions.tcl} {
     source [file join $ROOT $f]

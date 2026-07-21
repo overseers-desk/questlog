@@ -25,7 +25,7 @@ package require leash
 set ::questlog_config_only 1; source [file join $ROOT questlog]
 source [file join $ROOT lib path.tcl]
 source [file join $ROOT lib listfilter.tcl]
-source [file join $ROOT lib jsonl.tcl]
+package require logman
 source [file join $ROOT lib match.tcl]
 source [file join $ROOT lib scan.tcl]
 source [file join $ROOT lib cost.tcl]
@@ -35,10 +35,10 @@ proc ::questlog::path::projects_root {} { return $::BASE }
 
 # Count every transcript open the resolver's peek performs: first_cwd is the
 # one reader peek_folder_cwd calls per file.
-rename ::questlog::jsonl::first_cwd ::questlog::jsonl::__first_cwd_real
-proc ::questlog::jsonl::first_cwd {f} {
+rename ::logman::first_cwd ::logman::__first_cwd_real
+proc ::logman::first_cwd {f} {
     incr ::OPENS
-    return [::questlog::jsonl::__first_cwd_real $f]
+    return [::logman::__first_cwd_real $f]
 }
 
 # The caller supplies the exact recorded cwd: the folder-name and cwd

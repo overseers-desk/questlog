@@ -1,6 +1,6 @@
 #!/usr/bin/env tclsh9.0
 # Parity test: the search worker thread and the main interpreter must produce
-# identical scan_file / leaf_record_hit output. A worker sources lib/jsonl.tcl and
+# identical scan_file / leaf_record_hit output. A worker sources and
 # lib/match.tcl through worker_prelude instead of carrying copies, so this is
 # the guard that the two sides cannot drift - it runs the real prelude and
 # WorkerScript in a real thread and diffs the results. Run:
@@ -11,7 +11,7 @@ set ROOT [file dirname [file dirname [file normalize [info script]]]]
 ::tcl::tm::path add [file join $ROOT vendor]
 package require leash
 set ::questlog_config_only 1; source [file join $ROOT questlog]
-source [file join $ROOT lib jsonl.tcl]
+package require logman
 source [file join $ROOT lib match.tcl]
 source [file join $ROOT lib search.tcl]
 # Main-interp caps, as the launcher injects them.
@@ -86,7 +86,7 @@ foreach {name clauses} [list \
 # leaf_record_hit directly on a crafted record, so the tool_param_cap path (the
 # rendered tool_use a keyword leaf snippets through) is proven mirrored rather
 # than merely present.
-set rec [::questlog::jsonl::parse_line "{\"type\":\"assistant\",\"message\":{\"content\":\[{\"type\":\"tool_use\",\"name\":\"Bash\",\"input\":{\"command\":\"echo $bigparam\"}}\]}}"]
+set rec [::logman::parse_line "{\"type\":\"assistant\",\"message\":{\"content\":\[{\"type\":\"tool_use\",\"name\":\"Bash\",\"input\":{\"command\":\"echo $bigparam\"}}\]}}"]
 set leaf [::questlog::match::kw_leaf echo {} 0]
 set main_rh   [::questlog::match::leaf_record_hit $leaf $rec 1]
 set worker_rh [thread::send $tid [list ::questlog::match::leaf_record_hit $leaf $rec 1]]

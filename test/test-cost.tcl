@@ -11,7 +11,7 @@ set ROOT [file dirname [file dirname [file normalize [info script]]]]
 ::tcl::tm::path add [file join $ROOT vendor]
 namespace eval ::questlog::cost {}
 set ::questlog_config_only 1; source [file join $ROOT questlog]
-source [file join $ROOT lib jsonl.tcl]
+package require logman
 source [file join $ROOT lib cost.tcl]
 source [file join $ROOT cli cost.tcl]
 set failures 0

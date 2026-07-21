@@ -1626,7 +1626,7 @@ oo::class create ::questlog::ui::SessionList {
     method child_menu_open {} { my on_child_release $ChildMenuPath }
     method child_menu_copy_path {} { my clipboard_set $ChildMenuPath }
     method child_menu_copy_last_assistant {} {
-        my clipboard_set [::questlog::jsonl::last_assistant_text $ChildMenuPath]
+        my clipboard_set [::logman::last_assistant_text $ChildMenuPath]
     }
     method child_menu_reveal {} {
         set dir [file dirname $ChildMenuPath]

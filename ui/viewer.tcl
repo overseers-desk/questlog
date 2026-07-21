@@ -264,7 +264,7 @@ oo::class create ::questlog::ui::Viewer {
         set LineMap [dict create]
         set LoadedLines 0
         set Uuid [file rootname [file tail $Path]]
-        set Cwd [::questlog::jsonl::first_cwd $Path]
+        set Cwd [::logman::first_cwd $Path]
         # Show the working directory the session ran in (it survives a move,
         # unlike the encoded project folder the jsonl sits under). Fall back to
         # the jsonl's own directory when the file records no cwd.
@@ -938,7 +938,7 @@ oo::class create ::questlog::ui::Viewer {
         while {[chan gets $fh line] >= 0} {
             incr lineno
             if {$line eq ""} continue
-            set rec [::questlog::jsonl::parse_line $line]
+            set rec [::logman::parse_line $line]
             if {$rec eq ""} {
                 # A newline-less final line that does not parse is the tail
                 # claude is mid-write on: uncount it so append_new re-reads
@@ -990,7 +990,7 @@ oo::class create ::questlog::ui::Viewer {
     # section header is open. Pulled out of render so the wholesale fill and the
     # streamed append (append_new) make identical divider and header decisions.
     # The per-record cues - compact boundary, empty-body clock advance, idle
-    # gap - come from ::questlog::jsonl::transcript_step, the one classifier
+    # gap - come from ::logman::transcript_step, the one classifier
     # this method and the markdown export both fold over (issue #31), so a
     # divider rule lands on both surfaces at once. The
     # step owns classification and the clock only: every glyph and tag, the
@@ -1019,7 +1019,7 @@ oo::class create ::questlog::ui::Viewer {
         # record itself. A record yielding no body event draws nothing - the
         # step advanced the clock over it, so a gap still spans quiet metadata
         # records.
-        lassign [::questlog::jsonl::transcript_step $rec $last_ts $IdleGap] \
+        lassign [::logman::transcript_step $rec $last_ts $IdleGap] \
             events last_ts
         set body ""
         foreach ev $events {
@@ -1041,11 +1041,11 @@ oo::class create ::questlog::ui::Viewer {
         if {[::questlog::debug::enabled]} {
             ::questlog::debug::log render "line $lineno type=$t\
                 empty=[expr {$body eq ""}]\
-                tools=[llength [::questlog::jsonl::record_tool_uses $rec]]"
+                tools=[llength [::logman::record_tool_uses $rec]]"
         }
         if {$body eq ""} { return [list $last_ts $in_section] }
 
-        set ts_iso [::questlog::jsonl::record_timestamp $rec]
+        set ts_iso [::logman::record_timestamp $rec]
         if {!$in_section} {
             $Text insert end "[my section_header $ts_iso]\n" section-header
             set in_section 1
@@ -1056,7 +1056,7 @@ oo::class create ::questlog::ui::Viewer {
         dict set LineMap $lineno $start_idx
         dict set Bodies $lineno $body
         set CurTs $ts_iso        ;# a quote box in this record reads its time from here
-        set label [::questlog::jsonl::record_role_label $rec]
+        set label [::logman::record_role_label $rec]
         dict set Roles $lineno $label
         # Label -> tag: lowercased with spaces to underscores (TOOL RESULT ->
         # lbl-tool_result). The four lbl-* tags are configured in build.
@@ -1070,7 +1070,7 @@ oo::class create ::questlog::ui::Viewer {
         # (render_record_turned tags the completed line turnhdr after); the
         # glyph rides in front of the label, so start_idx above still names
         # the line and LineMap/Bodies/Roles keep their meaning untouched.
-        if {[::questlog::jsonl::is_turn_start $rec]} {
+        if {[::logman::is_turn_start $rec]} {
             my region_open [dict create line $lineno \
                 label [lindex [split $body \n] 0] ts $ts_iso \
                 counts [dict create]]
@@ -1083,7 +1083,7 @@ oo::class create ::questlog::ui::Viewer {
         # only when its model differs (a mid-turn /model change). RenderModel is
         # unset for a bodiless assistant record (guarded above), so it takes none.
         if {$t eq "assistant"} {
-            set mdl [::questlog::jsonl::record_model $rec]
+            set mdl [::logman::record_model $rec]
             if {$mdl ne "" && $mdl ne $RenderModel} {
                 my insert_model_chip $mdl
                 set RenderModel $mdl
@@ -1095,7 +1095,7 @@ oo::class create ::questlog::ui::Viewer {
         # it); prompts and system records keep the flat extract_text body.
         # start_idx above is the record's whole extent either way, label line
         # included, which is what a hidden tool_result record will cover.
-        if {$t eq "assistant" || [::questlog::jsonl::is_tool_result_record $rec]} {
+        if {$t eq "assistant" || [::logman::is_tool_result_record $rec]} {
             my insert_blocks $rec
         } else {
             my insert_body $t $body
@@ -1128,8 +1128,8 @@ oo::class create ::questlog::ui::Viewer {
         # bodiless one - the clock advances, the open turn keeps owning what
         # follows. (render_record's own empty-body return is the second half
         # of the gate: a region only opens once a header line rendered.)
-        if {[::questlog::jsonl::is_turn_start $rec]
-                && [::questlog::jsonl::extract_text $rec] ne ""} {
+        if {[::logman::is_turn_start $rec]
+                && [::logman::extract_text $rec] ne ""} {
             my region_close
             # Reset the chip's model at the turn boundary so the first assistant
             # of every turn re-chips even when unchanged from the prior turn; a
@@ -1146,7 +1146,7 @@ oo::class create ::questlog::ui::Viewer {
             return [list $last_ts $in_section]
         }
         lassign [my render_record $rec $last_ts $in_section] last_ts in_section
-        if {[my live] >= 0 && [::questlog::jsonl::is_tool_result_record $rec]} {
+        if {[my live] >= 0 && [::logman::is_tool_result_record $rec]} {
             set lineno [dict get $rec _line]
             if {[dict exists $LineMap $lineno]} {
                 $Text tag add [my detail_tag [my live]] \
@@ -1175,7 +1175,7 @@ oo::class create ::questlog::ui::Viewer {
             incr lineno
             if {$lineno <= $LoadedLines} continue
             if {$line eq ""} continue
-            set rec [::questlog::jsonl::parse_line $line]
+            set rec [::logman::parse_line $line]
             if {$rec eq ""} continue
             dict set rec _line $lineno
             lappend recs $rec
@@ -1638,7 +1638,7 @@ oo::class create ::questlog::ui::Viewer {
         set dtag [expr {[my live] >= 0 ? [my detail_tag [my live]] : ""}]
         set last ""
         set sawtext 0
-        foreach {btype content} [::questlog::jsonl::extract_blocks $rec] {
+        foreach {btype content} [::logman::extract_blocks $rec] {
             switch -- $btype {
                 assistant - user {
                     my insert_body $btype $content
@@ -1929,10 +1929,10 @@ oo::class create ::questlog::ui::Viewer {
     }
 
     # ISO->epoch and gap formatting are the shared session-segmentation
-    # clock (lib/jsonl.tcl), so the viewer's dividers and the markdown export
+    # clock (the logman module), so the viewer's dividers and the markdown export
     # never disagree. Kept as thin methods so the call sites read `my ...`.
-    method parse_iso {ts_iso}  { return [::questlog::jsonl::parse_iso $ts_iso] }
-    method fmt_gap {minutes}   { return [::questlog::jsonl::fmt_gap $minutes] }
+    method parse_iso {ts_iso}  { return [::logman::parse_iso $ts_iso] }
+    method fmt_gap {minutes}   { return [::logman::fmt_gap $minutes] }
 
     # Scroll the reading view to a jsonl line. A directly mapped line (a turn
     # that rendered a text body) is shown as-is. A line with no anchor falls
@@ -2439,8 +2439,8 @@ oo::class create ::questlog::ui::Viewer {
         $ToolList delete 0 end
         foreach rec $Records {
             set lineno [dict get $rec _line]
-            set when [my tool_time [::questlog::jsonl::record_timestamp $rec]]
-            foreach use [::questlog::jsonl::record_tool_uses $rec] {
+            set when [my tool_time [::logman::record_timestamp $rec]]
+            foreach use [::logman::record_tool_uses $rec] {
                 set name [dict get $use name]
                 set path [dict get $use path]
                 set row "$when · $name"

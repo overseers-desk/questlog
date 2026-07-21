@@ -1,13 +1,15 @@
 package require Tcl 9
 package require json
 package require must
+package require logman
 
 # ::questlog::match - the pure record-matching and snippet-formatting logic of
 # search, shared verbatim by the main interpreter and the search worker threads.
 #
 # A worker is a separate interp with no reach into the parent's procs, so both
-# sides source this one file (with lib/jsonl.tcl, which it leans on for the
-# block/tool walk): one copy, no drift. Nothing here touches Tk, TclOO or
+# sides source this one file: one copy, no drift. The record semantics (block
+# and tool walks, turn predicates) come from the logman module, which the tm
+# path resolves identically on both sides. Nothing here touches Tk, TclOO or
 # Thread; scan_file reads a file and json-parses lines, the rest is string work
 # on already-parsed records.
 #
@@ -19,7 +21,7 @@ package require must
 namespace eval ::questlog::match {
     variable Caps [dict create]
     namespace export clean_text snippet_window format_tool_use \
-        format_tool_use_full clean_preview scan_file leaf_record_hit \
+        clean_preview scan_file leaf_record_hit \
         leaf_name_hit eval_tree btype_in_regions
 }
 
@@ -132,13 +134,14 @@ proc ::questlog::match::window_at {s a b lead trail} {
     return $win
 }
 
-# Render a tool_use block as "Name(key=value, ...)". Most informative key
-# first when the tool is one we know; otherwise dict insertion order.
+# Render a tool_use block as "Name(key=value, ...)", capped for the timeline.
+# The capped twin of logman::format_tool_use_full; both order keys through
+# logman::order_tool_keys, so the two forms differ only in truncation.
 proc ::questlog::match::format_tool_use {name input} {
     if {[catch {dict size $input}]} { return "${name}()" }
     set keys [dict keys $input]
     if {[llength $keys] == 0} { return "${name}()" }
-    set ordered [::questlog::match::_order_tool_keys $name $keys]
+    set ordered [::logman::order_tool_keys $name $keys]
     set parts [list]
     foreach k $ordered {
         set v [dict get $input $k]
@@ -157,46 +160,6 @@ proc ::questlog::match::format_tool_use {name input} {
     set rcap [::questlog::match::cap tool_render_cap]
     if {[string length $s] > $rcap} { set s "[string range $s 0 [expr {$rcap - 1}]]…" }
     return $s
-}
-
-# Uncapped variant of format_tool_use for the reading body, where the full
-# command must be visible (the timeline still uses the capped form). Same key
-# ordering and whitespace collapse, no tool_param_cap / tool_render_cap.
-proc ::questlog::match::format_tool_use_full {name input} {
-    if {[catch {dict size $input}]} { return "${name}()" }
-    set keys [dict keys $input]
-    if {[llength $keys] == 0} { return "${name}()" }
-    set ordered [::questlog::match::_order_tool_keys $name $keys]
-    set parts [list]
-    foreach k $ordered {
-        set v [dict get $input $k]
-        set v [regsub -all {[\s]+} $v " "]
-        lappend parts "${k}=${v}"
-    }
-    return "${name}([join $parts {, }])"
-}
-
-proc ::questlog::match::_order_tool_keys {name keys} {
-    set preferred [dict create \
-        Bash       {command} \
-        Read       {file_path} \
-        Edit       {file_path old_string new_string} \
-        Write      {file_path content} \
-        Grep       {pattern path} \
-        Glob       {pattern path} \
-        Task       {subagent_type prompt} \
-        Agent      {subagent_type prompt} \
-        TaskCreate {subject description} \
-        TaskUpdate {taskId status}]
-    if {![dict exists $preferred $name]} { return $keys }
-    set out [list]
-    foreach k [dict get $preferred $name] {
-        if {$k in $keys} { lappend out $k }
-    }
-    foreach k $keys {
-        if {$k ni $out} { lappend out $k }
-    }
-    return $out
 }
 
 # op_toolset op - the tool names a file `op` matches. `wrote` is the created-
@@ -281,7 +244,7 @@ proc ::questlog::match::leaf_record_hit {leaf rec nocase} {
             set needle  [dict get $leaf needle]
             set regions [dict get $leaf regions]
             set n [expr {$nocase ? [string tolower $needle] : $needle}]
-            foreach {btype content} [::questlog::jsonl::extract_blocks $rec] {
+            foreach {btype content} [::logman::extract_blocks $rec] {
                 if {![::questlog::match::btype_in_regions $btype $regions]} continue
                 set hay [expr {$nocase ? [string tolower $content] : $content}]
                 if {[string first $n $hay] >= 0} {
@@ -294,7 +257,7 @@ proc ::questlog::match::leaf_record_hit {leaf rec nocase} {
         regex {
             set pat     [dict get $leaf needle]
             set regions [dict get $leaf regions]
-            foreach {btype content} [::questlog::jsonl::extract_blocks $rec] {
+            foreach {btype content} [::logman::extract_blocks $rec] {
                 if {![::questlog::match::btype_in_regions $btype $regions]} continue
                 if {[regexp -- $pat $content]} {
                     set sat 1
@@ -307,7 +270,7 @@ proc ::questlog::match::leaf_record_hit {leaf rec nocase} {
             set sel  [dict get $leaf sel]
             set spec [dict get $leaf spec]
             set val  [dict get $leaf value]
-            foreach t [::questlog::jsonl::record_tool_uses $rec] {
+            foreach t [::logman::record_tool_uses $rec] {
                 if {$sel eq "file"} {
                     # The path is matched from the right, so a bare filename
                     # finds it in any directory; `file` rides only on the
@@ -617,7 +580,7 @@ proc ::questlog::match::scan_file {path clauses {tick ""} {yield_lines 0}} {
                     if {![dict exists $names $m]} { dict set names $m $lineno }
                 }
             }
-            if {$do_row && [::questlog::jsonl::is_user_turn $line]} {
+            if {$do_row && [::logman::is_user_turn $line]} {
                 incr users
                 # First-prompt preview: string content captured with escaped pairs
                 # kept whole (clean_preview unescapes them); a block-array prompt

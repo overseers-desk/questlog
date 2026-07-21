@@ -238,7 +238,7 @@ proc ::questlog::cli::main::limit_matches {matches limit_cap {sub_path ""} {befo
             "type" [dict get $m btype] \
             "content" [dict get $m content]]
         if {$before > 0 || $after > 0} {
-            dict set entry window [::questlog::jsonl::context_window \
+            dict set entry window [::logman::context_window \
                 [dict get $m path] [dict get $m lineoff] $before $after]
         }
         lappend out $entry
