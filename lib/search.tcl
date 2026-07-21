@@ -42,12 +42,11 @@ proc ::questlog::search::dispatch {obj_cmd args} {
 }
 
 # The worker init prelude, built in the main interp where config and the repo
-# root are reachable. A worker is a separate interp; it requires the same
-# logman module and sources the same lib/match.tcl the main interp uses (so
-# the matching logic has one home, not a hand-synced copy) and then receives
-# the display caps as a set_caps snapshot, since it cannot reach
-# ::questlog::config itself, which stays the one home for the numbers; the
-# worker carries a derived copy.
+# root are reachable. A worker is a separate interp; it loads the same logman
+# module and lib/match.tcl the main interp uses (one home for the matching
+# logic, not a hand-synced copy) and then receives the display caps as a
+# set_caps snapshot, since it cannot reach ::questlog::config itself, which
+# stays the one home for the numbers; the worker carries a derived copy.
 proc ::questlog::search::worker_prelude {root} {
     return "foreach d [list [list [file join $root modules] [file join $root vendor]]] {
     if {\$d ni \[::tcl::tm::path list]} { ::tcl::tm::path add \$d }

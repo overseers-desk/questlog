@@ -7,11 +7,10 @@ package require logman
 # search, shared verbatim by the main interpreter and the search worker threads.
 #
 # A worker is a separate interp with no reach into the parent's procs, so both
-# sides source this one file: one copy, no drift. The record semantics (block
-# and tool walks, turn predicates) come from the logman module, which the tm
-# path resolves identically on both sides. Nothing here touches Tk, TclOO or
-# Thread; scan_file reads a file and json-parses lines, the rest is string work
-# on already-parsed records.
+# sides source this one file: one copy, no drift. The record semantics come
+# from the logman module, resolved identically on both sides. Nothing here
+# touches Tk, TclOO or Thread; scan_file reads a file and json-parses lines,
+# the rest is string work on already-parsed records.
 #
 # The five display caps the matchers honour live in ::questlog::config, which a
 # worker cannot read, so they are injected once through set_caps - from config
@@ -134,9 +133,8 @@ proc ::questlog::match::window_at {s a b lead trail} {
     return $win
 }
 
-# Render a tool_use block as "Name(key=value, ...)", capped for the timeline.
-# The capped twin of logman::format_tool_use_full; both order keys through
-# logman::order_tool_keys, so the two forms differ only in truncation.
+# Render a tool_use block as "Name(key=value, ...)", capped for the timeline:
+# logman::format_tool_use_full's capped twin, differing only in truncation.
 proc ::questlog::match::format_tool_use {name input} {
     if {[catch {dict size $input}]} { return "${name}()" }
     set keys [dict keys $input]

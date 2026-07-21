@@ -1,13 +1,8 @@
-# logman - the record semantics of Claude Code session transcripts (JSONL).
-# The one home for what a line of the stream means: which role:user records
-# are typed prompts and which are harness echoes, where a turn starts, which
-# records are hidden from the transcript, tool uses, models, timestamps,
-# compaction boundaries, and the canonical text body of a record. Two faces
-# on purpose: line-level regexes (is_user_turn, first_cwd) for consumers that
-# run over every line of every file without parsing, and parsed-dict twins
-# (is_turn_start, record_role_label, ...) for consumers that hold a record.
-# Everything is record-at-a-time with no whole-file state, so a consumer can
-# stream a transcript through it line by line.
+# logman - the record semantics of Claude Code session transcripts (JSONL):
+# the one home for what a line of the stream means. Two faces on purpose:
+# line-level regexes (is_user_turn, first_cwd) for consumers that never parse,
+# parsed-dict twins (is_turn_start, ...) for consumers that hold a record.
+# Record-at-a-time with no whole-file state: streamable.
 package require Tcl 9
 package require json
 
@@ -74,9 +69,7 @@ proc ::logman::is_tool_result_record {rec} {
 }
 
 # 1 iff a parsed record is hidden from the transcript reading: a compact
-# summary, or a record the harness marks isVisibleInTranscriptOnly (shown in
-# the live UI, not part of the conversation). Callers that walk records skip
-# this before classifying anything else.
+# summary, or display prose the harness marks isVisibleInTranscriptOnly.
 proc ::logman::is_hidden_record {rec} {
     return [expr {[dict getdef $rec isCompactSummary 0] ||
                   [dict getdef $rec isVisibleInTranscriptOnly 0]}]
@@ -124,7 +117,6 @@ proc ::logman::is_turn_start {rec} {
 }
 
 # Extract the canonical text body of a record.
-#
 #   user/assistant: .message.content if string,
 #                   else for each array element: .text if .type=="text",
 #                   .content if .type=="tool_result" and .content is string.
@@ -358,12 +350,9 @@ proc ::logman::record_tool_uses {rec} {
     return $out
 }
 
-# The uncapped one-line rendering of a tool_use block: NAME(key=value, ...),
-# whitespace-collapsed, keys in order_tool_keys order. The one renderer the
-# search snippet, the reading body and the markdown export share, so a tool
-# call reads character-for-character the same on every surface. A capped
-# display variant belongs to the consumer (questlog's match layer keeps one);
-# it should call order_tool_keys so the two forms order keys identically.
+# The uncapped NAME(key=value, ...) rendering of a tool_use block, whitespace-
+# collapsed: the one renderer every surface shares. A capped display variant
+# belongs to the consumer, ordering keys through order_tool_keys.
 proc ::logman::format_tool_use_full {name input} {
     if {[catch {dict size $input}]} { return "${name}()" }
     set keys [dict keys $input]
@@ -378,9 +367,7 @@ proc ::logman::format_tool_use_full {name input} {
     return "${name}([join $parts {, }])"
 }
 
-# The display order of a tool_use input's keys: the identifying argument first
-# (Bash's command, Read's file_path, ...), then the rest in stream order. An
-# unlisted tool keeps stream order whole.
+# Key display order: the identifying argument first, the rest in stream order.
 proc ::logman::order_tool_keys {name keys} {
     set preferred [dict create \
         Bash       {command} \
