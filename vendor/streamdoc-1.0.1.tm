@@ -1,17 +1,17 @@
 package require Tcl 9
 package require Tk
-package provide streamdoc 1.0
+package provide streamdoc 1.0.1
 
 namespace eval ::streamdoc {}
 
 # ::streamdoc::StreamDoc - the generic "streaming document of foldable
-# regions" engine.
+# regions" base class.
 #
 # A StreamDoc owns an append-only document rendered into a single read-only
 # text widget: chrome (free text between regions) interleaved with REGIONS,
 # each a header line, a body, and an optional trailing summary line. The
 # host supplies every character through the content door and the hooks
-# (Template Method); the engine owns the marks, the two elide layers and
+# (Template Method); the base class owns the marks, the two elide layers and
 # the streaming contract, and never looks inside a payload.
 #
 # A region's header is its first line; the body is everything after it.
@@ -25,8 +25,8 @@ namespace eval ::streamdoc {}
 # Plus r#Nm at the summary line's first char while one stands. Gravity does
 # the bookkeeping; the document streams without index arithmetic.
 #
-# Two elide layers per region, engine-owned - no other code may mutate a
-# tag's -elide:
+# Two elide layers per region, owned by the base class - no other code
+# may mutate a tag's -elide:
 #   f#N  the fold range [header +1line linestart, end): whole logical lines
 #        only, never the header's own newline - eliding it would visually
 #        join adjacent headers when everything is folded.
@@ -40,9 +40,9 @@ namespace eval ::streamdoc {}
 #
 # Content enters through the door, inside `batch`: append_open / emit /
 # emit_window / append_close. While a region is open the door feeds it,
-# popping any standing summary line first and re-appending it at close (the
-# summary transaction, engine-internal); between regions the door appends
-# chrome at the tail. `savepoint` takes a left-gravity mark at the append
+# popping any standing summary line first and re-appending it at close
+# (the summary transaction, internal to the base class); between regions
+# the door appends chrome at the tail. `savepoint` takes a left-gravity mark at the append
 # point and `rewind mark` deletes from it to the open region's end, so a
 # caller can re-emit a provisional tail; the summary pop is built on it.
 #
@@ -60,7 +60,7 @@ namespace eval ::streamdoc {}
 #
 # Hooks the host overrides, each with a working default:
 #   summary_text payload    the summary phrase; "" takes no summary line
-#   region_tags payload     tags laid on the engine-written summary line
+#   region_tags payload     tags laid on the summary line the base class writes
 #   on_region_rendered n    wire a just-closed region (bindings, indices)
 
 oo::class create ::streamdoc::StreamDoc {
@@ -69,7 +69,7 @@ oo::class create ::streamdoc::StreamDoc {
     variable Regions      ;# per-region dicts, in document order:
                           ;# {start end summary open folded shown payload}
     variable Cur          ;# index of the open region, or -1
-    variable Opts         ;# widget options decoupling the engine from any host
+    variable Opts         ;# widget options decoupling the base class from any host
     variable NextSave     ;# savepoint mark counter
     variable AtBottom     ;# tail-latch state across a streaming batch
     variable WasAtBottom  ;# last observed bottom state, edges fire the events
@@ -135,20 +135,20 @@ oo::class create ::streamdoc::StreamDoc {
 
     # ---- widget options ----------------------------------------------
     #
-    # The engine takes its host-specific look as options; its body holds no
+    # The base class takes its host-specific look as options; its body holds no
     # host references. The lot: the document font, the closed/open glyph
     # pair, and the tail latch. Defaults are a plain Tk look so the widget
     # runs standalone; a host overrides them through `configure` before the
     # body is built.
-    method engine_default_opts {} {
+    method default_opts {} {
         return [dict create \
             font TkTextFont \
             glyphs [list ▸ ▾] \
             autofollow 0]
     }
     method configure {args} {
-        if {![info exists Opts]} { set Opts [my engine_default_opts] }
-        set known [my engine_default_opts]
+        if {![info exists Opts]} { set Opts [my default_opts] }
+        set known [my default_opts]
         foreach {opt val} $args {
             set k [string trimleft $opt -]
             if {![dict exists $known $k]} { error "unknown option $opt" }
@@ -161,13 +161,13 @@ oo::class create ::streamdoc::StreamDoc {
         }
     }
     method opt {k} {
-        if {![info exists Opts]} { set Opts [my engine_default_opts] }
+        if {![info exists Opts]} { set Opts [my default_opts] }
         return [dict get $Opts $k]
     }
 
     # ---- body assembly -----------------------------------------------
 
-    # The whole construction ritual in one call: seed the engine state and
+    # The whole construction ritual in one call: seed the base class's state and
     # build the document text and its scrollbar into `parent` (a frame the
     # host owns and packs). A subclass constructor calls `my configure ...`
     # first when it overrides the look, then `my setup $parent`.
@@ -307,7 +307,7 @@ oo::class create ::streamdoc::StreamDoc {
 
     # reset: empty the document - drop every region's marks and elide tags,
     # wipe the buffer and clear the store. The base of a fresh feed. The
-    # first call also seeds the engine state; a host with bespoke widget
+    # first call also seeds the base class's state; a host with bespoke widget
     # assembly (its own text widget in Text) starts here instead of setup.
     method reset {} {
         if {![info exists Regions]} {

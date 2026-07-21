@@ -1,11 +1,11 @@
 package require Tcl 9
 package require Tk
 package require leash
-package provide streamtree 0.3.0
+package provide streamtree 0.3.1
 
 namespace eval ::streamtree {}
 
-# ::streamtree::StreamTree - the generic "tree drawn in one text widget" engine.
+# ::streamtree::StreamTree - the generic "tree drawn in one text widget" base class.
 #
 # Home: the teatotal module collection, the one stable place this module's
 # updates arrive from. A project holding a copy refreshes it from there rather
@@ -16,7 +16,7 @@ namespace eval ::streamtree {}
 # up across every row. Each node is a folder/row/child carrying the position
 # marks and tag that locate it in the widget, plus an opaque domain payload.
 # The subclass supplies the content and ordering through the hooks
-# (Template Method); the engine never looks inside a payload.
+# (Template Method); the base class never looks inside a payload.
 #
 # Layout of the body, top to bottom:
 #   header   - a 1-line text widget carrying the sortable column labels, in the
@@ -37,7 +37,7 @@ namespace eval ::streamtree {}
 # anchor_restore, which pins the top visible line back to the top, so a late
 # insert above the viewport never shifts what the reader is on.
 #
-# The engine owns every text-mark mutation behind a treeview-style primitive
+# The base class owns every text-mark mutation behind a treeview-style primitive
 # ensemble - insert/delete/detach/item/expand/collapse/hide/unhide/move/rebuild,
 # plus reset and a content door (append_open/emit/emit_window/append_close, and
 # drop_loose to lift a tagged run of it back out) for loose in-row content that
@@ -53,7 +53,7 @@ namespace eval ::streamtree {}
 #     column_spec               the metadata columns {id label sample align sortable} ({})
 #     render_subject node max    the row's left side: {subject <str> tags <ranges> meta_run 0|1}
 #                                (ranges is a list of {tag off len}, subject-relative)
-#     cell_values node           ordered {col value} pairs the engine lays as cells ({})
+#     cell_values node           ordered {col value} pairs laid as cells ({})
 #     cell_tag node col          the tag names overlaid on that cell (empty for none)
 #     sort_key payload col       the sort value for a column, from a node's payload
 #     apply_column_tabs tabs     set the right tab stops; the default sets them
@@ -68,7 +68,7 @@ namespace eval ::streamtree {}
 #     on_row_rendered id         wire a laid row (bindings, nested content, selection)
 #     on_before_delete id        drop the node's domain indices before it leaves the store
 #     populate id                realize a lazy node's children at the top of expand,
-#                                before the engine draws them
+#                                before the base class draws them
 #   Rebuild
 #     sort_siblings ids          reorder a sibling set for display, keeping every node
 #     render_skip id             leave a node out of the view while keeping it in the store
@@ -80,9 +80,9 @@ namespace eval ::streamtree {}
 #
 # ---- declarative attributes --------------------------------------------
 #
-# A consumer declares ATTRIBUTES, a small typed vocabulary the engine draws and
+# A consumer declares ATTRIBUTES, a small typed vocabulary the base class draws and
 # filters on its behalf while still reading nothing inside a payload: every value
-# arrives through the attr_value hook, so the engine interprets only what the
+# arrives through the attr_value hook, so the base class interprets only what the
 # consumer named. Attributes are declared through the -attrs option, an ordered
 # list of descriptor dicts, and validated at the door like the other option
 # surfaces (an unknown key, a bad kind, a duplicate id are refused where they were
@@ -191,7 +191,7 @@ oo::class create ::streamtree::StreamTree {
     variable ResizeX0         ;# header x (column space) the resize drag began at
     variable ResizeW0         ;# the column's width when the resize drag began
     variable ColHandles       ;# the visible vertical resize-handle rules over the header
-    variable Opts             ;# widget options decoupling the engine from any host app
+    variable Opts             ;# widget options decoupling the base class from any host app
     variable SubjectMax       ;# px the subject may fill before the metadata block
     variable FolderLabelMax   ;# px a root label may fill before its aggregates
     variable LayoutW          ;# Text width the current layout was computed for
@@ -297,7 +297,7 @@ oo::class create ::streamtree::StreamTree {
 
     # ---- widget options ----------------------------------------------
     #
-    # The engine takes its host-specific bindings as options so its body holds no
+    # The base class takes its host-specific bindings as options so its body holds no
     # app references: two font names, a colours dict (the header strip background,
     # its muted label ink, the active-column ink), the debounce a streamed resort
     # waits out, and a motion callback the drag-to-move host wires in. Defaults
@@ -306,7 +306,7 @@ oo::class create ::streamtree::StreamTree {
     # same door: -attrs declares the typed attributes, -attrstyles names the styles
     # its filter controls take (empty roles fall back to the stock ttk widget), and
     # -attrfiltercb is fired with the filter state whenever a filter changes.
-    method engine_default_opts {} {
+    method default_opts {} {
         return [dict create \
             listfont TkTextFont \
             headfont TkHeadingFont \
@@ -319,8 +319,8 @@ oo::class create ::streamtree::StreamTree {
             attrfiltercb ""]
     }
     method configure {args} {
-        if {![info exists Opts]} { set Opts [my engine_default_opts] }
-        set known [my engine_default_opts]
+        if {![info exists Opts]} { set Opts [my default_opts] }
+        set known [my default_opts]
         # Stage into a copy and validate the whole call before committing any of it,
         # so a bad option (or a bad -attrs) partway through leaves both the option
         # dict and the parsed attribute state exactly as they were.
@@ -336,7 +336,7 @@ oo::class create ::streamtree::StreamTree {
         if {$reparse} { my parse_attrs }
     }
     method opt {k} {
-        if {![info exists Opts]} { set Opts [my engine_default_opts] }
+        if {![info exists Opts]} { set Opts [my default_opts] }
         return [dict get $Opts $k]
     }
     method colour {role} { return [dict get [my opt colours] $role] }
@@ -344,7 +344,7 @@ oo::class create ::streamtree::StreamTree {
     # ---- body assembly -----------------------------------------------
 
     # The whole construction ritual in one call, for a host without bespoke
-    # assembly needs: seed the engine state, build the body and header into
+    # assembly needs: seed the base class's state, build the body and header into
     # `parent` (a frame the host owns and packs), and lay out the columns. A
     # subclass constructor calls `my configure ...` first when it overrides the
     # look, then `my setup $parent`. The initial sort is the subject key when
@@ -685,7 +685,7 @@ oo::class create ::streamtree::StreamTree {
     }
 
     # The domain's sort id for the non-metadata subject zone, or "" when the
-    # subject is not sortable (the engine default). A subclass overrides this so
+    # subject is not sortable (the base-class default). A subclass overrides this so
     # the leftmost header sorts.
     method subject_sort_id {} { return "" }
 
@@ -895,10 +895,10 @@ oo::class create ::streamtree::StreamTree {
         return $out
     }
 
-    # ---- generic line engine ------------------------------------------
+    # ---- generic row drawing ------------------------------------------
     #
     # A row is the subject (the node's left side, built by render_subject) plus a
-    # right-pinned metadata strip laid by the engine from cell_values: each cell
+    # right-pinned metadata strip laid by the base class from cell_values: each cell
     # is preceded by a tab, so the column tab stops align it under the header.
     # build_line returns the text and a per-column {off len} map; apply_line tags
     # the subject ranges, the contiguous metadata run (when meta_run is set), and
@@ -982,7 +982,7 @@ oo::class create ::streamtree::StreamTree {
 
     # ---- structural primitives ----------------------------------------
     #
-    # The engine owns every text-mark mutation behind a small treeview-style
+    # The base class owns every text-mark mutation behind a small treeview-style
     # ensemble (insert/delete/detach/item/expand/collapse/hide/unhide/move/
     # rebuild) plus a content door (append_open/emit/append_close) for loose
     # in-row content that is not itself a node. A subclass drives the widget
@@ -1015,7 +1015,7 @@ oo::class create ::streamtree::StreamTree {
     # (bindings, nested content, selection). on_before_delete runs before a node
     # leaves the store (drop domain indices and aggregates). populate runs at the
     # top of expand, so a lazy host can enumerate and attach the node's children
-    # right before the engine draws them; a fully materialized tree leaves it
+    # right before the base class draws them; a fully materialized tree leaves it
     # as the no-op default.
     method start_gravity {kind} { return right }
     method row_tags {kind} { return [list] }
@@ -1043,7 +1043,7 @@ oo::class create ::streamtree::StreamTree {
     method apply_column_tabs {tabs} { $Text configure -tabs $tabs }
     method relayout_content {} { foreach id [my all_rendered_nodes] { my item $id } }
 
-    # The value of a declared attribute on a node (engine hook). The engine reads
+    # The value of a declared attribute on a node (base-class hook). The base class reads
     # every attribute only through here, so a payload stays opaque: the default
     # takes the payload's `id` key, and a host with the value elsewhere overrides
     # this and nothing else.
@@ -1451,7 +1451,7 @@ oo::class create ::streamtree::StreamTree {
     # ---- declarative attributes ---------------------------------------
     #
     # The typed attribute vocabulary the -attrs option declares, plus the filter
-    # state and the controls that drive it. The engine draws a glyphed bool as a
+    # state and the controls that drive it. The base class draws a glyphed bool as a
     # subject-prefix mark and a glyphless bool as a check column, filters on both
     # bool and enum through the hide/unhide primitives, and reads every value only
     # through attr_value so a payload stays opaque. The header carries the contract.
