@@ -3,7 +3,7 @@
 # gates on.
 #
 # Each test is a standalone script that prints PASS/FAILED and exits with its
-# failure count. With STREAMTREE_AUDIT / STREAMDOC_AUDIT set, every engine
+# failure count. With STREAMTREE_AUDIT / STREAMDOC_AUDIT set, every primitive
 # mutation also checks its mark invariant and, on the first desync, latches and
 # writes an "INVARIANT @ ..." line to stderr. A test can desync a mark yet still
 # print PASS (it never inspects the latch), so a green test is not enough: this

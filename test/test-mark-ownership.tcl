@@ -1,9 +1,9 @@
 #!/usr/bin/env tclsh9.0
-# The StreamTree engine owns every text-mark mutation: the SessionList subclass
-# drives the widget only through the primitive ensemble and holds no raw
-# `$Text insert/delete/mark` of its own. This guards that boundary so a future
-# change cannot quietly reintroduce the scattered mark surgery the engine was
-# built to absorb (the base engine keeps them by design).
+# The streamtree base class owns every text-mark mutation: the SessionList
+# subclass drives the widget only through the primitive ensemble and holds no
+# raw `$Text insert/delete/mark` of its own. This guards that boundary so a
+# future change cannot quietly reintroduce the scattered mark surgery the base
+# class was built to absorb (it keeps them by design).
 package require Tcl 9
 set ROOT [file dirname [file dirname [file normalize [info script]]]]
 

@@ -312,7 +312,7 @@ oo::class create ::questlog::ui::Toolbar {
 
     # Pre-select the time row from a launch --since. An hours, days or "all" spec
     # is one the two spinboxes and the all radio express inline; any other spec
-    # the engine accepts (weeks, minutes, an absolute date) becomes the custom
+    # the CLI accepts (weeks, minutes, an absolute date) becomes the custom
     # member. Validation goes through the one grammar home, so this accepts exactly
     # what the headless CLI does. A bad spec is ignored with a warning, falling
     # back to the default rather than leaving nothing selected. The editor
@@ -540,7 +540,7 @@ oo::class create ::questlog::ui::Toolbar {
     }
 
     # Assemble the chosen spec, validate it through the one grammar home (so the
-    # popover can never emit a spec the engine would reject), commit it, and
+    # popover can never emit a spec the CLI would reject), commit it, and
     # publish. A spec the spinboxes already express (a whole number of hours or
     # days) goes back to them rather than parking as a redundant custom member;
     # anything else (weeks, minutes, a date) becomes the custom member. set_values

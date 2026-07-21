@@ -56,8 +56,8 @@ oo::class create FruitTree {
     }
     method sort_key {payload col} { return [dict getdef $payload $col ""] }
 }
-# The engine's Text is private, but setup builds it at $parent.body.t, which the
-# assertions read directly.
+# The base class's Text is private, but setup builds it at $parent.body.t,
+# which the assertions read directly.
 
 # The enum roster comes from a provider the tests can grow, so the "next open sees
 # the new value" case has something to add.
@@ -353,14 +353,14 @@ $h attr_filter_set colour {}
 check "a no-op enum set fires no callback" 1 $::CB_COUNT
 $h attr_filter_set ripe 0
 
-# ---- attr_value override: the engine reads only through the hook ---------
+# ---- attr_value override: the base class reads only through the hook -----
 
 # The value lives in a nested props dict, a shape the default attr_value would
-# never find. A working glyph and a working filter prove the engine reads every
-# attribute value only through the hook, so a payload stays the consumer's own. A
-# per-object override on a fresh FruitTree carries it, so $h keeps its default
-# reading for the tests around it; a whole subclass would earn its place only by
-# adding behaviour past this one redirected read, and it adds none.
+# never find. A working glyph and a working filter prove the base class reads
+# every attribute value only through the hook, so a payload stays the consumer's
+# own. A per-object override on a fresh FruitTree carries it, so $h keeps its
+# default reading for the tests around it; a whole subclass would earn its place
+# only by adding behaviour past this one redirected read, and it adds none.
 frame $W.op
 pack $W.op
 set o [FruitTree new]

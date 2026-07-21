@@ -143,9 +143,9 @@ set BM [dict create \
 set LIVE [dict create bbbb $Bp cccc $Cp dddd $Dp eeee $Ep]
 
 # The poll's job, as app.tcl does it: gather a set for each filter that has one and
-# hand the list what they jointly claim. The filters live in the engine, so read
-# which ones are on from the engine's own filter state, not from a snapshot the
-# caller builds. With both filters on that is the intersection, which is the only
+# hand the list what they jointly claim. The filters live in the base class, so
+# read which ones are on from the base class's own filter state, not from a
+# snapshot the caller builds. With both filters on that is the intersection, which is the only
 # membership the counts may be measured against.
 proc push {} {
     set state [$::SL attr_filter_all]

@@ -1,15 +1,16 @@
 #!/usr/bin/env wish9.0
-# The model filter as the engine evaluates it (attr_admits over a session node),
-# the one filter evaluator. The model filter's state is the excluded-label list:
+# The model filter as the base class evaluates it (attr_admits over a session
+# node), the one filter evaluator. The model filter's state is the excluded-label
+# list:
 # a row hides when its model is known AND on that list, so one model can be
 # excluded while the rest stay, and a label first seen after the reader chose
 # shows by default. A row whose model is empty or absent stays, because the cost
 # pass fills models in after the row lands and hiding on absence would flicker the
-# list as it does. Here the state is set through the engine (attr_filter_set) and
-# read through attr_admits on the node, not through any second predicate.
+# list as it does. Here the state is set through the base class (attr_filter_set)
+# and read through attr_admits on the node, not through any second predicate.
 #
-# It composes with running and bookmarked exactly as the engine ANDs its filters:
-# a row shows only when every active filter admits it.
+# It composes with running and bookmarked exactly as the base class ANDs its
+# filters: a row shows only when every active filter admits it.
 
 package require Tcl 9
 package require Tk
@@ -80,7 +81,7 @@ proc check {name got want} {
         incr ::fails
     }
 }
-# 1 iff the engine admits the session at $path under the active filters.
+# 1 iff the base class admits the session at $path under the active filters.
 proc admits {path} { return [$::SL attr_admits [$::SL sid $path]] }
 
 # Load all three into the model.

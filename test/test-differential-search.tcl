@@ -1,20 +1,21 @@
 #!/usr/bin/env tclsh9.0
 # Differential truth-table for session search.
 #
-# The same query is answered two ways - by the GUI engine (lib/scan.tcl Scan +
-# lib/search.tcl Search, driven here exactly as the app drives it) and by the
-# CLI engine (the real ./questlog --json subprocess) - over one fixture corpus
-# with known properties. Each case asserts BOTH engines return the exact
-# expected session set. They share lib/ but diverge in orchestration, so a
-# bounds filter the GUI search forgets (the `subtree` row bound, which lives in
-# filter::row_in_bounds and the CLI applies but the GUI search corpus does not)
-# shows up as a GUI-vs-truth and GUI-vs-CLI mismatch, not a silent pass.
+# The same query is answered two ways - by the GUI search path (lib/scan.tcl
+# Scan + lib/search.tcl Search, driven here exactly as the app drives it) and
+# by the CLI subprocess (the real ./questlog --json invocation) - over one
+# fixture corpus with known properties. Each case asserts BOTH search paths
+# return the exact expected session set. They share lib/ but diverge in
+# orchestration, so a bounds filter the GUI search forgets (the `subtree` row
+# bound, which lives in filter::row_in_bounds and the CLI applies but the GUI
+# search corpus does not) shows up as a GUI-vs-truth and GUI-vs-CLI mismatch,
+# not a silent pass.
 #
-# Pure Tcl, no Tk: each case runs the GUI engine through BOTH search paths - the
-# single-thread coroutine (QUESTLOG_THREADS=0) and the worker-thread
-# fan-out the app uses by default - so a bounds filter dropped in either delivery
-# path is caught. Both run headless under one vwait. Fixture mtimes are relative
-# to now, so the since-bound cases never rot.
+# Pure Tcl, no Tk: each case runs the GUI search path through both delivery
+# paths - the single-thread coroutine (QUESTLOG_THREADS=0) and the
+# worker-thread fan-out the app uses by default - so a bounds filter dropped in
+# either delivery path is caught. Both run headless under one vwait. Fixture
+# mtimes are relative to now, so the since-bound cases never rot.
 
 package require Tcl 9
 package require TclOO
@@ -41,7 +42,7 @@ source [file join $ROOT lib search.tcl]
     tool_render_cap [::questlog::config::get tool_render_cap]]
 
 # Isolated corpus. HOME points the exec'd CLI at the same tree the in-process
-# resolver returns, so both engines read one corpus.
+# resolver returns, so the two search paths read one corpus.
 set TMP /tmp/questlog-diff-test
 set CORPUS [file join $TMP .claude projects]
 proc ::questlog::path::projects_root {} { return $::CORPUS }
@@ -127,14 +128,14 @@ write_sdk_session -home-test-code-proja ssss $PROJA glassine 2
 # a subagent of sA; its needle appears nowhere else.
 write_subagent -home-test-code-proja aaaa agent-x1 fumarole 2
 
-# ---- engines --------------------------------------------------------
+# ---- search paths ----------------------------------------------------
 
 # uuids (sorted) of the sessions a path list names.
 proc uuids {paths} {
     return [lsort [lmap p $paths { file rootname [file tail $p] }]]
 }
 
-# The GUI search engine: Scan + Search wired as the app wires them, collecting
+# The GUI search path: Scan + Search wired as the app wires them, collecting
 # the matched session paths the way on_search_file does, run to completion under
 # one vwait.
 proc gui_search {snapshot threads} {
@@ -164,8 +165,8 @@ proc gui_search {snapshot threads} {
 }
 proc noop {args} {}
 
-# The CLI engine: the real ./questlog --json subprocess (HOME points it at the
-# fixture corpus), its folder/session JSON parsed back to a uuid set.
+# The CLI subprocess: the real ./questlog --json invocation (HOME points it at
+# the fixture corpus), its folder/session JSON parsed back to a uuid set.
 proc cli_search {argv} {
     global ROOT
     set json [exec [file join $ROOT questlog] --json {*}$argv 2> /dev/null]
@@ -178,8 +179,8 @@ proc cli_search {argv} {
     return [uuids $paths]
 }
 
-# One case: the same query through both engines, both asserted against truth,
-# and the two engines asserted equal to each other.
+# One case: the same query through both search paths, both asserted against
+# truth, and the two search paths asserted equal to each other.
 proc run_case {name search since subtree truth} {
     set argv [list --keyword $search --since $since]
     set snap [dict create search $search search_case 0 search_regions any since $since]

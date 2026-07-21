@@ -87,8 +87,8 @@ oo::class create ::questlog::ui::Viewer {
     variable CurTs            ;# ISO stamp of the record being rendered, read for a quote row
     variable Roles            ;# dict: jsonl line -> uppercased role, for row colour
     # Turns/CurTurn: a read-computed compatibility surface over the streamdoc
-    # engine's region store (one region per turn). A read trace (constructor)
-    # regenerates both from region_info on every read - the engine's marks
+    # base class's region store (one region per turn). A read trace (constructor)
+    # regenerates both from region_info on every read - the base class's marks
     # are the truth, these exist for outside readers (the fold tests, the
     # bench) that grew up on the hand-kept registry this replaced:
     #   {id line hdr body end label ts folded shown counts stub}
@@ -221,7 +221,7 @@ oo::class create ::questlog::ui::Viewer {
         set RunPath ""
         set ErrBuf ""
         my build
-        # Streamdoc host wiring: the engine drives the transcript widget
+        # Streamdoc host wiring: the base class drives the transcript widget
         # built above (the shared Text), keeps a tail reader latched across
         # streamed appends, and its first reset seeds the region store.
         my configure -autofollow 1
@@ -600,7 +600,7 @@ oo::class create ::questlog::ui::Viewer {
         # a turn ("▸ · 7 tool calls · 2 thinking"); it sits inside the fold
         # range, so like the dk-* faces it carries no -spacing1/2/3 (spacing
         # would seam at the elide boundary when its turn folds). The per-turn
-        # f#N/d#N elide tags are the engine's, configured at region_open in
+        # f#N/d#N elide tags are the base class's, configured at region_open in
         # that order, so a detail char's d#N outranks its f#N.
         $Text tag configure foldglyph -font QLMonoBold \
             -foreground [::questlog::ui::theme::c muted] \
@@ -957,7 +957,7 @@ oo::class create ::questlog::ui::Viewer {
     }
 
     method render {} {
-        # The engine's reset wipes the buffer, every region's marks and the
+        # The base class's reset wipes the buffer, every region's marks and the
         # per-turn f#N/d#N elide tag families in one sweep; the app-side
         # caches rebuild below. tkdown sweeps its own per-table tags.
         my reset
@@ -1061,7 +1061,7 @@ oo::class create ::questlog::ui::Viewer {
         # Label -> tag: lowercased with spaces to underscores (TOOL RESULT ->
         # lbl-tool_result). The four lbl-* tags are configured in build.
         # A turn-start record's label line is its turn's header, a region
-        # boundary: the engine region opens here, after the between-turn
+        # boundary: the base class's region opens here, after the between-turn
         # chrome above, so the divider and section header stay outside it
         # (render_record_turned closed the previous region before this
         # record). The payload carries what the app reads back per turn: the
@@ -1106,7 +1106,7 @@ oo::class create ::questlog::ui::Viewer {
     }
 
     # Turn-aware wrapper around render_record, the one entry both the
-    # wholesale fill and the streamed append use, so the engine's region
+    # wholesale fill and the streamed append use, so the base class's region
     # store is driven identically in both. A turn-start record
     # (is_turn_start; the rollback-list notion of a turn, so queued/sdk
     # prompts stay inside the running one) first closes the open region -
@@ -1117,7 +1117,7 @@ oo::class create ::questlog::ui::Viewer {
     # render_record, past the chrome). Every other record renders into the
     # running region: a tool_result record is detail in its entirety (label
     # line and trailing separator included, so hiding it leaves no residue).
-    # A fold held mid-stream is the engine's concern, not the caller's:
+    # A fold held mid-stream is the base class's concern, not the caller's:
     # append_new's append_close re-covers the fresh lines. A compact boundary closes
     # nothing: the conversation resumes mid-turn.
     method render_record_turned {rec last_ts in_section} {
@@ -1199,7 +1199,7 @@ oo::class create ::questlog::ui::Viewer {
         # itself, with the open turn's summary as the last content line the
         # door knows to pop.
         my clear_endhint
-        # One engine batch: it anchors the reader once (the autofollow latch
+        # One base-class batch: it anchors the reader once (the autofollow latch
         # keeps a tail reader at the tail), the door pops the open turn's
         # summary so the records land inside the turn, and append_close
         # re-covers a fold held during the stream and re-appends the summary
@@ -1248,14 +1248,14 @@ oo::class create ::questlog::ui::Viewer {
 
     # ---- turn folding and detail hiding: the streamdoc host skin -----------
     #
-    # The streamdoc engine owns the regions (one per turn), their boundary
+    # The streamdoc base class owns the regions (one per turn), their boundary
     # marks and both elide layers - f#N the fold, d#N the detail, in that
     # priority order - so nothing in the viewer mutates a tag's -elide. The
     # priority rule still binds the app's own tags: none laid over a turn
     # (body/dk-*/find/sel/tbl) may set an explicit -elide, or it would
     # override the fold; all of them leave it unset, which never does.
     #
-    # What lives here is the app skin over the engine: the names the rest of
+    # What lives here is the app skin over the base class: the names the rest of
     # the app and the tests call (thin delegates), hover-copy invalidation on
     # the mass toggles and jumps, the click handlers behind the turnhdr/stub
     # tag bindings, the summary hook that turns a payload's tally into the
@@ -1277,7 +1277,7 @@ oo::class create ::questlog::ui::Viewer {
     method expand_all {} { my copy_hide; next }
 
     # The one jump gate: every site that scrolls the transcript to an index
-    # routes here. The engine's reveal unfolds the target's turn, shows its
+    # routes here. The base class's reveal unfolds the target's turn, shows its
     # detail only when the index itself sits inside it, and drains the line
     # metrics before the see. The jump is layout churn like any other: the
     # see slides new text under a pointer resting on the transcript (a
@@ -1289,7 +1289,7 @@ oo::class create ::questlog::ui::Viewer {
         my reveal $idx
     }
 
-    # The engine's summary hook: the open turn's trailing stub phrase from
+    # The base class's summary hook: the open turn's trailing stub phrase from
     # the payload's per-kind detail tally. Nonzero kinds only, "· 7 tool
     # calls · 2 thinking". Tool results are not a kind of their own - they
     # shadow their calls - unless a turn somehow holds results with no calls,
@@ -1312,7 +1312,7 @@ oo::class create ::questlog::ui::Viewer {
         return "· [join $parts " · "]"
     }
 
-    # The styling tag on every engine-written summary line: `stub` carries
+    # The styling tag on every summary line the base class writes: `stub` carries
     # the faint mono face and the detail-toggle click zone (build).
     method region_tags {payload} { return [list stub] }
 
@@ -1331,7 +1331,7 @@ oo::class create ::questlog::ui::Viewer {
         if {$n >= 0} { my detail_toggle $n }
     }
 
-    # Regenerate the Turns/CurTurn read surface from the engine's region
+    # Regenerate the Turns/CurTurn read surface from the base class's region
     # store (the read trace target; see the variable comment). Writes fire
     # no trace, so this cannot recurse.
     method turns_surface {args} {
@@ -1507,7 +1507,7 @@ oo::class create ::questlog::ui::Viewer {
     # Re-read the open session's file after an external replace or truncate.
     # The document-path work of `show` without its session-switch resets, so
     # PromptVar, the prompt bar state, Uuid and Cwd survive a file swapped under
-    # the reader. render begins by resetting the engine, so re-entry is safe;
+    # the reader. render begins by resetting the base class, so re-entry is safe;
     # the quote lists, RenderTs/RenderInSection and LineMap it also wipes need
     # no separate reset here. The scroll position is preserved across the swap.
     method reload {} {
@@ -2526,7 +2526,7 @@ oo::class create ::questlog::ui::Viewer {
 
     # ---- turns index (jump to a turn's header) ----------------------------
 
-    # Fill the Turns listbox from the engine's region store, one row per turn
+    # Fill the Turns listbox from the base class's region store, one row per turn
     # "N · time · first prompt line" coloured like a user label (a turn opens
     # on a user prompt). N is the turn's 1-based number, so a reader can jump
     # to "turn 12" by the number they'd say aloud. The label was captured at

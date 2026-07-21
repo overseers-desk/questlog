@@ -1,14 +1,14 @@
 #!/usr/bin/env wish9.0
-# The list-view filters as the engine's own filter controls, packed onto the list
-# strip beside "expand all". Running and bookmarked are glyphed bools, model is an
-# excluded-set enum; each is a control the StreamTree attribute facility builds
-# into the strip and drives through attr_filter_set / -attrfiltercb. Toggling one
-# hides or shows rows in place - no scan, no search, the selection preserved. The
-# engine owns the one filter state, and the filter note and the folder counts read
-# it back through attr_filter_all, not a copy.
+# The list-view filters as the base class's own filter controls, packed onto the
+# list strip beside "expand all". Running and bookmarked are glyphed bools, model
+# is an excluded-set enum; each is a control the StreamTree attribute facility
+# builds into the strip and drives through attr_filter_set / -attrfiltercb.
+# Toggling one hides or shows rows in place - no scan, no search, the selection
+# preserved. The base class owns the one filter state, and the filter note and
+# the folder counts read it back through attr_filter_all, not a copy.
 #
 # Invariant under test: a filter click reaches no disk (the scan sees no new
-# scan_path), hides/shows loaded rows by the engine's excluded-set rules
+# scan_path), hides/shows loaded rows by the base class's excluded-set rules
 # (attr_admits), and keeps a path-keyed selection across the hide and the show.
 
 package require Tcl 9
@@ -98,7 +98,7 @@ update
 
 # The cost second pass is not wired in this harness; land the model labels the
 # way it would (refresh_cost writes the node), so the model filter has a
-# roster and the engine can read each row's model.
+# roster and the base class can read each row's model.
 foreach {p m} [list $Ap {Sonnet} $Bp {Opus} $Cp {Sonnet}] {
     $SL refresh_cost $p [dict create cost_usd 0.01 model $m]
 }
@@ -106,8 +106,8 @@ update
 check "all three rendered before any filter" \
     [list [$SL sflag $Ap rendered] [$SL sflag $Bp rendered] [$SL sflag $Cp rendered]] {1 1 1}
 
-# --- 1b. The status glyphs are engine-rendered attribute prefixes now (the
-#         hand-rolled appends are retired): a running row prefixes ● under
+# --- 1b. The status glyphs are attribute prefixes the base class renders now
+#         (the hand-rolled appends are retired): a running row prefixes ● under
 #         attr-running, a bookmarked row prefixes ★ under attr-bookmarked, each
 #         dressed in its theme colour. Mark A running for the check, then clear it.
 set T .s.body.t
@@ -154,8 +154,8 @@ check "running filter hides idle A"    [$SL sflag $Ap rendered] 0
 check "running filter hides idle C"    [$SL sflag $Cp rendered] 0
 check "A stays in the model (hidden)"  [$SL has_session $Ap] 1
 check "A selection survives the hide"  [$SL is_selected $Ap] 1
-# any_view_toggle reads the engine's filter state directly, so it reports a filter
-# the moment the strip sets one - no copy to land first.
+# any_view_toggle reads the base class's filter state directly, so it reports a
+# filter the moment the strip sets one - no copy to land first.
 check "a filter is active" 1 [$SL any_view_toggle]
 $SL attr_filter_set running 0
 update
@@ -232,10 +232,10 @@ check "no filter click ran a scan_path" $::scan_path_calls $base_scans
 check "A survived the whole filter sequence selected" [$SL is_selected $Ap] 1
 
 # --- 8. A filter survives a bounds change. The toolbar's snapshot carries search
-#        and bounds only; the engine owns the filter and holds it across the change,
-#        with no copy to wipe. With bookmarked pressed, a bounds change (apply_filter,
-#        clear, refill) must re-insert rows that still honour the filter, and the
-#        strip control must still read as pressed.
+#        and bounds only; the base class owns the filter and holds it across the
+#        change, with no copy to wipe. With bookmarked pressed, a bounds change
+#        (apply_filter, clear, refill) must re-insert rows that still honour the
+#        filter, and the strip control must still read as pressed.
 $SL attr_filter_set bookmarked 1
 update
 check "bookmarked filter on: only B shows" \
@@ -249,7 +249,7 @@ after 300 [list set ::scan_done 1]
 vwait ::scan_done
 $SL toggle_folder $FOLDER
 update
-check "the engine still holds the filter across the bounds change" \
+check "the base class still holds the filter across the bounds change" \
     [$SL attr_filter_get bookmarked] 1
 check "the refilled list still honours the filter" \
     [list [$SL sflag $Ap rendered] [$SL sflag $Bp rendered] [$SL sflag $Cp rendered]] {0 1 0}

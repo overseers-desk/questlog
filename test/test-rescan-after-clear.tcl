@@ -1,6 +1,6 @@
 #!/usr/bin/env wish9.0
 # Switching the recency bounds (e.g. 7-day to 30-day) clears the list and
-# re-runs the scan. clear wipes the engine's node store; the session-domain
+# re-runs the scan. clear wipes the base class's node store; the session-domain
 # reverse indices (FolderNode/PathNode/TagNode) into that store must be wiped
 # with it. If they are not, wider bounds that bring a fresh session into a
 # folder already seen under the narrower bounds hits a stale FolderNode whose

@@ -40,10 +40,10 @@ proc ::questlog::ui::session_columns {} {
 
 # ::questlog::ui::SessionList - the left pane: one read-only text widget that is
 # both the session browser and the search-result index in a single list. It is
-# a StreamTree (the generic tree-in-a-text-widget engine) specialised for the
-# session domain: folders are the roots, sessions are their children, and a
+# a StreamTree (the generic tree-in-a-text-widget base class) specialised for
+# the session domain: folders are the roots, sessions are their children, and a
 # session's subagents are its grandchildren. SessionList supplies the content
-# and ordering through the engine's hooks (column_spec, render_subject,
+# and ordering through the base class's hooks (column_spec, render_subject,
 # cell_values, cell_tag, sort_key) and owns the session-specific interaction,
 # cost aggregation, menus, rename, search snippets, and reconcile.
 #
@@ -59,8 +59,8 @@ proc ::questlog::ui::session_columns {} {
 # its snippets. A single click opens the session in the docked viewer and
 # anchors it to the relevant line.
 #
-# The engine draws each node into the widget with two marks (node.start at its
-# first char, node.end at the append point past its last descendant) and a
+# The base class draws each node into the widget with two marks (node.start at
+# its first char, node.end at the append point past its last descendant) and a
 # per-node tag. A folder's start is the heading start (right gravity). A
 # session's start is its header start with right gravity: a session rendered
 # while a sibling above it is collapsed begins exactly where that sibling's end
@@ -78,7 +78,7 @@ oo::class create ::questlog::ui::SessionList {
     # a raw [after] naming this object would fire into its remains after a destroy:
     # leash's `later` ties the arm to the object's life (leash-1.0.tm).
     mixin leash
-    # Shared with the StreamTree engine (same per-object variables): the widget
+    # Shared with the StreamTree base class (same per-object variables): the widget
     # refs, the node store, the column geometry and the sort state.
     variable Top
     variable Text
@@ -197,11 +197,11 @@ oo::class create ::questlog::ui::SessionList {
         set ResortTimer ""
         set LayoutW 0
         set RelayoutPending 0
-        # Bind the engine to this app's look and host services: the list and
+        # Bind the base class to this app's look and host services: the list and
         # heading fonts, the theme colours its header strip uses, the streamed-
         # resort debounce from config, and the drag-to-move motion handler. These
         # are the only app-specific values the otherwise self-contained StreamTree
-        # engine needs; it carries no reference to them itself.
+        # base class needs; it carries no reference to them itself.
         my configure -listfont QLList -headfont QLBold \
             -colours [dict create \
                 strip [::questlog::ui::theme::c strip] \
@@ -209,7 +209,7 @@ oo::class create ::questlog::ui::SessionList {
                 ink   [::questlog::ui::theme::c ink]] \
             -resortdelay [::questlog::config::get resort_debounce_ms] \
             -motioncb {::questlog::ui::drag::motion %X %Y}
-        # The three list-view filters declared to the engine, which renders the
+        # The three list-view filters declared to the base class, which renders the
         # running/bookmarked glyphs (subject-prefix, per-attribute tag attr-<id>)
         # and builds the strip filter controls. attr_value below answers running
         # from the live set, bookmarked from the row, model from the row label;
@@ -232,7 +232,7 @@ oo::class create ::questlog::ui::SessionList {
         my build
     }
 
-    # The session-domain indices are reverse-lookups into the engine's node
+    # The session-domain indices are reverse-lookups into the base class's node
     # store, so they must be dropped exactly when the store is wiped. Bulk
     # store resets (init, and the buffer reset behind clear) do not fire the
     # per-node on_before_delete hook, so extend the store-wipe primitive itself
@@ -260,7 +260,7 @@ oo::class create ::questlog::ui::SessionList {
     # ---- domain invariant audit ----------------------------------------
     #
     # The whole-store consistency check over the session domain, the
-    # counterpart to the engine's structural check_invariant (which guards the
+    # counterpart to the base class's structural check_invariant (which guards the
     # marks). It returns a list of human-readable violation strings, empty when
     # clean, so a test asserts `check audit [$SL audit] {}` and the soak calls
     # it after every operation. Two invariants:
@@ -360,7 +360,7 @@ oo::class create ::questlog::ui::SessionList {
     method sflag {path field} { my node_field [my sid $path] $field }
     method sflagset {path field value} { my node_set [my sid $path] $field $value }
 
-    # ---- engine lifecycle hooks --------------------------------------
+    # ---- base-class lifecycle hooks ------------------------------------
     #
     # The StreamTree primitives own the marks; these hooks carry the session
     # domain's per-kind behaviour. start_gravity and row_tags fix a row's mark
@@ -435,7 +435,7 @@ oo::class create ::questlog::ui::SessionList {
         # column-header strip, taking that strip's #ececec colour so it reads as
         # the top of the list. Packed before build_body so it lands above the
         # header band. Expand-all acts on the list (packed left); the filters
-        # (running, bookmarked, model) are the engine's own filter
+        # (running, bookmarked, model) are the base class's own filter
         # controls, packed right. During the interim the toolbar still carries a
         # duplicate View row; a later stage removes it.
         ttk::frame $Top.lvt -style LVStrip.TFrame -padding {8 4}
@@ -443,11 +443,11 @@ oo::class create ::questlog::ui::SessionList {
         ttk::button $Top.lvt.expandall -text "expand all" -style LV.TButton \
             -takefocus 0 -command [list [self] expand_all_folders]
         pack $Top.lvt.expandall -side left
-        # The engine fills the strip with a control per filterable attribute,
+        # The base class fills the strip with a control per filterable attribute,
         # packed toward the right so they sit opposite expand-all.
         my build_filters $Top.lvt right
 
-        # The engine assembles the body (header text, list text, scrollbar, the
+        # The base class assembles the body (header text, list text, scrollbar, the
         # <Configure> relayout hook, the selection suppression and TailMark);
         # the session-domain tags, sort header and menus go on top of it.
         my build_body
@@ -467,8 +467,8 @@ oo::class create ::questlog::ui::SessionList {
         $Text tag configure folderhead \
             -font QLList -foreground [::questlog::ui::theme::c folder] \
             -spacing1 14 -spacing3 3 -wrap none
-        # The status glyphs are engine-rendered attribute prefixes (running,
-        # bookmarked declared as glyphed bools); the engine tags each glyph
+        # The status glyphs are attribute prefixes the base class renders (running,
+        # bookmarked declared as glyphed bools); the base class tags each glyph
         # attr-<id>, and these dress the two glyphed attributes in their
         # theme colours.
         $Text tag configure attr-running    -foreground [::questlog::ui::theme::c attr_running]
@@ -584,18 +584,19 @@ oo::class create ::questlog::ui::SessionList {
         my layout_columns
     }
 
-    # ---- engine hooks: columns and relayout ---------------------------
+    # ---- base-class hooks: columns and relayout ------------------------
 
-    # The metadata columns (engine hook): id, label, width sample, alignment,
-    # and whether the header sorts. The single home is session_columns.
+    # The metadata columns (a base-class hook): id, label, width sample,
+    # alignment, and whether the header sorts. The single home is session_columns.
     method column_spec {} { return [::questlog::ui::session_columns] }
 
-    # The header label over the subject column (engine hook).
+    # The header label over the subject column (a base-class hook).
     method subject_label {} { return "Session" }
 
-    # Pin the engine's freshly-computed tab stops onto the three session-domain
-    # row tags, so folder headings, session headers and child rows all align
-    # their metadata under the header (engine hook, called from layout_columns).
+    # Pin the base class's freshly-computed tab stops onto the three
+    # session-domain row tags, so folder headings, session headers and child
+    # rows all align their metadata under the header (a base-class hook,
+    # called from layout_columns).
     method apply_column_tabs {tabs} {
         # Session rows get a leading left tab stop for the title so every slug
         # aligns past the marker gutter (the chevron and status glyphs); folder
@@ -627,8 +628,8 @@ oo::class create ::questlog::ui::SessionList {
             "▾ $::questlog::ui::GLYPH_RUNNING$::questlog::ui::GLYPH_BOOKMARK"] + 8}]
     }
 
-    # Re-fit every rendered row's ellipsis after a width change (engine hook,
-    # called from relayout inside the widget's normal state): each folder
+    # Re-fit every rendered row's ellipsis after a width change (a base-class
+    # hook, called from relayout inside the widget's normal state): each folder
     # heading, each rendered session header, and the children of an expanded
     # session.
     method relayout_content {} {
@@ -677,8 +678,8 @@ oo::class create ::questlog::ui::SessionList {
 
     method apply_filter {snapshot} {
         set Snapshot $snapshot
-        # The arriving snapshot is search and bounds only; the engine owns the
-        # filters and holds them across the change, so a refill honours a filter
+        # The arriving snapshot is search and bounds only; the base class owns
+        # the filters and holds them across the change, so a refill honours a filter
         # still pressed on the strip with nothing here to re-graft.
         my clear
     }
@@ -700,9 +701,9 @@ oo::class create ::questlog::ui::SessionList {
         set Query [dict create terms $terms nocase $nocase]
     }
 
-    # ---- declarative-attribute hooks (the engine's filter and glyph facility) --
+    # ---- declarative-attribute hooks (the base class's filter and glyph facility) -
 
-    # The value of a declared attribute on a node (engine hook). Only a
+    # The value of a declared attribute on a node (a base-class hook). Only a
     # session answers: a folder or subagent returns "" for all three, so a
     # container is never glyphed and never filtered (a bool absent shows and
     # draws no mark, an enum empty always shows).
@@ -716,8 +717,8 @@ oo::class create ::questlog::ui::SessionList {
         }
     }
 
-    # Apply the engine's active attribute filters (engine method, overridden).
-    # The base's hide/unhide ledger cannot compose with this list's
+    # Apply the base class's active attribute filters (a base-class method,
+    # overridden). The base's hide/unhide ledger cannot compose with this list's
     # folder-drop rebuild: the base unhide would render a row back into a
     # folder heading render_skip no longer draws. So derive each session's
     # hidden flag from attr_admits and rebuild - hidden-aware, folder-aware,
@@ -732,11 +733,11 @@ oo::class create ::questlog::ui::SessionList {
         my rebuild
     }
 
-    # A strip filter moved (engine hook -attrfiltercb): apply_attr_filters (fired
-    # from attr_filter_set just before this) has already re-derived the view and
-    # rebuilt. Recount the filter note off the fresh engine state, and hand the
-    # state to the app so it can gather the filter memberships. No disk: the loaded
-    # rows come from the cache and nothing here scans or searches.
+    # A strip filter moved (a base-class hook, -attrfiltercb): apply_attr_filters
+    # (fired from attr_filter_set just before this) has already re-derived the
+    # view and rebuilt. Recount the filter note off the fresh base-class state,
+    # and hand the state to the app so it can gather the filter memberships. No
+    # disk: the loaded rows come from the cache and nothing here scans or searches.
     method on_filter_change {state} {
         my refresh_filter_note
         if {$OnFilterChange ne ""} { {*}$OnFilterChange $state }
@@ -822,8 +823,9 @@ oo::class create ::questlog::ui::SessionList {
 
     # Browse-mode row from Scan. Skipped when criteria are active (the result
     # index is built from matches, not the scan stream). The view filters do
-    # not gate the stream: every in-bounds row enters the model, and the engine's
-    # attr_admits settles its hidden flag, so a filter only chooses what paints.
+    # not gate the stream: every in-bounds row enters the model, and the base
+    # class's attr_admits settles its hidden flag, so a filter only chooses what
+    # paints.
     method on_scan_row {row} {
         # Under active criteria the result index owns the list, so the scan
         # stream attaches nothing; an out-of-bounds row is simply not modelled.
@@ -1259,7 +1261,7 @@ oo::class create ::questlog::ui::SessionList {
     method clear_subhint {path} {
         set tag [my sget $path subhint_tag]
         if {$tag eq ""} return
-        # The engine owns the text delete (mark bookkeeping); the host clears its
+        # The base class owns the text delete (mark bookkeeping); the host clears its
         # own registry entry and the per-session handle.
         my drop_loose $tag
         $Text tag delete $tag
@@ -1308,8 +1310,8 @@ oo::class create ::questlog::ui::SessionList {
             my node_set $sid expanded 0
             my detach_session_children $path
         } else {
-            # The engine primitive: populate realizes the children, then the
-            # engine lays them at the session's append point.
+            # The base class's primitive: populate realizes the children, then
+            # it lays them at the session's append point.
             my expand $sid
         }
         if {[my node_field $sid rendered]} { my redraw_header $path }
@@ -1336,7 +1338,7 @@ oo::class create ::questlog::ui::SessionList {
         my node_set $sid children [linsert [my node_field $sid children] end $cid]
     }
 
-    # Engine hook: realize a session's subagent children at the top of expand.
+    # Base-class hook: realize a session's subagent children at the top of expand.
     # With no attached set yet (browse, or a search case-A session whose
     # subagents did not match), enumerate and attach them all; in search the
     # matched children are already attached as their matches arrived
@@ -1406,7 +1408,7 @@ oo::class create ::questlog::ui::SessionList {
         {*}$OnSubagentCost $cp
     }
 
-    # Engine override for a rebuild's recursion. A session's subagents are drawn
+    # Base-class override for a rebuild's recursion. A session's subagents are drawn
     # by wire_session_row (via render_children) as the session row is re-laid, so
     # descending into them here would draw each a second time (issue #52). Stop at
     # a session and let render_children be the one writer; folders still recurse
@@ -1760,10 +1762,11 @@ oo::class create ::questlog::ui::SessionList {
         return $cells
     }
 
-    # ---- engine hooks: cell values and tags ---------------------------
+    # ---- base-class hooks: cell values and tags -------------------------
 
-    # The metadata cells the engine lays for a node, as ordered {col value} pairs
-    # (engine hook). A session or subagent row carries every column. A folder
+    # The metadata cells the base class lays for a node, as ordered {col value}
+    # pairs (a base-class hook). A session or subagent row carries every column.
+    # A folder
     # heading carries no per-row date/turns/duration/actions: only an empty date
     # cell (so its size/cost still tab under the rows' size/cost columns) and the
     # size and cost aggregates.
@@ -1790,7 +1793,7 @@ oo::class create ::questlog::ui::SessionList {
         return $out
     }
 
-    # The overlay tags for one laid cell (engine hook), applied only when the
+    # The overlay tags for one laid cell (a base-class hook), applied only when the
     # cell is non-empty. The cost cell takes a tier colour (amber from 10c, brick
     # red from $1; below that the muted meta grey shows through); the actions cell
     # is marked so a click on it is told apart from the row, and brightens while
@@ -1833,7 +1836,7 @@ oo::class create ::questlog::ui::SessionList {
         }
     }
 
-    # The sort value for a column from a node's payload (engine hook). Date reads
+    # The sort value for a column from a node's payload (a base-class hook). Date reads
     # mtime so date-descending reproduces the mtime-descending streaming order; a
     # blank or unknown cost/turns/duration sinks to the bottom.
     method sort_key {s col} {
@@ -1876,12 +1879,12 @@ oo::class create ::questlog::ui::SessionList {
     method subject_sort_id {} { return "path" }
     method default_sort_dir {id} { return [expr {$id eq "path" ? "asc" : "desc"}] }
 
-    # ---- engine hook: the row subject (left side) ---------------------
+    # ---- base-class hook: the row subject (left side) --------------------
 
     # Build a node's subject: the left side per kind, ellipsised to fit before
-    # the metadata strip (engine hook). Returns {subject <str> tags <ranges>
+    # the metadata strip (a base-class hook). Returns {subject <str> tags <ranges>
     # meta_run <0|1>}, where tags is a list of {tag off len} ranges relative to
-    # the subject start and meta_run asks the engine to paint the contiguous muted
+    # the subject start and meta_run asks the base class to paint the contiguous muted
     # metadata run. A folder paints no meta run (its cells are tagged singly).
     method render_subject {node max} {
         switch -- [my node_field $node kind] {
@@ -1924,7 +1927,7 @@ oo::class create ::questlog::ui::SessionList {
         # left gutter, then a tab sends the slug to the title stop apply_column_tabs
         # adds to the sessionhead tabs - the same column-tab mechanism the
         # right-pinned metadata uses. The running/bookmark status glyphs are no
-        # longer laid here: the engine prefixes them ahead of this subject (its
+        # longer laid here: the base class prefixes them ahead of this subject (its
         # attr-running / attr-bookmarked tags), so this method draws only the
         # chevron and the title. Only a present chevron is drawn, so a plain gutter
         # shows nothing and the title still lands on the stop. The chevron is the
@@ -1997,7 +2000,7 @@ oo::class create ::questlog::ui::SessionList {
 
     # The folder heading subject: the marker, the (truncated) project label and a
     # bare "(N)" session count. The folder's size and cost aggregates are laid by
-    # the engine as cells (cell_values) under the rows' size/cost columns, with an
+    # the base class as cells (cell_values) under the rows' size/cost columns, with an
     # empty date cell so the double tab opens straight into the size column; their
     # bold/tier tags come from cell_tag. The subject tags only its leading marker
     # (the foldchevron range), so a Button-1 on the marker can be told from one on
@@ -2239,7 +2242,7 @@ oo::class create ::questlog::ui::SessionList {
     }
 
     # Drop the per-snippet / per-child-snippet tags ("n#" / "c#") left empty by a
-    # body delete. They are loose row content, not nodes, so the engine's
+    # body delete. They are loose row content, not nodes, so the base class's
     # node-based cleanup does not reach them; without this they accumulate.
     # Their reveal-registry entries go with them.
     method sweep_loose_tags {} {
@@ -2735,7 +2738,7 @@ oo::class create ::questlog::ui::SessionList {
         my peek_enter $kind $text
     }
 
-    # Resolve a drag point to the folder under it: the engine maps the point to a
+    # Resolve a drag point to the folder under it: the base class maps the point to a
     # text index; a folder heading's drop tag (TagNode) names the target folder.
     method drag_hit {X Y} {
         foreach t [$Text tag names [my index_at $X $Y]] {
@@ -2981,7 +2984,7 @@ oo::class create ::questlog::ui::SessionList {
             if {[my session_count] != $before} { my schedule_resort }
         }
         # A change in the running set changes the `running` attribute's value on
-        # the rows that flipped, so when the engine's running filter is on its
+        # the rows that flipped, so when the base class's running filter is on its
         # picture of the rows has gone stale: re-apply the attribute filters
         # against the fresh set, which re-lays the list. A session that stopped
         # while "running only" is on drops out; one that started shows. Gated on
@@ -3236,7 +3239,7 @@ oo::class create ::questlog::ui::SessionList {
     # no filter on, or none that has a membership (the model filter has none: a
     # row's model is known only once its transcript is parsed), nothing is claimed.
     #
-    # `shown` is the loaded session nodes the engine admits, counted through the one
+    # `shown` is the loaded session nodes the base class admits, counted through the one
     # evaluator (attr_admits) over the node store - what the list is holding and the
     # filters admit, which is not the rows on screen (a folded folder's rows count
     # and are not painted, and folding is the reader's own business). `total` is the

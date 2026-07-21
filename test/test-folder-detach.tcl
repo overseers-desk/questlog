@@ -100,7 +100,7 @@ check "three folders, in arrival order" [rendered_order] {-tmp-fd-p1 -tmp-fd-p2 
 check "P1 count = 1 viewable" [$SL folder_visible_count -tmp-fd-p1] 1
 check "P2 count = 1 viewable" [$SL folder_visible_count -tmp-fd-p2] 1
 
-# --- 2. Turn running-only ON. The engine holds the filter; the running poll settles
+# --- 2. Turn running-only ON. The base class holds the filter; the running poll settles
 #        the view each tick, so mark only P2's session running and let a poll pass:
 #        P1 and P3 have no running row and detach, P2 stays.
 $SL attr_filter_set running 1
@@ -123,7 +123,7 @@ check "P2 count back to 1"                 [$SL folder_visible_count -tmp-fd-p2]
 # --- 4. A filter with no poll behind it detaches folders on the toggle alone.
 #        Running rides the liveness reconcile; bookmarked has no such follow-up,
 #        so the toggle itself is the only chance to drop an emptied heading. The
-#        rebuild inside the toggle reads the engine's filter state directly, which
+#        rebuild inside the toggle reads the base class's filter state directly, which
 #        attr_filter_set has already updated, so it sees the new state at once.
 $SL attr_filter_set bookmarked 1
 update

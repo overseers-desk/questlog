@@ -19,9 +19,9 @@ $t insert "" row a [dict create label "first row"]
 
 `ttk::treeview` cannot draw multi-line rows, embed per-row widgets (match snippets, badge pills), anchor the viewport against a streaming insert, or roll child aggregates up into a parent heading. A canvas rewrite that can is a project of its own.
 
-streamtree renders a tree of abstract nodes into a single `text` widget: nodes nested to any depth, each rendered as one row, with a right-pinned metadata strip whose sortable, resizable columns line up across every row. It reuses treeview's *vocabulary* so the API reads as familiar. Each node carries the position marks and tag that locate it in the widget plus an opaque domain payload; the subclass supplies content and ordering through hooks (Template Method), and the engine never looks inside a payload.
+streamtree renders a tree of abstract nodes into a single `text` widget: nodes nested to any depth, each rendered as one row, with a right-pinned metadata strip whose sortable, resizable columns line up across every row. It reuses treeview's *vocabulary* so the API reads as familiar. Each node carries the position marks and tag that locate it in the widget plus an opaque domain payload; the subclass supplies content and ordering through hooks (Template Method), and the base class never looks inside a payload.
 
-`setup` runs the whole construction ritual: it seeds the engine state, builds the header and list into the frame, and lays out the columns. A host that wants to assemble things differently can do what `setup` does, step by step. Content beyond a flat labelled list comes from subclassing and overriding hooks (columns, rich subjects, sorts, per-kind row styles).
+`setup` runs the whole construction ritual: it seeds the base class's state, builds the header and list into the frame, and lays out the columns. A host that wants to assemble things differently can do what `setup` does, step by step. Content beyond a flat labelled list comes from subclassing and overriding hooks (columns, rich subjects, sorts, per-kind row styles).
 
 ## PRIMITIVES MAPPED TO ttk::treeview
 
@@ -75,11 +75,11 @@ Rebuild: `sort_siblings` (reorder a sibling set for display, keeping every node)
 
 ## THE SUBCLASS SURFACE
 
-A hook body works with its nodes through the store accessors, part of the subclassing contract: `node_exists id`, `node_get id` (the whole node dict), `node_field id field` / `node_set id field value` (one generic field), `node_payload id` (the opaque host dict) and `node_pget id key ?default?` / `node_pset id key value` (one payload key), and `roots` (the ordered root ids). Beside them sit the helpers a subclass reaches for while rendering and sorting: `colour role` (a `-colours` entry), `truncate_px text px font` (ellipsize to a pixel width), `all_rendered_nodes` (ids with a row in the view, document order), `set_sort id` (adopt a column as the active sort) and `schedule_resort` (debounced re-sort after streamed edits, `-resortdelay`). The demos use exactly this surface and nothing deeper; a subclass that finds itself wanting more than these and the hooks is reading the engine's own internals.
+A hook body works with its nodes through the store accessors, part of the subclassing contract: `node_exists id`, `node_get id` (the whole node dict), `node_field id field` / `node_set id field value` (one generic field), `node_payload id` (the opaque host dict) and `node_pget id key ?default?` / `node_pset id key value` (one payload key), and `roots` (the ordered root ids). Beside them sit the helpers a subclass reaches for while rendering and sorting: `colour role` (a `-colours` entry), `truncate_px text px font` (ellipsize to a pixel width), `all_rendered_nodes` (ids with a row in the view, document order), `set_sort id` (adopt a column as the active sort) and `schedule_resort` (debounced re-sort after streamed edits, `-resortdelay`). The demos use exactly this surface and nothing deeper; a subclass that finds itself wanting more than these and the hooks is reading the base class's own internals.
 
 ## OPTIONS
 
-The engine takes its host-specific look and services as options, set through `configure` before the body is built, so its body holds no host references:
+The streamtree base class takes its host-specific look and services as options, set through `configure` before the body is built, so its body holds no host references:
 
 | Option | Default | Purpose |
 |---|---|---|
@@ -96,7 +96,7 @@ Set the `STREAMTREE_AUDIT` environment variable and every primitive checks the p
 
 ## PERFORMANCE
 
-Measured July 2026 (medians of 3, min-max in parentheses) on an AMD Ryzen 7 5800X under Xvfb software rendering, Tcl/Tk 9.0.1. The numbers are for the base engine (one text string per row, no columns, no per-row bindings); a subclass with metadata columns and wired rows pays more per row.
+Measured July 2026 (medians of 3, min-max in parentheses) on an AMD Ryzen 7 5800X under Xvfb software rendering, Tcl/Tk 9.0.1. The numbers are for the base class (one text string per row, no columns, no per-row bindings); a subclass with metadata columns and wired rows pays more per row.
 
 | scenario | N | median (min-max) | per row | notes |
 |---|---|---|---|---|
@@ -109,7 +109,7 @@ Measured July 2026 (medians of 3, min-max in parentheses) on an AMD Ryzen 7 5800
 
 For calibration, ttk::treeview on the same machine bulk-loads 10k display-text-only rows in 28 ms (2.8 µs/row, a native C widget's floor) and holds 0.53 kB/row. It streams 1,846 inserts/s into a 10k flat list, but its scroll shifts on every insert; that repaint is baked into its number, where streamtree's number pays for the anchor work that prevents the shift. The workloads differ in what a row retains: streamtree keeps the payload dict, which doubles as the host's data model.
 
-The engine renders every visible row into the text widget (no virtualization); collapsed subtrees stay unrendered, which is the intended posture for large trees. Practical ceiling: tens of thousands of rendered rows load in seconds and stream comfortably; memory is the binding constraint at roughly 4.4 kB per rendered row.
+The base class renders every visible row into the text widget (no virtualization); collapsed subtrees stay unrendered, which is the intended posture for large trees. Practical ceiling: tens of thousands of rendered rows load in seconds and stream comfortably; memory is the binding constraint at roughly 4.4 kB per rendered row.
 
 ## LIMITS
 
@@ -122,7 +122,7 @@ label, an optional glyph, and whether a reader may filter on it. A glyphed
 bool draws as a subject-prefix mark; a glyphless one as a check-mark column.
 Filter controls build into a frame the host owns (a checkbutton per bool, a
 stay-open combobox-style popdown per enum with select all and none, dismissed by a click outside, Escape, or the window moving); an enum filter is a
-set of excluded values. Values reach the engine only through the attr_value
+set of excluded values. Values reach the base class only through the attr_value
 hook. The filter layer hides through a ledger of its own hides and composes
 with the consumer's: a node shows only when nobody hides it. The module
 header carries the full contract.
@@ -132,7 +132,7 @@ header carries the full contract.
 Filter kinds past bool and enum. A consumer will one day want a scalar
 threshold (a numeric column above some value) or a free-text match as a
 filter. What the control looks like, how a threshold is typed, and whether
-text matching belongs in a tree engine at all are undecided; the kind field
+text matching belongs in the base class at all are undecided; the kind field
 in the declaration is the extension point when the design round happens.
 
 ## REQUIREMENTS

@@ -25,14 +25,14 @@ $d batch {
 
 A transcript or log viewer wants three things at once: content streaming in at the tail while the user reads, finished sections folding to one line, and the reader's scroll position holding still through both. Doing this with raw text-widget indices breaks the first time an insert lands above the viewport; doing it with one text widget per section forfeits search, selection, and the single scrollbar.
 
-streamdoc owns an append-only document rendered into a single read-only `text` widget: free text (chrome) interleaved with foldable regions, each a header line, a body, and an optional trailing summary line. Region boundaries are real Tk marks, a left-gravity start and a right-gravity end that rides the tail while the region is open and is sealed on close, so streamed inserts carry the bookkeeping by gravity, not by index arithmetic. The host supplies every character through the content door and the hooks (Template Method); the engine owns the marks, the elide layers, and the streaming contract, and never looks inside a payload.
+streamdoc owns an append-only document rendered into a single read-only `text` widget: free text (chrome) interleaved with foldable regions, each a header line, a body, and an optional trailing summary line. Region boundaries are real Tk marks, a left-gravity start and a right-gravity end that rides the tail while the region is open and is sealed on close, so streamed inserts carry the bookkeeping by gravity, not by index arithmetic. The host supplies every character through the content door and the hooks (Template Method); the base class owns the marks, the elide layers, and the streaming contract, and never looks inside a payload.
 
-Each region has exactly two elide layers, both engine-owned (no host tag may set an explicit `-elide`):
+Each region has exactly two elide layers, both owned by the base class (no host tag may set an explicit `-elide`):
 
 - **fold** - the whole body and summary collapse to the header line. The layer covers whole logical lines and never the header's own newline, so folding everything leaves one header per line, a table of contents.
 - **detail** - lines the host tags with `detail_tag $n` as it emits, hidden by default behind the summary line. The detail layer outranks the fold layer, so unfolding a region does not spill its hidden detail, and re-folding re-hides whatever was revealed.
 
-The first character of a header line and of a summary line is a state glyph from the `-glyphs` pair, but the two track different state: the header glyph mirrors the region's fold state, the summary glyph mirrors its detail-shown state. The engine swaps each in place with a same-length replace, so downstream indices stay true. A header or summary line that does not start with a glyph is left alone.
+The first character of a header line and of a summary line is a state glyph from the `-glyphs` pair, but the two track different state: the header glyph mirrors the region's fold state, the summary glyph mirrors its detail-shown state. The base class swaps each in place with a same-length replace, so downstream indices stay true. A header or summary line that does not start with a glyph is left alone.
 
 ## PRIMITIVES
 
@@ -66,7 +66,7 @@ Every mutating primitive ends in `check_invariant`; a host never touches the und
 
 All content, chrome and region alike, goes through the door inside a `batch`, in whole newline-terminated lines. While a region is open the door feeds it: `append_open` pops any standing summary line so new content lands inside the region, not under its summary, and `append_close` re-appends the summary from the current payload - the one legal rewrite window a mid-document line gets. Between regions the door appends chrome.
 
-`rewind` is the door's undo: take a `savepoint` before emitting a provisional tail, then rewind to it and re-emit. The mark survives the cut (left gravity holds it at the boundary), so a feed can rewind to the same point repeatedly - the shape a wet-tail streaming renderer needs, and the mechanism the engine's own summary pop is built on.
+`rewind` is the door's undo: take a `savepoint` before emitting a provisional tail, then rewind to it and re-emit. The mark survives the cut (left gravity holds it at the boundary), so a feed can rewind to the same point repeatedly - the shape a wet-tail streaming renderer needs, and the mechanism the base class's own summary pop is built on.
 
 ## THE STREAMING CONTRACT
 
@@ -80,7 +80,7 @@ The widget's defining behaviour: content arriving while the user reads never mov
 ## HOOKS
 
 - `summary_text payload` - the summary phrase for a region's payload; the empty string takes no summary line. Default: always empty.
-- `region_tags payload` - the tags laid on the engine-written summary line, so the host can style and bind it. Default: `summary`.
+- `region_tags payload` - the tags laid on the summary line the base class writes, so the host can style and bind it. Default: `summary`.
 - `on_region_rendered n` - runs when a region closes; wire bindings or indices here. Default: nothing.
 
 Everything else a host adds - header styling, click-to-fold, detail styling - is ordinary tag configuration and tag bindings on tags the host emits itself, resolved back to a region through `region_at`.

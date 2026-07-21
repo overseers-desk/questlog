@@ -1,9 +1,9 @@
 #!/usr/bin/env tclsh9.0
 # The pure filter arithmetic in lib/listfilter.tcl: which filters are active,
 # which can name a cut, the membership two of them jointly claim, and the cut
-# itself. Every proc reads the engine's filter state dict (attr_filter_all shape:
-# running 0|1, bookmarked 0|1, model {excluded labels}) - the one filter state,
-# no snapshot mirror.
+# itself. Every proc reads the base class's filter state dict (attr_filter_all
+# shape: running 0|1, bookmarked 0|1, model {excluded labels}) - the one filter
+# state, no snapshot mirror.
 #
 # A filter filters loaded rows only, so a true member the search never loaded is
 # invisible; filter_cut is the arithmetic that surfaces that cut. The caller hands

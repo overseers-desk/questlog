@@ -1,6 +1,6 @@
 #!/usr/bin/env wish9.0
 # Soak the StreamTree mark contract under the four concurrent drivers that, before
-# the engine owned its marks, could desync one against another: the streaming
+# the base class owned its marks, could desync one against another: the streaming
 # scan (on_scan_row), the running poll (reconcile_running), the async cost flush
 # (refresh_cost), and a width change (relayout). With the audit gate on, every
 # primitive checks the per-folder mark invariant; this interleaves the drivers

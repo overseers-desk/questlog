@@ -52,9 +52,9 @@ proc ::questlog::resume_coro {co} {
 # reconciles which rows stay shown). These procs are that one answer; Scan and
 # SessionList call them rather than each carrying a copy of the cutoff
 # computation and the subtree predicate. The view filters (running, bookmarked,
-# model) are a separate question with a separate home, the list engine's
-# attribute filters: they shape which in-bounds rows the list shows, not which
-# rows are in bounds at all.
+# model) are a separate question with a separate home, the streamtree base
+# class's attribute filters: they shape which in-bounds rows the list shows,
+# not which rows are in bounds at all.
 #
 # A namespace of pure predicates, not a class: the issue-67 criteria all
 # fail, and a few procs over two dicts beat a class.
@@ -244,8 +244,8 @@ proc ::questlog::scan::in_subtree_of {path subtree_list} {
 # (default 1 = no floor). The one extractor (scan_file, browse and search alike)
 # records nturns capped at turn_count_cap, so the floor bounds both passes
 # identically; a row that somehow lacks nturns defaults to the threshold and
-# passes. The view filters are applied separately, by the list engine's
-# attribute filters.
+# passes. The view filters are applied separately, by the streamtree base
+# class's attribute filters.
 proc ::questlog::scan::row_in_bounds {snapshot row} {
     if {[dict get $row mtime] <= [cutoff_for $snapshot]} { return 0 }
     set ceiling [ceiling_for $snapshot]

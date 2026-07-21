@@ -3,7 +3,7 @@
 #
 # On a rebuild (a metric sort-header click is the easiest trigger) two writers
 # both drew an expanded session's subagents: wire_session_row's render_children,
-# fired when the session row is re-laid, and the engine's render_subtree
+# fired when the session row is re-laid, and the base class's render_subtree
 # recursion, which then re-lays each child too. render_children is the single
 # writer - render_subtree stops at a session, leaving its subagents to
 # render_children - so a rebuild draws each subagent once. This expands a

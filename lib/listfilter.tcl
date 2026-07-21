@@ -3,14 +3,14 @@ package require Tcl 9
 # ::questlog::listfilter - the session list's view-filter arithmetic.
 #
 # The left pane's view filters - Running, Bookmarked and the Model filter - live
-# on the list strip and are owned and evaluated by the StreamTree engine, the one
-# filter evaluator: its AttrFilter holds the state, attr_admits answers whether a
-# node passes. This namespace holds only the pure arithmetic the engine does not
-# do: which filters are active, which of them can name what the search left on
-# disk, the membership two filters jointly claim, and the cut - the members no
-# loaded row carries. Each reads the engine's filter state dict (attr_filter_all
-# shape: running 0|1, bookmarked 0|1, model {excluded labels}) and answers without
-# touching Tk or a node.
+# on the list strip and are owned and evaluated by the streamtree base class,
+# the one filter evaluator: its AttrFilter holds the state, attr_admits answers
+# whether a node passes. This namespace holds only the pure arithmetic the base
+# class does not do: which filters are active, which of them can name what the
+# search left on disk, the membership two filters jointly claim, and the cut -
+# the members no loaded row carries. Each reads the base class's filter state
+# dict (attr_filter_all shape: running 0|1, bookmarked 0|1, model {excluded
+# labels}) and answers without touching Tk or a node.
 #
 # A namespace of pure functions over that state, not a class: the same issue-67
 # reasoning as ::questlog::scan - no joint state, no named global, tell-don't-ask
