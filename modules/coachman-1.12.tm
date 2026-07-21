@@ -4,7 +4,7 @@ package require logger
 package require json
 package require json::write
 package require deadman
-package provide coachman 1.11
+package provide coachman 1.12
 
 # coachman - drives one harnessed `claude -p` CLI session.
 #
@@ -237,7 +237,8 @@ proc coachman::transcript_assistant_text {json_file} {
 # the parent JSONL plus any subagent transcripts beside it. Empty list
 # before the transcript appears. Globbed by session id rather than by
 # reconstructing the project directory from a cwd (the caller's cwd is
-# not deterministic here; UUID collision risk is negligible).
+# not deterministic here; UUID collision risk is negligible). Feeds the
+# default cost meter; post-hoc act auditing is the linesman module's.
 proc coachman::_session_files {sid root} {
     set parents [glob -nocomplain -directory $root -types f -- */${sid}.jsonl]
     if {[llength $parents] == 0} { return {} }
@@ -248,66 +249,6 @@ proc coachman::_session_files {sid root} {
         lappend files $sub
     }
     return $files
-}
-
-# tool_use_counts - post-hoc audit of a session's tool calls: counts of
-# tool_use blocks across session $sid's transcripts (the parent plus
-# its subagents) under $root. Bare, a dict of tool name to count. With
-# $toolname alone, that tool's count under its own name. With $toolname
-# and $inputfield, a dict of that input field's values to counts across
-# the tool's calls, the shape a did-it-invoke-the-skill audit reads
-# (tool Skill, field skill). Raises with -errorcode
-# {COACHMAN NO_TRANSCRIPT} when no transcript for $sid exists under
-# $root, a distinguishable absence: an empty dict means the session
-# made no matching calls, which is a different fact. A cheap string
-# prefilter runs before each json parse; long sessions run to
-# megabytes and json2dict is slow per line.
-proc coachman::tool_use_counts {sid root {toolname ""} {inputfield ""}} {
-    set files [coachman::_session_files $sid $root]
-    if {[llength $files] == 0} {
-        return -code error -errorcode {COACHMAN NO_TRANSCRIPT} \
-            "no transcript for session $sid under $root"
-    }
-    if {$toolname ne ""} {
-        set prefilter "*\"name\":\"$toolname\"*"
-    } else {
-        set prefilter "*\"type\":\"tool_use\"*"
-    }
-    set counts [dict create]
-    foreach f $files {
-        # An unreadable transcript raises rather than reading as zero
-        # calls: a silent zero would forge a "tool never invoked"
-        # verdict downstream, the opposite of what an audit is for.
-        set fd [open $f r]
-        fconfigure $fd -encoding utf-8 -profile replace
-        try {
-            while {[gets $fd line] >= 0} {
-                if {![string match $prefilter $line]} continue
-                if {[catch {set d [::json::json2dict $line]}]} continue
-                set msg [dict getdef $d message [dict create]]
-                foreach blk [dict getdef $msg content {}] {
-                    if {[dict getdef $blk type ""] ne "tool_use"} continue
-                    set name [dict getdef $blk name ""]
-                    if {$name eq ""} continue
-                    if {$toolname eq ""} {
-                        dict incr counts $name
-                        continue
-                    }
-                    if {$name ne $toolname} continue
-                    if {$inputfield eq ""} {
-                        dict incr counts $name
-                        continue
-                    }
-                    set input [dict getdef $blk input [dict create]]
-                    set v [dict getdef $input $inputfield ""]
-                    if {$v ne ""} { dict incr counts $v }
-                }
-            }
-        } finally {
-            close $fd
-        }
-    }
-    return $counts
 }
 
 oo::class create coachman::Harness {
