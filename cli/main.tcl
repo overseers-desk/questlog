@@ -226,12 +226,19 @@ proc ::questlog::cli::main::format_markdown {folders_dict} {
 # around the hit, read back from the session file by physical line. A match
 # already carries its file path and physical line, so the window is read here at
 # emission (only for the matches actually shown), not buffered during the scan.
-proc ::questlog::cli::main::limit_matches {matches limit_cap {sub_path ""} {before 0} {after 0}} {
+#
+# Under dialogue a hit that lives in the machinery (a tool call, its result, a
+# thinking block) is dropped, keeping only hits in what the user or assistant
+# said; a kept hit's context window is drawn through the same dialogue selection
+# (context_window's dialogue mode), so its turns carry only prose and the
+# excerpt reads as conversation.
+proc ::questlog::cli::main::limit_matches {matches limit_cap {sub_path ""} {before 0} {after 0} {dialogue 0}} {
     set out [list]
     if {$limit_cap <= 0} { return $out }
     set idx 0
     foreach m $matches {
         if {$sub_path ne "" && [dict getdef $m path ""] ne $sub_path} continue
+        if {$dialogue && [dict get $m btype] ni {user assistant}} continue
         if {$idx >= $limit_cap} break
         set entry [dict create \
             "line" [dict get $m lineoff] \
@@ -239,7 +246,7 @@ proc ::questlog::cli::main::limit_matches {matches limit_cap {sub_path ""} {befo
             "content" [dict get $m content]]
         if {$before > 0 || $after > 0} {
             dict set entry window [::logman::context_window \
-                [dict get $m path] [dict get $m lineoff] $before $after]
+                [dict get $m path] [dict get $m lineoff] $before $after $dialogue]
         }
         lappend out $entry
         incr idx
@@ -302,9 +309,14 @@ proc ::questlog::cli::main::rename {argv} {
 # for record-number anchors so each turn can be cited. Runs with no GUI and no
 # display. A session that cannot be read is a hard error.
 proc ::questlog::cli::main::show {argv} {
-    if {[llength $argv] != 1} { ::questlog::cli::main::misuse show }
-    set path [resolve_session [lindex $argv 0]]
-    set md [::questlog::markdown::export_session $path 1]
+    set dialogue 0
+    set rest [list]
+    foreach a $argv {
+        if {$a eq "--dialogue"} { set dialogue 1 } else { lappend rest $a }
+    }
+    if {[llength $rest] != 1} { ::questlog::cli::main::misuse show }
+    set path [resolve_session [lindex $rest 0]]
+    set md [::questlog::markdown::export_session $path 1 $dialogue]
     if {$md eq ""} {
         puts stderr "questlog: could not read session: $path"
         exit 1
@@ -444,6 +456,7 @@ proc ::questlog::cli::main::run {q} {
     set accrued       [dict get $q accrued]
     set ctx_before    [dict get $q ctx_before]
     set ctx_after     [dict get $q ctx_after]
+    set dialogue      [dict get $q dialogue]
     set mode          [dict get $q mode]
 
     # If --limit-matches is not set, default to config defaults
@@ -619,7 +632,7 @@ proc ::questlog::cli::main::run {q} {
         set parent_human [dict getdef $cost_info human_secs ""]
 
         # Limit parent matches
-        set limited_sess_matches [limit_matches [dict getdef $group_data parent_matches {}] $sess_limit "" $ctx_before $ctx_after]
+        set limited_sess_matches [limit_matches [dict getdef $group_data parent_matches {}] $sess_limit "" $ctx_before $ctx_after $dialogue]
 
         # Resolve subagents; under --accrued-cost drop those with no in-window
         # spend, and accumulate their totals in temporaries so the whole subtree
@@ -645,7 +658,7 @@ proc ::questlog::cli::main::run {q} {
             set sub_cr_sum  [expr {$sub_cr_sum  + [dict getdef $sub_cost_info cache_read_tokens 0]}]
 
             # Find and limit matching snippets for this subagent if any
-            set limited_sub_matches [limit_matches [dict getdef $group_data subagent_matches {}] $sub_limit $sub_path $ctx_before $ctx_after]
+            set limited_sub_matches [limit_matches [dict getdef $group_data subagent_matches {}] $sub_limit $sub_path $ctx_before $ctx_after $dialogue]
 
             lappend subagents_list [dict create \
                 "agent_id" [dict get $sub agent_id] \

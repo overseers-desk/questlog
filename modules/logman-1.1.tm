@@ -309,9 +309,9 @@ proc ::logman::tool_result_text {blk} {
 # --- dialogue view -----------------------------------------------------------
 # The human<->AI conversation with the machinery removed: what the user typed
 # and what the assistant said back, no tool calls, tool results, thinking, or
-# harness bookkeeping. The one home for that selection, so the reading export,
-# the query emitters and the replay consumer share a single definition of what
-# "dialogue" is rather than each re-deriving it.
+# harness bookkeeping. The one home for that selection, so the reading export
+# and the query emitters share a single definition of what "dialogue" is rather
+# than each re-deriving it.
 
 # 1 iff rec is a prompt the human typed, kept in the dialogue view. A user
 # record carrying real typed content: the tool_result carrier, the meta /
@@ -643,10 +643,10 @@ proc ::logman::first_cwd {path} {
 # record), which the reading-view export skips too, so it is not a context
 # "message". match is 0 for a neighbour; the hit's own record is built inline in
 # context_window with match 1.
-proc ::logman::turn_at {line lineno match} {
+proc ::logman::turn_at {line lineno match {dialogue 0}} {
     set rec [parse_line $line]
     if {$rec eq ""} { return "" }
-    set body [extract_text $rec]
+    set body [expr {$dialogue ? [dialogue_body $rec] : [extract_text $rec]}]
     if {$body eq ""} { return "" }
     return [dict create line $lineno role [record_role_label $rec] \
         text $body match $match]
@@ -662,8 +662,11 @@ proc ::logman::turn_at {line lineno match} {
 # that scan_file numbered, so it addresses the same record. Built from the same
 # parse_line/record_role_label/extract_text primitives as the whole-session
 # export, so a windowed turn reads as it does in `questlog show`. Empty list if
-# the file cannot be opened.
-proc ::logman::context_window {path hitline before after} {
+# the file cannot be opened. With dialogue true each turn's body comes from
+# dialogue_body instead, so a non-dialogue neighbour (a tool result, a system
+# note) drops from the window and a kept turn carries only its prose - the
+# machinery is stripped inside the turn, not just whole tool turns removed.
+proc ::logman::context_window {path hitline before after {dialogue 0}} {
     if {[catch {open $path r} fh]} { return [list] }
     chan configure $fh -encoding utf-8 -profile replace
     set lineno 0
@@ -674,7 +677,7 @@ proc ::logman::context_window {path hitline before after} {
         incr lineno
         if {$lineno < $hitline} {
             if {$before <= 0} continue
-            set turn [turn_at $line $lineno 0]
+            set turn [turn_at $line $lineno 0 $dialogue]
             if {$turn eq ""} continue
             lappend pre $turn
             if {[llength $pre] > $before} { set pre [lrange $pre 1 end] }
@@ -684,12 +687,13 @@ proc ::logman::context_window {path hitline before after} {
             # body: it carried the matched block.)
             set rec [parse_line $line]
             if {$rec ne ""} {
+                set body [expr {$dialogue ? [dialogue_body $rec] : [extract_text $rec]}]
                 set anchor [dict create line $lineno \
-                    role [record_role_label $rec] text [extract_text $rec] match 1]
+                    role [record_role_label $rec] text $body match 1]
             }
             if {$after <= 0} break
         } else {
-            set turn [turn_at $line $lineno 0]
+            set turn [turn_at $line $lineno 0 $dialogue]
             if {$turn eq ""} continue
             lappend post $turn
             if {[llength $post] >= $after} break

@@ -34,8 +34,8 @@ $::questlog::cli::commandline::CL preamble {
 
 $::questlog::cli::commandline::CL subcommand rename {<session.jsonl> [title]} \
     {Set the session's custom title; an empty or omitted title reverts to the auto title.}
-$::questlog::cli::commandline::CL subcommand show {<session.jsonl|uuid>} \
-    {Print the session as a readable transcript.}
+$::questlog::cli::commandline::CL subcommand show {<session.jsonl|uuid> [--dialogue]} \
+    {Print the session as a readable transcript; --dialogue keeps only the user and assistant conversation, dropping tool calls.}
 $::questlog::cli::commandline::CL subcommand install-claude-command {} \
     {Register questlog as a Claude Code command.}
 
@@ -101,6 +101,16 @@ $::questlog::cli::commandline::CL option -C -section context -arg N \
     -modes {json markdown} -because {the totals and the GUI show no per-hit context} \
     -fold {set ctx_before $value; set ctx_after $value} \
     -help {{Alias for --context.}}
+
+# ---- dialogue --------------------------------------------------------------
+
+$::questlog::cli::commandline::CL section dialogue {dialogue (--json/--markdown; the conversation, no machinery):}
+
+$::questlog::cli::commandline::CL option --dialogue -section dialogue \
+    -modes {json markdown} -because {a totals summary has no transcript to reduce} \
+    -fold {set dialogue 1} \
+    -help {{Keep only what the user typed and what the assistant replied;}
+           {drop tool calls, tool results, and thinking.}}
 
 # ---- clauses ---------------------------------------------------------------
 
@@ -295,7 +305,7 @@ proc ::questlog::cli::commandline::keyword_restriction {value suffix} {
 #   groups         the OR-of-ANDs: a list of AND-groups, each a list of clause
 #                  dicts {kind keyword|regex|tool, ..., neg 0|1}
 #   since until subtree limit limit_matches accrued nocase ctx_before ctx_after
-#   font debug
+#   dialogue font debug
 #
 # The grammar is an OR (--or) of AND-groups (adjacency) of optionally-negated
 # (--not) clauses; groups is the closed AND-groups and cur the one being built,
@@ -316,6 +326,7 @@ proc ::questlog::cli::commandline::parse {argv} {
     set nocase 1
     set ctx_before 0
     set ctx_after 0
+    set dialogue 0
     set groups [list]
     set cur [list]
     set pending_neg 0
@@ -366,7 +377,7 @@ proc ::questlog::cli::commandline::parse {argv} {
     return [dict create mode $mode groups $groups \
         limit $limit limit_matches $limit_matches subtree $subtree \
         since $since until $until accrued $accrued nocase $nocase \
-        ctx_before $ctx_before ctx_after $ctx_after \
+        ctx_before $ctx_before ctx_after $ctx_after dialogue $dialogue \
         font $font debug $debug]
 }
 

@@ -84,6 +84,30 @@ write_file $toolfix \
 check "export_session: a tool_use turn folds the call inline" \
     [string match {*Bash*} [::questlog::markdown::export_session $toolfix]] 1
 
+# ---- dialogue view: the conversation only ---------------------------------
+
+# A slash command, an assistant turn mixing thinking + prose + a tool call, the
+# tool's result, and a plain assistant turn. Dialogue mode keeps the command
+# (unwrapped) and both prose replies; it drops the thinking, the call and the
+# result.
+set dlgfix [file join /tmp questlog-show-dlg-[pid].jsonl]
+write_file $dlgfix [join {
+    {{"type":"user","message":{"content":"<command-message>x</command-message>\n<command-name>/x</command-name>\n<command-args>go</command-args>"}}}
+    {{"type":"assistant","message":{"content":[{"type":"thinking","thinking":"hmm"},{"type":"text","text":"working"},{"type":"tool_use","name":"Bash","input":{"command":"ls"}}]}}}
+    {{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t","content":"tool output here"}]}}}
+    {{"type":"assistant","message":{"content":[{"type":"text","text":"done"}]}}}
+} "\n"]
+set dlg [::questlog::markdown::export_session $dlgfix 1 1]
+check "dialogue: the slash command is a clean user turn" \
+    [string match {*/x go*} $dlg] 1
+check "dialogue: assistant prose kept, both turns" \
+    [list [string match {*working*} $dlg] [string match {*done*} $dlg]] {1 1}
+check "dialogue: thinking, tool call and tool result dropped" \
+    [list [string match {*hmm*} $dlg] [string match {*Bash*} $dlg] \
+          [string match {*tool output here*} $dlg]] {0 0 0}
+check "dialogue: the wrapper tags are gone" \
+    [string match {*command-name*} $dlg] 0
+
 # ---- show's identifier resolution -----------------------------------------
 
 check "resolve_session: an existing file path is taken as-is" \
@@ -103,7 +127,7 @@ write_file $sesspath $fixture
 check "resolve_session: a bare uuid resolves to its session file" \
     [::questlog::cli::main::resolve_session $uuid] $sesspath
 
-::questlog::path::_real_file delete -force $f $toolfix $proot
+::questlog::path::_real_file delete -force $f $toolfix $dlgfix $proot
 
 if {$failures == 0} {
     puts "\nAll tests passed."

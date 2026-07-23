@@ -35,7 +35,12 @@ namespace eval ::questlog::markdown {
 # "line" field use), so the headless `questlog show` output can be cited and a
 # reader can jump back to a record. The GUI copy/export-markdown actions leave
 # anchors off, so their output stays clean.
-proc ::questlog::markdown::export_session {path {anchors 0}} {
+#
+# With dialogue true the export drops to the human<->AI conversation
+# (::logman::dialogue_body): the user's prompts and the assistant's prose, no
+# tool calls, tool results, thinking, or dividers - the reading that a study of
+# the interaction itself wants. anchors still cite each kept turn.
+proc ::questlog::markdown::export_session {path {anchors 0} {dialogue 0}} {
     if {[catch {open $path r} fh]} { return "" }
     chan configure $fh -encoding utf-8 -profile replace
 
@@ -48,6 +53,17 @@ proc ::questlog::markdown::export_session {path {anchors 0}} {
         if {$line eq ""} continue
         set rec [::logman::parse_line $line]
         if {$rec eq ""} continue
+
+        # Dialogue view: the conversation only, no dividers. The one selector
+        # (dialogue_body) yields "" for every non-dialogue record, so the walk
+        # keeps just the user prompts and assistant prose.
+        if {$dialogue} {
+            set body [::logman::dialogue_body $rec]
+            if {$body ne ""} {
+                lappend out [list turn [::logman::record_role_label $rec] $body $lineno]
+            }
+            continue
+        }
 
         # The shared segmenter (::logman::transcript_step) classifies
         # the record and moves the idle-gap clock; this export owns the format of

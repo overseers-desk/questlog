@@ -107,6 +107,18 @@ check ctx_shortstat_refused {-C needs --json or --markdown (the totals and the G
 check ctx_not_a_count {-B: not a count: 'x' (want a non-negative integer)} \
     [refusal --json -B x --keyword y]
 
+# ---- dialogue: a conversation-only modifier on --json/--markdown -----------
+check dialogue_default   0 [dict get [parse --json --keyword x] dialogue]
+check dialogue_json      1 [dict get [parse --json --dialogue --keyword x] dialogue]
+check dialogue_markdown  1 [dict get [parse --markdown --dialogue --keyword x] dialogue]
+# A modifier, not an output mode: refused where there is no transcript to reduce.
+check dialogue_shortstat_refused \
+    {--dialogue needs --json or --markdown (a totals summary has no transcript to reduce)} \
+    [refusal --shortstat --dialogue --keyword x]
+check dialogue_gui_refused \
+    {--dialogue needs --json or --markdown (a totals summary has no transcript to reduce)} \
+    [refusal --dialogue --keyword x]
+
 # An empty query is legal: it opens the window on the whole corpus.
 check empty_groups {} [dict get [parse] groups]
 check empty_mode   gui [dict get [parse] mode]
