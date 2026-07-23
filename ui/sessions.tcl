@@ -1551,13 +1551,12 @@ oo::class create ::questlog::ui::SessionList {
         set subj $spine
         set tags [list [list childbar 0 [string length $spine]]]
         set atype [dict get $c agent_type]
+        set fixed [font measure QLList $spine]
         if {$atype ne ""} {
+            set atype [my truncate_px $atype [expr {$max - $fixed}] QLBold]
             lappend tags [list slug [string length $subj] [string length $atype]]
             append subj $atype
             append subj "  "
-        }
-        set fixed [font measure QLList $spine]
-        if {$atype ne ""} {
             incr fixed [expr {[font measure QLBold $atype] + [font measure QLList "  "]}]
         }
         append subj [my truncate_px [dict get $c label] \
@@ -1897,7 +1896,7 @@ oo::class create ::questlog::ui::SessionList {
     # The session subject: the expand chevron (when it has subagents), the status
     # glyphs (running ● green, bookmark ★ amber), the bold slug, the first-prompt
     # preview ellipsised into the room left, then the match count. The chevron and
-    # glyphs are kept whole; only the preview is trimmed.
+    # glyphs are kept whole; the slug and the preview are trimmed to the room.
     method session_subject {node max} {
         set s [my node_payload $node]
         set path [my node_field $node key]
@@ -1940,19 +1939,19 @@ oo::class create ::questlog::ui::SessionList {
         }
         append subj "\t"
         set title_off [string length $subj]
+        # The slug and the preview share the room between the title stop and the
+        # metadata block: the slug is trimmed first, the preview into what is
+        # left. An untrimmed slug wider than that room runs past the first
+        # metadata stop, and the row's tab stops cascade off their columns.
+        set fixed [my title_gutter_w]
+        incr fixed [font measure QLList $count_str]
         if {$slug ne ""} {
+            set slug [my truncate_px $slug [expr {$max - $fixed}] QLBold]
             lappend tags [list slug [string length $subj] [string length $slug]]
             append subj $slug
             append subj "  "
-        }
-        # The preview fills the room between the title stop and the metadata
-        # block: past the gutter the title is tabbed over, then the slug and the
-        # match count.
-        set fixed [my title_gutter_w]
-        if {$slug ne ""} {
             incr fixed [expr {[font measure QLBold $slug] + [font measure QLList "  "]}]
         }
-        incr fixed [font measure QLList $count_str]
         append subj [my truncate_px [dict get $s label] \
                          [expr {$max - $fixed}] QLList]
         append subj $count_str
