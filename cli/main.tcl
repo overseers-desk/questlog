@@ -468,6 +468,16 @@ proc ::questlog::cli::main::run {q} {
         set sub_limit $limit_matches
     }
 
+    # Ride the display caps in on the clauses dict so scan_file retires a file's
+    # leaf walk once it has buffered the earliest cap of raw hits (lib/match.tcl).
+    # Only the CLI does this; the GUI reads exact match totals. Under --dialogue
+    # the caps stay off: limit_matches drops tool/thinking hits before counting,
+    # so a raw-hit cap could retire before the user/assistant hits it keeps.
+    if {!$dialogue} {
+        dict set clauses snippet_cap $sess_limit
+        dict set clauses snippet_cap_child $sub_limit
+    }
+
     # 2. The row-level bounds snapshot: since, until, subtree. These ride outside
     # the boolean algebra as global bounds. The CLI has no session-list view, so
     # it carries no view filters; row_in_bounds applies bounds only.

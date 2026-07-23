@@ -128,7 +128,7 @@ lassign [::questlog::match::scan_file $f_B $AND2] row _
 check gate_row_nturns 1 [dict get $row nturns]
 check gate_row_first_user {just an ordinary prompt} [dict get $row first_user]
 
-# ---- pass 2 anchors matches on true physical lines --------------------------
+# ---- the parse pass anchors matches on true physical lines --------------------------
 # The gated-in file is read twice; a lineno not reset for the second pass
 # would shift every anchor by the file's length.
 lassign [::questlog::match::scan_file $f_A $AND2] _ matches
@@ -205,6 +205,129 @@ check multifold_gamma_gone  0 [nmatches $f_ab  [and_clauses [list $L_ka $L_kb $L
 set L_kacc [::questlog::match::kw_leaf "héllo" {} 0]
 set f_kesc [fixture kw_esc [list {{"type":"user","message":{"role":"user","content":"oh h\u00e9llo there"}}}]]
 check kw_rawunsafe_candidate 1 [nmatches $f_kesc [and_clauses [list $L_kacc] 1]]
+
+# ==== retirement: satisfied-and-capped leaves stop the leaf walk ============
+# A cap rides in on the clauses dict (snippet_cap / snippet_cap_child); the CLI
+# injects it, the GUI never does. Every case asserts emitted RESULTS: the buffer
+# keeps the earliest cap of hits by line, so a capped scan's snippets are the
+# uncapped scan's first-cap prefix, byte for byte.
+proc matches_of {path clauses} {
+    lassign [::questlog::match::scan_file $path $clauses] _ matches
+    return $matches
+}
+# A body line carrying $needle, tagged $tag so each line's snippet differs.
+proc bodyline {tag needle} {
+    return [format {{"type":"user","message":{"role":"user","content":"%s %s here"}}} $tag $needle]
+}
+
+# ---- cap honoured: exactly the earliest cap of matches, dicts identical ------
+# Five body lines match; cap 2 keeps the two earliest, and those two dicts equal
+# the uncapped run's first two. A single raw-safe keyword gates, so this drives
+# the gated pass-2 break.
+set five [list [bodyline one target] [bodyline two target] [bodyline three target] \
+    [bodyline four target] [bodyline five target]]
+set f_five [fixture five $five]
+set L_target [::questlog::match::kw_leaf target {} 0]
+set C_uncapped [and_clauses [list $L_target] 1]
+set C_cap2 $C_uncapped; dict set C_cap2 snippet_cap 2
+check cap_uncapped_count 5 [llength [matches_of $f_five $C_uncapped]]
+set capped [matches_of $f_five $C_cap2]
+check cap_honoured_count 2 [llength $capped]
+check cap_prefix_identical [lrange [matches_of $f_five $C_uncapped] 0 1] $capped
+
+# ---- cap honoured on the single combined pass (no gate) ---------------------
+# A non-ASCII keyword is raw-unsafe -> always_candidate, no positive gate, so
+# gate_on is 0 and scan_file runs one combined pass; retirement there sets
+# do_leaves 0 and reads on for the row. Same earliest-two result.
+set five_acc [list [bodyline one héllo] [bodyline two héllo] [bodyline three héllo] \
+    [bodyline four héllo] [bodyline five héllo]]
+set f_five_acc [fixture five_acc $five_acc]
+set L_acc [::questlog::match::kw_leaf "héllo" {} 0]
+set C_acc_un [and_clauses [list $L_acc] 1]
+set C_acc_cap $C_acc_un; dict set C_acc_cap snippet_cap 2
+check cap_singlepass_count 2 [llength [matches_of $f_five_acc $C_acc_cap]]
+check cap_singlepass_prefix [lrange [matches_of $f_five_acc $C_acc_un] 0 1] \
+    [matches_of $f_five_acc $C_acc_cap]
+
+# ---- snippet_cap_child selects the per-subagent cap on a child transcript ----
+# is_child is derived from a `.../subagents/` parent dir. With the session cap
+# set wide (would keep all five) and the child cap at 2, a child file honours
+# the child cap - proof scan_file picks the cap by is_child.
+set childdir [file join $fixdir sess-uuid subagents]
+file mkdir $childdir
+set childpath [file join $childdir agent-c.jsonl]
+set cfh [open $childpath w]
+chan configure $cfh -encoding utf-8 -translation lf
+foreach l $five { puts $cfh $l }
+close $cfh
+set C_child $C_uncapped
+dict set C_child snippet_cap 10
+dict set C_child snippet_cap_child 2
+lassign [::questlog::match::scan_file $childpath $C_child] crow cmatches
+check child_is_child 1 [dict get $crow is_child]
+check child_cap_honoured 2 [llength $cmatches]
+
+# ---- a satisfied names leaf blocks retirement; the early name hit survives ---
+# A names leaf never satisfies in the body walk, so while it is unsettled the cap
+# cannot fire. The name hit anchors on the title line (line 1) and the body hits
+# follow; capped and uncapped emit the identical prefix, name hit first.
+set NAMEQUEST {{"type":"ai-title","aiTitle":"the-quest-marker","sessionId":"s1"}}
+set namebody [list $NAMEQUEST [bodyline two target] [bodyline three target] \
+    [bodyline four target] [bodyline five target] [bodyline six target]]
+set f_nb [fixture namebody $namebody]
+set L_name [::questlog::match::kw_leaf marker {names} 0]
+set C_nb_un [and_clauses [list $L_name $L_target] 1]
+set C_nb_cap $C_nb_un; dict set C_nb_cap snippet_cap 2
+set nb_un [matches_of $f_nb $C_nb_un]
+set nb_cap [matches_of $f_nb $C_nb_cap]
+check names_block_retire_identical $nb_un $nb_cap
+check names_hit_anchors_first names [dict get [lindex $nb_cap 0] btype]
+
+# ---- a names leaf the file never shows settles via possible==0 ----------
+# The names needle appears on no raw line, so the parse pass marks its leaf impossible
+# and settles it; the sibling OR-branch then drives retirement normally. The
+# session matches through the sibling, its snippets the uncapped first-cap prefix.
+set sib [list [bodyline one target] [bodyline two target] [bodyline three target] \
+    [bodyline four target] [bodyline five target]]
+set f_sib [fixture sib $sib]
+set L_absent [::questlog::match::kw_leaf absentname {names} 0]
+set C_or_un [or_clauses [list [list $L_absent] [list $L_target]] 1]
+set C_or_cap $C_or_un; dict set C_or_cap snippet_cap 2
+set or_un [matches_of $f_sib $C_or_un]
+set or_cap [matches_of $f_sib $C_or_cap]
+check names_possible0_matches 2 [llength $or_cap]
+check names_possible0_prefix [lrange $or_un 0 1] $or_cap
+
+# ---- a names leaf whose needle sits only in body content stays unsatisfied ---
+# names:novel AND body:target; `novel` appears in body text but never as a worn
+# name, so its literal is present (the gate keeps the leaf possible), it never
+# settles, retirement never fires, and the AND fails - zero matches.
+set foobar [list [bodyline one target] [bodyline two target] \
+    [bodyline {with novel} target] [bodyline four target] \
+    [bodyline five target] [bodyline six target]]
+set f_foobar [fixture foobar $foobar]
+set L_novel [::questlog::match::kw_leaf novel {names} 0]
+set C_fb [and_clauses [list $L_novel $L_target] 1]
+dict set C_fb snippet_cap 2
+check names_bodyonly_zero 0 [llength [matches_of $f_foobar $C_fb]]
+
+# ---- a negated leaf (stopword) must be seen before retirement, past the cap ---------
+# target AND NOT stopword; target fills the buffer past the cap on early lines,
+# but the negated leaf is unsettled until stopword is read, so retirement holds
+# off, stopword is detected, and the AND fails.
+set negfile [list [bodyline one target] [bodyline two target] [bodyline three target] \
+    [bodyline four target] [bodyline five target] \
+    {{"type":"user","message":{"role":"user","content":"here comes stopword now"}}}]
+set f_neg [fixture negfile $negfile]
+set L_stopneg [::questlog::match::kw_leaf stopword {} 1]
+set C_neg [and_clauses [list $L_target $L_stopneg] 1]
+dict set C_neg snippet_cap 2
+check neg_seen_beyond_cap 0 [llength [matches_of $f_neg $C_neg]]
+
+# ---- the same negation with Z absent: the tree holds, matches emit ----------
+set negclean [list [bodyline one target] [bodyline two target] [bodyline three target]]
+set f_negc [fixture negclean $negclean]
+check neg_absent_match 1 [expr {[llength [matches_of $f_negc $C_neg]] > 0}]
 
 file delete -force $fixdir
 

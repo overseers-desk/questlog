@@ -397,6 +397,15 @@ proc ::questlog::match::scan_file {path clauses {tick ""} {yield_lines 0}} {
     set nocase [dict get $clauses nocase]
     set matching [expr {[llength $leaves] > 0}]
     set cap [dict getdef $clauses turn_count_cap 0]
+    # Satisfied-and-capped leaves retire: once every leaf is settled (satisfied,
+    # or under the gate proven impossible) and the buffer already holds the cap
+    # of raw hits the CLI can show, the rest of the leaf walk cannot change what
+    # is emitted, so it stops. Only the CLI injects these caps; the GUI reads
+    # exact match totals, so its clauses carry none and retirement stays off. A
+    # cap of 0 or less is off - the short-circuit precedes any buffer-length
+    # test. snippet_cap_child is the per-subagent cap, chosen for a child file.
+    set snippet_cap [dict getdef $clauses snippet_cap 0]
+    set snippet_cap_child [dict getdef $clauses snippet_cap_child 0]
 
     # Per-line pre-gate (search only): a record is parsed only when its raw text
     # could satisfy at least one leaf. The raw line is JSON-encoded, so only a
@@ -494,8 +503,10 @@ proc ::questlog::match::scan_file {path clauses {tick ""} {yield_lines 0}} {
             }
         }
     }
-    # Globs for the single-fold-literal match -nocase path, precomputed only
-    # where exactly one fold literal serves the gate site (see the pre-gate note).
+    # Globs for the single-fold-literal match -nocase fast path: kw_pat/fold_pat
+    # serve the per-line candidate gate below (see the pre-gate note); gpat
+    # serves the file-level pre-gate's per-glit test above it. Each is
+    # precomputed only where exactly one fold literal serves its test.
     set kw_pat [expr {$nocase && [llength $kw_needles] == 1 \
         ? [::questlog::match::gate_pat [lindex $kw_needles 0]] : ""}]
     set fold_pat [expr {[llength $fold_lits] == 1 \
@@ -530,6 +541,7 @@ proc ::questlog::match::scan_file {path clauses {tick ""} {yield_lines 0}} {
         set folder [file tail [file dirname $sessdir]]
         set parent_path [file join [file dirname $sessdir] $parent_uuid.jsonl]
     }
+    set fcap [expr {$is_child ? $snippet_cap_child : $snippet_cap}]
     set users 0
     set first_user ""
     set cwd_hint ""
@@ -541,6 +553,11 @@ proc ::questlog::match::scan_file {path clauses {tick ""} {yield_lines 0}} {
     set nleaves [llength $leaves]
     set leafsat [dict create]
     for {set lid 0} {$lid < $nleaves} {incr lid} { dict set leafsat $lid 0 }
+    # A leaf settles when it satisfies, or when the gate proves its literal
+    # absent from every raw line (the parse pass only). settled records the first settle
+    # from any cause so unsettled - the retirement trigger - counts each leaf once.
+    set unsettled $nleaves
+    set settled [dict create]
     set buffer [list]
     set seen [dict create]
     set names [dict create]
@@ -655,10 +672,16 @@ proc ::questlog::match::scan_file {path clauses {tick ""} {yield_lines 0}} {
                     # its regions; buffer the snippets only of positively-used
                     # leaves, so a negated leaf's incidental matches never pollute
                     # the result pane.
+                    set changed 0
                     for {set lid 0} {$lid < $nleaves} {incr lid} {
                         set leaf [lindex $leaves $lid]
                         set lr [::questlog::match::leaf_record_hit $leaf $rec $nocase]
                         if {![dict get $lr sat]} continue
+                        if {![dict exists $settled $lid]} {
+                            dict set settled $lid 1
+                            incr unsettled -1
+                            set changed 1
+                        }
                         dict set leafsat $lid 1
                         if {[dict get $leaf neg]} continue
                         foreach hit [dict get $lr hits] {
@@ -667,7 +690,16 @@ proc ::questlog::match::scan_file {path clauses {tick ""} {yield_lines 0}} {
                             if {[dict exists $seen $key]} continue
                             dict set seen $key 1
                             lappend buffer [list $lineno $btype $content]
+                            set changed 1
                         }
+                    }
+                    # Retire: the buffer holds the earliest cap of hits and every
+                    # leaf is settled, so no later line can change the emitted
+                    # prefix. The single pass stops leaf work but reads on for the
+                    # row; a gated parse pass breaks and the driver exits.
+                    if {$changed && $fcap > 0 && $unsettled == 0
+                            && [llength $buffer] >= $fcap} {
+                        if {$gate_on} { break } else { set do_leaves 0 }
                     }
                 }
             }
@@ -688,6 +720,12 @@ proc ::questlog::match::scan_file {path clauses {tick ""} {yield_lines 0}} {
                 || [dict get [lindex $leaves $lid] neg] || [lindex $gfound $gi]}]
         }
         if {![::questlog::match::eval_tree $tree $possible]} break
+        for {set lid 0} {$lid < $nleaves} {incr lid} {
+            if {![dict get $possible $lid] && ![dict exists $settled $lid]} {
+                dict set settled $lid 1
+                incr unsettled -1
+            }
+        }
         chan seek $fh 0
         set lineno 0
         set do_row 0
