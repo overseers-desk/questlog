@@ -357,6 +357,15 @@ proc ::questlog::match::leaf_name_hit {leaf names nocase} {
 #           is_child parent_path parent_uuid agent_id} in line order, non-empty
 #           only when the clause tree is satisfied.
 #
+
+# A `*<needle>*` glob for a single fold literal's match -nocase fast path. One
+# string map escapes the five glob metacharacters (backslash, *, ?, [, ]) in a
+# single pass, which cannot double-escape. match -nocase and string tolower
+# fold on the same 1:1 case map, so the glob keeps the tolower gate's candidates.
+proc ::questlog::match::gate_pat {needle} {
+    return "*[string map [list \\ \\\\ * \\* ? \\? \[ \\\[ \] \\\]] $needle]*"
+}
+
 # One extractor, one row shape: the browse and search passes cannot drift because
 # they build the same dict at the same join. The read strategy branches on
 # whether there are clauses to match:
@@ -398,7 +407,9 @@ proc ::questlog::match::scan_file {path clauses {tick ""} {yield_lines 0}} {
     # literal factor (must::factor); a pattern yielding none, or a factor
     # outside the raw-safe class, also makes every line a candidate, and a
     # (?i) factor is tested against the lowered line whatever the global
-    # case mode, since a regex carries its own case.
+    # case mode, since a regex carries its own case. A gate holding exactly one
+    # fold literal folds through match -nocase (which folds the line per call);
+    # two or more share one tolower, cheaper than N internal folds.
     # Correctness over the fast path: gating on an untestable leaf produced
     # silent false negatives, and a --not over one inverted them into false
     # positives - which is why a negated leaf's literal still joins the gate.
@@ -483,6 +494,18 @@ proc ::questlog::match::scan_file {path clauses {tick ""} {yield_lines 0}} {
             }
         }
     }
+    # Globs for the single-fold-literal match -nocase path, precomputed only
+    # where exactly one fold literal serves the gate site (see the pre-gate note).
+    set kw_pat [expr {$nocase && [llength $kw_needles] == 1 \
+        ? [::questlog::match::gate_pat [lindex $kw_needles 0]] : ""}]
+    set fold_pat [expr {[llength $fold_lits] == 1 \
+        ? [::questlog::match::gate_pat [lindex $fold_lits 0]] : ""}]
+    set gpat ""
+    set nfoldglit 0
+    foreach pair $glits {
+        if {[lindex $pair 1]} { incr nfoldglit; set gpat [lindex $pair 0] }
+    }
+    set gpat [expr {$nfoldglit == 1 ? [::questlog::match::gate_pat $gpat] : ""}]
     # The gate can only exclude when some positive leaf is testable.
     set gate_on 0
     for {set lid 0} {$lid < [llength $leaves]} {incr lid} {
@@ -548,8 +571,12 @@ proc ::questlog::match::scan_file {path clauses {tick ""} {yield_lines 0}} {
                     if {[lindex $gfound $gi]} continue
                     lassign [lindex $glits $gi] glit gfold
                     if {$gfold} {
-                        if {$lhay eq ""} { set lhay [string tolower $line] }
-                        set ghit [expr {[string first $glit $lhay] >= 0}]
+                        if {$gpat ne ""} {
+                            set ghit [string match -nocase $gpat $line]
+                        } else {
+                            if {$lhay eq ""} { set lhay [string tolower $line] }
+                            set ghit [expr {[string first $glit $lhay] >= 0}]
+                        }
                     } else {
                         set ghit [expr {[string first $glit $line] >= 0}]
                     }
@@ -599,9 +626,13 @@ proc ::questlog::match::scan_file {path clauses {tick ""} {yield_lines 0}} {
             if {$do_leaves} {
                 set candidate $always_candidate
                 if {!$candidate && [llength $kw_needles] > 0} {
-                    set hay [expr {$nocase ? [string tolower $line] : $line}]
-                    foreach n $kw_needles {
-                        if {[string first $n $hay] >= 0} { set candidate 1; break }
+                    if {$kw_pat ne ""} {
+                        set candidate [string match -nocase $kw_pat $line]
+                    } else {
+                        set hay [expr {$nocase ? [string tolower $line] : $line}]
+                        foreach n $kw_needles {
+                            if {[string first $n $hay] >= 0} { set candidate 1; break }
+                        }
                     }
                 }
                 if {!$candidate} {
@@ -610,9 +641,13 @@ proc ::questlog::match::scan_file {path clauses {tick ""} {yield_lines 0}} {
                     }
                 }
                 if {!$candidate && [llength $fold_lits] > 0} {
-                    set fhay [string tolower $line]
-                    foreach s $fold_lits {
-                        if {[string first $s $fhay] >= 0} { set candidate 1; break }
+                    if {$fold_pat ne ""} {
+                        set candidate [string match -nocase $fold_pat $line]
+                    } else {
+                        set fhay [string tolower $line]
+                        foreach s $fold_lits {
+                            if {[string first $s $fhay] >= 0} { set candidate 1; break }
+                        }
                     }
                 }
                 if {$candidate && ![catch {::json::json2dict $line} rec]} {

@@ -164,6 +164,48 @@ check gate_or_other_branch 1 [nmatches $f_zebra $OR2]
 check gate_or_no_branch    0 [nmatches $f_D    $OR2]
 check gate_or_and_branch   2 [nmatches $f_A    $OR2]
 
+# ---- glob metachars in a single nocase keyword go through gate_pat verbatim --
+# A single raw-safe keyword under nocase takes the string-match -nocase gate.
+# gate_pat escapes each glob metacharacter, so the needle matches only its
+# literal text: a `*`/`?`/`[` needle must hit the literal and miss the glob
+# expansion (content `axxb` for needle `a*b`). Case folds both ways. A needle
+# with a backslash is raw-unsafe, routes to always_candidate, and still hits.
+foreach {tag needle hitline missline} {
+    star  a*b {say A*B loud} {say axxb loud}
+    quest a?b {an A?B here}  {an axb here}
+    brack {x[y]} {see X[Y] now} {see xy now}
+} {
+    set L_g [::questlog::match::kw_leaf $needle {} 0]
+    set f_gh [fixture glob_${tag}_h [list [format {{"type":"user","message":{"role":"user","content":"%s"}}} $hitline]]]
+    set f_gm [fixture glob_${tag}_m [list [format {{"type":"user","message":{"role":"user","content":"%s"}}} $missline]]]
+    check glob_${tag}_literal_hit 1 [nmatches $f_gh [and_clauses [list $L_g] 1]]
+    check glob_${tag}_no_expand   0 [nmatches $f_gm [and_clauses [list $L_g] 1]]
+}
+set L_bs [::questlog::match::kw_leaf {a\b} {} 0]
+set f_bs [fixture glob_bs [list {{"type":"user","message":{"role":"user","content":"path a\\b end"}}}]]
+check glob_backslash_hit 1 [nmatches $f_bs [and_clauses [list $L_bs] 1]]
+
+# ---- several fold literals share one tolower; a lone (?i) factor folds itself -
+# Two mixed-case keywords under nocase land in kw_needles (>1, the shared-fold
+# loop); the AND also carries one (?i) regex whose single factor takes the
+# match -nocase path. A match needs all three folded correctly; dropping gamma
+# from the line fails the AND.
+set L_ka  [::questlog::match::kw_leaf Alpha {} 0]
+set L_kb  [::questlog::match::kw_leaf Beta {} 0]
+set L_rg  [::questlog::match::rx_leaf {(?i)gamma} {} 0]
+set f_abc [fixture multifold_hit  [list {{"type":"user","message":{"role":"user","content":"ALPHA and beta then GaMmA"}}}]]
+set f_ab  [fixture multifold_miss [list {{"type":"user","message":{"role":"user","content":"ALPHA and beta only"}}}]]
+check multifold_all_present [expr {[nmatches $f_abc [and_clauses [list $L_ka $L_kb $L_rg] 1]] > 0}] 1
+check multifold_gamma_gone  0 [nmatches $f_ab  [and_clauses [list $L_ka $L_kb $L_rg] 1]]
+
+# ---- a non-ASCII keyword is raw-unsafe, so every line stays a candidate ------
+# héllo cannot gate the encoded line (the writer stores the é as é), so the
+# needle routes to always_candidate; the parse pass decodes the escape and the
+# keyword still matches.
+set L_kacc [::questlog::match::kw_leaf "héllo" {} 0]
+set f_kesc [fixture kw_esc [list {{"type":"user","message":{"role":"user","content":"oh h\u00e9llo there"}}}]]
+check kw_rawunsafe_candidate 1 [nmatches $f_kesc [and_clauses [list $L_kacc] 1]]
+
 file delete -force $fixdir
 
 if {$fails > 0} {
