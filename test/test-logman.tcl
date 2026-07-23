@@ -192,6 +192,8 @@ check turn_command_echo 0 [::logman::is_user_turn \
     {{"type":"user","message":{"role":"user","content":"<command-name>/foo</command-name>"}}}]
 check turn_task_note 0 [::logman::is_user_turn \
     {{"type":"user","message":{"role":"user","content":"<task-notification>done</task-notification>"}}}]
+check turn_fast_reject 0 [::logman::is_user_turn \
+    {{"type":"assistant","message":{"role":"assistant","content":"never a user turn"}}}]
 
 # ---- record_role_label: the speaker heading for viewer and export ----------
 # A typed prompt (string or block-array) is USER; a tool_result record - also

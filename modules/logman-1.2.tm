@@ -33,6 +33,9 @@ proc ::logman::parse_line {line} {
 # agree. A line-level regex, no parse: it runs over every line of every
 # session file.
 proc ::logman::is_user_turn {line} {
+    # fast reject: this literal is the head of the regexp below, so a line
+    # lacking it cannot match - a necessary condition, string-cheaper than regexp.
+    if {[string first {"role":"user","content":} $line] < 0} { return 0 }
     return [expr {[regexp {"role":"user","content":(?:"|\[\{"type":"(?:text|image)")} $line] \
         && ![regexp {"content":"<(?:command-name|local-command-stdout|local-command-caveat|task-notification)>} $line]}]
 }
