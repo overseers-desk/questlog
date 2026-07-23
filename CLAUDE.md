@@ -2,6 +2,8 @@
 
 The invariants live in [`INVARIANTS.md`](INVARIANTS.md): read them before moving a module between `vendor/` and `modules/`, touching a released `.tm`, adding session state, or wiring tests. A change that breaks one is a design change, the owner's to make.
 
+@INVARIANTS.md
+
 ## Test conventions
 
 Each test locates the repo root from `info script`, adds `modules/` and `vendor/` to the tm path, carries its own `check` proc, and exits with its failure count. The coachman module's tests drive the harness against a fake claude binary through the `claude_bin` seam; nothing in the suite needs the real CLI.
