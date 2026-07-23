@@ -10,7 +10,8 @@ namespace eval ::logman {
     namespace export extract_text extract_blocks record_tool_uses \
         is_compact_boundary record_timestamp parse_iso fmt_gap first_cwd \
         is_user_turn is_hidden_record format_tool_use_full order_tool_keys \
-        is_turn_start record_role_label record_model context_window transcript_step
+        is_turn_start record_role_label record_model context_window transcript_step \
+        is_dialogue_prompt command_text dialogue_body
 }
 
 # Parse one JSONL line into a Tcl dict. Returns "" on parse failure.
@@ -303,6 +304,90 @@ proc ::logman::tool_result_text {blk} {
         return [expr {$joined eq "" ? "ERROR:" : "ERROR: $joined"}]
     }
     return $joined
+}
+
+# --- dialogue view -----------------------------------------------------------
+# The human<->AI conversation with the machinery removed: what the user typed
+# and what the assistant said back, no tool calls, tool results, thinking, or
+# harness bookkeeping. The one home for that selection, so the reading export,
+# the query emitters and the replay consumer share a single definition of what
+# "dialogue" is rather than each re-deriving it.
+
+# 1 iff rec is a prompt the human typed, kept in the dialogue view. A user
+# record carrying real typed content: the tool_result carrier, the meta /
+# summary / sidechain records and the interrupted marker are out, as in
+# is_turn_start, but a queued prompt IS kept here (the dialogue wants every
+# human line, not only the ones that open a rollback turn). A slash-command
+# invocation the user ran is kept and dialogue_body unwraps it; only the harness
+# echoes that are command OUTPUT, not input - its captured stdout, its caveat, a
+# background-task notification - are dropped.
+proc ::logman::is_dialogue_prompt {rec} {
+    if {[dict getdef $rec type ""] ne "user"} { return 0 }
+    if {![dict exists $rec message]}          { return 0 }
+    set msg [dict get $rec message]
+    if {![dict exists $msg content]}          { return 0 }
+    if {[is_tool_result_record $rec]}            { return 0 }
+    if {[dict getdef $rec isMeta 0]}             { return 0 }
+    if {[is_hidden_record $rec]}                 { return 0 }
+    if {[dict getdef $rec isSidechain 0]}        { return 0 }
+    if {[dict exists $rec interruptedMessageId]} { return 0 }
+    set c [dict get $msg content]
+    if {[is_string_content $c]} {
+        foreach pre {<local-command-stdout> <local-command-caveat> <task-notification>} {
+            if {[string match "$pre*" $c]} { return 0 }
+        }
+        return 1
+    }
+    set bt [dict getdef [lindex $c 0] type ""]
+    return [expr {$bt eq "text" || $bt eq "image"}]
+}
+
+# The clean text a slash-command invocation stands for: the command name and its
+# arguments, with the <command-message>/<command-name>/<command-args> wrapper the
+# harness writes stripped off. The command-name carries the leading slash
+# (/compact, /magazines:otter-ai); the short <command-message> label is a
+# fallback for a record that somehow lacks the name. "" when the content holds no
+# command tags, so a plain prompt falls through untouched.
+proc ::logman::command_text {content} {
+    if {![regexp {<command-name>(.*?)</command-name>} $content -> name]} {
+        if {![regexp {<command-message>(.*?)</command-message>} $content -> name]} {
+            return ""
+        }
+    }
+    set args ""
+    regexp {<command-args>(.*?)</command-args>} $content -> args
+    return [string trim "[string trim $name] [string trim $args]"]
+}
+
+# The dialogue body of a record, or "" to drop it from the human<->AI view:
+#   a human prompt -> the typed text, a slash command unwrapped to its "/name
+#                     args" form (command_text)
+#   an assistant   -> its spoken text blocks joined; thinking, tool_use and any
+#                     sidechain (subagent) reply are dropped
+#   anything else  -> "" (tool results, system notes, last-prompt snapshots,
+#                     attachments, meta and summary records)
+# The label a consumer pairs with this body is record_role_label's, the same
+# USER / ASSISTANT the full reading view uses.
+proc ::logman::dialogue_body {rec} {
+    if {[dict getdef $rec type ""] eq "assistant"} {
+        if {[dict getdef $rec isSidechain 0]} { return "" }
+        set parts [list]
+        foreach {btype content} [extract_blocks $rec] {
+            if {$btype eq "assistant"} { lappend parts $content }
+        }
+        return [join $parts "\n"]
+    }
+    if {![is_dialogue_prompt $rec]} { return "" }
+    set c [dict get [dict get $rec message] content]
+    if {[is_string_content $c]} {
+        set cmd [command_text $c]
+        return [expr {$cmd ne "" ? $cmd : $c}]
+    }
+    set parts [list]
+    foreach {btype content} [extract_blocks $rec] {
+        if {$btype eq "user" || $btype eq "image"} { lappend parts $content }
+    }
+    return [join $parts "\n"]
 }
 
 # Walk an assistant record's tool_use blocks. Returns one dict per block:
