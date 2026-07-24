@@ -186,7 +186,7 @@ check "raw_get skips a key named inside a string value" \
 check "raw_get on an absent key is empty" \
     [helmsman::raw_get "\{\"a\":1\}" input] {}
 check "label is tool and first line of the leading input value" \
-    [helmsman::label Bash {command "ls /tmp\nrm x"}] "Bash — ls /tmp"
+    [helmsman::label Bash {command "ls /tmp\nrm x"}] "Bash - ls /tmp"
 check "label without input is the bare tool name" \
     [helmsman::label WebSearch {}] WebSearch
 
@@ -212,6 +212,10 @@ check "partial messages are requested" \
     [expr {[lsearch -exact $a --include-partial-messages] >= 0}] 1
 check "the model defaults to sonnet" \
     [expr {[lsearch -exact $a sonnet] >= 0}] 1
+check "batch call is refused while the live session is open" \
+    [catch {$s call stage [file join $logd batch.log] "p"}] 1
+check "batch resume is refused while the live session is open" \
+    [catch {$s resume stage [file join $logd batch.log] "p"}] 1
 
 # ---- a streamed turn: deltas then done -------------------------------------
 
@@ -246,9 +250,11 @@ check "the result re-stamps the session (end-of-response signal)" \
 $s send tooluse
 check "the tool event arrives" [await {[n_evs tool] >= 1}] 1
 check "the tool label names the call" \
-    [dict get [last_ev tool] label] "Read — /etc/hosts"
+    [dict get [last_ev tool] label] "Read - /etc/hosts"
 check "the tool turn's settled text follows" \
     [await {[dict get [last_ev turn] text] eq "read it"}] 1
+check "the tool event keys to the turn its own message settled" \
+    [dict get [last_ev tool] turn_id] [dict get [last_ev turn] turn_id]
 
 # ---- a permission parks, allowing resumes ----------------------------------
 
@@ -257,7 +263,7 @@ check "the permission parks" [await {[n_evs permission] >= 1}] 1
 set perm [last_ev permission]
 check "the permission names the tool" [dict get $perm tool_name] Bash
 check "the permission carries a label" \
-    [dict get $perm label] "Bash — ls /tmp"
+    [dict get $perm label] "Bash - ls /tmp"
 check "the prompt is listed as pending" \
     [dict get [lindex [$s pending_prompts] 0] kind] permission
 $s answer_permission [dict get $perm req_id] 1

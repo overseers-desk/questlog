@@ -11,8 +11,10 @@ package provide helmsman 1.0
 # coachman (this module's superclass) is the batch half: one prompt run
 # to a finished product on disk. helmsman is the talker half: a running
 # conversation with streamed replies, typed follow-up turns, and the two
-# prompts the model raises mid-session - a tool-use permission and an
-# AskUserQuestion - each parked until the consumer answers. It draws
+# prompts the model raises mid-session - a tool-use permission, and an
+# AskUserQuestion (itself a tool call, arriving on the same channel
+# with a different answer shape) - each parked until the consumer
+# answers. It draws
 # nothing and knows nothing about widgets: the one callback given at
 # construction receives typed events, and the consumer renders them.
 #
@@ -21,8 +23,8 @@ package provide helmsman 1.0
 # 2.1.218 and claude-agent-sdk 0.2.121):
 #
 #   claude --output-format stream-json --verbose --model M
-#          --permission-prompt-tool stdio [--resume=SID]
-#          --include-partial-messages ... --input-format stream-json
+#          --permission-prompt-tool stdio --include-partial-messages
+#          [--resume=SID] ... --input-format stream-json
 #
 # stdin stays open across turns; each operator turn is one JSON line
 #   {"type":"user","message":{"role":"user","content":TEXT},
@@ -33,8 +35,10 @@ package provide helmsman 1.0
 # its answer is not allow/deny but the answers themselves: allow with
 # updatedInput = the original input plus an `answers` record mapping
 # question text -> answer string (multi-select answers comma-joined),
-# the shape the CLI's own schema names "User answers collected by the
-# permission component".
+# the shape the CLI's own input schema describes as "User answers
+# collected by the permission component" (the description is visible
+# in the claude binary's schema strings, not in any file of this
+# tree).
 #
 # NON-BLOCKING, the load-bearing property. A GUI built on this must not
 # freeze while the model streams, so the child's stdout is read only
@@ -120,7 +124,9 @@ package provide helmsman 1.0
 # batch permission_args is NOT overridden - the interactive flags live
 # in interactive_permission_args, so a batch call on a helmsman
 # instance still runs under coachman's posture. An instance drives one
-# live session OR batch calls, not both at once.
+# live session OR batch calls, not both at once, and the class holds
+# that line itself: call and resume refuse while the live session is
+# open, open refuses while a batch run is in flight.
 #
 # SEAMS a subclass overrides:
 #   claude_bin                  - inherited; the CLI, and the test seam.
@@ -147,7 +153,7 @@ proc helmsman::label {name input} {
     set detail [string trim $detail]
     set first [lindex [split $detail \n] 0]
     if {[string length $first] > 120} { set first [string range $first 0 119] }
-    if {$first ne ""} { return "$name — $first" }
+    if {$first ne ""} { return "$name - $first" }
     return $name
 }
 
@@ -232,7 +238,7 @@ proc helmsman::raw_get {raw key} {
 oo::class create helmsman::Session {
     superclass coachman::Harness
 
-    variable SessionId LogPrefix \
+    variable SessionId LogPrefix RunInFlight \
              OnEvent Chan ChildPid Opened Closing Busy SendQueue \
              TurnNo Turns CurTurn Parts FlushTimer LastTurnId ToolK \
              Pending KillTimer StderrFile
@@ -290,6 +296,19 @@ oo::class create helmsman::Session {
 
     # ── Public surface ────────────────────────────────────────────────
 
+    # call / resume - the inherited batch surface, refused while the
+    # live session is open: batch and live share the harness's identity
+    # (the slug's files, the tracked session id), and a batch run
+    # beside a live session would fight it for both.
+    method call {args} {
+        if {$Opened} { error "helmsman: a live session is open; batch call refused" }
+        next {*}$args
+    }
+    method resume {args} {
+        if {$Opened} { error "helmsman: a live session is open; batch resume refused" }
+        next {*}$args
+    }
+
     method is_open  {} { return $Opened }
     method queued   {} { return [llength $SendQueue] }
 
@@ -311,6 +330,7 @@ oo::class create helmsman::Session {
     # open - spawn the live session. See the header for the options.
     method open {args} {
         if {$Opened} { error "helmsman: session already open" }
+        if {$RunInFlight} { error "helmsman: a batch run is in flight; open refused" }
         set model  sonnet
         set resume ""
         set extra  {}
@@ -484,7 +504,19 @@ oo::class create helmsman::Session {
             }
             assistant {
                 set msg [dict getdef $d message {}]
-                foreach block [dict getdef $msg content {}] {
+                set blocks [dict getdef $msg content {}]
+                # A message carrying both tool calls and text is one
+                # turn whatever the block order: open it before a
+                # leading tool_use, so the tool keys to the turn its
+                # own text block is about to settle, not to the
+                # previous exchange's.
+                foreach block $blocks {
+                    if {[dict getdef $block type ""] eq "text"} {
+                        my _open_turn
+                        break
+                    }
+                }
+                foreach block $blocks {
                     switch -- [dict getdef $block type ""] {
                         tool_use {
                             my _on_tool [dict getdef $block name ""] \
@@ -641,8 +673,10 @@ oo::class create helmsman::Session {
 
     method _on_tool {name input} {
         # A tool use: a note row in the snapshot, and a tool event keyed
-        # to the assistant turn it belongs to - the working turn, or the
-        # one just finished when the tool call trails the text block.
+        # to the assistant turn it belongs to - the working turn (opened
+        # for the whole message when its text is still to come), the one
+        # just finished when the tool call trails the text block, or its
+        # own row for a message of tool calls alone.
         set label [helmsman::label $name $input]
         incr TurnNo
         lappend Turns [dict create turn_id $TurnNo role tool \
