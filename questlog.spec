@@ -1,5 +1,5 @@
 Name:           questlog
-Version:        1.2.2
+Version:        1.3.0
 Release:        1%{?dist}
 Summary:        GUI for finding, reading, and reopening past Claude Code sessions
 License:        MIT
@@ -60,6 +60,13 @@ install -D -m 0644 assets/questlog-512.png \
 %{_datadir}/icons/hicolor/512x512/apps/questlog.png
 
 %changelog
+* Wed Sep 23 2026 Weiwu Zhang <a@colourful.land> - 1.3.0-1
+- Rates: Claude Opus 5.5 is priced ($4/$20 per MTok, cache reads at $0.20); a session on it had shown a blank cost
+- Sessions list: folders nest, a heading sums its whole subtree over the rows shown, and every interaction works over the tree; browsing opens the project with the newest session
+- Human-gap rule: a pause of up to 30 minutes before a prompt counts in full and a longer one is worth a five-minute credit; the ⋯ menu sets both and the A/H heading names the rule; a subagent adds no machine time
+- CLI: --shortstat, --json and --markdown total a query's time, cost and date span per folder; --human-gap sets the gap rule
+- Move picker: the list's own tree plus the projects with no session in view; Browse starts at the session's folder; Resume needs an existing directory
+
 * Wed Sep 02 2026 Weiwu Zhang <a@colourful.land> - 1.2.2-1
 - Rates: Claude Fable 5.1 and Mythos 5.1 are priced, with cache reads at a quarter of Fable 5's rate; Sonnet 5 keeps its $2/$10 launch price, the scheduled rise having been cancelled
 - Sessions list: the arrow keys, Home and End walk the rows, Right and Left open and shut a folder, Return opens the row reached; a cut folder heading reveals its whole path on hover; on macOS Control-click opens the context menu and Command-click extends the selection

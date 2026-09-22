@@ -1,3 +1,13 @@
+questlog (1.3.0) unstable; urgency=medium
+
+  * Rates: Claude Opus 5.5 is priced (released 2026-09-22; $4/$20 per MTok, cache reads at $0.20); a session on it had shown a blank cost, or a false low where other models shared it.
+  * Sessions list: folders nest. A folder holds the folders and sessions beneath its directory, a directory holding no folder of its own joins its children's labels, and a folder whose directory is gone hangs under its nearest living ancestor with a marker. Each heading sums its whole subtree, count, size, cost, duration and human time, over the rows shown, so a filtered heading agrees with itself. The keys, a Shift-range, expand-all, a drop and search within a folder all work over the nested tree; a drop lands in the innermost folder under the pointer. Browsing opens the project with the newest session and leaves the rest as an overview of headings.
+  * Sessions list: the human-gap rule changed and became a setting. A pause of up to 30 minutes before a prompt counts as composing time in full (it was capped at five), and a longer one is worth one five-minute credit however long it ran. The ⋯ menu at the search row's end sets both figures, and hovering the A/H heading names the rule in force. A subagent's run adds no machine time, since its parent's clock already covers it.
+  * CLI: a query says what its sessions came to. --shortstat totals human and machine time, the date span, the days with a session and a per-folder breakdown; --json carries a per-folder totals object with a time_basis caveat; --markdown prints a totals line per folder. --human-gap <min[,min]> sets the gap rule in every mode.
+  * Move picker: it is the tree the list shows, every branch open, plus the projects on disk the list holds no session of; Browse starts at the session's own folder; a double-click confirms. Resume needs a directory that exists rather than a path the resolver remembers.
+
+ -- Weiwu Zhang <a@colourful.land>  Wed, 23 Sep 2026 00:00:00 +0000
+
 questlog (1.2.2) unstable; urgency=medium
 
   * Rates: Claude Fable 5.1 and Claude Mythos 5.1 are priced (released 2026-09-01; cache reads at a quarter of Fable 5's rate); a session on either had shown a blank cost, or a false low where other models shared it. Sonnet 5 keeps its $2/$10 launch price: the rise to $3/$15 scheduled for 2026-09-01 did not happen, and the row for it is gone.
