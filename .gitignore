@@ -1,5 +1,6 @@
 # Test scratch (test-fork-count writes a sandbox under the cwd it runs from)
 _fork_sandbox/
+_viewermove_sandbox/
 
 # Release build artifacts
 /dist/
