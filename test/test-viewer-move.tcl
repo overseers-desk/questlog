@@ -58,14 +58,18 @@ set FA [::questlog::path::encode_cwd $CWDA]
 set FB [::questlog::path::encode_cwd $CWDB]
 set PROOT [file join $SAND .claude projects]
 set a1 [file join $PROOT $FA aaaa.jsonl]
-write_session $a1 {a1-one a1-two} $CWDA "2026-07-24T17:00"
-file mtime $a1 [clock scan "2026-07-24 17:01:00" -gmt 1]
+# The rows date from an hour ago: the list models only rows inside its since
+# window, so a fixed calendar date would age out of it.
+set BASE [expr {[clock seconds] / 60 * 60 - 3600}]
+proc moment {epoch} { clock format $epoch -gmt 1 -format %Y-%m-%dT%H:%M }
+write_session $a1 {a1-one a1-two} $CWDA [moment $BASE]
+file mtime $a1 [expr {$BASE + 60}]
 # A subagent sidecar so a child transcript can be opened in the viewer and its
 # parent moved (the child-in-viewer case).
 set a1side [file join $PROOT $FA aaaa subagents]
 ::questlog::path::_real_file mkdir $a1side
 set a1child [file join $a1side agent-1.jsonl]
-write_session $a1child {sub-one} $CWDA "2026-07-24T17:02"
+write_session $a1child {sub-one} $CWDA [moment [expr {$BASE + 120}]]
 
 set SL ""
 set ::Scan [::questlog::Scan new [list apply {{r} { $::SL on_scan_row $r }}] noop]
