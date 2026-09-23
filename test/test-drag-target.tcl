@@ -86,7 +86,7 @@ namespace eval ::questlog::ui::app {
     variable Scan $::Scan
 }
 set ::refused ""
-proc tk_messageBox {args} { set ::refused [dict get $args -message] }
+proc ::questlog::ui::error_box {args} { set ::refused [dict get $args -message] }
 
 set fails 0
 proc check {name got want} {

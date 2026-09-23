@@ -328,6 +328,7 @@ if {[dict get $Query mode] ne "gui"} {
 # Tk (and with it ttk) enters the process here, required by theme.tcl (sourced
 # first) and the ui/ classes; the entry script never requires Tk itself.
 source [file join $ROOT ui  theme.tcl]
+source [file join $ROOT ui  error_box.tcl]
 source [file join $ROOT ui  terminal.tcl]
 source [file join $ROOT ui  live.tcl]
 source [file join $ROOT ui  state.tcl]

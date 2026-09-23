@@ -12,7 +12,7 @@
 #
 # ctx keys (single-session mode, the default):
 #   target    dict {path uuid cwd folder}
-#   parent    a window for dialogs (tk_getSaveFile / tk_messageBox -parent)
+#   parent    a window for dialogs (tk_getSaveFile / error_box -parent)
 #   clipboard command prefix; invoked {*}$clip <string>
 #   on_open   command prefix; invoked {*}$cb path   (omit to drop "Open in viewer")
 #   on_move   command prefix; invoked {*}$cb [list path]
@@ -193,7 +193,7 @@ proc ::questlog::ui::session_actions::act_export_markdown {ctx} {
         puts -nonewline $fh $md
         close $fh
     } err]} {
-        tk_messageBox -parent $parent -icon error -title "Export session" \
+        ::questlog::ui::error_box -parent $parent -title "Export session" \
             -message "Could not write $dest" -detail $err
     }
 }

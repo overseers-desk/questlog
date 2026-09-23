@@ -215,7 +215,7 @@ proc ::questlog::ui::move_dialog::confirm {} {
         set cwd [lindex [$Tv item [lindex $sel 0] -values] 0]
     }
     if {![string match "/*" $cwd]} {
-        tk_messageBox -parent $Top -icon error -title "Move session" \
+        ::questlog::ui::error_box -parent $Top -title "Move session" \
             -message "Destination must be an absolute path."
         return
     }

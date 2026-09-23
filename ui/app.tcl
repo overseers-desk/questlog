@@ -1039,7 +1039,7 @@ proc ::questlog::ui::app::on_drop_move {paths target_folder_basename} {
     variable Scan
     set dst_cwd [$Scan resolve_folder $target_folder_basename]
     if {![file isdirectory $dst_cwd]} {
-        tk_messageBox -icon error -title "Move session" -message [expr {$dst_cwd eq "" \
+        ::questlog::ui::error_box -title "Move session" -message [expr {$dst_cwd eq "" \
             ? "Cannot resolve destination folder: $target_folder_basename" \
             : "The destination's directory no longer exists: $dst_cwd"}]
         return
@@ -1058,7 +1058,7 @@ proc ::questlog::ui::app::do_move_batch {paths dst_cwd} {
         }
     }
     if {[llength $failures] > 0} {
-        tk_messageBox -icon error -title "Move session" \
+        ::questlog::ui::error_box -title "Move session" \
             -message "Move failed:\n[join $failures \n]"
     }
 }
@@ -1128,7 +1128,7 @@ proc ::questlog::ui::app::on_bookmark_toggle {path} {
         set rc [catch {::questlog::path::set_bookmark $path} err]
     }
     if {$rc} {
-        tk_messageBox -icon error -title "Bookmark" \
+        ::questlog::ui::error_box -title "Bookmark" \
             -message "Bookmark failed: $err"
         return
     }
@@ -1154,7 +1154,7 @@ proc ::questlog::ui::app::on_bookmark_set {paths} {
         $SessionList reconcile_one $p
     }
     if {[llength $failures] > 0} {
-        tk_messageBox -icon error -title "Bookmark" \
+        ::questlog::ui::error_box -title "Bookmark" \
             -message "Bookmark failed:\n[join $failures \n]"
     }
 }
