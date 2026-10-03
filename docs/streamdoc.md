@@ -50,7 +50,7 @@ The first character of a header line and of a summary line is a state glyph from
 | `detail_show n` / `detail_hide n` / `detail_toggle n` | reveal / re-hide a region's detail layer |
 | `fold_all` / `expand_all` | the table-of-contents reading, and back |
 | `summary_sync` | re-derive the open region's summary line from its payload |
-| `reveal idx` | unfold and un-hide whatever covers an index, then scroll it into view |
+| `reveal idx ?align?` | unfold and un-hide whatever covers an index, then scroll it into view: `see` (default) scrolls the least, `top` puts its line on the top edge, or as near as the last screenful allows |
 | `region_at idx` | the region containing an index, `-1` for chrome |
 | `detail_tag n` | the tag the host lays on region `n`'s detail lines as it emits |
 | `payload n` / `payload_set n payload` | the region's opaque host dict |
