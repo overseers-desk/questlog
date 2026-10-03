@@ -332,6 +332,26 @@ update idletasks
 check "the Tools jump reveals the tool_use line" \
     [expr {[vischars "needle-alpha"] > 0}] 1
 
+# The jump puts the clicked call itself at the top of the viewport, not its
+# record's label, nor the call at the bottom edge where `see` stops when the
+# view comes from below. Rows 1 and 2 are the Bash and Grep calls sharing one
+# tool-only record in turn 1, so the second must land past the first.
+set oldh [$Text cget -height]
+$Text configure -height 3
+foreach {row call} {1 "Bash(command=grep -r sigil" 2 "Grep(pattern=sigil"} {
+    $Text yview moveto 1
+    update idletasks
+    $ToolLB selection clear 0 end
+    $ToolLB selection set $row
+    $V tool_list_select
+    update idletasks
+    check "the Tools jump tops the view on $call" \
+        [$Text index "@0,0 linestart"] \
+        [$Text index "[$Text search -elide -exact $call 1.0] linestart"]
+}
+$Text configure -height $oldh
+update idletasks
+
 # ---- hover copy button -----------------------------------------------------------
 # A shared ⧉ button rides the top-right of the user/assistant message under the
 # pointer, copying that message's whole body (Bodies, unfiltered by fold state) -

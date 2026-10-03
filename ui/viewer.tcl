@@ -136,7 +136,7 @@ oo::class create ::questlog::ui::Viewer {
                               ;# from; select_band_row compares against it so a
                               ;# Ctrl-F recollect that left the band stale is skipped
     variable ToolList         ;# listbox of per-call rows (alias of BandDesc tools list)
-    variable ToolLines        ;# jsonl line of each call, parallel to the ToolList rows
+    variable ToolLines        ;# {jsonl line, ordinal in record} of each call, parallel to the ToolList rows
     variable QuoteList        ;# listbox of per-quote rows (alias of BandDesc quotes list)
     variable QuoteIdx         ;# text index of each quote block, parallel to QuoteList rows
     variable QuoteBodies      ;# raw de-quoted text of each quote, parallel to QuoteIdx (for copy)
@@ -2672,16 +2672,17 @@ oo::class create ::questlog::ui::Viewer {
     # Walk the loaded Records in document order, collect every assistant
     # tool_use block as one timeline row "time · tool · path", and fill the
     # head-strip count. Records are already in chronological order, so the
-    # walk needs no sort. Each row remembers its record's jsonl line (in
-    # ToolLines, parallel to the listbox rows) so a click jumps the reading
-    # view there. With no tool calls both the band's Tools tab and the head
-    # count stay hidden.
+    # walk needs no sort. Each row remembers its record's jsonl line and the
+    # call's ordinal within the record (in ToolLines, parallel to the listbox
+    # rows) so a click jumps the reading view to that call. With no tool calls
+    # both the band's Tools tab and the head count stay hidden.
     method index_tool_calls {} {
         set ToolLines [list]
         $ToolList delete 0 end
         foreach rec $Records {
             set lineno [dict get $rec _line]
             set when [my tool_time [::logman::record_timestamp $rec]]
+            set k 0
             foreach use [::logman::record_tool_uses $rec] {
                 set name [dict get $use name]
                 set path [dict get $use path]
@@ -2689,7 +2690,8 @@ oo::class create ::questlog::ui::Viewer {
                 if {$path ne ""} { append row " · $path" }
                 $ToolList insert end $row
                 $ToolList itemconfigure end -foreground [::questlog::ui::theme::c tool]
-                lappend ToolLines $lineno
+                lappend ToolLines [list $lineno $k]
+                incr k
             }
         }
         my refresh_tool_control
@@ -2715,25 +2717,34 @@ oo::class create ::questlog::ui::Viewer {
         my refresh_band_control tools [llength $ToolLines]
     }
 
-    # Jump the reading view to the clicked call's line, then open that turn's
-    # detail so the call itself is on screen. scroll_to_line routes through
-    # reveal_index, which unfolds the landing turn but shows hidden detail only
-    # when the jump index sits inside it; a tool_use renders after its record's
-    # visible label line, so a plain reveal lands on the label and leaves the
-    # call elided. The Tools tab is the one caller that explicitly asked for that
-    # hidden line, so it spills the whole turn's detail after landing. The other
-    # scroll_to_line callers (the session-list snippet deep links) keep the
-    # reveal-only-what-you-hit rule - which is exactly why this detail spill lives
-    # in the caller and not in scroll_to_line or reveal_index.
+    # Open the clicked call's turn detail and put the call's own line at the top
+    # of the view. The Tools tab spills the whole turn's detail, where the other
+    # reveal_index callers (the session-list snippet deep links) show only what
+    # they hit, so the spill lives here. The call is the record's k-th dk-tool_use
+    # line, each block being one logical line (adjacent blocks merge into one
+    # tag range, so a line already inside it counts); topping the view with yview, not
+    # just `see`, keeps it off the bottom edge where `see` stops when the view
+    # comes from below, under the earlier detail the spill uncovered.
     method tool_list_select {} {
         set sel [$ToolList curselection]
         if {$sel eq ""} return
-        set lineno [lindex $ToolLines [lindex $sel 0]]
-        my scroll_to_line $lineno
-        if {[dict exists $LineMap $lineno]} {
-            set n [my turn_at [dict get $LineMap $lineno]]
-            if {$n >= 0} { my details_show $n }
+        lassign [lindex $ToolLines [lindex $sel 0]] lineno k
+        if {![dict exists $LineMap $lineno]} { my scroll_to_line $lineno; return }
+        set call [dict get $LineMap $lineno]
+        set n [my turn_at $call]
+        if {$n >= 0} { my details_show $n }
+        set from $call
+        for {set i 0} {$i <= $k} {incr i} {
+            if {"dk-tool_use" ni [$Text tag names $from]} {
+                set r [$Text tag nextrange dk-tool_use $from]
+                if {$r eq ""} break
+                set from [lindex $r 0]
+            }
+            set call $from
+            set from [$Text index "$call +1line linestart"]
         }
+        my reveal_index $call
+        $Text yview $call
     }
 
     # ---- quote index (jump to an assistant's quoted passage) --------------
