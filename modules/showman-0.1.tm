@@ -574,10 +574,39 @@ oo::class create ::showman::Showman {
     # The one jump gate: every site that scrolls the view to an index routes
     # here. The base class's reveal unfolds the target's turn, shows its
     # detail only when the index itself sits inside it, and drains the line
-    # metrics before the see. A subclass with layout-riding chrome (a placed
+    # metrics before scrolling: align `see` scrolls the least, `top` puts the
+    # target on the top edge. A subclass with layout-riding chrome (a placed
     # hover button) overrides this to invalidate it first.
-    method reveal_index {idx} {
-        my reveal $idx
+    method reveal_index {idx {align see}} {
+        my reveal $idx $align
+    }
+
+    # The text index of the k-th (0-based) tool_use block of the record at
+    # jsonl line lineno, or "" when the record has no such call. Each block is
+    # one logical line tagged dk-tool_use, but adjacent blocks merge into one
+    # tag range, so a line already inside the tag counts. The walk stops at the
+    # next record's label, so a k past the record's calls finds nothing rather
+    # than a later record's call.
+    method tool_use_index {lineno k} {
+        if {![dict exists $LineMap $lineno]} { return "" }
+        set from [dict get $LineMap $lineno]
+        set stop [$Text index end]
+        dict for {ln idx} $LineMap {
+            if {[$Text compare $idx > $from] && [$Text compare $idx < $stop]} {
+                set stop $idx
+            }
+        }
+        for {set i 0} {$i <= $k} {incr i} {
+            if {"dk-tool_use" ni [$Text tag names $from]} {
+                set r [$Text tag nextrange dk-tool_use $from $stop]
+                if {$r eq ""} { return "" }
+                set from [lindex $r 0]
+            }
+            set call $from
+            set from [$Text index "$call +1line linestart"]
+            if {$i < $k && [$Text compare $from >= $stop]} { return "" }
+        }
+        return $call
     }
 
     # ---- live turn (the streamed conversation path) ------------------------

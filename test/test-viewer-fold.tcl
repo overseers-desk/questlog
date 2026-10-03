@@ -352,6 +352,12 @@ foreach {row call} {1 "Bash(command=grep -r sigil" 2 "Grep(pattern=sigil"} {
 $Text configure -height $oldh
 update idletasks
 
+# The call lookup stays inside its record: turn 0's Read record (jsonl line 3)
+# holds one call, so a second one is absent, not turn 1's Bash call.
+check "tool_use_index finds the record's own call" \
+    [$V tool_use_index 3 0] [$Text search -elide -exact "Read(file_path" 1.0]
+check "tool_use_index stops at the record's end" [$V tool_use_index 3 1] ""
+
 # ---- hover copy button -----------------------------------------------------------
 # A shared ⧉ button rides the top-right of the user/assistant message under the
 # pointer, copying that message's whole body (Bodies, unfiltered by fold state) -

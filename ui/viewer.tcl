@@ -1287,18 +1287,18 @@ oo::class create ::questlog::ui::Viewer {
     # The one jump gate: every site that scrolls the transcript to an index
     # routes here. The base class's reveal unfolds the target's turn, shows its
     # detail only when the index itself sits inside it, and drains the line
-    # metrics before the see. The jump is layout churn like any other: the
-    # see slides new text under a pointer resting on the transcript (a
+    # metrics before the scroll. The jump is layout churn like any other: the
+    # scroll slides new text under a pointer resting on the transcript (a
     # find-entry Return jumps without moving the mouse), and a placed copy
     # button would float over a message it does not name - so drop it first,
     # the next Motion re-places it.
-    method reveal_index {idx} {
+    method reveal_index {idx {align see}} {
         my copy_hide
         # A table match's record is its mark: light that table (and unlight
-        # the last) before the see, so a lazy realization the jump itself
+        # the last) before the scroll, so a lazy realization the jump itself
         # triggers builds the table already lit. A plain index only clears.
         my table_spotlight $idx
-        next $idx
+        next $idx $align
     }
 
     # Regenerate the Turns/CurTurn read surface from the base class's region
@@ -2717,34 +2717,17 @@ oo::class create ::questlog::ui::Viewer {
         my refresh_band_control tools [llength $ToolLines]
     }
 
-    # Open the clicked call's turn detail and put the call's own line at the top
-    # of the view. The Tools tab spills the whole turn's detail, where the other
-    # reveal_index callers (the session-list snippet deep links) show only what
-    # they hit, so the spill lives here. The call is the record's k-th dk-tool_use
-    # line, each block being one logical line (adjacent blocks merge into one
-    # tag range, so a line already inside it counts); topping the view with yview, not
-    # just `see`, keeps it off the bottom edge where `see` stops when the view
-    # comes from below, under the earlier detail the spill uncovered.
+    # Jump to the clicked call's own line and put it on the top edge. The call
+    # sits in its turn's hidden detail, so the reveal opens that detail; topping
+    # the view keeps the call off the bottom edge where a least-scroll stops
+    # when the view comes from below, under the earlier detail just uncovered.
     method tool_list_select {} {
         set sel [$ToolList curselection]
         if {$sel eq ""} return
         lassign [lindex $ToolLines [lindex $sel 0]] lineno k
-        if {![dict exists $LineMap $lineno]} { my scroll_to_line $lineno; return }
-        set call [dict get $LineMap $lineno]
-        set n [my turn_at $call]
-        if {$n >= 0} { my details_show $n }
-        set from $call
-        for {set i 0} {$i <= $k} {incr i} {
-            if {"dk-tool_use" ni [$Text tag names $from]} {
-                set r [$Text tag nextrange dk-tool_use $from]
-                if {$r eq ""} break
-                set from [lindex $r 0]
-            }
-            set call $from
-            set from [$Text index "$call +1line linestart"]
-        }
-        my reveal_index $call
-        $Text yview $call
+        set call [my tool_use_index $lineno $k]
+        if {$call eq ""} { my scroll_to_line $lineno; return }
+        my reveal_index $call top
     }
 
     # ---- quote index (jump to an assistant's quoted passage) --------------
