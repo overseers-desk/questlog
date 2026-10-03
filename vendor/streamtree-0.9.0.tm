@@ -1,7 +1,7 @@
 package require Tcl 9
 package require Tk
 package require leash
-package provide streamtree 0.8.0
+package provide streamtree 0.9.0
 
 namespace eval ::streamtree {}
 
@@ -45,7 +45,7 @@ namespace eval ::streamtree {}
 # the keyboard walks (treeview's focus row), batch to run many under one
 # anchoring (begin_batch/end_batch for a run that spans callbacks), plus reset
 # and a content door
-# (append_open/emit/emit_window/append_close, and drop_loose to lift a tagged
+# (append_open/emit/emit_window/emit_image/append_close, and drop_loose to lift a tagged
 # run of it back out) for loose in-row content that is not itself a node. A
 # subclass drives the widget only through these and never touches the text
 # widget.
@@ -57,6 +57,8 @@ namespace eval ::streamtree {}
 #   Content / layout
 #     subject_label             the header label over the subject column ("")
 #     column_spec               the metadata columns {id label sample align sortable} ({})
+#     row_image node             the options of the image the row leads with (-image
+#                                and, if wanted, -align -padx -pady), empty for none ({})
 #     render_subject node max    the row's left side: {subject <str> tags <ranges> meta_run 0|1}
 #                                (ranges is a list of {tag off len}, subject-relative)
 #     cell_values node           ordered {col value} pairs laid as cells ({})
@@ -117,15 +119,22 @@ namespace eval ::streamtree {}
 #               from a roster. Kinds past bool and enum, a scalar or free-text
 #               filter, are deliberately absent until a consumer needs one.
 #   glyph       a short string (one Unicode character is typical) a true bool draws
-#               as a subject-prefix mark. A bool with no glyph draws a check column.
+#               as a mark in the subject zone. A bool with no glyph draws a check column.
+#   place       where a glyphed bool's mark sits: prefix (default), ahead of the
+#               subject, or trail, right-aligned at the subject zone's end.
 #   filterable  1 to offer the attribute as a filter control, 0 (default) to draw
 #               it and no more.
 #   values      an enum's roster provider, a command prefix returning the current
 #               list of values; with none the roster is the distinct values the
 #               nodes carry, gathered through attr_value.
 #
-# Presentation. A bool WITH a glyph prefixes the subject with that glyph while the
-# value is true, under a per-attribute tag `attr-<id>` the host styles by name. A
+# Presentation. A bool WITH a glyph draws that glyph while the value is true,
+# under a per-attribute tag `attr-<id>` the host styles by name: placed prefix,
+# ahead of the subject; placed trail, in a cluster right-aligned at the subject
+# zone's end, a gap short of the first metadata cell, the subject ellipsised
+# first so the cluster stays whole. A trail-placed attribute declared at all
+# puts a right tab stop at that end on every row and the header, ahead of the
+# column stops apply_column_tabs is handed, and every row tabs to it. A
 # bool WITHOUT a glyph is a check column joined to the metadata strip like a
 # column_spec entry, a check mark when true and blank when false, and it does not
 # sort (a two-valued mark offers no ordering). An enum adds no presentation of its
@@ -203,6 +212,7 @@ oo::class create ::streamtree::StreamTree {
     variable ColHandles       ;# the visible vertical resize-handle rules over the header
     variable Opts             ;# widget options decoupling the base class from any host app
     variable SubjectMax       ;# px the subject may fill before the metadata block
+    variable TrailX           ;# the right stop a row's trailing marks end on, the subject zone's end
     variable LabelMax         ;# px a label laying no cell of its own may fill before the first tab stop
     variable LayoutW          ;# Text width the current layout was computed for
     variable RelayoutPending  ;# 1 while a debounced relayout is queued
@@ -221,6 +231,8 @@ oo::class create ::streamtree::StreamTree {
     # Declarative attributes: the parsed descriptor set and the live filter state.
     variable AttrOrder        ;# declared attribute ids, in declaration order
     variable AttrSpec         ;# id -> descriptor dict
+    variable AttrPrefix       ;# the glyphed bools placed prefix, in declaration order
+    variable AttrTrailing     ;# the glyphed bools placed trail, in declaration order
     variable AttrFilter       ;# filterable id -> filter state (bool 0|1; enum excluded list)
     variable AttrPopTop       ;# the enum checklist popdown, or "" when none is open
     variable AttrPopId        ;# the attribute the open popover filters
@@ -633,8 +645,12 @@ oo::class create ::streamtree::StreamTree {
     # pane, high DPI, the build-time placeholder width) drops columns from the
     # right until the rest leave the subject its floor: the leading columns are
     # the ones a host names first, and a stop past the left edge is one Tk
-    # refuses. Called at build and on every resize; it only repositions
-    # (cheap), the per-row ellipsis refit is the separate relayout.
+    # refuses. With a trail-placed attribute declared, one more right stop
+    # leads the strip's, at the subject zone's end, a gap short of the
+    # leftmost column: every row and the header tab to it before their
+    # cells, marks or none, so the cells never cascade a stop. Called at
+    # build and on every resize; it only repositions (cheap), the per-row
+    # ellipsis refit is the separate relayout.
     method layout_columns {} {
         set ColW [my effective_col_widths]
         set ids [lmap col [my effective_column_spec] { lindex $col 0 }]
@@ -663,7 +679,9 @@ oo::class create ::streamtree::StreamTree {
         }
         set ColLaid [lrange $ids 0 [expr {$n - 1}]]
         set ColRightX $rights
+        set TrailX $edge
         set ColTabs [list]
+        if {[llength [my attr_trailing]]} { lappend ColTabs $TrailX right }
         foreach rx $rights { lappend ColTabs $rx right }
         if {$SubjectMax < 80} { set SubjectMax 80 }
         if {$LabelMax < 60} { set LabelMax 60 }
@@ -887,6 +905,7 @@ oo::class create ::streamtree::StreamTree {
             set act_off 0
             set act_len [string length $line]
         }
+        if {[llength [my attr_trailing]]} { append line "\t" }
         foreach col [my laid_columns] {
             lassign $col id label
             append line "\t"
@@ -1113,18 +1132,35 @@ oo::class create ::streamtree::StreamTree {
         return "[string range $text 0 [expr {$lo - 1}]]…"
     }
 
-    # Build one row's text: the glyphed-bool attribute prefix, the subject from
-    # render_subject, then the metadata cells (the consumer's from cell_values and
-    # the glyphless-bool check columns) pinned to the right by the column tab
-    # stops; a cell of a column the width dropped is left out with its stop.
-    # Returns {line subject subjtags meta_run meta_off offs}, where offs maps each
-    # laid column id to its {off len} range for cell tagging. The attribute prefix
-    # sits at the row start, so the subject's own tag ranges shift past it and every
-    # prefix glyph carries its per-attribute tag.
+    # Build one row: the image it leads with, then its text: the glyphed-bool
+    # prefix, the subject from render_subject, the trailing marks behind their
+    # stop when a trail-placed attribute is declared, then the metadata cells
+    # (the consumer's from cell_values and the glyphless-bool check columns)
+    # pinned to the right by the column tab stops; a cell of a column the
+    # width dropped is left out with its stop. Returns {image line subject
+    # subjtags meta_run meta_off offs}: image is the row_image options, offs
+    # maps each laid column id to its {off len} range for cell tagging, and
+    # every offset counts from the text, past the prefix. The subject's budget
+    # is the zone less the image and, on a row with trailing marks, less the
+    # marks and a gap, so the subject ellipsises first and the marks stay whole.
     method build_line {node} {
+        set image [my row_image $node]
+        set lead_w 0
+        if {[llength $image]} {
+            set lead_w [expr {[image width [dict get $image -image]] + 2 * [dict getdef $image -padx 0]}]
+        }
+        set max [expr {$SubjectMax - $lead_w}]
         lassign [my subject_prefix $node] ptext ptags
+        set trailing [my attr_trailing]
+        set ttext ""
+        if {[llength $trailing]} {
+            lassign [my attr_marks $node $trailing] ttext ttags
+        }
+        if {$ttext ne ""} {
+            set max [expr {min($max, $TrailX - [font measure [my opt listfont] $ttext] - $ColGap - $lead_w)}]
+        }
         set plen [string length $ptext]
-        set sub [my render_subject $node $SubjectMax]
+        set sub [my render_subject $node $max]
         set subject [dict get $sub subject]
         set subjtags [lmap r [dict getdef $sub tags {}] {
             lassign $r tag off len
@@ -1132,6 +1168,15 @@ oo::class create ::streamtree::StreamTree {
         }]
         set meta_run [dict getdef $sub meta_run 0]
         set line $ptext$subject
+        if {[llength $trailing]} {
+            append line "\t"
+            set toff [string length $line]
+            append line $ttext
+            lappend subjtags {*}[lmap r $ttags {
+                lassign $r tag off len
+                list $tag [expr {$off + $toff}] $len
+            }]
+        }
         set meta_off [string length $line]
         set offs [dict create]
         foreach pair [my effective_cell_values $node] {
@@ -1142,9 +1187,20 @@ oo::class create ::streamtree::StreamTree {
             append line $val
             dict set offs $col [list $off [string length $val]]
         }
-        return [dict create line $line subject $subject \
+        return [dict create image $image line $line subject $subject \
             subjtags [concat $ptags $subjtags] \
             meta_run $meta_run meta_off $meta_off offs $offs]
+    }
+
+    # Lay a built row at a right-gravity mark: its image first, when it leads
+    # with one, then its text and whatever follows it, all under the row's tags.
+    method lay_line {mark info tags {after ""}} {
+        set image [dict get $info image]
+        if {[llength $image]} {
+            $Text image create $mark {*}$image
+            foreach t $tags { $Text tag add $t "$mark - 1c" }
+        }
+        $Text insert $mark "[dict get $info line]$after" $tags
     }
 
     # Run one row's build, build_line through apply_line, with the node held as
@@ -1159,8 +1215,10 @@ oo::class create ::streamtree::StreamTree {
     # Tag a freshly-inserted (or rewritten-in-place) row from its build_line
     # info: the contiguous muted metadata run on the right (when meta_run is
     # set), the subject-relative ranges from render_subject, then each non-empty
-    # cell's overlay tags from cell_tag.
+    # cell's overlay tags from cell_tag. The offsets count from the text, one
+    # index past the row's image when it leads with one.
     method apply_line {node row_start info} {
+        if {[llength [dict get $info image]]} { set row_start "$row_start + 1c" }
         if {[dict get $info meta_run]} {
             $Text tag add meta \
                 "$row_start + [dict get $info meta_off]c" "$row_start lineend"
@@ -1256,6 +1314,7 @@ oo::class create ::streamtree::StreamTree {
     # -tabs overrides apply_column_tabs to configure those tags instead.
     method subject_label {} { return "" }
     method column_spec {} { return [list] }
+    method row_image {node} { return [list] }
     method render_subject {node max} {
         return [dict create subject [my node_pget $node label [my node_field $node key]] \
             tags [list] meta_run 0]
@@ -1318,7 +1377,7 @@ oo::class create ::streamtree::StreamTree {
         set rstart [$Text index $tmp]
         my row_build $id {
             set info [my build_line $id]
-            $Text insert $tmp "[dict get $info line]\n" [list {*}[my row_tags $kind] $tag]
+            my lay_line $tmp $info [list {*}[my row_tags $kind] $tag] "\n"
             my apply_line $id $rstart $info
         }
         set rowend [$Text index $tmp]
@@ -1506,9 +1565,11 @@ oo::class create ::streamtree::StreamTree {
         my row_build $id {
             set info [my build_line $id]
             $Text delete $sm "$sm lineend"
-            $Text mark gravity $sm left
-            $Text insert $s0 [dict get $info line] [list {*}[my row_tags [my node_field $id kind]] $tag]
-            $Text mark gravity $sm [my start_gravity [my node_field $id kind]]
+            set tmp "__rowins"
+            $Text mark set $tmp $s0
+            $Text mark gravity $tmp right
+            my lay_line $tmp $info [list {*}[my row_tags [my node_field $id kind]] $tag]
+            $Text mark unset $tmp
             $Text mark set $sm $s0
             my apply_line $id $s0 $info
         }
@@ -1743,6 +1804,11 @@ oo::class create ::streamtree::StreamTree {
         $Text window create $mark {*}$args
         return [list $i0 [$Text index $mark]]
     }
+    method emit_image {mark args} {
+        set i0 [$Text index $mark]
+        $Text image create $mark {*}$args
+        return [list $i0 [$Text index $mark]]
+    }
     method append_close {id mark} {
         set newend [$Text index $mark]
         set oldend [$Text index [my node_field $id end]]
@@ -1780,7 +1846,7 @@ oo::class create ::streamtree::StreamTree {
 
     method validate_attrs {attrs} {
         if {[catch {llength $attrs}]} { error "attrs is not a list" }
-        set known {id label kind glyph filterable values}
+        set known {id label kind glyph place filterable values}
         set seen [list]
         foreach d $attrs {
             if {[catch {dict size $d}]} { error "attribute descriptor is not a dict: $d" }
@@ -1798,6 +1864,13 @@ oo::class create ::streamtree::StreamTree {
             if {$kind ni {bool enum}} {
                 error "attribute '$id': kind '$kind' is neither bool nor enum"
             }
+            set place [dict getdef $d place prefix]
+            if {$place ni {prefix trail}} {
+                error "attribute '$id': place '$place' is neither prefix nor trail"
+            }
+            if {$place eq "trail" && ($kind ne "bool" || [dict getdef $d glyph ""] eq "")} {
+                error "attribute '$id': only a glyphed bool is placed trail"
+            }
             set filt [dict getdef $d filterable 0]
             if {![string is boolean -strict $filt]} {
                 error "attribute '$id': filterable '$filt' is not a true or false value"
@@ -1811,11 +1884,20 @@ oo::class create ::streamtree::StreamTree {
     method parse_attrs {} {
         set AttrOrder [list]
         set AttrSpec [dict create]
+        set AttrPrefix [list]
+        set AttrTrailing [list]
         if {![info exists AttrFilter]} { set AttrFilter [dict create] }
         foreach d [my opt attrs] {
             set id [dict get $d id]
             lappend AttrOrder $id
             dict set AttrSpec $id $d
+            if {[dict getdef $d kind bool] eq "bool" && [dict getdef $d glyph ""] ne ""} {
+                if {[dict getdef $d place prefix] eq "trail"} {
+                    lappend AttrTrailing $id
+                } else {
+                    lappend AttrPrefix $id
+                }
+            }
             if {[dict getdef $d filterable 0] && ![dict exists $AttrFilter $id]} {
                 dict set AttrFilter $id \
                     [expr {[dict getdef $d kind bool] eq "bool" ? 0 : [list]}]
@@ -1835,6 +1917,7 @@ oo::class create ::streamtree::StreamTree {
     method attr_label {id} { return [dict getdef [my attr_desc $id] label $id] }
     method attr_kind {id} { return [dict getdef [my attr_desc $id] kind bool] }
     method attr_glyph {id} { return [dict getdef [my attr_desc $id] glyph ""] }
+    method attr_place {id} { return [dict getdef [my attr_desc $id] place prefix] }
     method attr_filterable {id} { return [dict getdef [my attr_desc $id] filterable 0] }
     method attr_provider {id} { return [dict getdef [my attr_desc $id] values ""] }
     method attr_check_filterable {id} {
@@ -1891,19 +1974,29 @@ oo::class create ::streamtree::StreamTree {
         return $cells
     }
 
-    # The subject prefix a row carries: each true glyphed bool's glyph, in
-    # declaration order, under its `attr-<id>` tag, then one space before the
-    # subject. Returns {text tags} with the tags row-relative, ready for apply_line.
-    method subject_prefix {node} {
+    # The glyphed bools placed trail, in declaration order.
+    method attr_trailing {} { my attr_ensure; return $AttrTrailing }
+
+    # The glyphs of a row's true glyphed bools among ids, in that order, each
+    # under its `attr-<id>` tag: {text tags}, the tags relative to the text,
+    # which build_line shifts to where it lays them.
+    method attr_marks {node ids} {
         set text ""
         set tags [list]
-        foreach id [my attr_order] {
-            if {[my attr_kind $id] ne "bool"} continue
+        foreach id $ids {
+            if {[my attr_truth $node $id] ne "true"} continue
             set g [my attr_glyph $id]
-            if {$g eq "" || [my attr_truth $node $id] ne "true"} continue
             lappend tags [list attr-$id [string length $text] [string length $g]]
             append text $g
         }
+        return [list $text $tags]
+    }
+
+    # The subject prefix a row carries: the marks of its prefix-placed glyphed
+    # bools, then one space before the subject.
+    method subject_prefix {node} {
+        my attr_ensure
+        lassign [my attr_marks $node $AttrPrefix] text tags
         if {$text ne ""} { append text " " }
         return [list $text $tags]
     }
