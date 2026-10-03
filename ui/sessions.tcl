@@ -135,6 +135,7 @@ oo::class create ::questlog::ui::SessionList {
     variable PathNode         ;# session path OR subagent path -> node id
     variable SelectedSet      ;# ordered set (dict sid->1) of selected sessions
     variable SelectAnchor     ;# sid a Shift-range extends from, or ""
+    variable DoubleRelease    ;# 1 while a double-click's own release is pending
     variable SelectedFolder   ;# fid whose heading is highlighted, or ""
     variable FMenu            ;# the folder-heading right-click menu
     variable Menu
@@ -196,6 +197,7 @@ oo::class create ::questlog::ui::SessionList {
         set Query [dict create terms [list] nocase 0]
         set SelectedSet [dict create]
         set SelectAnchor ""
+        set DoubleRelease 0
         set SelectedFolder ""
         set NextId 0
         # Default sort reproduces the streaming order (mtime descending), so a
@@ -1248,6 +1250,8 @@ oo::class create ::questlog::ui::SessionList {
             [list [self] on_session_press $bpath %X %Y]
         $Text tag bind $stag <ButtonRelease-1> \
             [list [self] on_session_release $bpath %X %Y]
+        $Text tag bind $stag <Double-Button-1> \
+            [list [self] on_session_double $bpath %X %Y]
         # Shift extends the selection; the platform's add-to-selection click,
         # which Tk names <<ToggleSelection>>, adds or drops one row. It is bound
         # as the virtual event and resolved on the matching release, never
@@ -2105,17 +2109,13 @@ oo::class create ::questlog::ui::SessionList {
 
         set tags [list]
         set subj ""
-        # Every session title starts at the same x. The chevron sits in a fixed
-        # left gutter, then a tab sends the slug to the title stop apply_column_tabs
-        # adds to the sessionhead tabs - the same column-tab mechanism the
-        # right-pinned metadata uses. The running/bookmark status glyphs are no
-        # longer laid here: the base class prefixes them ahead of this subject (its
-        # attr-running / attr-bookmarked tags), so this method draws only the
-        # chevron and the title. Only a present chevron is drawn, so a plain gutter
-        # shows nothing and the title still lands on the stop. The chevron is the
-        # only marker click_on_chevron tests, so a plain gutter has no chevron tag
-        # and a click in it just opens the session.
-        if {[dict get $s has_subagents]} {
+        # A tab sends the title to the title stop apply_column_tabs adds to the
+        # sessionhead tabs, so the title lands there with or without a chevron
+        # before it. The subagent chevron shows only on a selected or open row:
+        # shown on every row it would read as a folder's marker. A row without
+        # it has no chevron tag, so a click there just opens the session.
+        if {[dict get $s has_subagents]
+            && ([my node_field $node expanded] || [my is_selected $path])} {
             lappend tags [list chevron [string length $subj] 1]
             append subj [expr {[my node_field $node expanded] ? "▾" : "▸"}]
             append subj " "
@@ -2869,6 +2869,10 @@ oo::class create ::questlog::ui::SessionList {
                 catch {$Text tag remove selected [my node_field $sid start] \
                                                  [my node_field $sid end]}
             }
+            # A shut row's subagent chevron follows the selection (session_subject).
+            if {[my sget $path has_subagents] && ![my node_field $sid expanded]} {
+                my redraw_header $path
+            }
         }
         my action_set_bright $path $on
     }
@@ -2881,13 +2885,14 @@ oo::class create ::questlog::ui::SessionList {
         my clear_folder_selection
         set new [dict create]
         foreach p $paths { dict set new [my sid $p] 1 }
-        foreach id [dict keys $SelectedSet] {
+        set old $SelectedSet
+        set SelectedSet $new
+        foreach id [dict keys $old] {
             if {![dict exists $new $id]} { my apply_selection_tag [my node_field $id key] 0 }
         }
         foreach id [dict keys $new] {
-            if {![dict exists $SelectedSet $id]} { my apply_selection_tag [my node_field $id key] 1 }
+            if {![dict exists $old $id]} { my apply_selection_tag [my node_field $id key] 1 }
         }
-        set SelectedSet $new
     }
 
     # Plain click: the selection is exactly this one, and it anchors a range.
@@ -2978,6 +2983,9 @@ oo::class create ::questlog::ui::SessionList {
         }
         set was_drag [::questlog::ui::drag::release $X $Y]
         if {$was_drag} return
+        # The first click of a double already selected and opened the row; a
+        # second open would reload the viewer and drop its typed prompt.
+        if {$DoubleRelease} { set DoubleRelease 0; return }
         # A plain click collapses any multi-selection back to this one row.
         my selection_set $path
         # A plain click on a search result lands at the session start, not at its
@@ -2985,6 +2993,14 @@ oo::class create ::questlog::ui::SessionList {
         # viewer index. Anchoring to a hit is reserved for the two deliberate
         # deep-link gestures (a snippet click, the menu's "Open at this match").
         my open_session $path 0
+    }
+
+    # A double-click toggles the session's subagents, as one does a folder.
+    # On the chevron the first click's release has toggled already.
+    method on_session_double {path X Y} {
+        if {[my click_on_action $X $Y] || [my click_on_chevron $X $Y]} return
+        set DoubleRelease 1
+        my toggle_subagents $path
     }
 
     # Toggle release: add or drop this row in the selection, across folders.
