@@ -221,7 +221,7 @@ oo::class create ::questlog::ui::SessionList {
             -motioncb {::questlog::ui::drag::motion %X %Y} \
             -cursorcb [list [self] on_cursor]
         # The three list-view filters declared to the base class, which renders the
-        # running/bookmarked glyphs (subject-prefix, per-attribute tag attr-<id>)
+        # running/bookmarked glyphs (trailing the subject, per-attribute tag attr-<id>)
         # and builds the strip filter controls. attr_value below answers running
         # from the live set, bookmarked from the row, model from the row label;
         # loaded_models provides the enum roster (hidden rows included). The
@@ -230,9 +230,9 @@ oo::class create ::questlog::ui::SessionList {
         my configure \
             -attrs [list \
                 [dict create id running label "running only" kind bool \
-                    glyph $::questlog::ui::GLYPH_RUNNING filterable 1] \
+                    glyph $::questlog::ui::GLYPH_RUNNING place trail filterable 1] \
                 [dict create id bookmarked label "bookmarked only" kind bool \
-                    glyph $::questlog::ui::GLYPH_BOOKMARK filterable 1] \
+                    glyph $::questlog::ui::GLYPH_BOOKMARK place trail filterable 1] \
                 [dict create id model label $::questlog::ui::MODEL_ANY kind enum \
                     filterable 1 values [list [self] loaded_models]]] \
             -attrstyles [dict create \
@@ -543,12 +543,14 @@ oo::class create ::questlog::ui::SessionList {
         $Text tag configure attr-running    -foreground [::questlog::ui::theme::c attr_running]
         $Text tag configure attr-bookmarked -foreground [::questlog::ui::theme::c attr_bookmarked]
         # Session header: one line, the block's "title" (like a search result
-        # heading), indented under its folder. The rows are separated by the gap
+        # heading). Its marker slot is one marker width in, where a sibling
+        # folder's marker sits, so its title starts where that folder's label
+        # does. The rows are separated by the gap
         # above each and the bold title colour; no background band. The
         # selected row gets a highlight for click feedback. The metadata
         # columns align on per-tag right tab stops (set by layout_columns), so
         # the line reads in the proportional QLList without a fixed-width crutch.
-        $Text tag configure sessionhead -lmargin1 12 -lmargin2 28 \
+        $Text tag configure sessionhead -lmargin1 [my marker_w] -lmargin2 [my marker_w] \
             -spacing1 6 -spacing3 2 -foreground [::questlog::ui::theme::c ink] \
             -font QLList
         # The slug (Claude's agentName / aiTitle) renders bold inline before
@@ -668,8 +670,8 @@ oo::class create ::questlog::ui::SessionList {
     # called from layout_columns).
     method apply_column_tabs {tabs} {
         # Session rows get a leading left tab stop for the title so every slug
-        # aligns past the marker gutter (the chevron and status glyphs); folder
-        # and child rows keep the plain metadata tabs. This reuses the same
+        # aligns past the marker slot, chevron or none; folder and child rows
+        # keep the plain metadata tabs. This reuses the same
         # column-tab mechanism the right-pinned metadata already rides on.
         #
         # The stops arrive already sane (positive, strictly increasing) from
@@ -686,21 +688,16 @@ oo::class create ::questlog::ui::SessionList {
     # replaced once the window maps).
     method session_tabs {tabs px} {
         set first [lindex $tabs 0]
-        set title_x [expr {12 + [my title_gutter_w] + $px}]
+        set title_x [expr {2 * [my marker_w] + $px}]
         if {$first ne "" && $title_x < $first} {
             return [list $title_x left {*}$tabs]
         }
         return $tabs
     }
 
-    # The fixed left gutter on a session row, measured past sessionhead's
-    # lmargin1 (12): the widest marker cluster (chevron, running circle, bookmark
-    # star) plus a small gap, so a fully-marked gutter never reaches the title
-    # stop. session_subject budgets the preview past this same width.
-    method title_gutter_w {} {
-        return [expr {[font measure QLList \
-            "▾ $::questlog::ui::GLYPH_RUNNING$::questlog::ui::GLYPH_BOOKMARK"] + 8}]
-    }
+    # A marker and its space: a folder label's offset from its marker, and so
+    # one depth step and a session title's offset from its marker slot.
+    method marker_w {} { return [font measure QLList "▸ "] }
 
     # ---- depth --------------------------------------------------------
     #
@@ -725,7 +722,7 @@ oo::class create ::questlog::ui::SessionList {
     }
 
     method indent_px {id} {
-        return [expr {[my nesting $id] * [font measure QLList "▸ "]}]
+        return [expr {[my nesting $id] * [my marker_w]}]
     }
 
     # Shift a row's own tag in from its kind tag by the row's depth; at the
@@ -2126,7 +2123,7 @@ oo::class create ::questlog::ui::SessionList {
         # metadata block: the slug is trimmed first, the preview into what is
         # left. An untrimmed slug wider than that room runs past the first
         # metadata stop, and the row's tab stops cascade off their columns.
-        set fixed [my title_gutter_w]
+        set fixed [my marker_w]
         incr fixed [font measure QLList $count_str]
         set full_slug $slug
         set clipped 0
