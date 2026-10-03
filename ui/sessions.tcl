@@ -128,6 +128,9 @@ oo::class create ::questlog::ui::SessionList {
                               ;# session with nturns below it is hidden, never
                               ;# excluded - it stays stored, priced and counted
     variable Query            ;# {terms <list> nocase 0|1} for hit highlighting
+    variable LineGeo          ;# line kind tag -> {indent above below}, px
+    variable ContentCol       ;# a snippet's content tab stop at the root
+    variable Guides           ;# {width height folders} -> depth-guide photo
     variable HitTags
     # Domain indices into the node store: a folder name or a session/subagent
     # path to its node id.
@@ -444,7 +447,7 @@ oo::class create ::questlog::ui::SessionList {
         }
     }
     method on_row_rendered {id} {
-        my indent_tag $id [my node_field $id tag] [my row_tags [my node_field $id kind]]
+        my pin_title_stop $id
         switch [my node_field $id kind] {
             folder {
                 set htag [my node_field $id tag]
@@ -531,11 +534,14 @@ oo::class create ::questlog::ui::SessionList {
         # Folder heading: the outermost level, with a wide gap above so each
         # project group reads as a section. Proportional (QLList), like the
         # rest of the list - the design carries no fixed-width font.
-        # Folder heading is single-line so its size/cost aggregates can sit in
-        # the same right-pinned columns as the session rows below it.
+        # Every line is one row: a subject is ellipsised before the right-pinned
+        # metadata, and a match is clipped. Set on the widget, not per tag: under
+        # the base class's `word`, Tk breaks a line before an embedded window
+        # that follows text, whatever the line's tags say, so a match's badge
+        # would drop to a line of its own.
+        $Text configure -wrap none
         $Text tag configure folderhead \
-            -font QLList -foreground [::questlog::ui::theme::c folder] \
-            -spacing1 14 -spacing3 3 -wrap none
+            -font QLList -foreground [::questlog::ui::theme::c folder]
         # The status glyphs are attribute prefixes the base class renders (running,
         # bookmarked declared as glyphed bools); the base class tags each glyph
         # attr-<id>, and these dress the two glyphed attributes in their
@@ -546,12 +552,11 @@ oo::class create ::questlog::ui::SessionList {
         # heading). Its marker slot is one marker width in, where a sibling
         # folder's marker sits, so its title starts where that folder's label
         # does. The rows are separated by the gap
-        # above each and the bold title colour; no background band. The
+        # above each (LineGeo) and the bold title colour; no band. The
         # selected row gets a highlight for click feedback. The metadata
         # columns align on per-tag right tab stops (set by layout_columns), so
         # the line reads in the proportional QLList without a fixed-width crutch.
-        $Text tag configure sessionhead -lmargin1 [my marker_w] -lmargin2 [my marker_w] \
-            -spacing1 6 -spacing3 2 -foreground [::questlog::ui::theme::c ink] \
+        $Text tag configure sessionhead -foreground [::questlog::ui::theme::c ink] \
             -font QLList
         # The slug (Claude's agentName / aiTitle) renders bold inline before
         # the prompt body, so the slug acts as the headline and the prompt
@@ -567,21 +572,17 @@ oo::class create ::questlog::ui::SessionList {
         # qlBadge_<type> pill image (theme::build_chrome), so the content column
         # is sized from that pill's width; content is the proportional QLList.
         set barcol 22
-        # Tk positions an embedded window at the line's -lmargin2, not after the
-        # preceding glyph, so the badge column IS lmargin2: just past the bar
-        # glyph. lmargin1 holds the bar; a single tab then aligns content.
         set badgecol [expr {$barcol + [font measure QLList "▏"] + 6}]
         set bpw [image width [::questlog::ui::theme::badge_pill system]]
-        set content_col [expr {$badgecol + $bpw + 12}]
-        $Text configure -tabs [list $content_col left]
+        set ContentCol [expr {$badgecol + $bpw + 12}]
+        $Text configure -tabs [list $ContentCol left]
         # A thin session-grouping spine runs in the gutter to the left of the
         # badge: every snippet line opens with a bar glyph, so the matches of one
         # session stack into one continuous rule (the design's MatchList left
-        # guide). The badge (an embedded pill) sits at lmargin2; content tabs to
-        # content_col. -wrap none clips each match to one row, as the design does.
-        $Text tag configure snippet -lmargin1 $barcol -lmargin2 $badgecol \
-            -tabs [list $content_col left] -wrap none \
-            -font QLList -foreground [::questlog::ui::theme::c snippet] -spacing3 1
+        # guide). The badge (an embedded pill) follows the bar; content tabs to
+        # the content column.
+        $Text tag configure snippet -tabs [list $ContentCol left] \
+            -font QLList -foreground [::questlog::ui::theme::c snippet]
         $Text tag configure snippetbar -foreground [::questlog::ui::theme::c snippet_guide]
         # A `names` snippet is a title breadcrumb, not a transcript block: when the
         # matched name is superseded the row ends with an arrow to the name shown
@@ -592,15 +593,28 @@ oo::class create ::questlog::ui::SessionList {
         # layout_columns) so date/size/cost/turns/duration sit under the parent's
         # columns. The leading spine reuses the snippet guide colour as the tree
         # connector, so a session's children read as one grouped run.
-        $Text tag configure childhead -lmargin1 30 -lmargin2 46 \
-            -spacing1 2 -spacing3 2 -wrap none \
+        $Text tag configure childhead \
             -foreground [::questlog::ui::theme::c ink] -font QLList
         $Text tag configure childbar -foreground [::questlog::ui::theme::c snippet_guide]
         # A subagent's matched line, beneath its child row, indented past the
         # child so the hit reads at full width (its own line, not cramped into the
         # metadata strip). Same look as a parent snippet, one level deeper.
-        $Text tag configure childsnip -lmargin1 40 -lmargin2 40 -wrap none \
-            -font QLList -foreground [::questlog::ui::theme::c snippet] -spacing3 1
+        $Text tag configure childsnip \
+            -font QLList -foreground [::questlog::ui::theme::c snippet]
+        # Each line kind's indent and the gaps above and below it. The line image
+        # (line_image) carries all three, so a kind tag sets no margin or spacing;
+        # -offset places the text inside the taller line, which centres it.
+        set LineGeo [dict create \
+            folderhead  {0 14 3} \
+            sessionhead [list [my marker_w] 6 2] \
+            childhead   {30 2 2} \
+            snippet     [list $barcol 0 1] \
+            childsnip   {40 0 1}]
+        dict for {tag geo} $LineGeo {
+            lassign $geo _ above below
+            $Text tag configure $tag -offset [expr {($below - $above) / 2}]
+        }
+        set Guides [dict create]
         # The expand/collapse chevron at the head of a session that has subagents.
         $Text tag configure chevron -foreground [::questlog::ui::theme::c meta]
         # Metadata cells (date, size, cost): the muted grey column run pinned
@@ -703,14 +717,12 @@ oo::class create ::questlog::ui::SessionList {
     #
     # A row steps in by one marker width per folder between its own folder and
     # the root, so a nested folder's heading starts under its parent's label and
-    # its rows under that. The kind tags (folderhead, sessionhead, snippet, ...)
-    # carry absolute margins, and a Tk tag's margin replaces rather than adds,
-    # so the shift rides the tag each row already wears alone (the node tag; a
-    # snippet's n#/c# tag). That tag outranks the kind tag by birth: a new
-    # tag takes the top priority, and every kind tag was created at build,
-    # before any row. A `tag raise` per row said the same thing and walked
-    # the tag table to say it, quadratic over a rebuild. The metadata stops
-    # are absolute and stay put; a session's title stop moves with its row.
+    # its rows under that. Every line leads with an image that is the line's
+    # indent and its full height, gaps included, carrying a hairline at the
+    # marker column of each folder above it. Only open folders have lines under
+    # them, so each folder's rule runs unbroken from its heading to its last
+    # line, and a folder's own sessions visibly hang off it rather than off the
+    # subfolder listed above them.
 
     # Folders between a row's own folder and the root.
     method nesting {id} {
@@ -725,24 +737,77 @@ oo::class create ::questlog::ui::SessionList {
         return [expr {[my nesting $id] * [my marker_w]}]
     }
 
-    # Shift a row's own tag in from its kind tag by the row's depth; at the
-    # root the kind tag's margins hold and the tag is left alone.
-    method indent_tag {id tag kindtag} {
+    # The image a line of kind tag `kindtag` leads with, the line owned by node
+    # id (a row, or the session or subagent its loose content hangs under).
+    method line_image {id kindtag {badge 0}} {
+        lassign [dict get $LineGeo $kindtag] indent above below
+        set w [expr {max(1, $indent + [my indent_px $id])}]
+        set h [expr {[font metrics QLList -linespace] + $above + $below}]
+        if {$badge} { set h [expr {max($h, [my badge_line_h])}] }
+        set rules [expr {[my nesting $id] + ([my node_field $id kind] ne "folder")}]
+        set key [list $w $h $rules]
+        if {![dict exists $Guides $key]} {
+            set img [image create photo -width $w -height $h]
+            set half [expr {[font measure QLList "▸"] / 2}]
+            for {set m 0} {$m < $rules} {incr m} {
+                set x [expr {$m * [my marker_w] + $half}]
+                if {$x < $w} {
+                    $img put [::questlog::ui::theme::c snippet_guide] \
+                        -to $x 0 [expr {$x + 1}] $h
+                }
+            }
+            dict set Guides $key $img
+        }
+        return [dict get $Guides $key]
+    }
+
+    # The height of a line holding a type badge: the badge window, its padding
+    # included, is taller than the list font. The probe is never mapped, and
+    # lives outside the list so it is not taken for a badge.
+    method badge_line_h {} {
+        set b $Top.badgeprobe
+        if {![winfo exists $b]} {
+            label $b -image [::questlog::ui::theme::badge_pill system] \
+                -compound center -text SYSTEM -font QLBold -borderwidth 0
+        }
+        return [expr {[winfo reqheight $b] + 2}]
+    }
+
+    # Base-class hook: a row leads with its line image.
+    method row_image {id} {
+        return [list -image [my line_image $id [my row_tags [my node_field $id kind]]]]
+    }
+
+    # A nested session's title stop moves in with its row, on the row's own tag
+    # (a Tk tag's -tabs replaces rather than adds, so the kind tag's stops
+    # cannot carry it). That tag outranks the kind tag by birth: every kind tag
+    # was created at build, before any row.
+    method pin_title_stop {id} {
+        if {[my node_field $id kind] ne "session"} return
         set px [my indent_px $id]
         if {$px <= 0} return
-        foreach opt {-lmargin1 -lmargin2} {
-            set m [$Text tag cget $kindtag $opt]
-            $Text tag configure $tag $opt [expr {($m eq "" ? 0 : $m) + $px}]
+        $Text tag configure [my node_field $id tag] -tabs [my session_tabs $ColTabs $px]
+    }
+
+    # Open a line of loose content under node owner: the append point, then the
+    # line image under the line's own tag ntag and its kind tag. A snippet's
+    # content stop moves in with the line.
+    method line_open {owner ntag kindtag {badge 0}} {
+        if {$kindtag eq "snippet"} {
+            $Text tag configure $ntag \
+                -tabs [list [expr {$ContentCol + [my indent_px $owner]}] left]
         }
-        if {$kindtag eq "sessionhead"} {
-            $Text tag configure $tag -tabs [my session_tabs $ColTabs $px]
-        }
+        set m [my append_open $owner]
+        lassign [my emit_image $m -image [my line_image $owner $kindtag $badge]] i0 i1
+        $Text tag add $kindtag $i0 $i1
+        $Text tag add $ntag $i0 $i1
+        return $m
     }
 
     # Re-fit every rendered row's ellipsis after a width change (a base-class
     # hook, called from relayout inside the widget's normal state): each folder
     # heading, each rendered session header, and the children of an expanded
-    # session. A nested session's title stop rides its own tag (indent_tag)
+    # session. A nested session's title stop rides its own tag (pin_title_stop)
     # rather than the kind tag apply_column_tabs re-pinned, so it is re-pinned
     # here beside the redraw.
     method relayout_content {} {
@@ -751,7 +816,7 @@ oo::class create ::questlog::ui::SessionList {
                 folder { my redraw_folder_heading [my node_field $id key] }
                 session {
                     set path [my node_field $id key]
-                    my indent_tag $id [my node_field $id tag] sessionhead
+                    my pin_title_stop $id
                     my redraw_header $path
                     if {[my node_field $id expanded]} { my rerender_children $path }
                 }
@@ -1233,11 +1298,6 @@ oo::class create ::questlog::ui::SessionList {
         set path [my node_field $id key]
         set stag [my node_field $id tag]
         set sm   [my node_field $id start]
-        # Single-line rows: the subject preview is ellipsised to stop before the
-        # right-pinned metadata (render_subject), and -wrap none guards against
-        # any residual overflow. The full prompt is read in the viewer, which a
-        # click on the row opens.
-        $Text tag configure $stag -wrap none
         # Every $path below rides through pctsafe: bind %-substitutes its
         # script before Tcl parses it, and a project directory holding a %
         # would be rewritten in place (issue #41's "100%pure" repro). The
@@ -1308,7 +1368,6 @@ oo::class create ::questlog::ui::SessionList {
         }
         set sid [my sid $path]
         set ntag "n#[incr NextId]"
-        my indent_tag $sid $ntag snippet
         # Normalise to a type with a known badge pill; an unknown block type
         # falls back to the neutral system pill.
         set fgrole [dict getdef {
@@ -1320,7 +1379,7 @@ oo::class create ::questlog::ui::SessionList {
         # node: the content door opens a temp mark at the session's append point,
         # emits the pieces in order, then advances the session end (and the
         # folder end when this session is the folder's last) past them.
-        set m [my append_open $sid]
+        set m [my line_open $sid $ntag snippet 1]
         my emit $m "▏" [list snippet snippetbar $ntag]
         # Rounded type badge: a label drawing the type name centred over the
         # shared pill image (Tk's SVG cannot render text itself). It is created
@@ -1332,10 +1391,7 @@ oo::class create ::questlog::ui::SessionList {
             -create [list [self] make_badge $bt $fgrole \
                 [string toupper [my badge_label $bt]] $path $lineoff $ntag]]
         set wstart [lindex $wr 0]
-        # The window segment must carry the snippet tag too, or its untagged
-        # -wrap (the widget default `word`) lets the row wrap to a second line.
-        $Text tag add snippet $wstart "$wstart +1c"
-        $Text tag add $ntag   $wstart "$wstart +1c"
+        $Text tag add $ntag $wstart "$wstart +1c"
         my emit $m "\t" [list snippet $ntag]
         set cr [my emit $m $content [list snippet $ntag]]
         my emit $m "\n" [list snippet $ntag]
@@ -1368,17 +1424,15 @@ oo::class create ::questlog::ui::SessionList {
     method render_name_snippet {path content lineoff} {
         set sid [my sid $path]
         set ntag "n#[incr NextId]"
-        my indent_tag $sid $ntag snippet
         set slug [my sget $path slug]
         set superseded [expr {$slug ne "" && $content ne $slug}]
         set label [expr {$superseded ? "FORMER NAME" : "NAME"}]
-        set m [my append_open $sid]
+        set m [my line_open $sid $ntag snippet 1]
         my emit $m "▏" [list snippet snippetbar $ntag]
         set wr [my emit_window $m -align center -pady 1 -padx 3 \
             -create [list [self] make_badge names name $label $path $lineoff $ntag]]
         set wstart [lindex $wr 0]
-        $Text tag add snippet $wstart "$wstart +1c"
-        $Text tag add $ntag   $wstart "$wstart +1c"
+        $Text tag add $ntag $wstart "$wstart +1c"
         my emit $m "\t" [list snippet $ntag]
         set cr [my emit $m $content [list snippet $ntag]]
         my tag_hits_in_range [lindex $cr 0] [lindex $cr 1] $content
@@ -1409,8 +1463,7 @@ oo::class create ::questlog::ui::SessionList {
     method render_overflow {path more} {
         set sid [my sid $path]
         set ntag "n#[incr NextId]"
-        my indent_tag $sid $ntag snippet
-        set m [my append_open $sid]
+        set m [my line_open $sid $ntag snippet]
         my emit $m "▏" [list snippet snippetbar $ntag]
         my emit $m "  +$more" [list snippet snippetmore $ntag]
         my emit $m "\t" [list snippet $ntag]
@@ -1438,8 +1491,7 @@ oo::class create ::questlog::ui::SessionList {
         set subt [my sget $path sub_total]
         set nsub [llength [my session_child_paths $path]]
         set ntag "n#[incr NextId]"
-        my indent_tag $sid $ntag snippet
-        set m [my append_open $sid]
+        set m [my line_open $sid $ntag snippet]
         my emit $m "▏" [list snippet snippetbar $ntag]
         my emit $m "\t" [list snippet $ntag]
         my emit $m "no match in this session - $subt\
@@ -1700,12 +1752,11 @@ oo::class create ::questlog::ui::SessionList {
     method render_child_snippet {path cp btype content lineoff} {
         set cid [my sid $cp]
         set ntag "c#[incr NextId]"
-        my indent_tag $cid $ntag childsnip
         # A matched line is loose content inside the subagent's region: the door
         # emits it at the subagent's append point and advances the subagent end
         # past it, carrying the session and folder ends with it where they
         # coincide (the same forward nesting the parent snippet uses).
-        set m [my append_open $cid]
+        set m [my line_open $cid $ntag childsnip]
         my emit $m "▏  " [list childsnip childbar $ntag]
         set cr [my emit $m $content [list childsnip $ntag]]
         my emit $m "\n" [list childsnip $ntag]
@@ -1729,8 +1780,7 @@ oo::class create ::questlog::ui::SessionList {
     method render_child_overflow {path cp more} {
         set cid [my sid $cp]
         set ntag "c#[incr NextId]"
-        my indent_tag $cid $ntag childsnip
-        set m [my append_open $cid]
+        set m [my line_open $cid $ntag childsnip]
         my emit $m "▏  " [list childsnip childbar $ntag]
         my emit $m "+$more more [expr {$more == 1 ? {match} : {matches}}]\
             in this session - open to see all" [list childsnip snippetmore $ntag]
@@ -2069,7 +2119,6 @@ oo::class create ::questlog::ui::SessionList {
     # the subject start and meta_run asks the base class to paint the contiguous muted
     # metadata run. A folder paints no meta run (its cells are tagged singly).
     method render_subject {node max} {
-        set max [expr {$max - [my indent_px $node]}]
         switch -- [my node_field $node kind] {
             folder   { return [my folder_subject $node] }
             subagent { return [my child_subject $node $max] }

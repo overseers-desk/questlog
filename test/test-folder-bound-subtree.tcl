@@ -119,9 +119,10 @@ check "revealing the nested folder's session opens every folder above it, so it 
     [list [$SL folder_expanded $F_PRESS] [$SL folder_expanded $F_PLATEN] [$SL sflag $platen1 rendered]] \
     {1 1 1}
 set TX [set [info object namespace $SL]::Text]
+# A heading's marker follows the image its line leads with.
 check "the headings it opened show the open marker" \
     [lmap f [list $F_PRESS $F_PLATEN] {
-        string index [$TX get [$SL node_field [$SL fid $f] start]] 0
+        $TX get "[$SL node_field [$SL fid $f] start] +1c"
     }] {▾ ▾}
 check "the audit is clean after the reveal" [$SL audit] {}
 
