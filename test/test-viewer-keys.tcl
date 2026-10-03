@@ -104,13 +104,14 @@ foreach key {<Control-Key-b> <Key-Down> <Key-Up> <Key-End> <Key-Home> \
 }
 
 # A run of presses walks: the mark is left alone while it is on screen, so the
-# second Down starts from where the first left the cursor.
+# second Down starts from where the first left the cursor. Down moves a display
+# line, and a long answer wraps at some widths, so the walk counts those.
 $Text yview moveto 0
 update
 set walk [list]
 foreach n {1 2 3} {
     press <Key-Down>
-    lappend walk [lindex [split [$Text index insert] .] 0]
+    lappend walk [$Text count -displaylines 1.0 insert]
 }
 check "repeated Down walks the cursor down" \
     [expr {[lindex $walk 0] < [lindex $walk 1] && [lindex $walk 1] < [lindex $walk 2]}] 1

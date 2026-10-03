@@ -87,7 +87,9 @@ check gone_blank_other       0 [::questlog::scan::row_subtree_match \
 # ---- canon_dir: the entry-point canonicaliser both the toolbar's folder
 # editor and the CLI's --subtree run a typed path through. Tcl 9 expands ~
 # nowhere, so without it a typed ~/x bound compares literally and matches
-# nothing (the bug this pins). ----
+# nothing (the bug this pins). A home that does not exist has no symlink for
+# file normalize to resolve, so the expansion is the same on any machine. ----
+set ::env(HOME) /ql-test-home
 set home [file home]
 check canon_tilde      $home/code/proj [::questlog::path::canon_dir ~/code/proj]
 check canon_bare_tilde $home           [::questlog::path::canon_dir ~]
