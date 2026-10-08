@@ -295,6 +295,7 @@ $TurnLB selection clear 0 end
 $TurnLB selection set $last
 $V turn_list_select
 update idletasks
+$Text sync
 check "the jump moves the view to the last header" \
     [expr {[lindex [$Text yview] 0] > 0}] 1
 check "the last header is on screen after the jump" \
@@ -462,9 +463,11 @@ hover_at $aidx
 update idletasks
 check "the button is placed for the wheel test" \
     [expr {[place info $CopyBtn] ne ""}] 1
+$Text sync
 set y0 [lindex [$Text yview] 0]
 event generate $CopyBtn <MouseWheel> -delta -120
 update idletasks
+$Text sync
 check "a wheel notch on the button scrolls the transcript down" \
     [expr {[lindex [$Text yview] 0] > $y0}] 1
 

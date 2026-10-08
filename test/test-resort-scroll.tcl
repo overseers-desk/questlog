@@ -149,6 +149,7 @@ check "the whole flood coalesced to one rebuild" $::redraws 1
 $TX yview moveto 0.4
 update
 set top_before [topkey]
+$TX sync
 set frac_before [lindex [$TX yview] 0]
 check "scrolled away from the top" [expr {$frac_before > 0.0001}] 1
 set rb $::redraws
@@ -158,6 +159,7 @@ after 350 [list set ::d3 1]
 vwait ::d3
 check "an order-preserving recost still rebuilt once" [expr {$::redraws == $rb + 1}] 1
 check "the same node sits at the top after the rebuild" [topkey] $top_before
+$TX sync
 check "the view did not snap to the top" [expr {[lindex [$TX yview] 0] > 0.0001}] 1
 
 # ---- 4: a header click cancels a pending debounce ------------------------

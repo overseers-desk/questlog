@@ -85,6 +85,7 @@ proc press {key} {
     update
 }
 
+$Text sync
 check "the transcript is longer than the pane" \
     [expr {[lindex [$Text yview] 1] < 0.5}] 1
 check "the render leaves the insert mark out of view" \
