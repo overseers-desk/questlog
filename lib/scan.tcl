@@ -336,7 +336,7 @@ oo::class create ::questlog::Scan {
     variable ChunksTotal  ;# chunks posted for the live pass
     variable PathsTotal   ;# paths posted for the live pass (progress span)
     variable Scanned      ;# rows published by the live pass
-    variable Per          ;# paths per chunk for the live pass
+    variable ChunkEnds    ;# per chunk seq, the paths done once it releases
     variable Peek         ;# 1 = resolve_folder may read a transcript to name a
                           ;# folder (peek_folder_cwd), the exact answer the CLI
                           ;# wants; 0 = cache and filesystem walk only, the GUI's
@@ -363,7 +363,7 @@ oo::class create ::questlog::Scan {
         set ChunksTotal 0
         set PathsTotal 0
         set Scanned 0
-        set Per 1
+        set ChunkEnds [list]
         set Peek $peek
     }
 
@@ -450,16 +450,19 @@ oo::class create ::questlog::Scan {
             lappend paths $path
         }
         set PathsTotal [llength $paths]
-        set Per [::questlog::config::get scan_chunk_files]
+        set per [::questlog::config::get scan_chunk_files]
         set chunks [list]
         # The first chunk is deliberately small: chunk 0 gates the first paint
         # (in-order release), so the first rows land after a handful of reads
         # instead of a full-width chunk of the corpus's newest, largest files.
         set first [expr {min(6, [llength $paths])}]
         if {$first > 0} { lappend chunks [lrange $paths 0 [expr {$first - 1}]] }
-        for {set i $first} {$i < [llength $paths]} {incr i $Per} {
-            lappend chunks [lrange $paths $i [expr {$i + $Per - 1}]]
+        for {set i $first} {$i < [llength $paths]} {incr i $per} {
+            lappend chunks [lrange $paths $i [expr {$i + $per - 1}]]
         }
+        set ChunkEnds [list]
+        set n 0
+        foreach c $chunks { lappend ChunkEnds [incr n [llength $c]] }
         set ChunksTotal [llength $chunks]
         if {$ChunksTotal == 0} {
             # Deferred, never synchronous inside extend: a caller's
@@ -490,7 +493,7 @@ oo::class create ::questlog::Scan {
             dict unset ChunkBuf $NextChunk
             incr NextChunk
             if {$OnProgress ne ""} {
-                {*}$OnProgress [expr {min($NextChunk * $Per, $PathsTotal)}] $PathsTotal
+                {*}$OnProgress [lindex $ChunkEnds $NextChunk-1] $PathsTotal
             }
         }
         if {$NextChunk == $ChunksTotal} { my pool_scan_done $PoolEpoch }

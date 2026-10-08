@@ -61,9 +61,11 @@ set snapshot [dict create since all]
 proc run_pass {} {
     set ::rows [list]
     set ::done ""
+    set ::progress [list]
     set s [::questlog::Scan new \
         {apply {{row} { lappend ::rows $row }}} \
-        {apply {{n} { set ::done $n }}}]
+        {apply {{n} { set ::done $n }}} \
+        {apply {{done total} { lappend ::progress "$done/$total" }}}]
     $s extend $::snapshot
     vwait ::done
     $s destroy
@@ -72,6 +74,7 @@ proc run_pass {} {
 
 ::questlog::jobpool::init $ROOT
 set pool_rows [run_pass]
+set pool_progress $::progress
 ::questlog::jobpool::release
 set ::env(QUESTLOG_THREADS) 0
 set coro_rows [run_pass]
@@ -80,6 +83,9 @@ unset ::env(QUESTLOG_THREADS)
 check "both passes published every session" 7 [llength $coro_rows]
 check "pool pass row count matches" [llength $coro_rows] [llength $pool_rows]
 check "identical rows in identical publish order" $coro_rows $pool_rows
+# Eight paths (the hostile one counts): a 6-path first chunk, then one of 2.
+check "pool progress counts the paths each chunk released" \
+    {0/8 6/8 8/8} [lrange $pool_progress 0 2]
 
 # ---- cancel mid-pass ----------------------------------------------------
 ::questlog::jobpool::init $ROOT
