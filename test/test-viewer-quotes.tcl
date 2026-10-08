@@ -1,13 +1,11 @@
 #!/usr/bin/env wish9.0
-# Assistant blockquotes render as plain tagged text, not embedded text widgets.
-#
-# The old renderer embedded a child `text` widget per quote: its Text-class
-# wheel binding swallowed the mouse wheel as the pointer crossed a quote, and
-# its content was invisible to the transcript's own $Text search. This drives a
-# real Viewer over a one-quote synthetic session and asserts the replacement:
-# no embedded windows survive, the quoted text is found by $Text search, a click
-# on the ⧉ glyph copies the raw de-quoted text, and a reload leaves no stale
-# quote state behind.
+# Assistant blockquotes in the Viewer: tkdown paints the bar and inset, and
+# the Viewer indexes each quote for the Quotes tab and heads it with a ⧉ copy
+# glyph. This drives a real Viewer over a one-quote synthetic session and
+# asserts the Viewer's side: one quote indexed with its raw de-quoted text, a
+# click on the ⧉ glyph copies that text, a user prompt's `>` lines stay
+# literal, and a reload leaves no stale quote state behind. The quote's
+# painting is tkdown's and its own suite covers it.
 #
 # Runs under wish (it builds a Viewer, so it needs Tk); run-audit routes it to
 # wish9.0 on the private Xvfb. Standalone: DISPLAY=:95 wish9.0 test-viewer-quotes.tcl
@@ -57,7 +55,7 @@ fconfigure $fh -encoding utf-8
 # text. \n is a JSON string escape here, decoded to a newline by the parser.
 puts $fh {{"type":"user","cwd":"/tmp/proj","timestamp":"2026-07-11T10:00:00Z","message":{"role":"user","content":"show me a quote"}}}
 puts $fh {{"type":"assistant","timestamp":"2026-07-11T10:00:05Z","message":{"role":"assistant","model":"claude-3-5-sonnet-20241022","content":"Here is a quote:\n\n> This is QUOTETOKEN a quoted line\n> with **bold** inside\n\nDone.","usage":{"input_tokens":10,"output_tokens":5}}}}
-puts $fh {{"type":"user","cwd":"/tmp/proj","timestamp":"2026-07-11T10:00:09Z","message":{"role":"user","content":"thanks"}}}
+puts $fh {{"type":"user","cwd":"/tmp/proj","timestamp":"2026-07-11T10:00:09Z","message":{"role":"user","content":"thanks\n> USERQUOTE stays literal"}}}
 close $fh
 
 # The one quote's raw de-quoted text (what a copy must yield): the two quoted
@@ -77,12 +75,9 @@ update
 set Text [$V textwidget]
 set NS [info object namespace $V]
 
-# 1. No embedded windows remain in the transcript: the quote is tagged text now.
-check "no embedded quote widgets" [llength [$Text window names]] 0
-
-# 2. The quoted text is ordinary searchable content.
-check "quote token found by \$Text search" \
-    [expr {[$Text search QUOTETOKEN 1.0 end] ne ""}] 1
+# 2. A user prompt's `>` line is not a quote: it stays as typed.
+check "a prompt's > line stays literal" \
+    [expr {[$Text search "> USERQUOTE" 1.0 end] ne ""}] 1
 
 # 3. Exactly one quote was captured, in lock-step index/body lists.
 check "one quote indexed" [llength [set ${NS}::QuoteIdx]] 1
@@ -120,7 +115,6 @@ update
 check "QuoteIdx does not accumulate across reload" [llength [set ${NS}::QuoteIdx]] 1
 check "QuoteBodies matches QuoteIdx after reload" \
     [llength [set ${NS}::QuoteBodies]] [llength [set ${NS}::QuoteIdx]]
-check "still no embedded widgets after reload" [llength [$Text window names]] 0
 
 # ---- clean up ----------------------------------------------------------------
 ::questlog::path::_real_file delete -force $TMP

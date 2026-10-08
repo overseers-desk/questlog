@@ -1,8 +1,8 @@
 package require Tcl 9
 package require Tk
 package require logman
-package require streamdoc
-package require tkdown
+package require streamdoc 1.2
+package require tkdown 2.0
 package provide showman 0.1
 
 # showman - a Claude Code session transcript as a foldable, searchable
@@ -17,9 +17,8 @@ package provide showman 0.1
 #     content blocks, dividers), tkdown supplying markdown-to-Tk. Each turn
 #     folds to its header line; tool_use / thinking / tool_result blocks are
 #     detail, hidden behind a trailing stub ("· N tool calls · M thinking").
-#   - find (Ctrl-F): an overlay bar under the text; collect_matches tags hits
-#     `find` (reaching into elided detail), find_next steps with wraparound
-#     and reveals the hit through the one jump gate (reveal_index).
+#   - find (Ctrl-F): streamdoc's bar, bounded by find_bound so trailing
+#     chrome under `endhint` is never a match.
 #   - a LIVE turn (the reason this base exists): live_open starts a growing
 #     turn, live_write streams text into it in place (savepoint/rewind: each
 #     chunk re-renders the provisional message tail, so markdown that
@@ -39,24 +38,11 @@ package provide showman 0.1
 #   -palette dict   colour roles: section muted faint body user assistant
 #                   system tool_result find. Defaults are a plain light look.
 #   -fonts dict     tkdown font names {body bold italic bolditalic mono};
-#                   "" (the default) derives SV* named fonts from Tk's.
+#                   "" (the default) takes ::tkdown::ensure_fonts' set.
 #   -idle_gap min   minutes of silence that draw an idle-gap divider.
 # plus streamdoc's own: -font -glyphs -autofollow.
 
 namespace eval ::showman {}
-
-# The derived named fonts the default look reads: body faces from TkTextFont,
-# mono faces from TkFixedFont. Created once per interp; a host that passes
-# -fonts and -font uses its own and these still exist harmlessly.
-proc ::showman::ensure_fonts {} {
-    if {"SVBody" in [font names]} return
-    font create SVBody           {*}[font actual TkTextFont]
-    font create SVBodyBold       {*}[font actual TkTextFont] -weight bold
-    font create SVBodyItalic     {*}[font actual TkTextFont] -slant italic
-    font create SVBodyBoldItalic {*}[font actual TkTextFont] -weight bold -slant italic
-    font create SVMono           {*}[font actual TkFixedFont]
-    font create SVMonoBold       {*}[font actual TkFixedFont] -weight bold
-}
 
 oo::class create ::showman::Showman {
     superclass ::streamdoc::StreamDoc
@@ -71,12 +57,6 @@ oo::class create ::showman::Showman {
     variable NextLine         ;# highest _line seen; numbers records that carry none
     variable RenderTs         ;# trailing render state: epoch of the last content record
     variable RenderInSection  ;# trailing render state: 1 while a section header is open
-    variable Find             ;# find overlay frame
-    variable FindVar          ;# find entry text
-    variable FindMatches      ;# list of indices of all current matches
-    variable FindCur          ;# 0-based hit last shown (-1 = none shown yet)
-    variable FindPos          ;# find-bar "N of M" readout text ("" while cleared)
-    variable LastFindVar      ;# the term collect_matches last ran, for drift detection
     variable StreamSp         ;# savepoint of the live streamed message ("" between messages)
     variable StreamBuf        ;# the streamed message's accumulated source text
     variable StreamRole       ;# the streamed message's role (labels its first render)
@@ -88,16 +68,16 @@ oo::class create ::showman::Showman {
         my setup $parent
     }
 
-    # Assemble the view into `parent`: the base class's text and scrollbar,
-    # this class's tags and find bar, and a seeded document. A subclass with
-    # bespoke widget assembly (its own text widget in Text, its own find
-    # overlay) skips this and ends its build with `my reset` instead - the
-    # streamdoc pattern one level up.
+    # Assemble the view into `parent`: the base class's text, scrollbar and
+    # find bar, this class's tags, and a seeded document. A subclass with
+    # bespoke widget assembly (its own text widget in Text) skips this and
+    # ends its build with `my reset` instead - the streamdoc pattern one
+    # level up.
     method setup {parent} {
-        ::showman::ensure_fonts
+        ::tkdown::ensure_fonts
         next $parent
         my build_tags
-        my build_find
+        bind [winfo toplevel $Top] <Control-f> [list [self] find_show]
         my reset
     }
 
@@ -107,7 +87,7 @@ oo::class create ::showman::Showman {
     # here is what admits -palette/-fonts/-idle_gap through its `configure`.
     method default_opts {} {
         set d [next]
-        dict set d font SVBody
+        dict set d font [dict get [::tkdown::ensure_fonts] body]
         dict set d fonts ""
         dict set d idle_gap 10
         dict set d palette [dict create \
@@ -126,9 +106,6 @@ oo::class create ::showman::Showman {
     # One palette colour, by role name.
     method color {k} { return [dict get [my opt palette] $k] }
 
-    # The reading text widget, so a host can bind or focus it.
-    method textwidget {} { return $Text }
-
     # ---- body assembly -----------------------------------------------------
 
     # Tags over the document, colours from the palette. Order is priority:
@@ -136,23 +113,26 @@ oo::class create ::showman::Showman {
     # after body/code (they must win on -font) and `find` goes last (its
     # highlight must win on -background).
     method build_tags {} {
-        $Text tag configure section-header -font SVMono \
+        set d [::tkdown::ensure_fonts]
+        set mono [dict get $d mono]
+        set monobold [dict get $d monobold]
+        $Text tag configure section-header -font $mono \
             -spacing1 10 -spacing3 4 -foreground [my color section]
-        $Text tag configure divider -justify center -font SVMono \
+        $Text tag configure divider -justify center -font $mono \
             -foreground [my color muted] -spacing1 6 -spacing3 6
-        $Text tag configure compact-divider -justify center -font SVMono \
+        $Text tag configure compact-divider -justify center -font $mono \
             -foreground [my color muted] -spacing1 8 -spacing3 8
         # Colour marks only the role label; the body is neutral ink, so the
         # transcript reads as prose with a coloured speaker tag.
         foreach {role key} {user user assistant assistant system system \
                             tool_result tool_result} {
             $Text tag configure lbl-$role -foreground [my color $key] \
-                -font SVMonoBold -lmargin1 10 -lmargin2 10 -spacing1 6
+                -font $monobold -lmargin1 10 -lmargin2 10 -spacing1 6
         }
         $Text tag configure body -font [my body_font] -foreground [my color body] \
-            -lmargin1 10 -lmargin2 10 -spacing2 3 -spacing3 6
+            -spacing2 3 -spacing3 6
         $Text tag configure code -font [my mono_font] -foreground [my color body] \
-            -lmargin1 10 -lmargin2 10 -spacing2 3 -spacing3 6
+            -spacing2 3 -spacing3 6
         # Detail-block faces, one per block kind insert_blocks renders; muted
         # so detail reads apart from prose. They share body/code's margins but
         # carry no -spacing1/2/3 (spacing would seam at the elide boundary).
@@ -166,11 +146,17 @@ oo::class create ::showman::Showman {
         # first char, so it carries the label row's spacing and margins);
         # turnhdr is the header's click zone and sets no appearance (it
         # overlays the lbl-* colours); stub is the faint detail-summary line.
-        $Text tag configure foldglyph -font SVMonoBold \
+        $Text tag configure foldglyph -font $monobold \
             -foreground [my color muted] -lmargin1 10 -lmargin2 10 -spacing1 6
-        $Text tag configure stub -font SVMono \
+        $Text tag configure stub -font $mono \
             -foreground [my color faint] -lmargin1 10 -lmargin2 10
-        ::tkdown::tags $Text [my tkdown_fonts]
+        ::tkdown::tags $Text [my tkdown_fonts] -margin 10 -quotetags quote
+        $Text tag configure quote -foreground [my color body]
+        $Text tag configure td-link -foreground [my color user] -underline 1
+        $Text tag configure td-quotebar -foreground [my color muted]
+        $Text tag configure td-rule -background [my color faint]
+        $Text tag configure td-grid -background [my color faint]
+        $Text tag configure td-spot -background [my color find]
         $Text tag configure find -background [my color find]
         # Header and stub clicks: fold toggle and detail toggle. Tag bindings
         # fire on disabled text; the handlers resolve which turn from the
@@ -184,43 +170,15 @@ oo::class create ::showman::Showman {
         $Text tag bind stub    <ButtonRelease-1> [list [self] stub_click %x %y]
     }
 
-    # The tkdown fonts dict: the -fonts option verbatim, or the SV* defaults.
+    # The tkdown fonts dict: the -fonts option verbatim, or tkdown's defaults.
     method tkdown_fonts {} {
         set f [my opt fonts]
         if {$f ne ""} { return $f }
-        return [dict create body SVBody bold SVBodyBold italic SVBodyItalic \
-            bolditalic SVBodyBoldItalic mono SVMono]
+        return [::tkdown::ensure_fonts]
     }
     method body_font {}   { return [dict get [my tkdown_fonts] body] }
     method mono_font {}   { return [dict get [my tkdown_fonts] mono] }
     method italic_font {} { return [dict get [my tkdown_fonts] italic] }
-
-    # The find overlay, gridded under the text (streamdoc's setup gridded the
-    # text and scrollbar at row 0) and hidden until summoned.
-    method build_find {} {
-        set Find $Top.find
-        ttk::frame $Find
-        ttk::label $Find.lbl -text "Find:"
-        ttk::entry $Find.e -textvariable [my varname FindVar] -width 30
-        ttk::label $Find.pos -textvariable [my varname FindPos] \
-            -foreground [my color muted]
-        ttk::button $Find.next -text "Next" -command [list [self] find_next]
-        ttk::button $Find.close -text "✕" -command [list [self] find_hide]
-        pack $Find.lbl -side left -padx 4
-        pack $Find.e   -side left -fill x -expand 1
-        pack $Find.pos -side left -padx 4
-        pack $Find.next  -side left -padx 2
-        pack $Find.close -side left -padx 2
-        grid $Find -row 1 -column 0 -columnspan 2 -sticky ew
-        grid remove $Find
-        bind [winfo toplevel $Top] <Control-f> [list [self] find_show]
-        bind $Text <Escape>     [list [self] find_hide]
-        bind $Find.e <Escape>   [list [self] find_hide]
-        bind $Find.e <Return>   [list [self] find_next]
-        # Editing the term strands the old readout, so blank it until the
-        # next search re-establishes the tally.
-        bind $Find.e <KeyRelease> [list [self] find_typing]
-    }
 
     # ---- document lifecycle ------------------------------------------------
 
@@ -228,13 +186,9 @@ oo::class create ::showman::Showman {
     # also seeds this class's state - a subclass with bespoke assembly
     # reaches here without the constructor's help, like the base class.
     method reset {} {
-        if {![info exists FindVar]}     { set FindVar "" }
-        if {![info exists FindMatches]} { set FindMatches [list] }
-        if {![info exists FindCur]}     { set FindCur -1 }
-        if {![info exists FindPos]}     { set FindPos "" }
-        if {![info exists LastFindVar]} { set LastFindVar "" }
         if {![info exists StreamSp]}    { set StreamSp "" }
         if {![info exists StreamSetId]} { set StreamSetId "" }
+        ::tkdown::forget $Text
         next
         set Records [list]
         set Pending [list]
@@ -265,15 +219,15 @@ oo::class create ::showman::Showman {
     # follows with live_close.
     method render_records {recs} {
         my reset
-        ::tkdown::forget $Text
         $Text configure -state normal
+        set m [my append_open]
         foreach rec [::logman::mark_turn_runs $recs] {
             set rec [my number_record $rec]
             lappend Records $rec
             lassign [my render_record_turned $rec $RenderTs $RenderInSection] \
                 RenderTs RenderInSection
         }
-        my summary_sync
+        my append_close $m
         $Text configure -state disabled
     }
 
@@ -340,11 +294,11 @@ oo::class create ::showman::Showman {
         foreach ev $events {
             switch -- [lindex $ev 0] {
                 compact {
-                    $Text insert end "─── /compact ───\n" compact-divider
+                    $Text insert [my door] "─── /compact ───\n" compact-divider
                     set in_section 0
                 }
                 gap {
-                    $Text insert end \
+                    $Text insert [my door] \
                         "─── [my fmt_gap [lindex $ev 1]] later ───\n" divider
                     set in_section 0
                 }
@@ -357,11 +311,11 @@ oo::class create ::showman::Showman {
 
         set ts_iso [::logman::record_timestamp $rec]
         if {!$in_section} {
-            $Text insert end "[my section_header $ts_iso]\n" section-header
+            $Text insert [my door] "[my section_header $ts_iso]\n" section-header
             set in_section 1
         }
 
-        set start_idx [$Text index "end-1l linestart"]
+        set start_idx [$Text index "[my door] linestart"]
         dict set LineMap $lineno $start_idx
         set label [::logman::record_role_label $rec]
         # A turn-start record's label line is its turn's header, a region
@@ -375,9 +329,9 @@ oo::class create ::showman::Showman {
                 label [lindex [split $body \n] 0] ts $ts_iso \
                 edits [dict getdef $rec _edits 0] \
                 counts [dict create] working 0]
-            $Text insert end "▾ " {foldglyph turnhdr}
+            $Text insert [my door] "▾ " {foldglyph turnhdr}
         }
-        $Text insert end "$label  " "lbl-[string map {{ } _} [string tolower $label]]"
+        $Text insert [my door] "$label  " "lbl-[string map {{ } _} [string tolower $label]]"
         my on_label_rendered $rec $lineno $body $label $ts_iso
         # Assistant and tool_result records render one content block at a
         # time so each tool_use/thinking/tool_result/image block is its own
@@ -419,16 +373,19 @@ oo::class create ::showman::Showman {
             set lineno [dict get $rec _line]
             if {[dict exists $LineMap $lineno]} {
                 $Text tag add [my detail_tag [my live]] \
-                    [dict get $LineMap $lineno] [$Text index "end-1l linestart"]
+                    [dict get $LineMap $lineno] [$Text index "[my door] linestart"]
             }
         }
         return [list $last_ts $in_section]
     }
 
     # Insert one record body: markdown through tkdown (fenced code under the
-    # block `code` tag, everything else prose over `body`).
-    method insert_body {t body} {
-        ::tkdown::body $Text end $body body code
+    # block `code` tag, everything else over `body`). Only an assistant's `>`
+    # lines are quotes; a prompt's stay as the user typed them. `em` adds
+    # emitters over those.
+    method insert_body {t body {em {}}} {
+        if {$t ne "assistant"} { dict set em quote "" }
+        ::tkdown::body $Text [my door] $body body code $em
     }
 
     # Render an assistant or tool_result record body one content block at a
@@ -458,14 +415,14 @@ oo::class create ::showman::Showman {
                     # placeholder never carried it, so it gets none.
                     if {$dtag ne ""} { my count_detail thinking }
                     if {$content ne "\[redacted thinking\]"} {
-                        $Text insert end "\[thinking\] " [concat dk-chrome $dtag]
+                        $Text insert [my door] "\[thinking\] " [concat dk-chrome $dtag]
                     }
-                    $Text insert end "$content\n" [concat dk-thinking $dtag]
+                    $Text insert [my door] "$content\n" [concat dk-thinking $dtag]
                 }
                 default {
                     # tool_use / tool_result / image, one line per block.
                     if {$dtag ne ""} { my count_detail $btype }
-                    $Text insert end "$content\n" [concat [list dk-$btype] $dtag]
+                    $Text insert [my door] "$content\n" [concat [list dk-$btype] $dtag]
                 }
             }
             set last $btype
@@ -478,7 +435,7 @@ oo::class create ::showman::Showman {
         if {$last ni {assistant user}} {
             set sep body
             if {$sawtext && $dtag ne ""} { set sep [list body $dtag] }
-            $Text insert end "\n" $sep
+            $Text insert [my door] "\n" $sep
         }
         # A tool-only assistant record (no text block) is detail in its
         # entirety, like a tool_result record: otherwise its bare label line
@@ -488,7 +445,7 @@ oo::class create ::showman::Showman {
             set lineno [dict get $rec _line]
             if {[dict exists $LineMap $lineno]} {
                 $Text tag add $dtag [dict get $LineMap $lineno] \
-                    [$Text index "end-1l linestart"]
+                    [$Text index "[my door] linestart"]
             }
         }
     }
@@ -571,16 +528,6 @@ oo::class create ::showman::Showman {
         if {$n >= 0} { my detail_toggle $n }
     }
 
-    # The one jump gate: every site that scrolls the view to an index routes
-    # here. The base class's reveal unfolds the target's turn, shows its
-    # detail only when the index itself sits inside it, and drains the line
-    # metrics before scrolling: align `see` scrolls the least, `top` puts the
-    # target on the top edge. A subclass with layout-riding chrome (a placed
-    # hover button) overrides this to invalidate it first.
-    method reveal_index {idx {align see}} {
-        my reveal $idx $align
-    }
-
     # The text index of the k-th (0-based) tool_use block of the record at
     # jsonl line lineno, or "" when the record has no such call. Each block is
     # one logical line tagged dk-tool_use, but adjacent blocks merge into one
@@ -634,8 +581,8 @@ oo::class create ::showman::Showman {
             set n [my region_open [dict create line "" \
                 label [lindex [split $label \n] 0] ts $ts \
                 edits 0 counts [dict create] working 0]]
-            $Text insert end "▾ " {foldglyph turnhdr}
-            $Text insert end "USER  " lbl-user
+            $Text insert [my door] "▾ " {foldglyph turnhdr}
+            $Text insert [my door] "USER  " lbl-user
             my insert_body user $label
             set s [dict get [my region_info $n] start]
             $Text tag add turnhdr $s "$s lineend"
@@ -651,25 +598,14 @@ oo::class create ::showman::Showman {
     # write appends the chunk to the message's accumulated source and
     # re-renders the whole provisional tail from the savepoint (rewind, then
     # one markdown pass), so formatting that only settles once its closing
-    # syntax arrives - a fence, an emphasis run, a table - is re-read
-    # correctly on every chunk. The trailing summary line rides the door's
-    # summary transaction: popped before the rewrite, re-appended after.
+    # syntax arrives - a fence, an emphasis run - is re-read correctly on
+    # every chunk; a table stays text until live_flush. The trailing summary
+    # line rides the door's summary transaction: popped before the rewrite,
+    # re-appended after.
     method live_write {chunk {role assistant}} {
         if {[my live] < 0} { error "live_write with no open turn" }
         append StreamBuf $chunk
-        my batch {
-            set m [my append_open]
-            if {$StreamSp eq ""} {
-                set StreamRole $role
-                $Text insert end "[string toupper $role]  " \
-                    "lbl-[string tolower $role]"
-                set StreamSp [my savepoint]
-            } else {
-                my rewind $StreamSp
-            }
-            my insert_body $StreamRole $StreamBuf
-            my append_close $m
-        }
+        my stream_paint $role [dict create table ""]
     }
 
     # Mark the open turn working (or not): a "working…" phrase on its stub
@@ -701,28 +637,40 @@ oo::class create ::showman::Showman {
         if {$StreamSp ne "" && $text eq $StreamBuf} { return }
         set StreamSetId $turn_id
         set StreamBuf $text
+        my stream_paint $role [dict create table ""]
+    }
+
+    # Paint the streamed message from its savepoint, taking one (under the
+    # role label) on its first paint. Mid-stream a table stays text: a grid
+    # rebuilt every frame blanks and jumps; live_flush paints it once.
+    method stream_paint {role em} {
         my batch {
             set m [my append_open]
             if {$StreamSp eq ""} {
                 set StreamRole $role
-                $Text insert end "[string toupper $role]  " \
+                $Text insert [my door] "[string toupper $role]  " \
                     "lbl-[string tolower $role]"
                 set StreamSp [my savepoint]
             } else {
                 my rewind $StreamSp
             }
-            my insert_body $StreamRole $StreamBuf
+            my insert_body $StreamRole $StreamBuf $em
             my append_close $m
         }
     }
 
-    # Finalize the streamed message in progress: the provisional tail becomes
-    # settled document, the savepoint is released, and the next live_write
+    # Finalize the streamed message in progress: the provisional tail is
+    # repainted once with the default emitters, its tables as grids, and
+    # becomes settled document; the savepoint is released, and the next live_write
     # starts a fresh message. append_records and live_close call this
     # themselves; a subclass calls it between two streamed messages of one
     # turn (an assistant reply resuming after its tool calls).
     method live_flush {} {
-        if {$StreamSp ne ""} { my discard $StreamSp; set StreamSp "" }
+        if {$StreamSp ne ""} {
+            if {[my live] >= 0} { my stream_paint $StreamRole {} }
+            my discard $StreamSp
+            set StreamSp ""
+        }
         set StreamBuf ""
         set StreamRole ""
         set StreamSetId ""
@@ -752,93 +700,19 @@ oo::class create ::showman::Showman {
         return "end"
     }
 
-    method find_show {} {
-        grid $Find
-        focus $Find.e
+    method find_bound {} { return [my content_end] }
+
+    # Hits the text search cannot see: table cells inside their grids, and
+    # link urls.
+    method find_extra {term nocase} {
+        return [concat [::tkdown::table_scan $Text $term $nocase] \
+            [::tkdown::link_scan $Text $term $nocase]]
     }
 
-    method find_hide {} {
-        grid remove $Find
-        my find_clear
-    }
-
-    # Drop the find state: highlight, match set, cursor, readout. The one
-    # home for the clearing, whatever overlay a subclass dismisses around it.
-    method find_clear {} {
-        $Text tag remove find 1.0 end
-        set FindMatches [list]
-        set FindCur -1
-        set FindPos ""
-    }
-
-    # Collect every occurrence of a literal pattern, tagging hits `find`.
-    # -elide: without it `search` skips hidden text, and a hit inside an
-    # elided detail block must still be findable (it is what lets a jump
-    # reveal the block). A stub's own words and a header's fold glyph are
-    # turn chrome, not transcript, so hits there are skipped.
-    method collect_matches {pattern} {
-        $Text tag remove find 1.0 end
-        if {$pattern eq ""} { return [list] }
-        set results [list]
-        set start 1.0
-        set skip [my find_chrome_tags]
-        while {1} {
-            set len 0
-            set m [$Text search -elide -count len -nocase -- $pattern $start \
-                [my content_end]]
-            if {$m eq ""} break
-            set start "$m + ${len}c"
-            set chrome 0
-            foreach tg [$Text tag names $m] {
-                if {$tg in $skip} { set chrome 1; break }
-            }
-            if {$chrome} continue
-            $Text tag add find $m "$m + ${len}c"
-            lappend results $m
-        }
-        return $results
-    }
-
-    # Step to the next hit, wrapping, collecting first when the term changed
-    # since the last collection. The jump routes through reveal_index, so a
-    # hit inside a folded turn or hidden detail block is made visible.
-    method find_next {} {
-        if {[llength $FindMatches] == 0 || $FindVar ne $LastFindVar} {
-            set FindMatches [my collect_matches $FindVar]
-            set FindCur -1
-            set LastFindVar $FindVar
-            my on_find_collected
-        }
-        if {[llength $FindMatches] == 0} {
-            set FindCur -1
-            # A search ran and found nothing: state the empty tally so "no
-            # matches" reads apart from "no search yet" (which blanks it).
-            set FindPos "0 of 0"
-            catch {bell}
-            return
-        }
-        set FindCur [expr {$FindCur < 0 ? 0 : $FindCur + 1}]
-        if {$FindCur >= [llength $FindMatches]} { set FindCur 0 }
-        my reveal_index [lindex $FindMatches $FindCur]
-        my on_find_stepped $FindCur
-        my update_find_readout
-    }
-
-    # The find bar's "N of M" readout, off the shared match set and the
-    # active-hit cursor. An empty set blanks it; find_next's own no-result
-    # path shows the explicit "0 of 0".
-    method update_find_readout {} {
-        set total [llength $FindMatches]
-        if {$total == 0} { set FindPos ""; return }
-        set cur [expr {$FindCur < 0 ? 1 : $FindCur + 1}]
-        set FindPos "$cur of $total"
-    }
-
-    # The entry text drifted from what was last collected: the readout counts
-    # the old set, so blank it until the next search re-establishes the tally.
-    method find_typing {} {
-        if {$FindVar ne $LastFindVar} { set FindPos "" }
-    }
+    # Light a table a jump lands on; any other jump, or closing the find,
+    # puts it out.
+    method on_reveal {idx} { ::tkdown::table_spotlight $Text $idx }
+    method find_cleared {} { ::tkdown::table_spotlight $Text "" }
 
     # ---- section chrome ----------------------------------------------------
 

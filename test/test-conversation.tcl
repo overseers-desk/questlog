@@ -231,6 +231,32 @@ check "a view-only surface still renders turns" [[$RO viewer] region_count] 1
 $RO destroy
 destroy .ro
 
+# ---- a streamed table stays text until the message settles -------------------
+# A grid rebuilt on every repaint frame blanks and jumps its columns.
+ttk::frame .tb
+set TB [::questlog::ui::Conversation new .tb -input 0]
+pack .tb -fill both -expand 1
+set TV [$TB viewer]
+set TT [$TV textwidget]
+set table "Here:\n\n| a | b |\n|---|---|\n| one | two |\n| three | four |\n"
+$TB turn 1 user "a table please" 1
+foreach n [list 12 24 [string length $table]] {
+    $TB turn 2 assistant [string range $table 0 $n-1] 0
+    update
+}
+check "mid-stream the table is text, no grid" \
+    [list [llength [winfo children $TT]] \
+          [expr {[$TT search -- "| three | four |" 1.0 end] ne ""}]] {0 1}
+$TV live_close
+update
+after idle {set ::idled 1}; vwait ::idled
+check "after close the table is exactly one grid" \
+    [list [llength [winfo children $TT]] \
+          [llength [lsearch -all -regexp [$TT mark names] {^tbl#m}]] \
+          [expr {[$TT search -- "| three | four |" 1.0 end] ne ""}]] {1 1 0}
+$TB destroy
+destroy .tb
+
 # ============================================================================
 # Part B - helmsman behind the seam, against the fake claude CLI.
 # ============================================================================

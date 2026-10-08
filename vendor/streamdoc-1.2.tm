@@ -1,6 +1,6 @@
 package require Tcl 9
 package require Tk
-package provide streamdoc 1.1
+package provide streamdoc 1.2
 
 namespace eval ::streamdoc {}
 
@@ -54,14 +54,28 @@ namespace eval ::streamdoc {}
 # Anti-self-scroll: `batch` brackets a streamed mutation with anchor_save /
 # anchor_restore, so content landing below a parked reader never moves the
 # line they are on. With -autofollow on and the reader at the tail, the view
-# latches there and follows appends (the tail -f contract), released the
-# moment they scroll away; <<AtBottom>> / <<LeftBottom>> fire on the host
-# frame at the edges, and `follow` jumps back to the tail.
+# latches there and follows appends (the tail -f contract). Only the reader
+# lets go of the latch: their own scrolling, `scroll_to`, a fold or detail
+# toggle, or a reveal away from the last line. Growth they did not ask for
+# leaves it held and re-follows. <<AtBottom>> / <<LeftBottom>> fire on the
+# host frame at the edges, and `follow` jumps back to the tail.
+#
+# Find (Ctrl-F): a bar under the text whose entry collects every literal
+# hit, folded and hidden text included, tags it `find`, and steps through
+# the hits with wraparound, each one through `reveal`. The base class lays
+# the tag and sets no colours; the host configures `find` for the look.
 #
 # Hooks the host overrides, each with a working default:
 #   summary_text payload    the summary phrase; "" takes no summary line
 #   region_tags payload     tags laid on the summary line the base class writes
 #   on_region_rendered n    wire a just-closed region (bindings, indices)
+#   on_reveal idx           runs first in reveal, before anything scrolls
+#   place_find frame        where the find bar sits; default the row below
+#   find_chrome_tags        tags whose text find skips; default `summary`
+#   find_bound              where the text search stops; default `end`
+#   find_extra term nocase  {index excerpt} hits the text search cannot see
+#   find_excerpt idx        the excerpt a hit shows
+#   on_find_collected / on_find_stepped i / find_cleared
 
 oo::class create ::streamdoc::StreamDoc {
     variable Top          ;# the host frame setup built into
@@ -71,8 +85,19 @@ oo::class create ::streamdoc::StreamDoc {
     variable Cur          ;# index of the open region, or -1
     variable Opts         ;# widget options decoupling the base class from any host
     variable NextSave     ;# savepoint mark counter
-    variable AtBottom     ;# tail-latch state across a streaming batch
+    variable Latched      ;# 1 while the view is held on the tail
+    variable FollowAfter  ;# the pending idle re-follow, "" none
+    variable AnchorY      ;# the anchored line's y, for its pixel offset
     variable WasAtBottom  ;# last observed bottom state, edges fire the events
+    variable Find         ;# the find bar's frame
+    variable FindVar      ;# the find entry's text
+    variable FindPos      ;# the "N of M" readout, "" while cleared
+    variable FindMatches  ;# hit indices (or marks) in document order
+    variable FindCur      ;# 0-based hit last shown, -1 none
+    variable FindNocase   ;# 1 matches regardless of case
+    variable FindExcerpt  ;# index -> excerpt, for find_extra hits
+    variable LastFindVar  ;# the term the match set was collected for
+    variable LastNocase   ;# and its case; a change in either recollects
 
     # ---- structural invariant ----------------------------------------
     #
@@ -168,7 +193,7 @@ oo::class create ::streamdoc::StreamDoc {
     # ---- body assembly -----------------------------------------------
 
     # The whole construction ritual in one call: seed the base class's state and
-    # build the document text and its scrollbar into `parent` (a frame the
+    # build the document text, its scrollbar and the find bar into `parent` (a frame the
     # host owns and packs). A subclass constructor calls `my configure ...`
     # first when it overrides the look, then `my setup $parent`.
     method setup {parent} {
@@ -181,13 +206,20 @@ oo::class create ::streamdoc::StreamDoc {
             -borderwidth 0 -highlightthickness 0 -padx 8 -pady 8 \
             -font [my opt font] -insertwidth 0
         ttk::scrollbar $parent.sb -orient vertical \
-            -command [list $parent.text yview]
+            -command [list [self] scroll_to]
         grid $parent.text -row 0 -column 0 -sticky nsew
         grid $parent.sb   -row 0 -column 1 -sticky ns
         grid columnconfigure $parent 0 -weight 1
         grid rowconfigure    $parent 0 -weight 1
         set Text $parent.text
+        my find_seed
+        my latch_seed
+        my build_find
     }
+
+    # The text widget, for tag configuration, tag bindings, and painting at
+    # the door through a painter that takes a widget and an index.
+    method textwidget {} { return $Text }
 
     # Text widget yview update: forward to the scrollbar, and edge-detect the
     # tail so a host can mirror the tail -f contract: <<AtBottom>> fires on the
@@ -206,26 +238,122 @@ oo::class create ::streamdoc::StreamDoc {
     # Jump to the tail and latch there. With -autofollow on the view keeps
     # following streamed appends until the reader scrolls away.
     method follow {} {
+        set Latched 1
         $Text yview moveto 1
+    }
+
+    # ---- the tail latch --------------------------------------------------
+    #
+    # The latch is let go only by the reader: wheel and touchpad scrolling
+    # and the scroll keys on the text, the scrollbar and `scroll_to`, a fold
+    # or detail toggle, a reveal away from the last line. Everything else
+    # that moves the tail - an append, an embedded window realised or grown
+    # late, a resize of the text - leaves it held and re-follows on idle. It
+    # takes hold through `follow`, or at a batch that finds the view on the
+    # tail.
+    method latch_seed {} {
+        if {[info exists Latched]} return
+        set Latched 0
+        set FollowAfter ""
+        set tag [my bindtag $Text]
+        foreach ev {<MouseWheel> <Shift-MouseWheel> <Button-4> <Button-5>
+                <TouchpadScroll> <Prior> <Next> <Up> <Down> <Home> <End>} {
+            catch {bind $tag $ev [list [self] latch_release]}
+        }
+        bind $tag <Configure> [list [self] refollow_later]
+    }
+    method latch_release {} { set Latched 0 }
+    method latched {} {
+        return [expr {[my opt autofollow] && [info exists Latched] && $Latched}]
+    }
+
+    # streamdoc's bindings on a host widget w go on the tag streamdoc$w,
+    # inserted once into w's bindtags just after w's own: the host's bindings
+    # on w run first and a `break` there stops streamdoc's; the class's run
+    # after, unless streamdoc's script breaks.
+    method bindtag {w} {
+        set tag streamdoc$w
+        set tags [bindtags $w]
+        if {$tag ni $tags} {
+            set i [lsearch -exact $tags $w]
+            bindtags $w [linsert $tags [expr {$i + 1}] $tag]
+        }
+        return $tag
+    }
+
+    # A scroll on the reader's behalf: forwards to the text's yview and lets
+    # go of the latch. The scrollbar's command, and the way a host scrolls.
+    method scroll_to {args} {
+        if {[llength $args]} { set Latched 0 }
+        return [$Text yview {*}$args]
+    }
+
+    # One idle re-follow at a time, by which point the growth has landed.
+    method refollow_later {} {
+        if {![my latched] || $FollowAfter ne ""} return
+        set FollowAfter [after idle [list [self] refollow]]
+    }
+    method refollow {} {
+        set FollowAfter ""
+        if {[my latched] && [lindex [$Text yview] 1] < 1.0} {
+            $Text yview moveto 1
+        }
+    }
+
+    # An embedded window's <Configure>: realised or resized. One in view or
+    # below it, which for a latched view is the tail, re-follows.
+    method window_grew {w} {
+        if {![my latched] || [catch {$Text index $w} i]} return
+        if {[$Text compare $i >= @0,0]} { my refollow_later }
+    }
+    method window_watch {w} {
+        bind $w <Configure> +[list [self] window_grew $w]
+        return $w
+    }
+    # -create's script, run where Tk would run it, its window watched; ""
+    # is Tk's "no window" and passes through.
+    method window_realise {script} {
+        set w [uplevel #0 $script]
+        if {$w ne ""} { my window_watch $w }
+        return $w
+    }
+
+    destructor {
+        if {[info exists FollowAfter] && $FollowAfter ne ""} {
+            after cancel $FollowAfter
+        }
     }
 
     # ---- view-anchoring around streaming appends -----------------------
     #
     # A streamed append must not shift what the reader is looking at. The
     # document is append-only, so two cases cover it: with -autofollow on and
-    # the reader at the tail, keep them latched there so appends keep scrolling
-    # into view; otherwise pin the character that was at the top of the
-    # viewport, so a summary pop or rewind near the tail cannot tug the view.
+    # the latch held, keep the view on the tail so appends keep scrolling into
+    # view, then once more on idle for growth that lands after the batch;
+    # otherwise pin the character that was at the top of the viewport, so a
+    # summary pop or rewind near the tail cannot tug the view. The pin keeps
+    # that line's pixel offset too: `yview` on a mark alone would snap a tall
+    # line part-scrolled off the top, an embedded table say, to its top edge.
     method anchor_save {} {
-        set AtBottom [expr {[lindex [$Text yview] 1] >= 0.999}]
+        if {[my opt autofollow] && [lindex [$Text yview] 1] >= 0.999} {
+            set Latched 1
+        }
         $Text mark set AnchorTop @0,0
         $Text mark gravity AnchorTop left
+        set AnchorY [lindex [$Text dlineinfo AnchorTop] 1]
     }
     method anchor_restore {} {
-        if {[my opt autofollow] && [info exists AtBottom] && $AtBottom} {
+        if {[my latched]} {
             $Text yview moveto 1
+            my refollow_later
         } else {
-            catch {$Text yview AnchorTop}
+            catch {
+                $Text yview AnchorTop
+                set y [lindex [$Text dlineinfo AnchorTop] 1]
+                if {$AnchorY ne "" && $y ne "" && $y != $AnchorY} {
+                    $Text yview scroll [expr {$y - $AnchorY}] pixels
+                }
+            }
         }
         catch {$Text mark unset AnchorTop}
     }
@@ -252,6 +380,7 @@ oo::class create ::streamdoc::StreamDoc {
     method summary_text {payload} { return "" }
     method region_tags {payload} { return [list summary] }
     method on_region_rendered {n} {}
+    method on_reveal {idx} {}
 
     # ---- region lifecycle ----------------------------------------------
 
@@ -315,6 +444,13 @@ oo::class create ::streamdoc::StreamDoc {
             set Cur -1
             set NextSave 0
         }
+        # The buffer goes, and every hit index with it.
+        my find_seed
+        my latch_seed
+        set FindMatches [list]
+        set FindCur -1
+        set FindPos ""
+        set FindExcerpt [dict create]
         set st [$Text cget -state]
         $Text configure -state normal
         set n -1
@@ -354,8 +490,17 @@ oo::class create ::streamdoc::StreamDoc {
         $Text insert $mark $text $tags
         return [list $i0 [$Text index $mark]]
     }
+    # The window, or the one -create builds, is watched so that its growth at
+    # the tail re-follows a latched view.
     method emit_window {mark args} {
         set i0 [$Text index $mark]
+        if {[dict exists $args -create]} {
+            dict set args -create \
+                [list [self] window_realise [dict get $args -create]]
+        }
+        if {[dict exists $args -window]} {
+            my window_watch [dict get $args -window]
+        }
         $Text window create $mark {*}$args
         return [list $i0 [$Text index $mark]]
     }
@@ -372,6 +517,12 @@ oo::class create ::streamdoc::StreamDoc {
             my summary_sync
         }
         my check_invariant append_close
+    }
+
+    # The open door's mark, for a caller that did not open it.
+    method door {} {
+        if {"__emit" ni [$Text mark names]} { error "no door is open" }
+        return __emit
     }
 
     # A left-gravity mark at the append point, for a later rewind. Left
@@ -450,8 +601,12 @@ oo::class create ::streamdoc::StreamDoc {
     }
 
     # ---- fold and detail layers -------------------------------------------
+    #
+    # Each is a reader's action and lets go of the tail latch: a reader at
+    # the tail unfolding the last region keeps the header they clicked.
 
     method fold {n} {
+        set Latched 0
         set R [lindex $Regions $n]
         if {[dict get $R folded]} return
         # An open region's fold range is unsealed; cover what stands now, and
@@ -470,6 +625,7 @@ oo::class create ::streamdoc::StreamDoc {
     }
 
     method unfold {n} {
+        set Latched 0
         set R [lindex $Regions $n]
         if {![dict get $R folded]} return
         # d#N stays hidden: unfolding shows the region's prose and summary,
@@ -491,6 +647,7 @@ oo::class create ::streamdoc::StreamDoc {
     }
 
     method detail_show {n} {
+        set Latched 0
         set R [lindex $Regions $n]
         if {[dict get $R shown]} return
         $Text tag configure d#$n -elide 0
@@ -503,6 +660,7 @@ oo::class create ::streamdoc::StreamDoc {
     }
 
     method detail_hide {n} {
+        set Latched 0
         set R [lindex $Regions $n]
         if {![dict get $R shown]} return
         $Text tag configure d#$n -elide 1
@@ -524,9 +682,11 @@ oo::class create ::streamdoc::StreamDoc {
 
     # Fold every region: the table-of-contents reading, one header per region.
     method fold_all {} {
+        set Latched 0
         for {set n 0} {$n < [llength $Regions]} {incr n} { my fold $n }
     }
     method expand_all {} {
+        set Latched 0
         for {set n 0} {$n < [llength $Regions]} {incr n} { my unfold $n }
     }
 
@@ -607,16 +767,24 @@ oo::class create ::streamdoc::StreamDoc {
     #
     # align `see` scrolls the least that brings the index into view; `top`
     # puts its line on the top edge, or as near as the widget scrolls when
-    # the index sits in the last screenful.
+    # the index sits in the last screenful. on_reveal runs ahead of all of
+    # it, so a window the scroll realises is born in the state the host set.
+    #
+    # A jump is the reader's: it lets go of the tail latch, unless its target
+    # sits on the last line, where a held latch stays held.
     method reveal {idx {align see}} {
         if {$align ni {see top}} {
             error "bad align \"$align\": must be see or top"
         }
+        my on_reveal $idx
+        set held [expr {[my latched]
+            && [$Text compare "$idx linestart" >= "end - 2 chars linestart"]}]
         set n [my region_at $idx]
         if {$n >= 0} {
             if {[dict get [lindex $Regions $n] folded]} { my unfold $n }
             if {"d#$n" in [$Text tag names $idx]} { my detail_show $n }
         }
+        set Latched $held
         update idletasks
         $Text sync
         if {$align eq "top"} {
@@ -625,4 +793,188 @@ oo::class create ::streamdoc::StreamDoc {
             $Text see $idx
         }
     }
+
+    # ---- find (Ctrl-F) ------------------------------------------------------
+
+    # Seed the find state once; setup and reset both come here, so a host
+    # with bespoke assembly that starts at reset has it too.
+    method find_seed {} {
+        if {[info exists FindMatches]} return
+        set FindVar ""
+        set FindPos ""
+        set FindMatches [list]
+        set FindCur -1
+        set FindNocase 1
+        set FindExcerpt [dict create]
+        set LastFindVar ""
+        set LastNocase 1
+    }
+
+    # Build the bar, unplaced until find_show. The Aa box reads "match
+    # case", so it is checked while FindNocase is 0.
+    method build_find {} {
+        set Find $Top.find
+        ttk::frame $Find
+        ttk::label $Find.lbl -text "Find:"
+        ttk::entry $Find.e -textvariable [my varname FindVar] -width 30
+        ttk::label $Find.pos -textvariable [my varname FindPos]
+        ttk::checkbutton $Find.case -text "Aa" -variable [my varname FindNocase] \
+            -onvalue 0 -offvalue 1 -command [list [self] find_typing]
+        ttk::button $Find.prev -text "Prev" -command [list [self] find_prev]
+        ttk::button $Find.next -text "Next" -command [list [self] find_next]
+        ttk::button $Find.close -text "✕" -command [list [self] find_hide]
+        pack $Find.lbl -side left -padx 4
+        pack $Find.e -side left -fill x -expand 1
+        foreach w {pos case prev next close} { pack $Find.$w -side left -padx 2 }
+        # break: the Text class binds Control-f to a cursor move.
+        bind [my bindtag $Top] <Control-f> [list [self] find_show]
+        bind [my bindtag $Text] <Control-f> "[list [self] find_show]; break"
+        bind [my bindtag $Text] <Escape> [list [self] find_hide]
+        bind $Find.e <Escape> [list [self] find_hide]
+        bind $Find.e <Return> [list [self] find_next]
+        bind $Find.e <Shift-Return> [list [self] find_prev]
+        bind $Find.e <KeyRelease> [list [self] find_typing]
+    }
+
+    # The default place: the grid row under the text and scrollbar, which
+    # setup grids at row 0.
+    method place_find {frame} {
+        grid $frame -row 1 -column 0 -columnspan 2 -sticky ew
+    }
+
+    method find_show {} {
+        my place_find $Find
+        focus $Find.e
+        $Find.e selection range 0 end
+    }
+
+    # Unplaced through whichever manager place_find chose. The insert mark
+    # stays on the last hit, so the keyboard picks up the document there.
+    method find_hide {} {
+        set mgr [winfo manager $Find]
+        if {$mgr ne ""} { $mgr forget $Find }
+        my find_clear
+        if {[string match $Find* [focus]]} { focus $Text }
+    }
+
+    method find_clear {} {
+        $Text tag remove find 1.0 end
+        set FindMatches [list]
+        set FindCur -1
+        set FindPos ""
+        set FindExcerpt [dict create]
+        my find_cleared
+        my check_invariant find_clear
+    }
+
+    # Tag every hit of a literal term `find` and return the hits in document
+    # order. Existing `find` tags stay, so a host collecting term by term
+    # keeps them all lit. -elide finds folded and hidden text; reveal opens
+    # it on the jump. A hit starting under a find_chrome_tags tag is skipped.
+    # find_extra hits are merged in by index and keep their excerpts.
+    method collect {term nocase} {
+        if {$term eq ""} { return [list] }
+        set opts [list -elide -count len]
+        if {$nocase} { lappend opts -nocase }
+        set skip [my find_chrome_tags]
+        set bound [my find_bound]
+        set hits [list]
+        set start 1.0
+        while {1} {
+            set len 0
+            set m [$Text search {*}$opts -- $term $start $bound]
+            if {$m eq ""} break
+            set start "$m + ${len}c"
+            set chrome 0
+            foreach tg [$Text tag names $m] {
+                if {$tg in $skip} { set chrome 1; break }
+            }
+            if {$chrome} continue
+            $Text tag add find $m "$m + ${len}c"
+            lappend hits $m
+        }
+        foreach hit [my find_extra $term $nocase] {
+            lassign $hit idx excerpt
+            dict set FindExcerpt $idx $excerpt
+            lappend hits $idx
+        }
+        my check_invariant collect
+        return [lsort -command [list [self] cmp_index] $hits]
+    }
+
+    # The bar's collection: a fresh match set for one term, under the case
+    # box, nothing shown yet.
+    method collect_matches {pattern} {
+        $Text tag remove find 1.0 end
+        set FindExcerpt [dict create]
+        set FindMatches [my collect $pattern $FindNocase]
+        set FindCur -1
+        set LastFindVar $pattern
+        set LastNocase $FindNocase
+        my update_find_readout
+        my on_find_collected
+        return $FindMatches
+    }
+
+    method find_next {} { my find_step 1 }
+    method find_prev {} { my find_step -1 }
+
+    # Step dir hits with wraparound, recollecting first when the term or the
+    # case box changed since the set was collected. A set a host filled
+    # itself steps as it stands while the entry still holds the last term.
+    method find_step {dir} {
+        if {![llength $FindMatches] || $FindVar ne $LastFindVar
+                || $FindNocase != $LastNocase} {
+            my collect_matches $FindVar
+        }
+        set total [llength $FindMatches]
+        if {!$total} {
+            # "0 of 0" tells a search that found nothing from no search yet.
+            set FindPos "0 of 0"
+            catch {bell}
+            return
+        }
+        if {$FindCur < 0} {
+            set FindCur [expr {$dir > 0 ? 0 : $total - 1}]
+        } else {
+            set FindCur [expr {($FindCur + $dir) % $total}]
+        }
+        set idx [lindex $FindMatches $FindCur]
+        my reveal $idx
+        $Text mark set insert $idx
+        my on_find_stepped $FindCur
+        my update_find_readout
+    }
+
+    method update_find_readout {} {
+        set total [llength $FindMatches]
+        if {!$total} { set FindPos ""; return }
+        set FindPos "[expr {$FindCur < 0 ? 1 : $FindCur + 1}] of $total"
+    }
+
+    # An edited term or a flipped case box strands the readout: blank it
+    # until the next step recollects.
+    method find_typing {} {
+        if {$FindVar ne $LastFindVar || $FindNocase != $LastNocase} {
+            set FindPos ""
+        }
+    }
+
+    # Document order for lsort; marks and indices compare alike.
+    method cmp_index {a b} {
+        if {[$Text compare $a < $b]} { return -1 }
+        if {[$Text compare $a > $b]} { return 1 }
+        return 0
+    }
+
+    method find_chrome_tags {} { return [list summary] }
+    method find_bound {} { return end }
+    method find_extra {term nocase} { return [list] }
+    method find_excerpt {idx} {
+        if {[dict exists $FindExcerpt $idx]} { return [dict get $FindExcerpt $idx] }
+        return [$Text get "$idx linestart" "$idx lineend"]
+    }
+    method on_find_collected {} {}
+    method on_find_stepped {i} {}
+    method find_cleared {} {}
 }

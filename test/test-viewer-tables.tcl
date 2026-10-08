@@ -1,14 +1,13 @@
 #!/usr/bin/env wish9.0
-# GFM tables render as embedded grid widgets whose cells word-wrap.
+# GFM tables in the Viewer: tkdown paints each as an embedded grid, and the
+# Viewer wires it into search, jump, copy and reload.
 #
-# Tab-aligned table lines clipped wide cells at the pane edge; each table is
-# now one embedded window holding a frame of per-cell text widgets. This
-# drives a real Viewer over a two-table synthetic session and asserts the
-# contract around the widget route: cells wrap and the grid fits the pane,
-# search still finds table content (band and Ctrl-F) through the recorded
-# payload, a jump spotlights the whole table, the table ⧉ copies the table
-# as round-tripping markdown, the message copy still yields the raw body,
-# and a reload leaves no orphaned table widgets.
+# This drives a real Viewer over a two-table synthetic session and asserts
+# the Viewer's side: search finds table content (band and Ctrl-F), the band
+# excerpt is the cell text, a jump spotlights the table in the theme's find
+# colour, the message copy keeps the raw table source, and a reload leaves no
+# orphaned table frames. The grid itself (wrap, fit, copy button, round trip)
+# is tkdown's and its own suite covers it.
 #
 # Runs under wish (it builds a Viewer, so it needs Tk); run-audit routes it to
 # wish9.0 on the private Xvfb. Standalone: DISPLAY=:95 wish9.0 test-viewer-tables.tcl
@@ -43,22 +42,6 @@ proc check {name got want} {
     }
 }
 
-# ---- pure procs ---------------------------------------------------------------
-
-check "colwidths: naturals kept when they fit" \
-    [::questlog::ui::table_colwidths {100 200 300} 1000 50] {100 200 300}
-check "colwidths: proportional shrink above the floor" \
-    [::questlog::ui::table_colwidths {100 400 500} 500 120] {100 177 222}
-check "colwidths: a floor-width column is never squeezed" \
-    [::questlog::ui::table_colwidths {10 990} 200 100] {10 190}
-check "colwidths: shrink clamps at the floor" \
-    [::questlog::ui::table_colwidths {200 800} 300 150] {150 240}
-
-set md [::questlog::ui::table_to_markdown \
-    [dict create align {left center right} rows {{a b c} {d {e | f} g}}]]
-check "to_markdown: delimiter row from align, cells re-escaped" $md \
-    "| a | b | c |\n| --- | :---: | ---: |\n| d | e \\| f | g |"
-
 # ---- synthetic session: two tables in one assistant turn -----------------------
 set tmpbase [expr {[info exists ::env(TMPDIR)] ? $::env(TMPDIR) : "/tmp"}]
 set TMP [file join $tmpbase ql-table-test-[pid]]
@@ -88,35 +71,19 @@ update
 set Text [$V textwidget]
 set NS [info object namespace $V]
 
-# 1. Two tables emitted: registry, window segments, marks.
-check "two tables registered" [llength [dict keys [set ${NS}::Tables]]] 2
-check "two tblwin segments" [llength [$Text tag ranges tblwin]] 4
-check "table marks stand" \
-    [expr {[lsearch [$Text mark names] tbl#m1] >= 0 && [lsearch [$Text mark names] tbl#m2] >= 0}] 1
-
-# 2. Realization and fit: bring each table into view, let the two idle fit
-#    stages run, then read the geometry.
-foreach id {1 2} {
-    $Text see tbl#m$id
+# 1. Two tables painted: tkdown's marks and window segments.
+proc tblmarks {} {
+    lsort [lsearch -all -inline -glob [$::Text mark names] tbl#m*]
+}
+check "two table marks" [tblmarks] {tbl#m1 tbl#m2}
+check "two td-tblwin segments" [llength [$Text tag ranges td-tblwin]] 4
+foreach m [tblmarks] {
+    $Text see $m
     update idletasks
     update
 }
-set F1 [dict get [set ${NS}::Tables] 1 frame]
-set F2 [dict get [set ${NS}::Tables] 2 frame]
-check "table 1 realized" [winfo exists $F1] 1
-check "table 2 realized" [winfo exists $F2] 1
-check "table 2 fits the pane" \
-    [expr {[winfo reqwidth $F2] <= [winfo width $Text]}] 1
-
-# 3. The long cell wraps: more than one display line, and -height tracks it.
-set LONG ""
-foreach c [dict get [set ${NS}::Tables] 2 cells] {
-    if {[string first "very long sentence" [$c get 1.0 "end -1c"]] >= 0} { set LONG $c }
-}
-check "long cell found" [expr {$LONG ne ""}] 1
-set dl [$LONG count -update -displaylines 1.0 end]
-check "long cell wraps" [expr {$dl > 1}] 1
-check "long cell height tracks its wrap" [$LONG cget -height] $dl
+set F1 $Text.tbl1
+check "table 1 built" [winfo exists $F1] 1
 
 # 4. The opening search found the table-only token: its match record is the
 #    table's mark and its band excerpt reads from the cell, not the widget.
@@ -134,7 +101,7 @@ $V jump_to_match $mi
 update idletasks
 update
 check "jump lights the table" [$F1 cget -background] $FIND
-$V reveal_index 1.0
+$V reveal 1.0
 check "off-table jump clears the spotlight" [$F1 cget -background] $FAINT
 
 # 6. Ctrl-F reaches table content: the token exists only in the payload, and
@@ -146,35 +113,27 @@ check "Ctrl-F finds the table-only token" \
     [expr {[lsearch [set ${NS}::FindMatches] tbl#m1] >= 0}] 1
 check "Ctrl-F jump lights the table" [$F1 cget -background] $FIND
 
-# 7. The table ⧉ copies markdown that round-trips to the same payload,
-#    escaped pipe included.
-clipboard clear
-clipboard append "sentinel-before"
-$V table_copy 1
-set segs [::tkdown::segment_tables [clipboard get]]
-check "copied markdown is one table" \
-    [list [llength $segs] [lindex $segs 0 0]] {1 table}
-check "copy round-trips the payload" \
-    [lindex $segs 0 1] [dict get [set ${NS}::Tables] 1 payload]
-
 # 8. The message copy still yields the raw markdown body, pipes intact.
 set ${NS}::MenuTarget [dict create line 2]
 $V menu_copy_message
 check "message copy keeps the raw table source" \
     [expr {[string first "| Name | **Qty** | Price |" [clipboard get]] >= 0}] 1
 
-# 9. Reload: the previous document's table widgets are destroyed, the registry
-#    refills to the same two tables, nothing accumulates.
+# 9. Reload: tkdown forgets the previous document's tables, so their frames
+#    and marks go and only the new document's tables stand.
 $V show $JP 0 {}
 update idletasks
 update
-check "registry does not accumulate across reload" \
-    [llength [dict keys [set ${NS}::Tables]]] 2
-check "tblwin segments do not accumulate" [llength [$Text tag ranges tblwin]] 4
+foreach m [tblmarks] {
+    $Text see $m
+    update idletasks
+    update
+}
+check "table marks do not accumulate" [tblmarks] {tbl#m3 tbl#m4}
+check "td-tblwin segments do not accumulate" [llength [$Text tag ranges td-tblwin]] 4
 set stale 0
 foreach w [winfo children $Text] {
-    if {[string match *.tbl* $w] && ![dict exists [set ${NS}::Tables] \
-        [string range [file extension $w] 4 end]]} { incr stale }
+    if {[regexp {\.tbl(\d+)$} $w -> n] && "tbl#m$n" ni [tblmarks]} { incr stale }
 }
 check "no orphaned table frames" $stale 0
 

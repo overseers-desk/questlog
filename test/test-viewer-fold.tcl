@@ -149,13 +149,13 @@ check "turn 1 stub counts its detail" \
 check "prose-only turn takes no stub" [dict get [turn 2] stub] ""
 # The stub's words are chrome: a search for them must not index - on either
 # collector (the index_matches twin was previously unexercised).
-check "stub words are not matches" [llength [$V collect_matches "tool call"]] 0
+check "stub words are not matches" [llength [$V collect "tool call" 1]] 0
 $V index_matches [dict create terms [list "tool call"] nocase 0]
 check "stub words do not index either" [llength [set ${NS}::FindMatches]] 0
 # Both collectors and both case branches reach hidden detail (-elide on every
 # search site; the Ctrl-F path and the nocase branch were unexercised).
 check "the find path reaches hidden detail" \
-    [llength [$V collect_matches "needle-beta"]] 1
+    [llength [$V collect "needle-beta" 1]] 1
 $V index_matches [dict create terms [list NEEDLE-BETA] nocase 1]
 check "a nocase query reaches hidden detail" \
     [llength [set ${NS}::FindMatches]] 1
@@ -497,7 +497,7 @@ update idletasks
 # the transcript, the button placed, and the see slides new text under both.
 hover_at $aidx
 check "button placed before the find jump" [expr {[place info $CopyBtn] ne ""}] 1
-$V reveal_index [$Text search -elide "needle-beta" 1.0 [$V content_end]]
+$V reveal [$Text search -elide "needle-beta" 1.0 [$V content_end]]
 check "a reveal jump drops the placed button" [place info $CopyBtn] ""
 $V details_hide 0
 hover_at $aidx
