@@ -75,7 +75,9 @@ $V show $JP 0 {}
 update idletasks
 update
 
-proc top {} { return [lindex [$::Text yview] 0] }
+# yview fractions rest on line heights Tk is still estimating in the
+# background; sync settles them so a page step compares like with like.
+proc top {} { $::Text sync; return [lindex [$::Text yview] 0] }
 proc press {key} {
     focus -force $::Text
     update
@@ -120,6 +122,7 @@ check "repeated Down walks the cursor down" \
 # resting place. Half the pane's own height is the floor for "it moved".
 $Text yview moveto 0.4
 update
+$Text sync
 set page [expr {[lindex [$Text yview] 1] - [lindex [$Text yview] 0]}]
 set y0 [top]
 press <Key-Next>
