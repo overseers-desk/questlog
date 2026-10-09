@@ -201,6 +201,26 @@ set res [subject_at [dict create slug "quick fix" count 0 sub_total 0 \
              has_subagents 0 label "short one"] 600]
 check "an untrimmed row wires no reveal" [reveal_entry $res] ""
 
+# A matched row keeps its room for the slug and preview: the counts are not in
+# the row but close its reveal, which a match wires whether the row is cut or not.
+set res [subject_at [dict create slug "quick fix" count 3 sub_total 2 \
+             has_subagents 1 label "short one" last_reply $LASTR] 600]
+check "a matched row carries no count" \
+    [regexp {match|subagent|·} [dict get $res subject]] 0
+lassign [reveal_entry $res] rkind rtext rcursor rsub
+check "an untrimmed matched row reveals its counts after the reply" \
+    $rsub "$LASTR\n\n3 matches, +2 in subagents"
+set res [subject_at [dict create slug "quick fix" count 1 sub_total 0 \
+             has_subagents 0 label "short one"] 600]
+lassign [reveal_entry $res] rkind rtext rcursor rsub
+check "a lone match reveals singular, with no reply above it" $rsub "1 match"
+set res [subject_at [dict create slug $LONGSLUG count 2 sub_total 0 \
+             has_subagents 0 label $LONGLABEL] 300]
+check "a matched row's slug and preview fill the same budget as an unmatched one" \
+    [dict get $res subject] \
+    [dict get [subject_at [dict create slug $LONGSLUG count 0 sub_total 0 \
+                   has_subagents 0 label $LONGLABEL] 300] subject]
+
 # ---- case 5: a folder heading cut to its aggregates reveals its path -------
 # A project path is what names a folder, and a deep one is cut before the
 # right-pinned aggregates. The heading carries the same reveal as a session row,

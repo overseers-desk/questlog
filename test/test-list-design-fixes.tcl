@@ -16,7 +16,8 @@
 #        assistant output holds otherwise.
 #   C9   only-subagents-matched shows an indented note below the row (subject
 #        dimmed), with the match/subagent counts singularised.
-#   C10a the "+N in subagents" pip singularises to "+1 in subagent".
+#   C10a a matched row carries no count; its hover names the counts, the
+#        subagent figure singularised to "+1 in subagent".
 
 package require Tcl 9
 package require Tk
@@ -109,6 +110,15 @@ proc widget_text {} { global TX; return [$TX get 1.0 end] }
 proc has_line {pat} {
     foreach l [split [widget_text] "\n"] { if {[string match $pat $l]} { return 1 } }
     return 0
+}
+# What hovering a session row's title run shows.
+proc row_reveal {path} {
+    set ::questlog::ui::reveal::DelayMs 0
+    $::SL peek_enter_tag "t#[$::SL sid $path]"
+    update
+    set shown [::questlog::ui::reveal::shown]
+    $::SL peek_leave 0
+    return $shown
 }
 
 # ---- C8: one copy slot - snippet on a hit, else last assistant output -----
@@ -242,6 +252,8 @@ update
 check "case-B parent is rendered" [$SL sflag $PB rendered] 1
 check "case-B note sits below the row (2 matches, 1 subagent)" \
     [has_line "*no match in this session - 2 matches below in a subagent*"] 1
+check "case-B hover names the subagent matches" \
+    [string match "*\n2 matches in subagents" [row_reveal $PB]] 1
 # The subject run is dimmed (only its subagents matched). The title begins
 # past the tab that sends it to the title stop, so probe the character there
 # rather than a fixed offset into the line.
@@ -253,8 +265,9 @@ check "case-B subject run is dimmed" \
 check "subagent overflow names the rest (2 matches, cap 1 -> +1)" \
     [has_line "*1 more match in this session - open to see all*"] 1
 
-# ---- C10a: case C pip singularises on one subagent match ------------------
-# PC has one direct match AND one subagent match: header shows "+1 in subagent".
+# ---- C10a: case C counts sit in the hover, singularised -------------------
+# PC has one direct match AND one subagent match: the row shows no count, and
+# its hover reads "1 match, +1 in subagent".
 $SL add_session_matches [list \
     [dict create path $PC folder $FA btype user content "parent-c work" lineoff 1]]
 $SL add_session_matches [list \
@@ -264,12 +277,10 @@ $SL add_session_matches [list \
 update
 set psm [$SL node_field [$SL sid $PC] start]
 set headline [$TX get $psm "$psm lineend"]
-check "case-C pip singularises to '+1 in subagent'" \
-    [string match "*+1 in subagent*" $headline] 1
-check "case-C pip is not pluralised" \
-    [string match "*+1 in subagents*" $headline] 0
-check "case-C header keeps its own direct match count" \
-    [string match "*1 match*" $headline] 1
+check "case-C row carries no count" \
+    [regexp {match|subagent|·} $headline] 0
+check "case-C hover names both counts, singularised" \
+    [string match "*\n1 match, +1 in subagent" [row_reveal $PC]] 1
 
 # ---- case B -> case C: the subagent's match lands before the parent's own --
 # The note case B drew must lift when direct matches arrive, and the children

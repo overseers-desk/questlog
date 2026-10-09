@@ -16,7 +16,7 @@ namespace eval ::questlog::ui {
 # row is {id label sample align sortable}.
 #
 # The row reads subject-on-the-left, metadata right-pinned: the subject (glyphs,
-# slug, preview, match count) fills from the left and the columns below sit in a
+# slug, preview) fills from the left and the columns below sit in a
 # fixed strip flush to the right edge, in this left-to-right order. Turns,
 # Duration, Ctx% and Model are filled by the cost second pass (the forward scan
 # stops at the second user record and computes none of them); Ctx% is the
@@ -55,7 +55,7 @@ proc ::questlog::ui::session_columns {} {
 #
 # Layout, top to bottom, as tagged regions in the one text widget:
 #   folder heading   - the project label, a drop target for moves
-#   session header   - glyphs, label, time, and (when searching) a match count
+#   session header   - glyphs, label, time; a search's match counts in its hover
 #   snippet rows     - up to three per session: a block-type label and a
 #                      hit-leading snippet with the matched term in bold
 #
@@ -1102,7 +1102,7 @@ oo::class create ::questlog::ui::SessionList {
 
     # A whole found session from Search: its complete row and its full match list
     # in line order. Renders the session card, up to snippets_per_session
-    # snippets, and the final match count in one anchored pass - no per-match
+    # snippets, and the overflow line in one anchored pass - no per-match
     # anchoring or redraw, which is what kept a broad query from freezing the
     # list. Self-brackets one session; the batched flush (begin_batch/end_batch)
     # brackets many at once.
@@ -1885,8 +1885,8 @@ oo::class create ::questlog::ui::SessionList {
     # Attach a subagent's matches to its parent session (issue #13 cases B and C).
     # Creates the parent card if the parent itself had no match (case B), seeds
     # the child models, attaches this child's hits (capped at
-    # snippets_per_subagent), counts them for the parent's pip, and either
-    # auto-expands (case B: no direct match) or leaves collapsed with the pip.
+    # snippets_per_subagent), counts them for the parent's hover, and either
+    # auto-expands (case B: no direct match) or leaves it collapsed.
     method add_subagent_matches {matches} {
         set first [lindex $matches 0]
         set cp     [dict get $first path]
@@ -1917,7 +1917,7 @@ oo::class create ::questlog::ui::SessionList {
         my sset $cp hits $hits
         my attach_child $parent $cp
         # Case B (no direct hit in the parent) auto-expands so the matched
-        # subagents are visible; case C keeps the parent collapsed with the pip.
+        # subagents are visible; case C keeps the parent collapsed.
         if {[my sget $parent count] == 0} {
             my node_set [my sid $parent] expanded 1
         }
@@ -2127,28 +2127,29 @@ oo::class create ::questlog::ui::SessionList {
     }
 
     # The session subject: the expand chevron (when it has subagents), the status
-    # glyphs (running ● green, bookmark ★ amber), the bold slug, the first-prompt
-    # preview ellipsised into the room left, then the match count. The chevron and
-    # glyphs are kept whole; the slug and the preview are trimmed to the room.
+    # glyphs (running ● green, bookmark ★ amber), the bold slug, then the
+    # first-prompt preview ellipsised into the room left. The chevron and glyphs
+    # are kept whole; the slug and the preview are trimmed to the room.
     method session_subject {node max} {
         set s [my node_payload $node]
         set path [my node_field $node key]
         set slug [dict get $s slug]
         set count [dict get $s count]
         set subt  [dict get $s sub_total]
-        # Match-count tail: direct matches, plus a "+N in subagent(s)" pip when the
-        # session's subagents also matched (case C). The case-B "no direct match"
-        # note is not a tail here: with no hit of its own the parent surfaces on
-        # its subagents alone, and the note is its own line below the row
-        # (render_subhint), so it does not eat the preview's room.
-        set count_str ""
+        # The match counts close the title run's reveal rather than taking the
+        # row's room: "3 matches, +2 in subagents" when both the session and its
+        # subagents matched (case C), "2 matches in subagents" when only they did
+        # (case B, whose note is also its own line below the row, render_subhint).
+        set counts [list]
         if {$count > 0} {
-            set count_str "   ·   $count [expr {$count == 1 ? {match} : {matches}}]"
-            if {$subt > 0} {
-                append count_str "   ·   +$subt in\
-                    [expr {$subt == 1 ? {subagent} : {subagents}}]"
-            }
+            lappend counts "$count [expr {$count == 1 ? {match} : {matches}}]"
         }
+        if {$subt > 0} {
+            set in_subs "in [expr {$subt == 1 ? {subagent} : {subagents}}]"
+            lappend counts [expr {$count > 0 ? "+$subt $in_subs"
+                : "$subt [expr {$subt == 1 ? {match} : {matches}}] $in_subs"}]
+        }
+        set count_str [join $counts ", "]
         # Only its subagents matched: the row still carries the session, dimmed, so
         # the eye reads it as context for the hits below rather than a hit itself.
         set only_in_subs [expr {$count == 0 && $subt > 0}]
@@ -2173,7 +2174,6 @@ oo::class create ::questlog::ui::SessionList {
         # left. An untrimmed slug wider than that room runs past the first
         # metadata stop, and the row's tab stops cascade off their columns.
         set fixed [my marker_w]
-        incr fixed [font measure QLList $count_str]
         set full_slug $slug
         set clipped 0
         set sep_w [font measure QLList "  "]
@@ -2195,7 +2195,8 @@ oo::class create ::questlog::ui::SessionList {
         # row's own preview is the opening prompt and stops saying that after
         # the first few turns. A session too young to have finished a turn has
         # no reply yet, and a row with neither falls back to the preview the row
-        # shows, so the reveal is never empty. An untrimmed row shows all it
+        # shows, so the reveal is never empty. A matched row wires it cut or not,
+        # for the counts it closes on; an untrimmed row with no match shows all it
         # has and wires nothing. The run gets a tag of its own rather than
         # riding the row's ($stag already binds <Enter>/<Leave> for the cursor
         # and the ⋯ brightening, which peek_wire would overwrite), minted here
@@ -2206,15 +2207,18 @@ oo::class create ::questlog::ui::SessionList {
         # life of the window. t# is its own tag family, swept like the n# hit
         # tags and the c# subagent ones but apart from them, so a title run is
         # never mistaken for a hit by anything that resolves a hit's tag.
-        if {$clipped} {
+        if {$clipped || $count_str ne ""} {
             set ntag "t#$node"
             lappend tags [list $ntag $title_off \
                               [expr {[string length $subj] - $title_off}]]
             set body [dict getdef $s last_user ""]
             if {$body eq ""} { set body $full_label }
-            my peek_wire $ntag $full_slug $body 0 [dict getdef $s last_reply ""]
+            set sub [dict getdef $s last_reply ""]
+            if {$count_str ne ""} {
+                set sub [expr {$sub eq "" ? $count_str : "$sub\n\n$count_str"}]
+            }
+            my peek_wire $ntag $full_slug $body 0 $sub
         }
-        append subj $count_str
         # Dim the title run (slug and preview, past the marker gutter) when only
         # the subagents matched; the running/bookmark glyphs keep their own colour.
         if {$only_in_subs} {
@@ -2228,7 +2232,7 @@ oo::class create ::questlog::ui::SessionList {
         return [file executable $path]
     }
 
-    # Rewrite a session header line in place (glyphs, count). Leaves the
+    # Rewrite a session header line in place (glyphs). Leaves the
     # surrounding lines untouched, so a per-tick glyph refresh never shifts
     # the view.
     method redraw_header {path} {
