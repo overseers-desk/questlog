@@ -1690,10 +1690,11 @@ oo::class create ::questlog::ui::Viewer {
     # head-strip count from the recollected set makes the band's rows the
     # live set, so select_band_row's exact-set gate then passes and its
     # highlight tracks the step. An identical set (a first Next on the search
-    # term already shown) leaves the band untouched, keeping its rarest-first
-    # order and open state. On a step: move the band highlight with it.
+    # term already shown) keeps the band's rarest-first order and open state,
+    # relabelling its rows in place: one index excerpts differently per term (a
+    # link's url, then its text). On a step: move the band highlight with it.
     method on_find_collected {} {
-        if {$FindMatches ne $BandMatchSet} { my refill_match_band }
+        if {$FindMatches ne $BandMatchSet} { my refill_match_band } else { my relabel_match_band }
     }
     method on_find_stepped {i} { my select_band_row $i }
 
@@ -1730,6 +1731,27 @@ oo::class create ::questlog::ui::Viewer {
         set MatchLabels [list]
         foreach m $FindMatches { lappend MatchLabels [my find_excerpt $m] }
         my refresh_match_control
+    }
+
+    method relabel_match_band {} {
+        set labels [list]
+        foreach m $FindMatches { lappend labels [my find_excerpt $m] }
+        if {$labels eq $MatchLabels} return
+        set sel [$MatchList curselection]
+        set top [lindex [$MatchList yview] 0]
+        set i 0
+        foreach m $FindMatches lab $labels old $MatchLabels {
+            if {$lab ne $old} {
+                set fg [$MatchList itemcget $i -foreground]
+                $MatchList delete $i
+                $MatchList insert $i [lindex [my match_row $m $lab] 1]
+                $MatchList itemconfigure $i -foreground $fg
+            }
+            incr i
+        }
+        set MatchLabels $labels
+        foreach i $sel { $MatchList selection set $i }
+        $MatchList yview moveto $top
     }
 
     # ---- match index (seeded from the search query) ------------------
@@ -1842,18 +1864,24 @@ oo::class create ::questlog::ui::Viewer {
         set BandMatchSet $FindMatches
         set i 0
         foreach m $FindMatches lab $MatchLabels {
-            set ln [my line_at $m]
-            set ty [expr {[dict exists $Roles $ln] ? [dict get $Roles $ln] : ""}]
+            lassign [my match_row $m $lab] ty row
             if {[::questlog::debug::enabled]} {
                 ::questlog::debug::log match \
-                    "row $i at $m resolved line=[list $ln] role=[list $ty]"
+                    "row $i at $m resolved line=[list [my line_at $m]] role=[list $ty]"
             }
-            set tail [expr {$ln eq "" ? "" : " · line $ln"}]
-            $MatchList insert end "$ty · …$lab…$tail"
+            $MatchList insert end $row
             $MatchList itemconfigure $i -foreground [my role_color $ty]
             incr i
         }
         my refresh_band_control matches [llength $FindMatches]
+    }
+
+    # A match's role and its band row text.
+    method match_row {m lab} {
+        set ln [my line_at $m]
+        set ty [expr {[dict exists $Roles $ln] ? [dict get $Roles $ln] : ""}]
+        set tail [expr {$ln eq "" ? "" : " · line $ln"}]
+        return [list $ty "$ty · …$lab…$tail"]
     }
 
     # Row foreground by role, echoing the rendered transcript's role colours.

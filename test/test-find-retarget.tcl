@@ -112,6 +112,34 @@ check "close: band reverts to alpha"  [$MatchList size]          2
 check "close: head-strip reverts"     [bandcount]                "2 matches"
 check "close: band rows are alpha set" [llength [iv BandMatchSet]] 2
 
+# ---- an identical set relabels its rows -------------------------------------
+# A Ctrl-F for a link's url, then for a word in the link's text, hits the same
+# index: the set is unchanged, so the band keeps its rows but not their excerpts.
+set JL [file join $TMP link.jsonl]
+set fh [open $JL w]
+fconfigure $fh -encoding utf-8
+puts $fh {{"type":"user","cwd":"/tmp/proj","timestamp":"2026-07-12T09:00:00Z","message":{"role":"user","content":"see the docs"}}}
+puts $fh {{"type":"assistant","timestamp":"2026-07-12T09:00:05Z","message":{"role":"assistant","model":"claude-3-5-sonnet-20241022","content":"Lead text. [QWORD docs](https://example.com/URLTOKEN) trailing words.","usage":{"input_tokens":10,"output_tokens":5}}}}
+close $fh
+$V show $JL 0 {}
+update idletasks
+update
+$V find_show
+set ${NS}::FindVar URLTOKEN
+$V find_next
+update idletasks
+set urlset [iv FindMatches]
+check "link url: one row excerpting the url" [iv MatchLabels] [list https://example.com/URLTOKEN]
+set ${NS}::FindVar QWORD
+$V find_next
+update idletasks
+set line "Lead text. QWORD docs trailing words."
+check "link text: the same index"           [iv FindMatches] $urlset
+check "link text: the excerpt follows the term" [iv MatchLabels] [list $line]
+check "link text: the band row follows it"  [string match "*…$line…*" [$MatchList get 0]] 1
+check "link text: the highlight stays"      [$MatchList curselection] 0
+$V find_hide
+
 # ---- clean up ----------------------------------------------------------------
 ::questlog::path::_real_file delete -force $TMP
 puts [expr {$fails ? "FAILED ($fails)" : "PASS"}]
