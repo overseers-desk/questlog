@@ -51,6 +51,7 @@ oo::class create ::showman::Showman {
     # declared here so this class's methods read them.
     variable Top
     variable Text
+    variable FindTop          ;# the toplevel carrying this view's Ctrl-F binding
     variable Records          ;# parsed records rendered, in document order
     variable Pending          ;# a trailing turn start held back from the last append batch
     variable LineMap          ;# dict: record _line -> text index of its label line
@@ -77,8 +78,19 @@ oo::class create ::showman::Showman {
         ::tkdown::ensure_fonts
         next $parent
         my build_tags
-        bind [winfo toplevel $Top] <Control-f> [list [self] find_show]
+        set FindTop [winfo toplevel $Top]
+        bind $FindTop <Control-f> [list [self] find_show]
         my reset
+    }
+
+    # The widgets can outlive the object, so Ctrl-F is unbound here unless a
+    # later view has taken it over.
+    destructor {
+        if {[info exists FindTop] && [winfo exists $FindTop]
+                && [bind $FindTop <Control-f>] eq [list [self] find_show]} {
+            bind $FindTop <Control-f> {}
+        }
+        next
     }
 
     # ---- options -----------------------------------------------------------

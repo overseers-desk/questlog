@@ -331,5 +331,31 @@ check "an empty tick releases the held turn start" \
     [$F region_count] [expr {$before + 1}]
 check "the released turn shows no edits" [dict get [$F payload $before] edits] 0
 
+# ---- Ctrl-F after the object is gone ---------------------------------------
+# A host may destroy the object and keep its widgets (Conversation's destructor
+# does). The toplevel's Ctrl-F must not call the dead object, and destroying an
+# older view must leave a newer one's binding in place.
+set BGERRS [list]
+interp bgerror {} {apply {{msg opts} { lappend ::BGERRS $msg }}}
+toplevel .ct
+ttk::frame .ct.a
+ttk::frame .ct.b
+set CA [::showman::Showman new .ct.a]
+pack .ct.a -fill both -expand 1
+set CB [::showman::Showman new .ct.b]
+$CA destroy
+check "destroying an older view keeps the newer view's Ctrl-F" \
+    [bind .ct <Control-f>] [list $CB find_show]
+$CB destroy
+check "the view's widgets outlive it" [winfo exists .ct.b] 1
+check "destroying the view unbinds its Ctrl-F" [bind .ct <Control-f>] ""
+update
+focus -force .ct
+update
+event generate .ct <Control-f>
+update
+check "Ctrl-F on a dead view's toplevel raises no background error" $BGERRS {}
+destroy .ct
+
 puts [expr {$fails ? "FAILED ($fails)" : "PASS"}]
 exit $fails
