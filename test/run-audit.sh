@@ -9,23 +9,29 @@
 # print PASS (it never inspects the latch), so a green test is not enough: this
 # runner fails the suite on a non-zero test exit OR on any INVARIANT line.
 #
-# A Tk test runs under wish9.0 on a private Xvfb :99 (never the user's :0, where
-# its windows would land over their work). A test with no `package require Tk` is
+# A Tk test runs under wish9.0 on a private Xvfb on a display the server picks
+# free (never the user's :0, where its windows would land over their work). A test with no `package require Tk` is
 # a CLI test and runs under tclsh9.0: under wish it would fall off the script end
 # into the event loop and hang, since only failing CLI tests call exit.
 set -u
 cd "$(dirname "$0")/.."
 
-Xvfb :99 -screen 0 1500x1150x24 >/tmp/ql-audit-xvfb.log 2>&1 &
+dfile=$(mktemp)
+Xvfb -displayfd 3 -screen 0 1500x1150x24 3>"$dfile" >/tmp/ql-audit-xvfb.log 2>&1 &
 xvfb=$!
-sleep 2
+for _ in $(seq 1 50); do [ -s "$dfile" ] && break; sleep 0.2; done
+display=$(tr -dc 0-9 <"$dfile"); rm -f "$dfile"
+if [ -z "$display" ]; then
+    echo "Xvfb did not report a display (see /tmp/ql-audit-xvfb.log)" >&2
+    kill "$xvfb" 2>/dev/null; exit 1
+fi
 
 export STREAMTREE_AUDIT=1
 export STREAMDOC_AUDIT=1
 fails=0
 for t in test/test-*.tcl; do
     if grep -qE '^[[:space:]]*package require Tk' "$t"; then
-        err=$(DISPLAY=:99 timeout 90 wish9.0 "$t" 2>&1 >/dev/null); code=$?
+        err=$(DISPLAY=:$display timeout 90 wish9.0 "$t" 2>&1 >/dev/null); code=$?
     else
         err=$(timeout 90 tclsh9.0 "$t" 2>&1 >/dev/null); code=$?
     fi
