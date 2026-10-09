@@ -2176,13 +2176,13 @@ oo::class create ::questlog::ui::SessionList {
         incr fixed [font measure QLList $count_str]
         set full_slug $slug
         set clipped 0
+        set sep_w [font measure QLList "  "]
+        set slug [my truncate_px $slug [expr {$max - $fixed - $sep_w}] QLBold]
+        if {$slug ne $full_slug} { set clipped 1 }
         if {$slug ne ""} {
-            set slug [my truncate_px $slug [expr {$max - $fixed}] QLBold]
-            if {$slug ne $full_slug} { set clipped 1 }
             lappend tags [list slug [string length $subj] [string length $slug]]
-            append subj $slug
-            append subj "  "
-            incr fixed [expr {[font measure QLBold $slug] + [font measure QLList "  "]}]
+            append subj $slug "  "
+            incr fixed [expr {[font measure QLBold $slug] + $sep_w}]
         }
         set full_label [dict get $s label]
         set label [my truncate_px $full_label [expr {$max - $fixed}] QLList]

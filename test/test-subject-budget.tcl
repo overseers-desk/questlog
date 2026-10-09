@@ -107,6 +107,27 @@ check "the preview still gets room after a short slug" \
 check "short-slug visible run fits the 600px budget" \
     [expr {[font measure QLBold $slug] + [font measure QLList $rest] <= $MAX}] 1
 
+# The "  " after the slug is drawn too, so the budget holds it: a slug trimmed
+# to the whole room would push the separator past the row's width. The title
+# run starts at its tab stop, after the marker's reserved width.
+proc title_px {res} {
+    set subj [dict get $res subject]
+    set slug [tagged_run $res slug]
+    set at   [string first $slug $subj]
+    return [expr {[font measure QLBold $slug] \
+                  + [font measure QLList [string range $subj [expr {$at + [string length $slug]}] end]]}]
+}
+foreach MAX {60 90 120} {
+    set res [subject_at [dict create slug [string repeat x 200] count 0 sub_total 0 \
+                 has_subagents 0 label ""] $MAX]
+    check "session row with its separator fits a ${MAX}px budget" \
+        [expr {[$SL marker_w] + [title_px $res] <= $MAX}] 1
+}
+set res [subject_at [dict create slug [string repeat x 200] count 0 sub_total 0 \
+             has_subagents 0 label ""] \
+             [expr {[$SL marker_w] + [font measure QLList "  "]}]]
+check "a slug with no room left drops its separator too" [dict get $res subject] "\t"
+
 # ---- case 3: child_subject trims a long agent_type the same way ------------
 # A subagent row is "spine  agent_type  preview"; the bold agent_type is trimmed
 # to the budget just as the slug is, so a very long agent type never overruns.
