@@ -36,7 +36,7 @@ Colour and selection stay the host's everywhere. A caller passes its own base ta
 
 | Tag | The host configures | Laid on |
 |---|---|---|
-| `td-link` | `-foreground`, `-underline`, and bindings (`<Button-1>` calling `link_at`) | every link's text |
+| `td-link` | `-foreground`, `-underline`; bindings too when it sets no `-link_cmd` (see Links) | every link's text; its ink is copied onto links in a grid's cells |
 | `td-quotebar` | `-foreground` | the bar opening each line of a quote |
 | `td-rule` | `-background`, the rule's colour | the one line of a rule |
 | `td-grid` | `-background`, the gridline colour | nothing; read when a grid is coloured |
@@ -47,22 +47,35 @@ That split is why the host, not the module, decides the fonts. `tags` takes a di
 
 ## THE SEGMENT AND INLINE MODEL
 
-The parse half splits a body in layers, each splitter seeing a body the ones above it have already peeled. `body` runs `segment_code_fences` first, then on each prose run `segment_blockquotes`, `segment_rules`, `segment_images` and `segment_tables`; what remains is prose, whose emitter splits lists with `segment_lists`, lifts its own headings, and passes each run of text through `parse_inline`. `segment_headings` is not part of that walk: it serves a host that wants a document's headings as segments.
+The parse half splits a body in layers, each splitter seeing a body the ones above it have already peeled. `body` runs `segment_code_fences` first, then on each prose run `segment_blockquotes`, `segment_rules`, `segment_images` and `segment_tables`; what remains is prose, whose emitter splits lists with `segment_lists`, lifts its own headings, and passes each run of text through `parse_inline`. `segment_headings` is not part of that walk: it serves a host that wants a document's headings as segments. `resolve_refs` is not part of it either: a host with reference-style links runs it over the whole document first (see Links).
 
 | Proc | Produces | Kinds |
 |---|---|---|
+| `resolve_refs` | text | the document with every reference-link definition line removed and every reference rewritten as an inline link; run it over the whole document before any splitting |
 | `segment_code_fences` | `{kind text}` | `prose`, `code` (the verbatim run between a pair of fence lines, markers and language tag gone; an unterminated fence runs to the end) |
 | `segment_blockquotes` | `{kind text}` | `normal`, `quote` (a maximal run of `>` lines, de-quoted one marker deep; a bare blank line ends it) |
 | `segment_headings` | `{kind payload}` | `normal` (text), `heading` (`{level title}`): an ATX line of one to six `#` and a space, its closing `#` run dropped, or a setext pair, a line of text over an underline of three or more `=` (level 1) or `-` (level 2). The line above an underline must be non-blank plain text, and neither line may hold a `\|`, so a table's delimiter row is never an underline. Lines inside a fence are never headings, and the fence lines stay in the normal text. |
 | `segment_rules` | `{kind payload}` | `normal` (text), `rule` (empty): a line of three or more `-`, `*` or `_`, spaces allowed between, that is not a setext underline and not inside a fence |
 | `segment_images` | `{kind payload}` | `normal` (text), `image` (`{alt path}`): a line holding nothing but one `![alt](path)`, an optional quoted title after the path |
-| `segment_tables` | `{kind payload}` | `normal` (text), `table` (`{align <per-col> rows <header-then-body>}`, every row padded or cut to the header's width) |
+| `segment_tables` | `{kind payload}` | `normal` (text), `table` (`{align <per-col> rows <header-then-body>}`, each align `left`, `right` or `center`, every row padded or cut to the header's width); a host with rows of its own builds the same payload and hands it to `emit_table` |
 | `segment_lists` | `{kind payload}` | `normal` (text), `list` (the items in source order, each `{depth marker text}`) |
 | `parse_inline` | ordered runs | `{style chunk}` with style `plain`, `code`, `bold`, `italic` or `bolditalic`, and `{link chunk url}`; markers stripped, adjacent plain runs coalesced, the display text always at index 1 |
 
 A list item opens with `-`, `*` or `+` and a space, its marker `•`, or with ASCII digits, a dot and a space, its marker those digits and the dot, so a list keeps its source numbering. Its depth is its indentation in steps of two spaces or one tab. A non-blank line under an item that opens no item of its own, flush left or indented, joins that item's text and keeps its line break: the item's text holds a newline between the two source lines, the continuation's own indentation dropped. Blank lines followed by another item keep the list going; blank lines followed by anything else end it. `tcl 9.0`, `1.2.3` and `- - -` open nothing.
 
-The inline rules are pragmatic rather than full CommonMark. A code span wins over everything else, so asterisks, brackets and URLs inside `` `code` `` stay literal. `[text](url)` is a link whose display text is the raw text between the brackets; a bare `http://` or `https://` URL, or one in `<angle brackets>`, is a link whose text is the URL, less any trailing punctuation and any unbalanced closing parenthesis. An inline `![alt](path)` shows its alt text as plain text. Emphasis is asterisks only, so `snake_case` and `__init__` are left alone. An opener needs a non-space character after it and a closer one before it, so `3 * 4` and a `* ` bullet stay literal. A backslash escapes a literal backtick, asterisk or backslash, and every other backslash is kept verbatim, so paths and regex survive intact.
+The inline rules are pragmatic rather than full CommonMark. A code span wins over everything else, so asterisks, brackets, URLs and backslashes inside a span stay literal. The one exception is a backslash before a backtick run at least the span's opening length, which escapes as many backticks as the opening has, painted without the backslash, while the span can still close later on the same line; otherwise the backslash is literal and the run may close the span. A span itself may run on across lines. The examples sit in a fence because a span cannot quote them:
+
+```
+`a\.b`                   a\.b
+`status \`ok\` done`     status `ok` done
+`C:\Drivers\` dated      C:\Drivers\   then the prose: dated
+`\`                      \
+`` x \`` y ``            x `` y
+`` \` ``                 \`
+`` `C:\Drivers\` ``      `C:\Drivers\`
+```
+
+`[text](url)` is a link whose display text is the raw text between the brackets; a bare `http://` or `https://` URL, or an `<scheme:rest>` autolink in angle brackets (`<https://example.org/>`, `<mailto:someone@example.org>`, `<tel:+61255550100>`; the scheme is 2 to 32 characters, a letter then letters, digits, `+`, `.` or `-`, and the rest begins with `//` or the scheme is `mailto`, `tel` or `sms`, and holds no space, `<` or `>`; anything else in angle brackets, such as `<div>`, a C++ template like `std::vector<std::string>` or a namespaced XML tag like `<xs:element>`, stays literal, brackets included), is a link whose text is the URL, less any trailing punctuation and any unbalanced closing parenthesis. An inline `![alt](path)` shows its alt text as plain text. Emphasis is asterisks only, so `snake_case` and `__init__` are left alone. An opener needs a non-space character after it and a closer one before it, so `3 * 4` and a `* ` bullet stay literal. Outside a code span a backslash escapes any ASCII punctuation character (`\$18.34`, `\_`, `\#`, `\[not a link](x)`), and a backslash before anything else, or at the end of the text, is kept verbatim, so paths and regex survive intact.
 
 `table_to_markdown payload` turns a table payload back into GFM text that `segment_tables` reads to the same payload. `table_colwidths rows avail em space` is the grid's column allocator, pure and callable on its own: given each cell's word widths in pixels, it returns the column widths that fit `avail` with the fewest wrapped lines.
 
@@ -73,17 +86,17 @@ Each emit call inserts at an index the caller advances, a mark or `end`, paintin
 | Proc | Arguments | Purpose |
 |---|---|---|
 | `ensure_fonts` | | Create the Td\* faces from `TkTextFont` and `TkFixedFont` once per interp and return their fonts dict, `{body TdBody bold TdBodyBold italic TdBodyItalic bolditalic TdBodyBoldItalic mono TdMono monobold TdMonoBold}`. A widget given one of these font names before `ensure_fonts` has created it keeps Tk's fallback face even once the font exists, so a host calls `ensure_fonts` before any widget names a font from it. |
-| `tags` | `w fonts ?option value ...?` | Register a text widget: configure its `td-*` faces from the fonts dict, take the options below, and open its table and link registries. Call once per widget before painting; calling again keeps the tables and links it holds. |
+| `tags` | `w fonts ?option value ...?` | Register a text widget: configure its `td-*` faces from the fonts dict, take the options below, and open its link registry. Call once per widget before painting; calling again keeps the links it holds. |
 | `body` | `w idx text baseTags codeTags ?emitters?` | Paint a markdown body block by block, then one closing newline under `baseTags`. |
 | `prose` | `w idx text baseTags ?suffix?` | Paint one prose run through `emit_prose`, then `suffix` (default `"\n\n"`) under `baseTags`. |
 | `runs` | `w idx text baseTags` | Insert one run's inline spans. |
 | `link_at` | `w idx` | The url of the link under `idx`, or `""`. |
-| `link_scan` | `w needle nocase` | Search the links' urls: `{index url}` per link whose url holds the needle and whose visible text does not, in document order, the index being the start of the link's text. A match in the text, a bare URL's included, is left to the host's own text search. |
-| `table_scan` | `w needle nocase` | Search the tables' cell text: `{mark excerpt}` per matching table, in document order. |
-| `table_spotlight` | `w idx` | Light the table whose mark is at `idx` and put out the one lit before; `""` puts it out. |
+| `link_scan` | `w needle nocase` | Search the links' urls, in the text and in tables' cells: `{index url}` per link whose url holds the needle and whose visible text does not, in document order, the index being the start of the link's text, or for a link in a cell its table's window character. A match in the text, a bare URL's included, is left to the host's own text search. |
+| `table_scan` | `w needle nocase` | Search the tables' cell text, built or not: `{index excerpt}` per matching table, in document order, the index being the table's window character. |
+| `table_spotlight` | `w idx` | Light the table whose window character is at `idx` and put out the one lit before; any other index, `""` included, only puts it out. |
 | `refit` | `w ?option value ...?` | Re-set any option, re-derive the margins, and re-fit every built grid. |
-| `forget` | `w` | Destroy the widget's grids, unset their marks and drop its links before a full re-render. |
-| `unregister` | `w` | Drop the widget from the registry, its grids with it; runs on the widget's `<Destroy>`. |
+| `forget` | `w` | Drop the links tkdown painted, put the spotlight out and cancel a pending refit; for a full re-render, before or after `delete 1.0 end` alike. |
+| `unregister` | `w` | Drop the widget from the registry and take off the bindings tkdown made on it; runs on the widget's `<Destroy>`. |
 
 The options, each re-settable through `refit`:
 
@@ -93,6 +106,7 @@ The options, each re-settable through `refit`:
 | `-quotetags` | `{}` | Tags the default quote emitter lays over a whole quote, for the host's ink and inset. |
 | `-image_cmd` | `{}` | A command called with an image's path, returning a Tk image name or `""`. |
 | `-on_block` | `{}` | A command told of each block `body` paints. |
+| `-link_cmd` | `{}` | A command called with a link's url when the reader clicks the link, in the text or in a grid's cell. With it set tkdown binds the clicks and the hand cursor; without it tkdown binds nothing. See Links. |
 | `-copystyle` | `Copy.TButton` | The ttk style of a grid's copy button, a style the host defines. Until the host defines it, or for any style ttk has no layout for, the module falls back to `TButton`. |
 
 The fonts dict requires the keys `body`, `bold`, `italic`, `bolditalic` and `mono`; a missing one is an error. `monobold` is optional and, like any extra key, is kept for the host; nothing in the module draws with it. The heading keys `h1`, `h2` and `h3` are optional, each falling back to `bold`. Levels four through six all paint as `h3`, so a document never asks for a face the host did not size.
@@ -110,7 +124,7 @@ The fonts dict requires the keys `body`, `bold`, `italic`, `bolditalic` and `mon
 | `image` | `cmd w idx alt path baseTags` | `emit_image` |
 | `rule` | `cmd w idx baseTags` | `emit_rule` |
 
-Every block ends its own line before the next begins. The walk closes a prose block's last line itself, and closes any other block's line its emitter left open, so a table under a list starts on a line of its own.
+Every block ends its own line before the next begins. Each default emitter closes its own line, so one called directly at a mark leaves the mark on a fresh line; the walk closes a prose block's last line itself, and closes any other block's line a host's emitter left open, so a table under a list starts on a line of its own.
 
 After each block, `-on_block` is called as `cmd kind start end text`: `start` is the first character of the block's own content and `end` the index just past everything it inserted, exclusive. A newline an emitter writes ahead of a quote, rule, image or table to set it off, such as the blank line the default quote emitter puts between prose and a quote, lies before `start`, so a host inserting at `start` lands on the block's first painted line. `text` is the block's text (a quote's de-quoted, a table's as GFM, an image's alt, a rule's empty). It fires for every non-empty block `body` paints, each time it paints it, so a host that repaints a range hears its blocks again; a prose block of nothing but blank lines, the gap between two other blocks, is painted and not reported.
 
@@ -124,27 +138,37 @@ The default rule emitter paints one line holding a single space under `td-rule` 
 
 ### Links
 
-A link's text goes in under the base tags, `td-link`, and a tag of its own, `td-link<N>`, whose number is never reused in the widget. The registry maps that tag to the link's url, which is how `link_at` answers for a click and `link_scan` searches urls a reader cannot see. `forget` deletes the per-link tags with the registry, and `link_scan` drops any link whose text has been deleted.
+Reference-style links are resolved by text, before parsing. `resolve_refs text` returns `text` with every definition line removed and every reference rewritten as an inline link. A definition is `[label]: url` on a line of its own, indented at most three spaces, the url optionally in `<...>` and optionally followed by a quoted title (`"..."`, `'...'` or `(...)`), which is dropped. A reference is `[text][label]`, `[label][]` or `[label]`; the last is one only when the label is defined and no `(` or `[` follows it. Each becomes `[text](url)`, the short forms using the label as text, and `![alt][label]` becomes `![alt](url)`. Labels match without case and across runs of whitespace; the first definition of a label wins; a reference to an undefined label stays literal. A `[^note]` label is a footnote, and its definition and references are left as they are. Fenced code and backtick spans are untouched. A url holding whitespace or unbalanced parentheses is written as `[text](<url>)`. A CRLF document's definitions are recognised and its line ends kept. Definitions are document-wide, so a host that segments (`segment_headings`, a per-section `body`) runs `resolve_refs` over the whole document first; `body` does not run it, because a host that segments would hand it partial text.
+
+A link's text goes in under the base tags, `td-link`, and a tag of its own, `td-link<N>`, whose number is never reused in the widget. The registry maps that tag to the link's url, which is how `link_at` answers for a point in the text and `link_scan` searches urls a reader cannot see. `forget` deletes the per-link tags with the registry, and `link_scan` drops any link whose text has been deleted.
+
+A link inside a table's cell is painted in the cell under the cell's own link tags, carrying the ink of the widget's `td-link` (its `-foreground` and `-underline`, copied when the grid is built and on every `refit`). Its url rides in the cell's bindings, so a cell link is in no registry; `link_scan` finds it from the table itself.
+
+With `-link_cmd` set, tkdown binds the clicks, on `td-link` in the widget and on each cell link, and calls the command with the url. The click is the release: a press on a link followed by a release on the same link, within four pixels of the press, opens it, and a press that drags further at any point is a selection and opens nothing, wherever it ends. A double- or triple-click opens the link once. The pointer over a link shows `hand2`, and leaving it gives the widget its own cursor back. Without `-link_cmd` tkdown binds nothing on `td-link`, and a host that wants clicks binds the tag itself and asks `link_at` for the url under the pointer; a cell link then has its ink and no click. Setting `-link_cmd` to `{}` through `refit` takes tkdown's bindings off `td-link` again.
 
 ## THE TABLE AND REFIT LIFECYCLE
 
-A pipe table renders as a grid: one embedded window in the text, a frame of gridded `text` cells that wrap their words. A table wider than the pane keeps its columns and folds its long cells onto more lines, so nothing runs past the right edge. Cells take their font from the fonts dict, the header row bold throughout, and inline markdown inside a cell still styles; each column honours the delimiter's left, right or centre alignment. A cell's background and cursor are the text widget's, its ink comes from the first base tag carrying a `-foreground` (the widget's own foreground otherwise), and the frame showing through between the cells is the gridline colour, `td-grid`'s `-background` or the widget's foreground when the host configured none.
+A pipe table renders as a grid: one embedded window in the text, a frame of gridded `text` cells that wrap their words. A table wider than the pane keeps its columns and folds its long cells onto more lines, so nothing runs past the right edge. Cells take their font from the fonts dict, the header row bold throughout, and inline markdown inside a cell still styles, links included; each column honours the delimiter's left, right or centre alignment. A cell's background and cursor are the text widget's, its ink comes from the first base tag carrying a `-foreground` (the widget's own foreground otherwise), and the frame showing through between the cells is the gridline colour, `td-grid`'s `-background` or the widget's foreground when the host configured none.
 
-The window builds itself only when the text first shows it, so a long document costs no widgets until the reader reaches its tables. What search and spotlight need is recorded when the table is painted: the payload, the cells' text as the reader sees it, and a left-gravity mark `tbl#m<N>` on the window character. That character carries `td-tblwin` and the base tags, so a host's fold or elide tag reaches the table like any other text, and it is followed by its newline under the base tags. A table met mid-line starts a line of its own.
+The window's character carries `td-tblwin` and the base tags, so a host's fold or elide tag reaches the table like any other text, and it is followed by its newline under the base tags. A table met mid-line starts a line of its own. The window builds itself only when the text first shows it, so a long document costs no widgets until the reader reaches its tables.
 
-Column widths are fitted to the pane: the room is the widget's inner width less both margins and each column's gridlines and cell padding, every cell's words are measured in the face they paint in, and `table_colwidths` divides the room. A table that fits keeps its natural widths and does not stretch to the pane. Each cell's height follows the width it is given. A grid is fitted once it is built and again, on the next idle pass, whenever the widget is resized or the host calls `refit`; a reading-font change fires no resize, so the host calls `refit`, which measures the words afresh.
+The text widget is where a table lives. Its window's `-create` script carries everything the table was painted from, the parsed payload and the base tags, and the text keeps a record of every embedded window, built or not, elided or not, in document order. Search, spotlight, copy and refit all read the table from there. Nothing in tkdown follows the text's edits: an insert or delete above a table moves its window like any character, and deleting a table's text, `delete 1.0 end` included, removes the table and destroys its grid if built, with nothing left behind to clean up. A grid's frame is `w.tbl<N>`, its number never reused in the widget's life.
+
+Column widths are fitted to the pane: the room is the widget's inner width less both margins and each column's gridlines and cell padding, every cell's words are measured in the face they paint in, and `table_colwidths` divides the room. A table that fits keeps its natural widths and does not stretch to the pane. Each cell's height follows the width it is given. A grid is fitted once it is built and again, on the next idle pass, whenever the widget is resized or the host calls `refit`; a reading-font change fires no resize, so the host calls `refit`, which measures the words afresh. `refit` also repaints every built grid, so a host that re-inks `td-grid`, `td-spot` or `td-link` calls it too.
 
 Under the pointer a grid shows a copy button at its top-right, `-copystyle`'s ttk style, which copies the table to the clipboard as GFM text and shows a tick for a moment; a drag-selection cannot reach into an embedded window, so this is how a reader copies a table. The mouse wheel over a grid scrolls the text widget, with the delta it arrived with.
 
-A text search cannot see into an embedded window either, so the module searches for the host. `table_scan` returns `{mark excerpt}` for each table holding the needle, in document order, the excerpt being the first matching cell's text. The mark is an index like any other: a host can scroll to it, and `table_spotlight` with the same index paints that table's gridlines in `td-spot`'s `-background`, putting out the table lit before. The spotlight takes effect before the table is built, so a jump that scrolls a table into view for the first time shows it lit.
+A text search cannot see into an embedded window either, so the module searches for the host. `table_scan` returns `{index excerpt}` for each table holding the needle, built or not, in document order, the index being the table's window character and the excerpt the first matching cell's text as the reader sees it. The index is current when `table_scan` returns it: a host can scroll to it, and `table_spotlight` with the same index paints that table's gridlines in `td-spot`'s `-background`, putting out the table lit before. The spotlight takes effect before the table is built, so a jump that scrolls a table into view for the first time shows it lit.
 
-Before a full re-render, the host calls `forget`: it destroys every grid, unsets every `tbl#m<N>` mark, deletes the per-link tags, and empties both registries. Table and link numbers carry on across `forget`, so a number never names two tables or two links in one widget's life. A `delete 1.0 end` alone destroys the built grids along with their window characters, and `refit`, `table_scan` and `forget` each drop the record of any table whose window character is gone. A table leaving the record takes its mark with it, a built grid's on the idle pass after its window goes, so a pane repainted many times without `forget` does not pile up `tbl#m<N>` marks. Registration survives `forget`; the registry entry dies with the widget.
+`forget` is for the links: it deletes the per-link tags, empties the link registry, puts the spotlight out and cancels a pending refit. Tables need nothing from it, so a host re-rendering a pane may call it before its `delete 1.0 end` or after it; the order does not matter. Registration survives `forget`; the registry entry dies with the widget.
 
 ## LIMITS
 
-tkdown is not a full CommonMark implementation. A quote is one level deep: a `>` inside a quote is literal, and a quote's lines go through the inline pass only, so a list or heading inside a quote stays plain text. Links are inline only, with no reference-style `[text][ref]` definitions. Fences do not nest. A fence line is taken wherever it stands, so one indented under a list item ends the list; inside a quote it is quoted text. Underscores never mark emphasis. A column whose cells are all empty still takes one character's width in a grid. Anything outside the covered forms renders as literal text.
+tkdown is not a full CommonMark implementation. A quote is one level deep: a `>` inside a quote is literal, and a quote's lines go through the inline pass only, so a list or heading inside a quote stays plain text. Fences do not nest. A fence line is taken wherever it stands, so one indented under a list item ends the list; inside a quote it is quoted text. Underscores never mark emphasis. A column whose cells are all empty still takes one character's width in a grid. Anything outside the covered forms renders as literal text.
 
 tkdown also takes completed blocks, not a stream: each call paints a finished body in one pass. A host streaming content re-renders the affected block from its own model and repaints it whole.
+
+Escaping a backtick inside a code span is tkdown's one departure from CommonMark there, which has no escape inside a span; chat and transcript markdown writes a nested backtick that way. An escaped backtick counts only while the span can still close later on the same line, so a span ending in a backslash closes when no closer follows on its line, and a backslash before a run shorter than the span's opening, which could never close it, is always literal. The one miss is such a span followed by another span on the same line: in `` `cd\`, `cd~` `` the backslash-backtick reads as escaped, the first span runs on to the second span's opening backtick, and that span's closing backtick shows as a stray.
 
 ## REQUIREMENTS
 

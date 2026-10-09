@@ -252,7 +252,7 @@ update
 after idle {set ::idled 1}; vwait ::idled
 check "after close the table is exactly one grid" \
     [list [llength [winfo children $TT]] \
-          [llength [lsearch -all -regexp [$TT mark names] {^tbl#m}]] \
+          [expr {[llength [$TT dump -window 1.0 end]] / 3}] \
           [expr {[$TT search -- "| three | four |" 1.0 end] ne ""}]] {1 1 0}
 $TB destroy
 destroy .tb

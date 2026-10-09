@@ -15,8 +15,8 @@ set ROOT [file dirname [file dirname [file normalize [info script]]]]
 ::tcl::tm::path add [file join $ROOT vendor]
 package require leash
 package require streamtree
-package require streamdoc 1.2
-package require tkdown 2.0
+package require streamdoc 1.3
+package require tkdown 2.1
 package require logman
 set ::questlog_config_only 1; source [file join $ROOT questlog]
 foreach f {lib/debug.tcl lib/cost.tcl ui/theme.tcl lib/path.tcl lib/listfilter.tcl \

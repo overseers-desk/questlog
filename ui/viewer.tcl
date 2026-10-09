@@ -1,6 +1,6 @@
 package require Tcl 9
 package require Tk
-package require tkdown 2.0
+package require tkdown 2.1
 package require showman
 
 # Round-robin interleave of per-term hit-position lists, already ordered
@@ -65,6 +65,7 @@ oo::class create ::questlog::ui::Viewer {
     variable Cwd              ;# loaded session's working directory (first_cwd)
     variable CwdFull          ;# full ~-collapsed cwd string, kept for re-elision on resize
     variable Find             ;# find overlay frame
+    variable FindExcerpt      ;# streamdoc's index -> excerpt for its find_extra hits
     variable FindMatches      ;# list of indices of all current matches
     variable FindCur          ;# 0-based hit last shown (-1 = none shown yet); the
                               ;# readout and the band highlight both read it, and
@@ -544,16 +545,6 @@ oo::class create ::questlog::ui::Viewer {
         grid columnconfigure $Band 0 -weight 1
         grid rowconfigure    $Band 1 -weight 1
         # The band starts collapsed: it joins the body split only in band_show.
-
-        # A read-only reading view that supports drag-select and copy. The one
-        # Text class gesture it suppresses is <B1-Leave>, the sole entry into
-        # tk::TextAutoScan: a leave event delivered here while a button-1 press
-        # owned by another widget is still down would start an autoscan loop
-        # that no release is routed back to cancel, scrolling the view to the
-        # end and greying it over on its own. Breaking <B1-Leave> blocks that
-        # loop; <B1-Motion> selection, double/triple-click, Ctrl-C copy, and the
-        # default <B1-Enter>/<ButtonRelease-1> CancelRepeat all stay in place.
-        bind $Text <B1-Leave> break
 
         # Tags.
         # Section header (the "▼ date" line): grey, monospace, not bold.
@@ -1809,9 +1800,9 @@ oo::class create ::questlog::ui::Viewer {
     # A one-line, whitespace-collapsed excerpt of the match's line, for the
     # match index row.
     method find_excerpt {idx} {
-        # A table match excerpts from its recorded cell text: the widget
-        # holds only the window char at that mark, nothing to read.
-        if {[string match tbl#m* $idx]} {
+        # A find_extra hit (a table's cell, a link's url) excerpts from the
+        # text it recorded: a table's index holds only its window char.
+        if {[dict exists $FindExcerpt [$Text index $idx]]} {
             set line [next $idx]
         } else {
             # A hit on a record's first line would excerpt the role label too,

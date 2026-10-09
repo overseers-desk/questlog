@@ -71,13 +71,16 @@ update
 set Text [$V textwidget]
 set NS [info object namespace $V]
 
-# 1. Two tables painted: tkdown's marks and window segments.
-proc tblmarks {} {
-    lsort [lsearch -all -inline -glob [$::Text mark names] tbl#m*]
+# 1. Two tables painted: two embedded windows and their window segments.
+proc tblwins {} {
+    lmap {key name idx} [$::Text dump -window 1.0 end] { set idx }
 }
-check "two table marks" [tblmarks] {tbl#m1 tbl#m2}
+proc tblframes {} {
+    lsort [lmap f [$::Text window names] { regsub {.*\.} $f {} }]
+}
+check "two table windows" [llength [tblwins]] 2
 check "two td-tblwin segments" [llength [$Text tag ranges td-tblwin]] 4
-foreach m [tblmarks] {
+foreach m [tblwins] {
     $Text see $m
     update idletasks
     update
@@ -86,10 +89,11 @@ set F1 $Text.tbl1
 check "table 1 built" [winfo exists $F1] 1
 
 # 4. The opening search found the table-only token: its match record is the
-#    table's mark and its band excerpt reads from the cell, not the widget.
+#    index of the table's window, and its band excerpt reads from the cell,
+#    not the widget.
 check "band search finds the table token" \
-    [expr {[lsearch [set ${NS}::FindMatches] tbl#m1] >= 0}] 1
-set mi [lsearch [set ${NS}::FindMatches] tbl#m1]
+    [expr {[lsearch [set ${NS}::FindMatches] [lindex [tblwins] 0]] >= 0}] 1
+set mi [lsearch [set ${NS}::FindMatches] [lindex [tblwins] 0]]
 check "band excerpt is the cell text" \
     [expr {[string first "TBLTOKEN" [lindex [set ${NS}::MatchLabels] $mi]] >= 0}] 1
 
@@ -110,7 +114,7 @@ set ${NS}::FindVar "tbltoken"
 $V find_next
 update idletasks
 check "Ctrl-F finds the table-only token" \
-    [expr {[lsearch [set ${NS}::FindMatches] tbl#m1] >= 0}] 1
+    [expr {[lsearch [set ${NS}::FindMatches] [lindex [tblwins] 0]] >= 0}] 1
 check "Ctrl-F jump lights the table" [$F1 cget -background] $FIND
 
 # 8. The message copy still yields the raw markdown body, pipes intact.
@@ -119,21 +123,21 @@ $V menu_copy_message
 check "message copy keeps the raw table source" \
     [expr {[string first "| Name | **Qty** | Price |" [clipboard get]] >= 0}] 1
 
-# 9. Reload: tkdown forgets the previous document's tables, so their frames
-#    and marks go and only the new document's tables stand.
+# 9. Reload: the previous document's tables go with its text, frames and
+#    all, and only the new document's tables stand.
 $V show $JP 0 {}
 update idletasks
 update
-foreach m [tblmarks] {
+foreach m [tblwins] {
     $Text see $m
     update idletasks
     update
 }
-check "table marks do not accumulate" [tblmarks] {tbl#m3 tbl#m4}
+check "table frames do not accumulate" [tblframes] {tbl3 tbl4}
 check "td-tblwin segments do not accumulate" [llength [$Text tag ranges td-tblwin]] 4
 set stale 0
 foreach w [winfo children $Text] {
-    if {[regexp {\.tbl(\d+)$} $w -> n] && "tbl#m$n" ni [tblmarks]} { incr stale }
+    if {[regexp {\.(tbl\d+)$} $w -> n] && $n ni [tblframes]} { incr stale }
 }
 check "no orphaned table frames" $stale 0
 

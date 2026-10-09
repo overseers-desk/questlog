@@ -1,8 +1,8 @@
 package require Tcl 9
 package require Tk
 package require logman
-package require streamdoc 1.2
-package require tkdown 2.0
+package require streamdoc 1.3
+package require tkdown 2.1
 package provide showman 0.1
 
 # showman - a Claude Code session transcript as a foldable, searchable

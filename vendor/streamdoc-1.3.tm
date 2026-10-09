@@ -1,6 +1,6 @@
 package require Tcl 9
 package require Tk
-package provide streamdoc 1.2
+package provide streamdoc 1.3
 
 namespace eval ::streamdoc {}
 
@@ -41,24 +41,21 @@ namespace eval ::streamdoc {}
 # Content enters through the door, inside `batch`: append_open / emit /
 # emit_window / append_close. While a region is open the door feeds it,
 # popping any standing summary line first and re-appending it at close
-# (the summary transaction, internal to the base class); between regions
-# the door appends chrome at the tail. `savepoint` takes a left-gravity mark at the append
-# point and `rewind mark` deletes from it to the open region's end, so a
-# caller can re-emit a provisional tail; the summary pop is built on it.
+# (the summary pop, internal to the base class); between regions the door
+# appends chrome at the tail. `savepoint` and `rewind` let a caller re-emit
+# a provisional tail; the summary pop is a rewind to the summary's mark.
 #
 # Glyphs: the first char of a header line and of a summary line is a state
 # glyph from the -glyphs pair. fold/unfold and detail_show/hide swap it with
 # a same-length replace, so every index downstream stays true. A first char
 # that is not one of the pair is left alone; glyphless headers work.
 #
-# Anti-self-scroll: `batch` brackets a streamed mutation with anchor_save /
+# View anchoring: `batch` brackets a streamed mutation with anchor_save /
 # anchor_restore, so content landing below a parked reader never moves the
 # line they are on. With -autofollow on and the reader at the tail, the view
-# latches there and follows appends (the tail -f contract). Only the reader
-# lets go of the latch: their own scrolling, `scroll_to`, a fold or detail
-# toggle, or a reveal away from the last line. Growth they did not ask for
-# leaves it held and re-follows. <<AtBottom>> / <<LeftBottom>> fire on the
-# host frame at the edges, and `follow` jumps back to the tail.
+# latches there and follows appends (the tail -f contract; "the tail latch"
+# below says what lets go). <<AtBottom>> / <<LeftBottom>> fire on the host
+# frame at the edges, and `follow` jumps back to the tail.
 #
 # Find (Ctrl-F): a bar under the text whose entry collects every literal
 # hit, folded and hidden text included, tags it `find`, and steps through
@@ -87,6 +84,7 @@ oo::class create ::streamdoc::StreamDoc {
     variable NextSave     ;# savepoint mark counter
     variable Latched      ;# 1 while the view is held on the tail
     variable FollowAfter  ;# the pending idle re-follow, "" none
+    variable Pressed      ;# 1 while a button-1 press that began on the text is held
     variable AnchorY      ;# the anchored line's y, for its pixel offset
     variable WasAtBottom  ;# last observed bottom state, edges fire the events
     variable Find         ;# the find bar's frame
@@ -105,11 +103,10 @@ oo::class create ::streamdoc::StreamDoc {
     # is well-formed, starts on a line start, and the regions are ordered and
     # disjoint down the buffer; a standing summary mark sits inside its region;
     # the open region's end rides the buffer tail. A violation means a mark
-    # desynced - the class of fault behind a fold that swallows its neighbour.
-    # Gated on the STREAMDOC_AUDIT env var so production pays nothing; when on,
-    # it logs the first violation with the call chain and latches off, naming
-    # the primitive that broke the contract. Every primitive calls this at its
-    # tail.
+    # desynced. Gated on the STREAMDOC_AUDIT env var so production pays
+    # nothing; when on, it logs the first violation with the call chain and
+    # latches off, naming the primitive that broke the contract. Every
+    # primitive calls this at its tail.
     method check_invariant {where} {
         if {![info exists ::env(STREAMDOC_AUDIT)]} return
         if {[info exists ::STREAMDOC_AUDIT_TRIPPED]} return
@@ -161,9 +158,8 @@ oo::class create ::streamdoc::StreamDoc {
     # ---- widget options ----------------------------------------------
     #
     # The base class takes its host-specific look as options; its body holds no
-    # host references. The lot: the document font, the closed/open glyph
-    # pair, and the tail latch. Defaults are a plain Tk look so the widget
-    # runs standalone; a host overrides them through `configure` before the
+    # host references. Defaults are a plain Tk look so the widget runs
+    # standalone; a host overrides them through `configure` before the
     # body is built.
     method default_opts {} {
         return [dict create \
@@ -251,16 +247,33 @@ oo::class create ::streamdoc::StreamDoc {
     # late, a resize of the text - leaves it held and re-follows on idle. It
     # takes hold through `follow`, or at a batch that finds the view on the
     # tail.
+    #
+    # The view moves only on the reader's own action, and an autoscan no
+    # press on this text started is not the reader's. The Text class starts
+    # one on <B1-Leave> and stops it on <B1-Enter> or the release; a press
+    # held from another widget keeps those under that widget's grab, and a
+    # stray <B1-Leave> would scroll on to the end of the document. So the
+    # leave reaches the class only while Pressed. A release that went to
+    # another grab leaves Pressed set; the pointer back over the text with
+    # button 1 up (mask 256) clears it.
     method latch_seed {} {
         if {[info exists Latched]} return
         set Latched 0
         set FollowAfter ""
+        set Pressed 0
         set tag [my bindtag $Text]
         foreach ev {<MouseWheel> <Shift-MouseWheel> <Button-4> <Button-5>
                 <TouchpadScroll> <Prior> <Next> <Up> <Down> <Home> <End>} {
             catch {bind $tag $ev [list [self] latch_release]}
         }
         bind $tag <Configure> [list [self] refollow_later]
+        set pressed [my varname Pressed]
+        bind $tag <ButtonPress-1> [list set $pressed 1]
+        bind $tag <ButtonRelease-1> [list set $pressed 0]
+        foreach ev {<Enter> <Motion>} {
+            bind $tag $ev "if {!(%s & 256)} [list [list set $pressed 0]]"
+        }
+        bind $tag <B1-Leave> "if {!\[[list set $pressed]\]} break"
     }
     method latch_release {} { set Latched 0 }
     method latched {} {
@@ -318,9 +331,40 @@ oo::class create ::streamdoc::StreamDoc {
         return $w
     }
 
+    # A host may keep the widgets past the instance; nothing streamdoc bound
+    # on them may call it after. That includes the wrapper round a built
+    # window's -create script: Tk runs the script again if the window is
+    # destroyed, so every window gets the host's script back, built or not.
     destructor {
         if {[info exists FollowAfter] && $FollowAfter ne ""} {
             after cancel $FollowAfter
+        }
+        foreach v {Text Top} {
+            if {![info exists $v] || ![winfo exists [set $v]]} continue
+            set tag streamdoc[set $v]
+            foreach ev [bind $tag] { bind $tag $ev {} }
+        }
+        if {[info exists Find] && [winfo exists $Find]} { destroy $Find }
+        if {[info exists Top] && [winfo exists $Top.sb]
+                && [$Top.sb cget -command] eq [list [self] scroll_to]} {
+            $Top.sb configure -command {}
+        }
+        if {![info exists Text] || ![winfo exists $Text]} return
+        if {[$Text cget -yscrollcommand] eq [list [self] on_yscroll]} {
+            $Text configure -yscrollcommand {}
+        }
+        foreach {- w i} [$Text dump -window 1.0 end] {
+            if {$w ne "" && [winfo exists $w]} {
+                set watch [list [self] window_grew $w]
+                set lines [split [bind $w <Configure>] \n]
+                bind $w <Configure> [join [lsearch -all -inline -exact \
+                    -not $lines $watch] \n]
+            }
+            set c [$Text window cget $i -create]
+            if {[string is list $c] && [llength $c] == 3
+                    && [lrange $c 0 1] eq [list [self] window_realise]} {
+                $Text window configure $i -create [lindex $c 2]
+            }
         }
     }
 
@@ -414,11 +458,8 @@ oo::class create ::streamdoc::StreamDoc {
         if {[$Text compare $body < $e]} { $Text tag add f#$n $body $e }
     }
 
-    # Close the open region. The summary is written through summary_sync,
-    # the same appender the streaming path uses. The fold tag then goes over
-    # the whole body in one definitive add, which subsumes any incremental
-    # fold-during-stream adds. Last the end mark's gravity is sealed; the
-    # next insert at the tail would otherwise drag the mark along.
+    # Close the open region. The fold range goes on whole here, covering
+    # whatever part a fold during the stream laid.
     method region_close {} {
         if {$Cur < 0} return
         set n $Cur
@@ -690,12 +731,10 @@ oo::class create ::streamdoc::StreamDoc {
         for {set n 0} {$n < [llength $Regions]} {incr n} { my unfold $n }
     }
 
-    # Swap a 1-char state glyph in place: a same-length replace, so every
-    # index downstream stays true. Re-applies the tags found under the old
-    # glyph (minus a transient sel) and runs under a saved and restored
-    # -state, because callers arrive from click handlers on the disabled
-    # document as often as from inside a batch. A char outside the glyph pair
-    # is left alone, so a glyphless header line never loses its first char.
+    # Swap a 1-char state glyph with a same-length replace, so every index
+    # downstream stays true. Callers arrive from click handlers on the
+    # disabled document as often as from inside a batch, hence the -state
+    # round trip. A glyphless header line keeps its first char.
     method swap_glyph {idx glyph} {
         set cur [$Text get $idx]
         lassign [my opt glyphs] closed open
@@ -765,16 +804,19 @@ oo::class create ::streamdoc::StreamDoc {
     # relayout that invalidates the metrics. Hence: drain idletasks, then
     # sync, then scroll. Click-latency price, paid only on a jump.
     #
-    # align `see` scrolls the least that brings the index into view; `top`
-    # puts its line on the top edge, or as near as the widget scrolls when
-    # the index sits in the last screenful. on_reveal runs ahead of all of
-    # it, so a window the scroll realises is born in the state the host set.
+    # align `see` is Tk's: a target near the view scrolls just into it, a
+    # far one is centred. `top` puts the head of the index's line on the top
+    # edge, so a hit deep in a wrapped line still shows where the line
+    # begins, or as near as the widget scrolls in the last screenful.
+    # on_reveal runs ahead of all of it, so a window the scroll realises is
+    # born in the state the host set.
     #
     # A jump is the reader's: it lets go of the tail latch, unless its target
     # sits on the last line, where a held latch stays held.
     method reveal {idx {align see}} {
-        if {$align ni {see top}} {
-            error "bad align \"$align\": must be see or top"
+        set how [dict create see [list see $idx] top [list yview "$idx linestart"]]
+        if {![dict exists $how $align]} {
+            error "bad align \"$align\": must be [join [dict keys $how] { or }]"
         }
         my on_reveal $idx
         set held [expr {[my latched]
@@ -787,11 +829,7 @@ oo::class create ::streamdoc::StreamDoc {
         set Latched $held
         update idletasks
         $Text sync
-        if {$align eq "top"} {
-            $Text yview $idx
-        } else {
-            $Text see $idx
-        }
+        $Text {*}[dict get $how $align]
     }
 
     # ---- find (Ctrl-F) ------------------------------------------------------
@@ -871,7 +909,10 @@ oo::class create ::streamdoc::StreamDoc {
     # order. Existing `find` tags stay, so a host collecting term by term
     # keeps them all lit. -elide finds folded and hidden text; reveal opens
     # it on the jump. A hit starting under a find_chrome_tags tag is skipped.
-    # find_extra hits are merged in by index and keep their excerpts.
+    # find_extra hits are merged in by resolved index and keep their
+    # excerpts; an index named twice counts once, under its first excerpt. A
+    # text hit drops any excerpt an earlier collect left at its index, so it
+    # always excerpts its line.
     method collect {term nocase} {
         if {$term eq ""} { return [list] }
         set opts [list -elide -count len]
@@ -891,10 +932,13 @@ oo::class create ::streamdoc::StreamDoc {
             }
             if {$chrome} continue
             $Text tag add find $m "$m + ${len}c"
+            dict unset FindExcerpt $m
             lappend hits $m
         }
         foreach hit [my find_extra $term $nocase] {
             lassign $hit idx excerpt
+            set idx [$Text index $idx]
+            if {$idx in $hits} continue
             dict set FindExcerpt $idx $excerpt
             lappend hits $idx
         }
@@ -903,12 +947,15 @@ oo::class create ::streamdoc::StreamDoc {
     }
 
     # The bar's collection: a fresh match set for one term, under the case
-    # box, nothing shown yet.
+    # box, nothing shown yet. The entry takes the term too, so a step after
+    # a host's call walks this set instead of recollecting for the entry's
+    # old text.
     method collect_matches {pattern} {
         $Text tag remove find 1.0 end
         set FindExcerpt [dict create]
         set FindMatches [my collect $pattern $FindNocase]
         set FindCur -1
+        set FindVar $pattern
         set LastFindVar $pattern
         set LastNocase $FindNocase
         my update_find_readout
@@ -971,6 +1018,7 @@ oo::class create ::streamdoc::StreamDoc {
     method find_bound {} { return end }
     method find_extra {term nocase} { return [list] }
     method find_excerpt {idx} {
+        set idx [$Text index $idx]
         if {[dict exists $FindExcerpt $idx]} { return [dict get $FindExcerpt $idx] }
         return [$Text get "$idx linestart" "$idx lineend"]
     }

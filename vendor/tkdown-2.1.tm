@@ -1,22 +1,29 @@
 package require Tcl 9
-package provide tkdown 2.0
+package provide tkdown 2.1
 
 namespace eval ::tkdown {
-    namespace export parse_inline segment_code_fences segment_blockquotes \
+    namespace export parse_inline resolve_refs segment_code_fences segment_blockquotes \
         segment_headings segment_rules segment_images segment_tables \
         segment_lists table_to_markdown table_colwidths ensure_fonts tags \
         runs prose body emit_prose emit_code emit_quote emit_table \
         emit_image emit_rule refit forget unregister table_scan \
         table_spotlight link_at link_scan
     # Emit state, one entry per registered widget: widget path -> {fonts
-    # margin copystyle quotetags image_cmd on_block tables nextid spot fittok
-    # links nextlink}, tables being id -> the table's entry (see the grid
-    # section), spot the lit table's id, fittok the pending re-fit's after
-    # token and links td-link<N> tag -> url.
+    # margin copystyle quotetags image_cmd on_block link_cmd nextid spot
+    # fittok links nextlink}, nextid the last table id given, spot the lit
+    # table's id or "", fittok the pending re-fit's after token and links
+    # td-link<N> tag -> url. The tables themselves live in the text (see the
+    # grid section).
     variable widgets [dict create]
+    # A press on a link awaiting its release, per text widget (a pane or a
+    # grid's cell): {tag x y}, tag "" once the press can open nothing. See
+    # link_release.
+    variable pressed
+    # A widget's own cursor while the pointer is over one of its links.
+    variable cursors
     # table_colwidths' search state, keyed by a per-call id; see colwidths_memo.
     variable colmemo
-    # Numbers body's per-block marks.
+    # Numbers the per-block marks block sets.
     variable blockseq 0
 }
 
@@ -30,12 +37,12 @@ namespace eval ::tkdown {
 # thematic breaks, image lines, nested lists, links, code spans, and
 # asterisk emphasis - and leaves the rest as literal text.
 #
-# The parse half (the segment_* splitters and parse_inline) is pure Tcl,
-# needs no Tk, and runs under a bare tclsh. The splitters are layered: each
-# sees a body the ones above it have already peeled, in the order body
-# walks them. The prose emitter splits lists and lifts headings itself;
-# segment_headings is for a host that wants a document's headings as
-# segments of its own. The emit half paints onto a widget registered with
+# The parse half (the segment_* splitters, resolve_refs and parse_inline)
+# is pure Tcl, needs no Tk, and runs under a bare tclsh. The splitters are
+# layered: each sees a body the ones above it have already peeled, in the
+# order body walks them. The prose emitter splits lists and lifts headings
+# itself; segment_headings is for a host that wants a document's headings
+# as segments of its own. The emit half paints onto a widget registered with
 # `tags`, and every td-* tag it configures is font-only or geometry-only.
 # Colour always comes from the base tags the host stacks underneath or from
 # td-* tags the host inks, so the module owns faces and layout and the host
@@ -67,6 +74,112 @@ proc ::tkdown::segment_code_fences {body} {
         lappend segs [list [expr {$incode ? "code" : "prose"}] [join $buf "\n"]]
     }
     return $segs
+}
+
+# Rewrite a document's reference links as inline links: every definition
+# line `[label]: url "title"` is removed and every use of a defined label,
+# `[text][label]`, `[label][]` or a bare `[label]`, becomes `[text](url)`
+# (`![alt](url)` for an image). Labels match without case or runs of
+# whitespace. A `[^note]` label is a footnote and is left, definition and use.
+# Fenced lines and backtick spans are untouched, and a use whose label has no
+# definition stays literal. Definitions are document-scoped and usually sit
+# at the end, so the host runs this over the whole document before any
+# splitting; body does not, since a host painting one section at a time
+# would hand it a text without its definitions. A CRLF document's lines are
+# matched without their "\r" and keep it in the result.
+proc ::tkdown::resolve_refs {text} {
+    set defs [dict create]
+    set kept [list]
+    set infence 0
+    foreach line [split $text "\n"] {
+        set bare [string trimright $line "\r"]
+        if {[::tkdown::fence_line $bare]} {
+            set infence [expr {!$infence}]
+        } elseif {!$infence && [regexp {^ {0,3}\[([^\]]+)\]:[ \t]*(<[^>]*>|[^\s<]\S*)(?:[ \t]+(?:"[^"]*"|'[^']*'|\([^)]*\)))?[ \t]*$} \
+                $bare -> label url]
+                && [string index $label 0] ne "^"} {
+            set url [string trim $url "<>"]
+            set key [::tkdown::ref_key $label]
+            if {$url ne "" && ![dict exists $defs $key]} { dict set defs $key $url }
+            continue
+        }
+        lappend kept $line
+    }
+    if {[dict size $defs] == 0} { return [join $kept "\n"] }
+    set out [list]
+    set infence 0
+    foreach line $kept {
+        set bare [string trimright $line "\r"]
+        if {[::tkdown::fence_line $bare]} {
+            set infence [expr {!$infence}]
+        } elseif {!$infence} {
+            set line [::tkdown::ref_line $bare $defs][string range $line [string length $bare] end]
+        }
+        lappend out $line
+    }
+    return [join $out "\n"]
+}
+
+# A label's lookup key: case folded, runs of whitespace one space.
+proc ::tkdown::ref_key {label} {
+    return [string tolower [regsub -all {\s+} [string trim $label] " "]]
+}
+
+# Rewrite the references on one line against defs, passing over backtick
+# spans and backslash escapes. A url with whitespace or unbalanced parens
+# goes in <angle brackets>, where neither ends the destination.
+proc ::tkdown::ref_line {line defs} {
+    set br {\[((?:[^\[\]\\]|\\.)*)\]}
+    set out ""
+    set i 0
+    set n [string length $line]
+    while {$i < $n} {
+        set ch [string index $line $i]
+        if {$ch eq "\\"} {
+            append out [string range $line $i [expr {$i + 1}]]
+            incr i 2
+            continue
+        }
+        if {$ch eq "`"} {
+            regexp {^`+} [string range $line $i end] run
+            set close [string first $run $line [expr {$i + [string length $run]}]]
+            set end [expr {$close < 0 ? $i + [string length $run]
+                                      : $close + [string length $run]}]
+            append out [string range $line $i [expr {$end - 1}]]
+            set i $end
+            continue
+        }
+        set img [expr {$ch eq "!" && [string index $line $i+1] eq "\["}]
+        if {$img || $ch eq "\["} {
+            set b [expr {$img ? $i + 1 : $i}]
+            if {[regexp "^$br" [string range $line $b end] m text]
+                    && [string index $text 0] ne "^"} {
+                set next [expr {$b + [string length $m]}]
+                set label ""
+                set end $next
+                if {[regexp "^$br" [string range $line $next end] m2 l2]} {
+                    set label [expr {$l2 eq "" ? $text : $l2}]
+                    set end [expr {$next + [string length $m2]}]
+                } elseif {[string index $line $next] ne "("} {
+                    set label $text
+                }
+                set key [::tkdown::ref_key $label]
+                if {$label ne "" && [string index $label 0] ne "^"
+                        && [dict exists $defs $key]} {
+                    set url [dict get $defs $key]
+                    if {[regexp {\s} $url] || [::tkdown::paren_debt $url]} {
+                        set url <$url>
+                    }
+                    append out [expr {$img ? "!" : ""}] "\[$text\]($url)"
+                    set i $end
+                    continue
+                }
+            }
+        }
+        append out $ch
+        incr i
+    }
+    return $out
 }
 
 # Split a body into ordered {kind text} segments, where kind is
@@ -336,8 +449,8 @@ proc ::tkdown::delim_align {cell} {
 
 # Split one table row into trimmed cells. Splits on unescaped "|"; a
 # pipe-bounded row drops its empty leading/trailing cell; "\|" becomes a
-# literal "|" in the cell (parse_inline's escape map covers only \` \* \\, so
-# a surviving "\|" would leak a backslash into the rendered cell).
+# literal "|" in the cell (the split has to see the escape before any inline
+# scan does).
 proc ::tkdown::split_row {line} {
     set line [string trim [string trimright $line "\r"]]
     set cells [list]
@@ -547,9 +660,8 @@ proc ::tkdown::colwidths_cost {memo widths} {
     return [tcl::mathop::+ 0 {*}$tallest]
 }
 
-# The starting allocations: CSS auto layout (the excess over the floors
-# shared in proportion to each column's max-content less its floor), the
-# max-contents scaled to avail, and a greedy climb from the floors.
+# Three starting points because the search is local: a single seed can sit
+# in a basin the others escape.
 proc ::tkdown::colwidths_seeds {memo mins maxs avail} {
     set summin [tcl::mathop::+ {*}$mins]
     set summax [tcl::mathop::+ {*}$maxs]
@@ -770,34 +882,54 @@ proc ::tkdown::segment_lists {text} {
 #   - code spans (one or two backticks) win over everything else, so
 #     asterisks, links and URLs inside `code` stay literal;
 #   - [text](url) is a link whose chunk is the raw text between the brackets,
-#     emphasis markers and all; a bare http:// or https:// URL, or one in
-#     <angle brackets>, is a link whose chunk is the URL itself;
+#     emphasis markers and all; a bare http:// or https:// URL, or an
+#     <angle-bracket autolink> (see inline_links), is a link whose chunk is
+#     the URL itself;
 #   - an inline ![alt](path) shows its alt text in the surrounding style;
 #   - emphasis is asterisks only (*, **, ***): underscores stay literal, so
 #     snake_case, __init__ and the like are left alone;
 #   - an opener needs a non-space char after it and a closer a non-space char
 #     before it (flanking), so "3 * 4" and "* item" stay literal;
-#   - \`, \* and \\ escape a literal backtick, asterisk and backslash; every
-#     other backslash is kept verbatim (paths and regex carry many).
+#   - outside a code span, a backslash before any ASCII punctuation character
+#     escapes it (so \$, \_, \# and \[ read literally, and \` opens no code
+#     span); a backslash before anything else is kept verbatim (paths and
+#     regex carry many). A code span is literal, backslashes included, so
+#     `a\.b` shows a\.b, with one exception: a backslash before a backtick
+#     run at least the span's opening length escapes that many backticks
+#     while the span can still close later on the same line, so `a \`b\` c`
+#     shows a `b` c, `x \`y\`` shows x `y` and ``a \`` b`` shows a `` b.
+#     Otherwise the backslash is literal and the run may close the span, so
+#     `C:\Drivers\` shows C:\Drivers\, and `` \` `` shows \` since a single
+#     backtick cannot close a double span. A span may close on a later line.
+#     The cost: in `cd\`, `cd~` the first span runs on to the third
+#     backtick. (CommonMark has no escape inside a code span; chat and
+#     transcript markdown writes a nested backtick this way.)
 proc ::tkdown::parse_inline {text} {
-    # Escapes go to private-use sentinels so the marker scans never meet them;
-    # any stray sentinel in the raw input is dropped first. Links are lifted
-    # out to a sentinel of their own before the emphasis scan.
+    # Escapes in the prose go to private-use sentinels so the marker scans
+    # never meet them; any stray sentinel in the raw input is dropped first.
+    # Links are lifted out to a sentinel of their own before the emphasis scan.
     set bt \uE000 ;# escaped backtick  -> literal `
     set st \uE001 ;# escaped asterisk  -> literal *
     set bs \uE002 ;# escaped backslash -> literal backslash
     set lk \uE003 ;# a link held aside, in order
-    set text [string map [list $bt {} $st {} $bs {} $lk {}] $text]
-    set text [string map [list {\`} $bt {\*} $st {\\} $bs] $text]
+    set text [regsub -all {[\uE000-\uE003\uE100-\uE17F]} $text {}]
 
-    # Pass A: peel off code spans; the gaps between them are prose.
+    # Pass A: peel off code spans; the gaps between them are prose. An escape
+    # pair in the prose is stepped over whole, so an escaped backtick never
+    # opens a span.
     set segs [list]
     set buf ""
     set i 0
     set n [string length $text]
     while {$i < $n} {
-        if {[string index $text $i] ne "`"} {
-            append buf [string index $text $i]
+        set ch [string index $text $i]
+        if {$ch eq "\\" && [regexp {[!-/:-@\[-`\x7b-~]} [string index $text $i+1]]} {
+            append buf [string range $text $i $i+1]
+            incr i 2
+            continue
+        }
+        if {$ch ne "`"} {
+            append buf $ch
             incr i
             continue
         }
@@ -806,7 +938,10 @@ proc ::tkdown::parse_inline {text} {
         set fence [expr {$j - $i}]
         set close -1
         if {$fence <= 2} {
-            set close [::tkdown::inline_close_code $text $j $fence]
+            if {![info exists scans($fence)]} {
+                set scans($fence) [::tkdown::inline_code_closes $text $fence]
+            }
+            set close [lindex $scans($fence) 0 $j]
         }
         if {$close < 0} {
             append buf [string range $text $i [expr {$j - 1}]]
@@ -814,7 +949,7 @@ proc ::tkdown::parse_inline {text} {
             continue
         }
         if {$buf ne ""} { lappend segs prose $buf; set buf "" }
-        set content [string range $text $j [expr {$close - 1}]]
+        set content [::tkdown::inline_code_text $text $j $close  [lindex $scans($fence) 1] $fence]
         if {[string length $content] >= 2 && [string index $content 0] eq " " \
                 && [string index $content end] eq " " \
                 && [string trim $content] ne ""} {
@@ -825,14 +960,16 @@ proc ::tkdown::parse_inline {text} {
     }
     if {$buf ne ""} { lappend segs prose $buf }
 
-    # Pass B: links out, emphasis within each prose gap, links back in where
-    # their sentinels landed; unescape every emitted chunk.
+    # Pass B: escapes to sentinels, links out, emphasis within each prose gap,
+    # links back in where their sentinels landed; unescape every emitted chunk.
     set runs [list]
     foreach {kind chunk} $segs {
         if {$kind eq "code"} {
-            lappend runs [list code [::tkdown::inline_unescape $chunk]]
+            lappend runs [list code $chunk]
             continue
         }
+        set chunk [regsub -all -command {\\([!-/:-@\[-`\x7b-~])} $chunk \
+            ::tkdown::inline_escape]
         lassign [::tkdown::inline_links $chunk] chunk links
         set k 0
         foreach run [::tkdown::inline_emphasis $chunk] {
@@ -865,19 +1002,60 @@ proc ::tkdown::parse_inline {text} {
 }
 
 
-# Index of the closing backtick run of exactly `fence` backticks at or after
-# `from`, or -1. Runs of a different length are literal content, so skipped.
-proc ::tkdown::inline_close_code {s from fence} {
+# Where a code span of `fence` backticks closes, for each place its content
+# could start, and which backslashes in it escape: {closes escapes}, closes a
+# list over 0..n+1 of the index of the closing run or -1, escapes a list over
+# 0..n-1 of 1 at each escaping backslash. A backtick run of another length is
+# literal. A backslash before a run of at least `fence` backticks escapes
+# `fence` of them when the scan from after those finds a closer before the
+# next newline, the rest of the run then read afresh; otherwise the
+# backslash is literal and the run is examined as a closer.
+# Built right to left, so each lookahead is one lookup, and once per text,
+# since where a scan ends does not depend on where the span opened.
+proc ::tkdown::inline_code_closes {s fence} {
     set n [string length $s]
-    set i $from
-    while {$i < $n} {
-        if {[string index $s $i] ne "`"} { incr i; continue }
-        set k $i
-        while {$k < $n && [string index $s $k] eq "`"} { incr k }
-        if {($k - $i) == $fence} { return $i }
-        set i $k
+    set closes [lrepeat [expr {$n + 2}] -1]
+    set escapes [lrepeat $n 0]
+    set run 0
+    set eol $n
+    for {set i [expr {$n - 1}]} {$i >= 0} {incr i -1} {
+        set ch [string index $s $i]
+        if {$ch eq "`"} {
+            incr run
+            lset closes $i [expr {$run == $fence ? $i : [lindex $closes $i+$run]}]
+            continue
+        }
+        if {$ch eq "\n"} { set eol $i }
+        set c [lindex $closes $i+1]
+        if {$ch eq "\\" && $run >= $fence} {
+            set after [lindex $closes [expr {$i + 1 + $fence}]]
+            if {$after >= 0 && $after < $eol} {
+                set c $after
+                lset escapes $i 1
+            }
+        }
+        lset closes $i $c
+        set run 0
     }
-    return -1
+    return [list $closes $escapes]
+}
+
+# A code span's content from `from` to its closer at `end`, as painted: each
+# escape (by inline_code_closes) as `fence` backticks without its backslash,
+# every other character as written.
+proc ::tkdown::inline_code_text {s from end escapes fence} {
+    set text ""
+    set i $from
+    while {$i < $end} {
+        if {[lindex $escapes $i]} {
+            append text [string repeat ` $fence]
+            incr i [expr {$fence + 1}]
+        } else {
+            append text [string index $s $i]
+            incr i
+        }
+    }
+    return $text
 }
 
 # Split one prose run into {style chunk} runs on asterisk emphasis. plain runs
@@ -940,15 +1118,37 @@ proc ::tkdown::inline_close_emph {s from runlen} {
     return -1
 }
 
+# The sentinel for an escaped punctuation character: the three the emphasis
+# and code scans care most about have fixed ones, every other ASCII
+# punctuation character maps to \uE100 plus its code point.
+proc ::tkdown::inline_escape {match ch} {
+    switch -- $ch {
+        ` { return \uE000 }
+        * { return \uE001 }
+        \\ { return \uE002 }
+    }
+    scan $ch %c code
+    return [format %c [expr {0xE100 + $code}]]
+}
+
 proc ::tkdown::inline_unescape {s} {
-    return [string map [list \uE000 "`" \uE001 "*" \uE002 "\\"] $s]
+    set s [string map [list \uE000 "`" \uE001 "*" \uE002 "\\"] $s]
+    return [regsub -all -command {[\uE100-\uE17F]} $s {apply {{m} {
+        scan $m %c code
+        format %c [expr {$code - 0xE100}]
+    }}}]
 }
 
 # Lift the links out of one prose gap. Returns {s links}: s is the gap with
 # each link replaced by the \uE003 sentinel and each inline image by its alt
 # text (asterisks escaped, so the alt reads literally), and links is the
 # {text url} pairs in sentinel order. A bare URL must not follow a letter or
-# digit, and loses a trailing punctuation run (url_trim).
+# digit, holds no space, < or >, and loses a trailing punctuation run
+# (url_trim). An angle-bracket autolink <scheme:rest> has a scheme of 2 to 32
+# characters (a letter, then letters, digits, + . or -) and either a rest
+# starting "//" or the scheme mailto, tel or sms; the rest holds no space, <
+# or >. Any other <...>, as in <xs:element> or std::vector<std::string>, is
+# text.
 proc ::tkdown::inline_links {s} {
     set out ""
     set links [list]
@@ -975,12 +1175,17 @@ proc ::tkdown::inline_links {s} {
                 set i $next
                 continue
             }
-        } elseif {$ch eq "<" && [regexp {^<(https?://[^\s<>]+)>} $rest m url]} {
+        } elseif {$ch eq "<"
+                && [regexp {^<([A-Za-z][A-Za-z0-9+.-]{1,31}):([^\s<>]+)>} $rest \
+                    m scheme tail]
+                && ([string range $tail 0 1] eq "//"
+                    || [string tolower $scheme] in {mailto tel sms})} {
+            set url "$scheme:$tail"
             lappend links [list $url $url]
             append out \uE003
             incr i [string length $m]
             continue
-        } elseif {$ch eq "h" && [regexp {^https?://[^\s<]+} $rest m]
+        } elseif {$ch eq "h" && [regexp {^https?://[^\s<>]+} $rest m]
                 && ![string is alnum -strict [string index $s [expr {$i - 1}]]]} {
             set url [::tkdown::url_trim $m]
             if {[regexp {://.} $url]} {
@@ -999,8 +1204,9 @@ proc ::tkdown::inline_links {s} {
 # If a [text](dest) link starts at index i of s, return {text url next},
 # where next is the index just past its closing paren; else "". Brackets in
 # the text and parens in the destination nest. The destination is a URL,
-# optionally in <angle brackets>, optionally followed by a quoted title,
-# which is dropped; an empty URL or anything else after it is no link.
+# optionally in <angle brackets> (inside which parens are only text),
+# optionally followed by a quoted title, which is dropped; an empty URL or
+# anything else after it is no link.
 proc ::tkdown::inline_link_at {s i} {
     set n [string length $s]
     set depth 0
@@ -1010,8 +1216,12 @@ proc ::tkdown::inline_link_at {s i} {
         if {$c eq "\]" && [incr depth -1] == 0} break
     }
     if {$j >= $n || [string index $s [expr {$j + 1}]] ne "("} { return "" }
-    set depth 0
-    for {set k [expr {$j + 1}]} {$k < $n} {incr k} {
+    set k [expr {$j + 1}]
+    if {[regexp {^\s*<[^<>]*>} [string range $s [expr {$j + 2}] end] m]} {
+        set k [expr {$j + 1 + [string length $m]}]
+    }
+    set depth 1
+    for {incr k} {$k < $n} {incr k} {
         set c [string index $s $k]
         if {$c eq "("} { incr depth }
         if {$c eq ")" && [incr depth -1] == 0} break
@@ -1025,6 +1235,16 @@ proc ::tkdown::inline_link_at {s i} {
     if {$url eq ""} { return "" }
     return [list [string range $s [expr {$i + 1}] [expr {$j - 1}]] $url \
         [expr {$k + 1}]]
+}
+
+# Whether url's parens fail to nest: a ")" with no "(" open before it, or a
+# "(" left open at the end.
+proc ::tkdown::paren_debt {url} {
+    set depth 0
+    foreach c [split [regsub -all {[^()]} $url {}] ""] {
+        if {[incr depth [expr {$c eq "(" ? 1 : -1}]] < 0} { return 1 }
+    }
+    return [expr {$depth != 0}]
 }
 
 # A bare URL with its trailing punctuation dropped, GFM's autolink trim: any
@@ -1069,13 +1289,14 @@ proc ::tkdown::ensure_fonts {} {
 # fonts is a dict of Tk font names: body bold italic bolditalic mono are
 # required; h1 h2 h3 are optional heading faces falling back to bold. Extra
 # keys, monobold among them, are kept for the host but nothing here draws
-# with them. The options are those refit re-sets: -margin {left right} (or one n for both) is the host's base margin
-# in screen distance, -copystyle the ttk style of a grid's copy button,
-# -quotetags the tags the quote emitter lays over a quote, -image_cmd the
-# command turning an image path into a Tk image, -on_block the command told
-# of each block body paints. Registration opens the widget's table and link
-# registries; the entry dies with the widget. Registering a widget again
-# keeps the tables and links it already holds.
+# with them. The options are those refit re-sets: -margin {left right} (or
+# one n for both) is the host's base margin in screen distance, -copystyle
+# the ttk style of a grid's copy button, -quotetags the tags the quote
+# emitter lays over a quote, -image_cmd the command turning an image path
+# into a Tk image, -on_block the command told of each block body paints,
+# -link_cmd the command a click on a link calls with its url. Registration
+# opens the widget's link registry; the entry dies with the widget.
+# Registering a widget again keeps its links and its table and link counts.
 proc ::tkdown::tags {w fonts args} {
     variable widgets
     foreach k {body bold italic bolditalic mono} {
@@ -1084,11 +1305,10 @@ proc ::tkdown::tags {w fonts args} {
         }
     }
     set reg [dict create fonts $fonts margin {0 0} copystyle Copy.TButton \
-        quotetags {} image_cmd {} on_block {} \
-        tables [dict create] nextid 0 spot "" fittok "" \
-        links [dict create] nextlink 0]
+        quotetags {} image_cmd {} on_block {} link_cmd {} \
+        nextid 0 spot "" fittok "" links [dict create] nextlink 0]
     if {[dict exists $widgets $w]} {
-        foreach k {tables nextid spot fittok links nextlink} {
+        foreach k {nextid spot fittok links nextlink} {
             dict set reg $k [dict get $widgets $w $k]
         }
     }
@@ -1114,6 +1334,7 @@ proc ::tkdown::tags {w fonts args} {
     }
     $w tag configure td-rule -font TdRule
     ::tkdown::margins $w
+    ::tkdown::link_bind $w
     # A grid's frame, cells and copy button share one bindtag per pane: the
     # wheel goes on to w with its delta untouched (a cell would otherwise
     # take it and the pane stop scrolling under the pointer), and crossing
@@ -1151,9 +1372,10 @@ proc ::tkdown::options {w reg opts} {
             -quotetags { dict set reg quotetags $val }
             -image_cmd { dict set reg image_cmd $val }
             -on_block  { dict set reg on_block $val }
+            -link_cmd  { dict set reg link_cmd $val }
             default {
                 error "tkdown: unknown option \"$opt\": want -margin,\
-                    -copystyle, -quotetags, -image_cmd or -on_block"
+                    -copystyle, -quotetags, -image_cmd, -on_block or -link_cmd"
             }
         }
     }
@@ -1204,13 +1426,24 @@ proc ::tkdown::list_indent {w tag depth} {
     }
 }
 
-# Drop the widget from the registry, its grids and their bindings with it.
+# Drop the widget from the registry, its link tags and the bindings tkdown
+# made for it with it. A grid already built stays in the text, inert.
 proc ::tkdown::unregister {w} {
     variable widgets
+    variable pressed
+    variable cursors
     if {![dict exists $widgets $w]} return
     ::tkdown::forget $w
+    if {[winfo exists $w]} {
+        dict set widgets $w link_cmd ""
+        ::tkdown::link_bind $w
+    }
     set bt tkdown.grid$w
     foreach ev [bind $bt] { bind $bt $ev {} }
+    foreach v {pressed cursors} {
+        array unset $v $w
+        array unset $v $w.*
+    }
     dict unset widgets $w
 }
 
@@ -1222,8 +1455,8 @@ proc ::tkdown::with_margin {tags} {
 # Insert one prose run's inline spans at idx. Each styled chunk stacks its
 # td-* face over baseTags, so only the -font changes and the host's colour
 # and margins hold. A link's text also carries td-link, for the host's ink
-# and bindings, and a tag of its own, td-link<N>, which the registry maps to
-# its url (link_at, link_scan).
+# and the click bindings, and a tag of its own, td-link<N>, which the
+# registry maps to its url (link_at, link_scan, link_release).
 proc ::tkdown::runs {w idx text baseTags} {
     variable widgets
     set baseTags [::tkdown::with_margin $baseTags]
@@ -1393,22 +1626,21 @@ proc ::tkdown::insert_at {w idx} {
 }
 
 # Re-set any of tags' options, then bring the pane up to date with them:
-# margins re-derived, copy buttons restyled, tables whose window has gone
-# from the text dropped, and every built grid re-fitted on the next idle
+# margins re-derived, the link bindings set or taken off, copy buttons
+# restyled, and every built grid repainted and re-fitted on the next idle
 # pass. A resize needs only the re-fit, which the pane's <Configure>
-# schedules by itself; a host calls refit after a font change or to change
-# an option.
+# schedules by itself; a host calls refit after a font change, after
+# re-inking td-link, td-grid or td-spot, or to change an option.
 proc ::tkdown::refit {w args} {
     variable widgets
     if {![dict exists $widgets $w]} return
     dict set widgets $w [::tkdown::options $w [dict get $widgets $w] $args]
     ::tkdown::margins $w
+    ::tkdown::link_bind $w
     set style [::tkdown::copy_style $w]
-    dict for {id t} [dict get $widgets $w tables] {
-        set f [dict get $t frame]
+    foreach f [::tkdown::table_frames $w] {
         if {[winfo exists $f.copy]} { $f.copy configure -style $style }
     }
-    ::tkdown::table_prune $w
     ::tkdown::refit_later $w
 }
 
@@ -1426,37 +1658,42 @@ proc ::tkdown::refit_run {w} {
     variable widgets
     if {![dict exists $widgets $w]} return
     dict set widgets $w fittok ""
-    dict for {id t} [dict get $widgets $w tables] {
-        if {![winfo exists [dict get $t frame]]} continue
-        ::tkdown::table_paint $w $id
-        ::tkdown::table_fit $w $id
+    if {![winfo exists $w]} return
+    foreach f [::tkdown::table_frames $w] {
+        lassign [::tkdown::table_spec $w $f] id payload baseTags
+        if {$id eq ""} continue
+        ::tkdown::table_paint $w $id $baseTags
+        ::tkdown::table_fit $w $id $payload
     }
 }
 
-# Drop w's tables and links: destroy every grid, unset every tbl#m<N> mark,
-# delete every td-link<N> tag, empty both registries. A `delete 1.0 end`
-# alone leaves the link tags behind, and an unbuilt table's mark until
-# refit or table_scan drops its record. Registration survives; call before a re-render. Table and
-# link numbers are not reset, so a number never names two things.
+# Drop the links tkdown painted in w: delete every td-link<N> tag and
+# empty the link registry; put the spotlight out and cancel a pending
+# re-fit. A `delete 1.0 end` leaves the link tags behind, so a host calls
+# this around a re-render, before the delete or after it alike. Tables need
+# nothing from it, the text dropping a deleted table with its window.
+# Registration survives, and link numbers are not reset, so a number never
+# names two links.
 proc ::tkdown::forget {w} {
     variable widgets
+    variable pressed
+    variable cursors
     if {![dict exists $widgets $w]} return
     after cancel [dict get $widgets $w fittok]
-    dict for {id t} [dict get $widgets $w tables] {
-        after cancel [dict get $t fbtok]
-        destroy [dict get $t frame]
-    }
+    dict set widgets $w fittok ""
+    ::tkdown::table_spotlight $w ""
     if {[winfo exists $w]} {
-        foreach m [$w mark names] {
-            if {[string match tbl#m* $m]} { $w mark unset $m }
-        }
         set tags [dict keys [dict get $widgets $w links]]
         if {[llength $tags]} { $w tag delete {*}$tags }
     }
-    dict set widgets $w tables [dict create]
     dict set widgets $w links [dict create]
-    dict set widgets $w spot ""
-    dict set widgets $w fittok ""
+    # A grid deleted with the pointer over a link, or mid-press, leaves its
+    # cell's entries behind.
+    foreach v {pressed cursors} {
+        foreach t [array names $v] {
+            if {![winfo exists $t]} { unset ${v}($t) }
+        }
+    }
 }
 
 # The url of the link under idx, or "".
@@ -1473,8 +1710,9 @@ proc ::tkdown::link_at {w idx} {
 # Search the links' urls, which the text does not show unless the link's
 # text is its url. One hit per link whose url holds the needle and whose
 # text does not, a match in the text being the host's own search's to find,
-# in document order: {index url}, index being the start of the link's text.
-# A link whose text is gone leaves the registry here.
+# in document order: {index url}, index being the start of the link's text,
+# or for a link in a table's cell the table's window character. A link
+# whose text is gone leaves the registry here.
 proc ::tkdown::link_scan {w needle nocase} {
     variable widgets
     if {![dict exists $widgets $w] || $needle eq ""} { return {} }
@@ -1490,22 +1728,155 @@ proc ::tkdown::link_scan {w needle nocase} {
         }
         set shown ""
         foreach {a b} $ranges { append shown [$w get $a $b] }
-        if {$nocase} {
-            set url_hay [string tolower $url]
-            set shown [string tolower $shown]
-        } else {
-            set url_hay $url
-        }
-        if {[string first $needle $url_hay] >= 0
-                && [string first $needle $shown] < 0} {
+        if {[::tkdown::url_hit $needle $nocase $url $shown]} {
             lappend out [list $at $url]
         }
     }
-    return [lsort -command [list ::tkdown::mark_order $w] $out]
+    foreach t [::tkdown::table_list $w] {
+        lassign $t idx id payload
+        foreach cell [concat {*}[dict get $payload rows]] {
+            foreach run [::tkdown::parse_inline $cell] {
+                lassign $run style shown url
+                if {$style eq "link"
+                        && [::tkdown::url_hit $needle $nocase $url $shown]} {
+                    lappend out [list $idx $url]
+                }
+            }
+        }
+    }
+    return [lsort -command [list ::tkdown::index_order $w] $out]
 }
 
-# The default prose emitter: one prose run split into peer blocks that
-# re-join on the newlines the splits consumed. A list run paints through
+# Whether url holds needle and shown does not, needle already folded when
+# nocase is set.
+proc ::tkdown::url_hit {needle nocase url shown} {
+    if {$nocase} {
+        set url [string tolower $url]
+        set shown [string tolower $shown]
+    }
+    return [expr {[string first $needle $url] >= 0
+        && [string first $needle $shown] < 0}]
+}
+
+proc ::tkdown::index_order {w a b} {
+    set a [lindex $a 0]
+    set b [lindex $b 0]
+    if {[$w compare $a < $b]} { return -1 }
+    if {[$w compare $a > $b]} { return 1 }
+    return 0
+}
+
+# Bind -link_cmd's click and the hand cursor on w's td-link, or, with no
+# command, take tkdown's bindings off it, leaving the tag to the host, and
+# give w its own cursor back should the pointer be over a link. A grid's
+# cells bind their links at build and ask for -link_cmd on the click.
+proc ::tkdown::link_bind {w} {
+    variable widgets
+    variable pressed
+    set on [expr {[dict get $widgets $w link_cmd] ne ""}]
+    foreach {ev script} [::tkdown::link_scripts $w $w ""] {
+        if {$on} {
+            $w tag bind td-link $ev $script
+        } elseif {[$w tag bind td-link $ev] eq $script} {
+            $w tag bind td-link $ev {}
+        }
+    }
+    if {!$on} {
+        ::tkdown::link_hand $w $w 0
+        unset -nocomplain pressed($w)
+    }
+}
+
+# The event-script pairs a link in text widget t (the pane w or one of its
+# cells) is bound with; url is a cell link's, held in its release script
+# with its "%" doubled so the binding's substitution gives it back intact.
+# A second or third press in place arrives as a Double or Triple press,
+# not a plain one, and records nothing, so a double-click opens the link
+# once.
+proc ::tkdown::link_scripts {w t url} {
+    set rel "[list ::tkdown::link_release $w $t] %x %y"
+    if {$t ne $w} { append rel " " [string map {% %%} [list $url]] }
+    return [list \
+        <ButtonPress-1>        [list ::tkdown::link_press $t %x %y] \
+        <Double-ButtonPress-1> [list ::tkdown::link_unpress $t] \
+        <Triple-ButtonPress-1> [list ::tkdown::link_unpress $t] \
+        <B1-Motion>            [list ::tkdown::link_drag $t %x %y] \
+        <ButtonRelease-1>      $rel \
+        <Enter>                [list ::tkdown::link_hand $w $t 1] \
+        <Leave>                [list ::tkdown::link_hand $w $t 0]]
+}
+
+# A press on a link in text widget t, the pane or a cell: note the link's
+# own tag, td-link<N> or lnk<N>, and where. The click is the release, so a
+# press that starts a drag-selection opens nothing.
+proc ::tkdown::link_press {t x y} {
+    variable pressed
+    set tag [lsearch -inline -regexp [$t tag names @$x,$y] {^(td-link|lnk)\d+$}]
+    set pressed($t) [list $tag $x $y]
+}
+
+proc ::tkdown::link_unpress {t} {
+    variable pressed
+    unset -nocomplain pressed($t)
+}
+
+# The pointer moving with the button down: once it is more than 4 pixels
+# from the press, the press is a drag and opens nothing, wherever it ends.
+proc ::tkdown::link_drag {t x y} {
+    variable pressed
+    if {![info exists pressed($t)]} return
+    lassign $pressed($t) tag px py
+    if {abs($x - $px) > 4 || abs($y - $py) > 4} {
+        set pressed($t) [list "" $px $py]
+    }
+}
+
+# The release after a press on a link calls -link_cmd with the link's url
+# when it lands on the same link within 4 pixels of the press, the pointer
+# having kept within them throughout (link_drag). Distance rather than the
+# sel tag decides, because a selection the press itself left (a
+# double-click's word) is no drag. url is a cell's link's; in the pane the
+# registry holds it.
+proc ::tkdown::link_release {w t x y {url ""}} {
+    variable widgets
+    variable pressed
+    if {![info exists pressed($t)]} return
+    lassign $pressed($t) tag px py
+    unset pressed($t)
+    if {$tag eq "" || abs($x - $px) > 4 || abs($y - $py) > 4} return
+    if {$tag ni [$t tag names @$x,$y]} return
+    if {![dict exists $widgets $w]} return
+    set cmd [dict get $widgets $w link_cmd]
+    if {$t eq $w} { set url [dict getdef [dict get $widgets $w links] $tag ""] }
+    if {$cmd ne "" && $url ne ""} { {*}$cmd $url }
+}
+
+# The hand cursor over a link while -link_cmd is set, and t's own cursor
+# back when the pointer leaves it.
+proc ::tkdown::link_hand {w t on} {
+    variable widgets
+    variable cursors
+    if {!$on} {
+        if {[info exists cursors($t)]} {
+            $t configure -cursor $cursors($t)
+            unset cursors($t)
+        }
+        return
+    }
+    if {![dict exists $widgets $w] || [dict get $widgets $w link_cmd] eq ""} return
+    if {![info exists cursors($t)]} { set cursors($t) [$t cget -cursor] }
+    $t configure -cursor hand2
+}
+
+# w's cursor as the host set it, the hand over a link aside.
+proc ::tkdown::own_cursor {w} {
+    variable cursors
+    if {[info exists cursors($w)]} { return $cursors($w) }
+    return [$w cget -cursor]
+}
+
+# The default prose emitter: one prose run split into list runs, heading
+# lines and plain text, joined again on the newlines the splits consumed. A list run paints through
 # emit_list; a heading line, ATX (atx_line) or a line over its setext
 # underline (setext_level), lifts out under td-h1/h2/h3 (levels 4-6 render
 # as h3); the rest is plain text, inline spans parsed inside each. A run
@@ -1644,24 +2015,28 @@ proc ::tkdown::emit_rule {w idx baseTags} {
 # A table is one embedded window: a frame of gridded text cells that wrap
 # their words, so a table wider than the pane folds its long cells instead
 # of running off the edge. A cell is a text widget because one cell can mix
-# faces (bold, `code`). The window builds itself only when the text first
-# shows it (-create), so a long document costs no widgets until it is read;
-# everything search and spotlight need is recorded at emit time instead:
-# the payload, the cells' text as the reader sees it, and a mark on the
-# window character. Per table the registry keeps
-#   mark frame payload base flat lit fbtok cells
-# where mark is tbl#m<N> on the window character, frame the grid's path
-# (built or not), payload the parsed {align rows}, base the baseTags the
-# table was painted under, flat the cells' text with inline markers
-# dropped, for scan, lit whether it is the spotlit table, fbtok the copy
-# button's pending ✓ reset token, and cells the cell widget paths, empty
-# until built.
+# faces (bold, `code`) and links. The window builds itself only when the
+# text first shows it, so a long document costs no widgets until it is read.
+#
+# The text widget is the table registry. A table's -create script,
+#   ::tkdown::table_realize w id payload baseTags
+# carries everything it was painted from: id numbers its frame w.tbl<id>
+# (from the entry's nextid, so a frame name is never reused), payload is the
+# parsed {align rows}, and baseTags the tags it was painted under. The text
+# records every embedded window, built or not, elided or not: `dump -window`
+# lists them in document order with their indices, `window cget -create`
+# gives the script back (table_spec), and deleting the text drops the record
+# and destroys a built frame. The text substitutes %W and %% in the script
+# before running it, so the script is stored with every "%" doubled and
+# table_spec halves them again. Search, spotlight, copy and refit read what
+# they need from there, so nothing here follows the text's edits. The one
+# table state outside the text is the entry's spot, the lit table's id.
 
-# The default table emitter: paint a parsed GFM table {align rows} at idx,
-# the window character under td-tblwin (its margins, raised over the base
-# tags' own) and baseTags (so a host's fold or elide tag reaches the table
-# too), the left-gravity mark tbl#m<N> on it, then its newline under
-# baseTags. A table met mid-line starts a line of its own.
+# The default table emitter: paint a parsed GFM table {align rows} at idx
+# as one embedded window, its character under td-tblwin (its margins, raised
+# over the base tags' own) and baseTags (so a host's fold or elide tag
+# reaches the table too), then its newline under baseTags. A table met
+# mid-line starts a line of its own.
 proc ::tkdown::emit_table {w idx payload baseTags} {
     variable widgets
     set id [dict get $widgets $w nextid]
@@ -1673,46 +2048,65 @@ proc ::tkdown::emit_table {w idx payload baseTags} {
         $w insert $idx "\n" $baseTags
         set at [$w index "$at +1c"]
     }
-    $w window create $idx -create [list ::tkdown::table_realize $w $id] \
-        -align top -pady 2 -stretch 0
+    $w window create $idx -align top -pady 2 -stretch 0 -create [string map \
+        {% %%} [list ::tkdown::table_realize $w $id $payload $baseTags]]
     foreach tag [concat $baseTags [list td-tblwin]] { $w tag add $tag $at }
     $w tag raise td-tblwin
-    $w mark set tbl#m$id $at
-    $w mark gravity tbl#m$id left
     $w insert $idx "\n" $baseTags
-    set flat [lmap row [dict get $payload rows] {
-        lmap cell $row {
-            set s ""
-            foreach run [::tkdown::parse_inline $cell] { append s [lindex $run 1] }
-            set s
-        }
-    }]
-    dict set widgets $w tables $id [dict create mark tbl#m$id frame $w.tbl$id \
-        payload $payload base $baseTags flat $flat lit 0 fbtok "" cells {}]
+}
+
+# What the window at idx (an index, or the window's path once built) was
+# painted from, {id payload baseTags} out of its -create script; "" when idx
+# holds no grid of w's.
+proc ::tkdown::table_spec {w idx} {
+    if {[catch {$w window cget $idx -create} script]} { return "" }
+    set script [string map {%% %} $script]
+    if {[lindex $script 0] ne "::tkdown::table_realize"
+            || [lindex $script 1] ne $w} { return "" }
+    return [lrange $script 2 end]
+}
+
+# w's tables in document order, built or not: {index id payload baseTags}
+# each, index being the window character's.
+proc ::tkdown::table_list {w} {
+    set out [list]
+    foreach {key name idx} [$w dump -window 1.0 end] {
+        set spec [::tkdown::table_spec $w $idx]
+        if {$spec ne ""} { lappend out [list $idx {*}$spec] }
+    }
+    return $out
+}
+
+# w's built grids, their frames' paths.
+proc ::tkdown::table_frames {w} {
+    lmap f [$w window names] {
+        set id [::tkdown::table_of $w $f]
+        if {$id eq "" || $f ne "$w.tbl$id" || ![winfo exists $f]} continue
+        set f
+    }
 }
 
 # The window's -create: build table id's frame and return its path, or ""
-# for a table the registry no longer holds. The frame's background is the
-# gridline colour, showing through the one-pixel pads around each cell.
-proc ::tkdown::table_realize {w id} {
+# once w is no longer registered. The frame's background is the gridline
+# colour, showing through the one-pixel pads around each cell.
+proc ::tkdown::table_realize {w id payload baseTags} {
     variable widgets
-    if {![dict exists $widgets $w tables $id]} { return "" }
-    set t [dict get $widgets $w tables $id]
-    set f [dict get $t frame]
+    if {![dict exists $widgets $w]} { return "" }
+    set f $w.tbl$id
     if {[winfo exists $f]} { return $f }
     set fonts [dict get $widgets $w fonts]
     frame $f -borderwidth 0 -highlightthickness 0
-    set align [dict get $t payload align]
+    set align [dict get $payload align]
     set ncol [llength $align]
     set cells [list]
     set r 0
-    foreach row [dict get $t payload rows] {
+    foreach row [dict get $payload rows] {
         for {set j 0} {$j < $ncol} {incr j} {
             set c $f.c${r}x$j
             text $c -wrap word -width 1 -height 1 -borderwidth 0 \
                 -highlightthickness 0 -padx 4 -pady 2 -takefocus 0 \
                 -font [dict get $fonts body]
-            ::tkdown::table_fill_cell $c $fonts [lindex $row $j] \
+            ::tkdown::table_fill_cell $w $c $fonts [lindex $row $j] \
                 [expr {$r == 0}] [lindex $align $j]
             grid $c -row $r -column $j -sticky nsew -padx 1 -pady 1
             bind $c <Configure> [list ::tkdown::table_cell_height $c]
@@ -1721,32 +2115,42 @@ proc ::tkdown::table_realize {w id} {
         incr r
     }
     ttk::button $f.copy -style [::tkdown::copy_style $w] -text "⧉" -width 2 \
-        -takefocus 0 -cursor hand2 -command [list ::tkdown::table_copy $w $id]
+        -takefocus 0 -cursor hand2 \
+        -command [list ::tkdown::table_copy $w $f.copy $payload]
     foreach x [concat [list $f $f.copy] $cells] {
         bindtags $x [linsert [bindtags $x] 1 tkdown.grid$w]
     }
-    bind $f <Destroy> [list ::tkdown::table_destroyed $w $id %W]
-    dict set widgets $w tables $id cells $cells
-    ::tkdown::table_paint $w $id
-    after idle [list ::tkdown::table_fit $w $id]
+    ::tkdown::table_paint $w $id $baseTags
+    after idle [list ::tkdown::table_fit $w $id $payload]
     return $f
 }
 
 # Fill one cell from its markdown: the inline runs under per-cell face
 # tags, a header cell bold throughout (hb is configured last, so it
-# outranks the span faces), an aligned column justified by al.
-proc ::tkdown::table_fill_cell {c fonts cell header align} {
+# outranks the span faces), an aligned column justified by al. A link's
+# text lies under lk, inked by table_paint and showing the hand, and under
+# lnk<N>, a tag of the cell's own whose click bindings hold the url.
+proc ::tkdown::table_fill_cell {w c fonts cell header align} {
+    $c tag configure lk
     foreach {tg k} {b bold i italic bi bolditalic cd mono hb bold} {
         $c tag configure $tg -font [dict get $fonts $k]
     }
     if {$align ne "left"} { $c tag configure al -justify $align }
+    set n 0
     foreach run [::tkdown::parse_inline $cell] {
-        lassign $run style chunk
+        lassign $run style chunk url
         switch -- $style {
             code       { set tags cd }
             bold       { set tags b }
             italic     { set tags i }
             bolditalic { set tags bi }
+            link {
+                set tags [list lk lnk[incr n]]
+                foreach {ev script} [::tkdown::link_scripts $w $c $url] {
+                    $c tag bind [expr {$ev in {<Enter> <Leave>} ? "lk" : "lnk$n"}] \
+                        $ev $script
+                }
+            }
             default    { set tags {} }
         }
         $c insert end $chunk $tags
@@ -1757,26 +2161,28 @@ proc ::tkdown::table_fill_cell {c fonts cell header align} {
 }
 
 # Colour a built grid from the pane as it stands: the frame in the gridline
-# (or spotlight) colour, each cell in the pane's background and cursor and
-# the ink of the table's base tags.
-proc ::tkdown::table_paint {w id} {
+# (or, lit, the spotlight) colour, each cell in the pane's background and
+# cursor and the ink of the table's base tags, its links in td-link's ink.
+proc ::tkdown::table_paint {w id baseTags} {
     variable widgets
-    set t [dict get $widgets $w tables $id]
-    set f [dict get $t frame]
+    set f $w.tbl$id
     set bg [::tkdown::grid_colour $w]
-    if {[dict get $t lit]} {
+    if {[dict get $widgets $w spot] eq $id} {
         set spot [::tkdown::tag_ink $w td-spot -background]
         if {$spot ne ""} { set bg $spot }
     }
     $f configure -background $bg
     set fg [$w cget -foreground]
-    foreach tag [dict get $t base] {
+    foreach tag $baseTags {
         set ink [::tkdown::tag_ink $w $tag -foreground]
         if {$ink ne ""} { set fg $ink; break }
     }
-    foreach c [dict get $t cells] {
+    set link [list -foreground [::tkdown::tag_ink $w td-link -foreground] \
+        -underline [::tkdown::tag_ink $w td-link -underline]]
+    foreach c [grid slaves $f] {
         $c configure -background [$w cget -background] -foreground $fg \
-            -cursor [$w cget -cursor]
+            -cursor [::tkdown::own_cursor $w]
+        $c tag configure lk {*}$link
     }
 }
 
@@ -1834,28 +2240,15 @@ proc ::tkdown::table_hover_check {w x} {
 }
 
 # The copy button's action: the table as GFM onto the clipboard, the
-# embedded window's text being out of reach of a drag-selection.
-proc ::tkdown::table_copy {w id} {
-    variable widgets
-    if {![dict exists $widgets $w tables $id]} return
-    set t [dict get $widgets $w tables $id]
+# embedded window's text being out of reach of a drag-selection, and a tick
+# on the button for 700 ms.
+proc ::tkdown::table_copy {w btn payload} {
     clipboard clear -displayof $w
-    clipboard append -displayof $w -- \
-        [::tkdown::table_to_markdown [dict get $t payload]]
-    set f [dict get $t frame]
-    if {![winfo exists $f.copy]} return
-    after cancel [dict get $t fbtok]
-    $f.copy configure -text "✓"
-    dict set widgets $w tables $id fbtok \
-        [after 700 [list ::tkdown::table_copy_reset $w $id]]
-}
-
-proc ::tkdown::table_copy_reset {w id} {
-    variable widgets
-    if {![dict exists $widgets $w tables $id]} return
-    dict set widgets $w tables $id fbtok ""
-    set f [dict get $widgets $w tables $id frame]
-    if {[winfo exists $f.copy]} { $f.copy configure -text "⧉" }
+    clipboard append -displayof $w -- [::tkdown::table_to_markdown $payload]
+    $btn configure -text "✓"
+    after 700 [list apply {{b} {
+        if {[winfo exists $b]} { $b configure -text "⧉" }
+    }} $btn]
 }
 
 # Size a built grid's columns to the pane. avail is the pane's inner width
@@ -1864,15 +2257,14 @@ proc ::tkdown::table_copy_reset {w id} {
 # column widths, pinned as grid minsizes. The cells' <Configure> bindings
 # turn the new widths into wrapped heights. Words are measured afresh on
 # every fit, so a refit after a font change sees the new faces.
-proc ::tkdown::table_fit {w id} {
+proc ::tkdown::table_fit {w id payload} {
     variable widgets
-    if {![dict exists $widgets $w tables $id]} return
-    set t [dict get $widgets $w tables $id]
-    set f [dict get $t frame]
+    if {![dict exists $widgets $w]} return
+    set f $w.tbl$id
     if {![winfo exists $f]} return
     if {[winfo width $w] <= 1} return
     set fonts [dict get $widgets $w fonts]
-    set ncol [llength [dict get $t payload align]]
+    set ncol [llength [dict get $payload align]]
     lassign [dict get $widgets $w margin] l r
     set inset [expr {2 * ([winfo pixels $w [$w cget -borderwidth]] \
         + [winfo pixels $w [$w cget -highlightthickness]] \
@@ -1881,7 +2273,7 @@ proc ::tkdown::table_fit {w id} {
     if {$avail < $ncol} { set avail $ncol }
     set rows [list]
     set header 1
-    foreach row [dict get $t payload rows] {
+    foreach row [dict get $payload rows] {
         lappend rows [lmap cell $row { ::tkdown::cell_tokens $fonts $cell $header }]
         set header 0
     }
@@ -1939,101 +2331,53 @@ proc ::tkdown::table_cell_height {c} {
     if {[$c cget -height] != $dl} { $c configure -height $dl }
 }
 
-# A grid's <Destroy>, whether by forget or by its window character being
-# deleted: the table leaves the registry and its mark is unset. The text may
-# be partway through deleting the window character, so the mark goes on the
-# next idle pass rather than from inside the delete.
-proc ::tkdown::table_destroyed {w id x} {
-    variable widgets
-    if {![dict exists $widgets $w tables $id]} return
-    if {[dict get $widgets $w tables $id frame] ne $x} return
-    after cancel [dict get $widgets $w tables $id fbtok]
-    after idle [list ::tkdown::mark_unset $w \
-        [dict get $widgets $w tables $id mark]]
-    dict unset widgets $w tables $id
-    if {[dict get $widgets $w spot] eq $id} { dict set widgets $w spot "" }
-}
-
-proc ::tkdown::mark_unset {w m} {
-    if {[winfo exists $w]} { $w mark unset $m }
-}
-
-# Drop the tables whose mark no longer sits on their window character, the
-# mark unset with them: the text holding them was deleted before the grid
-# was ever built, so no <Destroy> came to say so.
-proc ::tkdown::table_prune {w} {
-    variable widgets
-    dict for {id t} [dict get $widgets $w tables] {
-        set m [dict get $t mark]
-        if {![catch {$w dump -window $m} d]} {
-            if {[llength $d] == 3 && [lindex $d 1] in [list "" [dict get $t frame]]} {
-                continue
-            }
-            $w mark unset $m
-        }
-        after cancel [dict get $t fbtok]
-        destroy [dict get $t frame]
-        dict unset widgets $w tables $id
-        if {[dict get $widgets $w spot] eq $id} { dict set widgets $w spot "" }
-    }
+# A cell's text as the reader sees it, its inline markers dropped.
+proc ::tkdown::cell_text {cell} {
+    set s ""
+    foreach run [::tkdown::parse_inline $cell] { append s [lindex $run 1] }
+    return $s
 }
 
 # Search the tables' text, which a `$w search` cannot see inside an
-# embedded window. One hit per table, in document order: {mark excerpt},
-# the excerpt being the first matching cell's text as the reader sees it.
+# embedded window. One hit per table, built or not, in document order:
+# {index excerpt}, index being the window character's and the excerpt the
+# first matching cell's text as the reader sees it.
 proc ::tkdown::table_scan {w needle nocase} {
     variable widgets
     if {![dict exists $widgets $w] || $needle eq ""} { return {} }
-    ::tkdown::table_prune $w
     if {$nocase} { set needle [string tolower $needle] }
     set out [list]
-    dict for {id t} [dict get $widgets $w tables] {
-        set hit ""
-        foreach cell [concat {*}[dict get $t flat]] {
-            set hay [expr {$nocase ? [string tolower $cell] : $cell}]
-            if {[string first $needle $hay] >= 0} { set hit $cell; break }
-        }
-        if {$hit ne ""} { lappend out [list [dict get $t mark] $hit] }
-    }
-    return [lsort -command [list ::tkdown::mark_order $w] $out]
-}
-
-proc ::tkdown::mark_order {w a b} {
-    set a [lindex $a 0]
-    set b [lindex $b 0]
-    if {[$w compare $a < $b]} { return -1 }
-    if {[$w compare $a > $b]} { return 1 }
-    return 0
-}
-
-# Light the table whose mark sits at idx and put out the one lit before;
-# any other idx, "" included, only puts it out. A lit grid's frame takes
-# td-spot's background, so the gridlines and border read as the hit. The
-# flag is set before the grid exists, so a jump that scrolls a table into
-# view for the first time builds it lit.
-proc ::tkdown::table_spotlight {w idx} {
-    variable widgets
-    if {![dict exists $widgets $w]} return
-    set target ""
-    if {$idx ne ""} {
-        dict for {id t} [dict get $widgets $w tables] {
-            if {![catch {$w compare [dict get $t mark] == $idx} same] && $same} {
-                set target $id
+    foreach t [::tkdown::table_list $w] {
+        lassign $t idx id payload
+        foreach cell [concat {*}[dict get $payload rows]] {
+            set s [::tkdown::cell_text $cell]
+            set hay [expr {$nocase ? [string tolower $s] : $s}]
+            if {[string first $needle $hay] >= 0} {
+                lappend out [list $idx $s]
                 break
             }
         }
     }
-    set prev [dict get $widgets $w spot]
-    if {$prev ne "" && $prev ne $target && [dict exists $widgets $w tables $prev]} {
-        dict set widgets $w tables $prev lit 0
-        if {[winfo exists [dict get $widgets $w tables $prev frame]]} {
-            ::tkdown::table_paint $w $prev
-        }
+    return $out
+}
+
+# Light the table whose window character is at idx and put out the one lit
+# before; any other idx, "" included, only puts it out. A lit grid's frame
+# takes td-spot's background, so the gridlines and border read as the hit.
+# The light is held by table id, so a jump that scrolls a table into view
+# for the first time builds it lit.
+proc ::tkdown::table_spotlight {w idx} {
+    variable widgets
+    if {![dict exists $widgets $w]} return
+    set target ""
+    if {$idx ne "" && [winfo exists $w]} {
+        set target [lindex [::tkdown::table_spec $w $idx] 0]
     }
+    set prev [dict get $widgets $w spot]
     dict set widgets $w spot $target
-    if {$target eq ""} return
-    dict set widgets $w tables $target lit 1
-    if {[winfo exists [dict get $widgets $w tables $target frame]]} {
-        ::tkdown::table_paint $w $target
+    foreach id [lsort -unique [list $prev $target]] {
+        set f $w.tbl$id
+        if {$id eq "" || ![winfo exists $f]} continue
+        ::tkdown::table_paint $w $id [lindex [::tkdown::table_spec $w $f] 2]
     }
 }
