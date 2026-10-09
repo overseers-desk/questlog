@@ -1801,12 +1801,12 @@ oo::class create ::questlog::ui::SessionList {
         set tags [list [list childbar 0 [string length $spine]]]
         set atype [dict get $c agent_type]
         set fixed [font measure QLList $spine]
+        set sep_w [font measure QLList "  "]
+        set atype [my truncate_px $atype [expr {$max - $fixed - $sep_w}] QLBold]
         if {$atype ne ""} {
-            set atype [my truncate_px $atype [expr {$max - $fixed}] QLBold]
             lappend tags [list slug [string length $subj] [string length $atype]]
-            append subj $atype
-            append subj "  "
-            incr fixed [expr {[font measure QLBold $atype] + [font measure QLList "  "]}]
+            append subj $atype "  "
+            incr fixed [expr {[font measure QLBold $atype] + $sep_w}]
         }
         append subj [my truncate_px [dict get $c label] \
                          [expr {$max - $fixed}] QLList]

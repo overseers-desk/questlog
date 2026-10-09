@@ -122,6 +122,25 @@ set run_px [expr {[font measure QLList $spine] \
 check "long agent_type is ellipsised" [string index $atype end] $ELLIP
 check "child visible run fits the 300px budget" [expr {$run_px <= $MAX}] 1
 
+# The "  " after the agent type is drawn too, so the budget holds it: a type
+# trimmed to the whole room would push the separator past the row's width.
+proc child_px {res} {
+    set subj  [dict get $res subject]
+    set atype [tagged_run $res slug]
+    set at    [string first $atype $subj]
+    return [expr {[font measure QLList [string range $subj 0 [expr {$at - 1}]]] \
+                  + [font measure QLBold $atype] \
+                  + [font measure QLList [string range $subj [expr {$at + [string length $atype]}] end]]}]
+}
+foreach MAX {60 90 120} {
+    set res [child_at [dict create agent_type [string repeat a 200] label ""] $MAX]
+    check "child row with its separator fits a ${MAX}px budget" \
+        [expr {[child_px $res] <= $MAX}] 1
+}
+set res [child_at [dict create agent_type [string repeat a 200] label ""] \
+             [expr {[font measure QLList "▏  "] + [font measure QLList "  "]}]]
+check "a type with no room left drops its separator too" [dict get $res subject] "▏  "
+
 # ---- case 4: a cut title run carries the hover reveal ----------------------
 # What the row cannot show, the hover shows: a trimmed row wires a t# tag over
 # the title run and parks the whole name and preview in the reveal registry, so
