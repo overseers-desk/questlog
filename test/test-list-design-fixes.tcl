@@ -16,8 +16,8 @@
 #        assistant output holds otherwise.
 #   C9   only-subagents-matched shows an indented note below the row (subject
 #        dimmed), with the match/subagent counts singularised.
-#   C10a a matched row carries no count; its hover names the counts, the
-#        subagent figure singularised to "+1 in subagent".
+#   C10a a matched row carries no count; its hover names how many subagents
+#        matched, singularised to "more in 1 subagent".
 
 package require Tcl 9
 package require Tk
@@ -252,8 +252,8 @@ update
 check "case-B parent is rendered" [$SL sflag $PB rendered] 1
 check "case-B note sits below the row (2 matches, 1 subagent)" \
     [has_line "*no match in this session - 2 matches below in a subagent*"] 1
-check "case-B hover names the subagent matches" \
-    [string match "*\n2 matches in subagents" [row_reveal $PB]] 1
+check "case-B hover names the one matched subagent, without 'more'" \
+    [string match "*\nin 1 subagent" [row_reveal $PB]] 1
 # The subject run is dimmed (only its subagents matched). The title begins
 # past the tab that sends it to the title stop, so probe the character there
 # rather than a fixed offset into the line.
@@ -265,9 +265,9 @@ check "case-B subject run is dimmed" \
 check "subagent overflow names the rest (2 matches, cap 1 -> +1)" \
     [has_line "*1 more match in this session - open to see all*"] 1
 
-# ---- C10a: case C counts sit in the hover, singularised -------------------
+# ---- C10a: case C's matched subagents are named in the hover, singularised --
 # PC has one direct match AND one subagent match: the row shows no count, and
-# its hover reads "1 match, +1 in subagent".
+# its hover reads "more in 1 subagent".
 $SL add_session_matches [list \
     [dict create path $PC folder $FA btype user content "parent-c work" lineoff 1]]
 $SL add_session_matches [list \
@@ -279,8 +279,8 @@ set psm [$SL node_field [$SL sid $PC] start]
 set headline [$TX get $psm "$psm lineend"]
 check "case-C row carries no count" \
     [regexp {match|subagent|·} $headline] 0
-check "case-C hover names both counts, singularised" \
-    [string match "*\n1 match, +1 in subagent" [row_reveal $PC]] 1
+check "case-C hover names the matched subagent, singularised" \
+    [string match "*\nmore in 1 subagent" [row_reveal $PC]] 1
 
 # ---- case B -> case C: the subagent's match lands before the parent's own --
 # The note case B drew must lift when direct matches arrive, and the children

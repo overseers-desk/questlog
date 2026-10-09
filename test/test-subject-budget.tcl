@@ -201,19 +201,34 @@ set res [subject_at [dict create slug "quick fix" count 0 sub_total 0 \
              has_subagents 0 label "short one"] 600]
 check "an untrimmed row wires no reveal" [reveal_entry $res] ""
 
-# A matched row keeps its room for the slug and preview: the counts are not in
-# the row but close its reveal, which a match wires whether the row is cut or not.
-set res [subject_at [dict create slug "quick fix" count 3 sub_total 2 \
-             has_subagents 1 label "short one" last_reply $LASTR] 600]
+# A row whose subagents matched keeps its room for the slug and preview: how
+# many subagents matched is not in the row but closes its reveal, which such a
+# row wires whether it is cut or not. The reveal gives no hit count.
+proc matched_parent {payload nmatched nplain} {
+    set n [$::SL node_new default "" /tmp/subjbudget $payload]
+    set kids [list]
+    foreach c [list {*}[lrepeat $nmatched 2] {*}[lrepeat $nplain 0]] {
+        lappend kids [$::SL node_new subagent $n /tmp/subjbudget/sub [dict create count $c]]
+    }
+    $::SL node_set $n children $kids
+    return $n
+}
+set res [$SL session_subject [matched_parent [dict create slug "quick fix" \
+             count 3 sub_total 4 has_subagents 1 label "short one" \
+             last_reply $LASTR] 2 1] 600]
 check "a matched row carries no count" \
     [regexp {match|subagent|·} [dict get $res subject]] 0
 lassign [reveal_entry $res] rkind rtext rcursor rsub
-check "an untrimmed matched row reveals its counts after the reply" \
-    $rsub "$LASTR\n\n3 matches, +2 in subagents"
-set res [subject_at [dict create slug "quick fix" count 1 sub_total 0 \
-             has_subagents 0 label "short one"] 600]
+check "an untrimmed row with matched subagents counts them after the reply" \
+    $rsub "$LASTR\n\nmore in 2 subagents"
+set res [$SL session_subject [matched_parent [dict create slug "quick fix" \
+             count 0 sub_total 3 has_subagents 1 label "short one"] 1 0] 600]
 lassign [reveal_entry $res] rkind rtext rcursor rsub
-check "a lone match reveals singular, with no reply above it" $rsub "1 match"
+check "only one subagent matched: singular, no 'more'" $rsub "in 1 subagent"
+set res [subject_at [dict create slug "quick fix" count 3 sub_total 0 \
+             has_subagents 0 label "short one"] 600]
+check "an untrimmed row with direct matches only wires no reveal" \
+    [reveal_entry $res] ""
 set res [subject_at [dict create slug $LONGSLUG count 2 sub_total 0 \
              has_subagents 0 label $LONGLABEL] 300]
 check "a matched row's slug and preview fill the same budget as an unmatched one" \

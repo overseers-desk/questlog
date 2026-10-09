@@ -55,7 +55,7 @@ proc ::questlog::ui::session_columns {} {
 #
 # Layout, top to bottom, as tagged regions in the one text widget:
 #   folder heading   - the project label, a drop target for moves
-#   session header   - glyphs, label, time; a search's match counts in its hover
+#   session header   - glyphs, label, time; its hover names the matched subagents
 #   snippet rows     - up to three per session: a block-type label and a
 #                      hit-leading snippet with the matched term in bold
 #
@@ -1489,7 +1489,7 @@ oo::class create ::questlog::ui::SessionList {
         if {![my session_onlyinsubs $path]} return
         set sid [my sid $path]
         set subt [my sget $path sub_total]
-        set nsub [llength [my session_child_paths $path]]
+        set nsub [my matched_subagents $sid]
         set ntag "n#[incr NextId]"
         set m [my line_open $sid $ntag snippet]
         my emit $m "▏" [list snippet snippetbar $ntag]
@@ -1564,6 +1564,17 @@ oo::class create ::questlog::ui::SessionList {
         if {[my node_field $sid rendered]} { my redraw_header $path }
         my anchor_restore
         $Text configure -state disabled
+    }
+
+    # How many of a session's subagents matched the search: the attached ones
+    # with a hit, since a session expanded before its matches arrived has every
+    # subagent attached.
+    method matched_subagents {node} {
+        set n 0
+        foreach cid [my node_field $node children] {
+            if {[my node_pget $cid count 0] > 0} { incr n }
+        }
+        return $n
     }
 
     # The attached subagent subset, as child paths in render order, derived
@@ -1885,7 +1896,7 @@ oo::class create ::questlog::ui::SessionList {
     # Attach a subagent's matches to its parent session (issue #13 cases B and C).
     # Creates the parent card if the parent itself had no match (case B), seeds
     # the child models, attaches this child's hits (capped at
-    # snippets_per_subagent), counts them for the parent's hover, and either
+    # snippets_per_subagent), counts them for the parent, and either
     # auto-expands (case B: no direct match) or leaves it collapsed.
     method add_subagent_matches {matches} {
         set first [lindex $matches 0]
@@ -1924,7 +1935,7 @@ oo::class create ::questlog::ui::SessionList {
         # Reseat the below-header block from the current totals: the case-B note
         # then the matched subagents, in that order. A whole-block redraw (not an
         # incremental child append) keeps the note above the children and lets its
-        # "N matches in a subagent/subagents" wording track each arriving child.
+        # "N matches below in a subagent/subagents" wording track each arriving child.
         if {[my sflag $parent rendered]} {
             if {[my node_field [my sid $parent] expanded]} {
                 my redraw_sub_block $parent
@@ -2136,20 +2147,16 @@ oo::class create ::questlog::ui::SessionList {
         set slug [dict get $s slug]
         set count [dict get $s count]
         set subt  [dict get $s sub_total]
-        # The match counts close the title run's reveal rather than taking the
-        # row's room: "3 matches, +2 in subagents" when both the session and its
-        # subagents matched (case C), "2 matches in subagents" when only they did
-        # (case B, whose note is also its own line below the row, render_subhint).
-        set counts [list]
-        if {$count > 0} {
-            lappend counts "$count [expr {$count == 1 ? {match} : {matches}}]"
-        }
+        # The title run's reveal closes on how many subagents matched, not on
+        # hits: "more in 2 subagents" when the session matched too (case C), "in
+        # 2 subagents" when only they did (case B, whose own line below the row
+        # already says the session has no direct match, render_subhint).
+        set count_str ""
         if {$subt > 0} {
-            set in_subs "in [expr {$subt == 1 ? {subagent} : {subagents}}]"
-            lappend counts [expr {$count > 0 ? "+$subt $in_subs"
-                : "$subt [expr {$subt == 1 ? {match} : {matches}}] $in_subs"}]
+            set nsub [my matched_subagents $node]
+            set count_str "in $nsub [expr {$nsub == 1 ? {subagent} : {subagents}}]"
+            if {$count > 0} { set count_str "more $count_str" }
         }
-        set count_str [join $counts ", "]
         # Only its subagents matched: the row still carries the session, dimmed, so
         # the eye reads it as context for the hits below rather than a hit itself.
         set only_in_subs [expr {$count == 0 && $subt > 0}]
@@ -2195,18 +2202,18 @@ oo::class create ::questlog::ui::SessionList {
         # row's own preview is the opening prompt and stops saying that after
         # the first few turns. A session too young to have finished a turn has
         # no reply yet, and a row with neither falls back to the preview the row
-        # shows, so the reveal is never empty. A matched row wires it cut or not,
-        # for the counts it closes on; an untrimmed row with no match shows all it
-        # has and wires nothing. The run gets a tag of its own rather than
-        # riding the row's ($stag already binds <Enter>/<Leave> for the cursor
-        # and the ⋯ brightening, which peek_wire would overwrite), minted here
-        # rather than in wire_session_row because a rename redraws the row
-        # through item, which does not re-run on_row_rendered. The name is the
-        # node's, not a fresh mint: a running row redraws on every glyph tick,
-        # and a minted tag per redraw would pile entries up in PeekByTag for the
-        # life of the window. t# is its own tag family, swept like the n# hit
-        # tags and the c# subagent ones but apart from them, so a title run is
-        # never mistaken for a hit by anything that resolves a hit's tag.
+        # shows, so the reveal is never empty. A row whose subagents matched
+        # wires it cut or not, for the line it closes on; any other untrimmed
+        # row shows all it has and wires nothing. The run gets a tag of its own
+        # rather than riding the row's ($stag already binds <Enter>/<Leave> for
+        # the cursor and the ⋯ brightening, which peek_wire would overwrite),
+        # minted here rather than in wire_session_row because a rename redraws
+        # the row through item, which does not re-run on_row_rendered. The name
+        # is the node's, not a fresh mint: a running row redraws on every glyph
+        # tick, and a minted tag per redraw would pile entries up in PeekByTag
+        # for the life of the window. t# is its own tag family, swept like the
+        # n# hit tags and the c# subagent ones but apart from them, so a title
+        # run is never mistaken for a hit by anything that resolves a hit's tag.
         if {$clipped || $count_str ne ""} {
             set ntag "t#$node"
             lappend tags [list $ntag $title_off \
