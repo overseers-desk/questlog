@@ -1,5 +1,5 @@
 Name:           questlog
-Version:        1.3.0
+Version:        1.3.1
 Release:        1%{?dist}
 Summary:        GUI for finding, reading, and reopening past Claude Code sessions
 License:        MIT
@@ -60,6 +60,13 @@ install -D -m 0644 assets/questlog-512.png \
 %{_datadir}/icons/hicolor/512x512/apps/questlog.png
 
 %changelog
+* Fri Oct 09 2026 Weiwu Zhang <a@colourful.land> - 1.3.1-1
+- Session viewer: tables, quotes, find and links come from tkdown 2.1 and streamdoc 1.3; code spans keep their backslashes and escaped punctuation such as \$ renders; angle brackets make a link only around a real URL; a %% in a table cell shows as typed; a drag past the pane edge autoscrolls, and a stray leave no longer runs the view away
+- Session viewer: a Tools-tab jump puts the call at the top of the pane; the match band relabels its rows when a new term finds the same places
+- Sessions list: match counts leave the row, and the hover says how many subagents matched; a clipped slug or agent type no longer pushes the columns after it; the scan progress count is accurate
+- Sessions list: an open folder draws a rule to its last line; a session's title lines up with sibling folders and its marks trail it; the subagent chevron shows only on a selected or open row, and a double-click toggles the subagents
+- Error dialogs: the text can be selected and copied
+
 * Wed Sep 23 2026 Weiwu Zhang <a@colourful.land> - 1.3.0-1
 - Rates: Claude Opus 5.5 is priced ($4/$20 per MTok, cache reads at $0.20); a session on it had shown a blank cost
 - Sessions list: folders nest, a heading sums its whole subtree over the rows shown, and every interaction works over the tree; browsing opens the project with the newest session
