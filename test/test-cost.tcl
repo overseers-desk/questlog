@@ -140,6 +140,12 @@ check "compute_usd: each request on its own card" \
     0.13250005
 check "compute_usd: -1 when no request is priced" \
     [tallyman::compute_usd {{other 1 1 0 0}} $tiered 2026-03-01] -1.0
+set reversed [dict create m {
+    {2026-02-01 0.50 2.50 0.625 0.05 100001}
+    {2026-02-01 0.10 0.50 0.125 0.01 0}
+}]
+check "rate_for: the card does not depend on row order" \
+    [lindex [tallyman::rate_for $reversed m 2026-03-01 100000] 1] 0.10
 
 # The final request sent 2 + 99998 + 400000 = 500k of Opus 4.8's 1M window:
 # 50%. The later sidechain record (another context, however large) and the
@@ -337,7 +343,30 @@ set fixC [write_lines {
 }]
 check "a Haiku 5.5 session pays each request's own card" \
     [format %.5f [dict get [::questlog::cli::cost::compute_sync $fixC] cost_usd]] 0.03515
+lassign [win 2026-10-08 2026-10-08] lo hi
+check "a windowed Haiku 5.5 spend pays each request's own card too" \
+    [format %.5f [dict get [::questlog::cost::accrue_window $fixC $lo $hi] cost_usd]] 0.03515
 file delete $fixC
+
+# The dict retyped from the CSV says what the CSV says, model by model: a
+# figure that disagrees is a silent mispricing wherever the dict is vendored.
+proc same_rows {a b} {
+    if {[llength $a] != [llength $b]} { return 0 }
+    foreach ra $a rb $b {
+        if {[llength $ra] != [llength $rb] || [lindex $ra 0] ne [lindex $rb 0]} { return 0 }
+        foreach x [lrange $ra 1 end] y [lrange $rb 1 end] { if {$x != $y} { return 0 } }
+    }
+    return 1
+}
+set shipped [source [file join $ROOT modules anthropic-rates.tcl]]
+set drift [list]
+foreach m [lsort -unique [concat [dict keys $::questlog::cost::Rates] [dict keys $shipped]]] {
+    if {![dict exists $shipped $m] || ![dict exists $::questlog::cost::Rates $m] \
+            || ![same_rows [dict get $shipped $m] [dict get $::questlog::cost::Rates $m]]} {
+        lappend drift $m
+    }
+}
+check "modules/anthropic-rates.tcl agrees with data/anthropic-rates.csv" $drift {}
 
 if {$failures == 0} {
     puts "\nAll tests passed."

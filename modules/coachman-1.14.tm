@@ -403,8 +403,8 @@ oo::class create coachman::Harness {
         if {[llength $rates] == 0} {
             error "coachman: session_cost_usd unmetered - no rates table (see cost_rates)"
         }
-        if {[catch {package require tallyman}]} {
-            error "coachman: session_cost_usd unmetered - tallyman is not on the module path"
+        if {[catch {package require tallyman 1.3}]} {
+            error "coachman: session_cost_usd unmetered - tallyman 1.3 or later is not on the module path"
         }
         set files [coachman::_session_files $sid [my transcripts_root]]
         if {[llength $files] == 0} { return 0.0 }
@@ -447,8 +447,8 @@ oo::class create coachman::Harness {
         if {[llength [my cost_rates]] == 0} {
             error "coachman: cost cap \$$WorkerCostCapUsd armed but unmetered - no rates table beside the module; supply cost_rates, override session_cost_usd, or set the cap to 0"
         }
-        if {[catch {package require tallyman}]} {
-            error "coachman: cost cap \$$WorkerCostCapUsd armed but unmetered - tallyman is not on the module path; vendor it beside the module, override session_cost_usd, or set the cap to 0"
+        if {[catch {package require tallyman 1.3}]} {
+            error "coachman: cost cap \$$WorkerCostCapUsd armed but unmetered - tallyman 1.3 or later is not on the module path; vendor it beside the module, override session_cost_usd, or set the cap to 0"
         }
     }
 

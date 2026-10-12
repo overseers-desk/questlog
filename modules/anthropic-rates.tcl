@@ -13,7 +13,9 @@
 # the era that billed; prompt_min, the smallest prompt length (one request's
 # input + cache-write + cache-read tokens) a row prices, splits an era into
 # cards for a model billed by prompt length, 0 for a model with one price.
-# `source` this file to obtain the dict:
+# A model on several cards needs tallyman 1.3 or later, which picks each
+# request's card; an older tallyman prices every request on the era's last
+# row. `source` this file to obtain the dict:
 #     set rates [source [file join $vendor anthropic-rates.tcl]]
 
 dict create \

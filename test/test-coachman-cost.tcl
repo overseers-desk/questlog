@@ -62,6 +62,21 @@ check "the meter prices the parent plus its subagents" \
 check "the meter reads 0 before the transcript appears" \
     [$h session_cost_usd sid-none] 0.0
 
+# A model billed by prompt length pays each request's own card, the
+# subagent's long request included: 50k input on the small card (in 1 per
+# Mtok, $0.05) and 100,001 on the large (in 10 per Mtok, $1.00001).
+set fd [open [file join $proj sid-t.jsonl] w]
+puts $fd {{"type":"assistant","requestId":"r3","timestamp":"2026-06-01T10:00:05.000Z","message":{"model":"tiered","usage":{"input_tokens":50000,"output_tokens":0}}}}
+close $fd
+set subdir [file join $proj sid-t subagents]
+file mkdir $subdir
+set fd [open [file join $subdir agent-1.jsonl] w]
+puts $fd {{"type":"assistant","isSidechain":true,"requestId":"r4","timestamp":"2026-06-01T10:01:00.000Z","message":{"model":"tiered","usage":{"input_tokens":100001,"output_tokens":0}}}}
+close $fd
+set ::TRATES [dict create tiered {{2026-01-01 1 2 3 4 0} {2026-01-01 10 20 30 40 100001}}]
+check "the meter prices a long subagent request on its own card" \
+    [near [$h session_cost_usd sid-t] 1.05] 1
+
 # An unpriced model is a blank, not a false figure: the meter reads 0.
 set ::TRATES [dict create othermodel {{2026-01-01 10.0 20.0 5.0 1.0}}]
 check "an unpriced model reads 0, not a wrong price" \
