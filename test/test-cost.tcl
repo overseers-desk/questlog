@@ -321,6 +321,24 @@ set a [::questlog::cost::accrue_window $fixB $lo $hi]
 check "accrue: request not double-counted in the later window" [dict size [dict get $a model_breakdown]] 0
 file delete $fixB
 
+# ---- a model billed by prompt length, from the shipped table ---------------
+
+# Haiku 5.5 (data/anthropic-rates.csv, effective 2026-10-07) has two cards.
+# A request whose prompt is 60k input + 50k cache reads is over 100k and pays
+# the large card: 60k @ 0.50 + 50k @ 0.05 + 1k out @ 2.50 = $0.035; a 1k
+# request pays the small one: 1k @ 0.10 + 100 out @ 0.50 = $0.00015.
+check "the shipped table carries both Haiku 5.5 cards" \
+    [llength [dict get $::questlog::cost::Rates claude-haiku-5-5]] 2
+set fixC [write_lines {
+    {{"type":"user","timestamp":"2026-10-08T10:00:00.000Z","message":{"role":"user","content":"a long prompt"}}}
+    {{"type":"assistant","requestId":"r6","timestamp":"2026-10-08T10:00:05.000Z","message":{"model":"claude-haiku-5-5","usage":{"input_tokens":60000,"output_tokens":1000,"cache_read_input_tokens":50000}}}}
+    {{"type":"user","timestamp":"2026-10-08T10:01:00.000Z","message":{"role":"user","content":"a short one"}}}
+    {{"type":"assistant","requestId":"r7","timestamp":"2026-10-08T10:01:05.000Z","message":{"model":"claude-haiku-5-5","usage":{"input_tokens":1000,"output_tokens":100}}}}
+}]
+check "a Haiku 5.5 session pays each request's own card" \
+    [format %.5f [dict get [::questlog::cli::cost::compute_sync $fixC] cost_usd]] 0.03515
+file delete $fixC
+
 if {$failures == 0} {
     puts "\nAll tests passed."
 } else {
