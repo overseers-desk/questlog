@@ -55,8 +55,8 @@ namespace eval tallyman {}
 
 # The row that billed a request: the model's latest era at or before
 # session_date, and within it the card whose prompt_min is the largest not
-# above prompt_len. Empty if no row matches (unknown model, or date before the
-# first listed era).
+# above prompt_len. Empty if no row matches (unknown model, date before the
+# first listed era, or an era whose every card starts above prompt_len).
 proc tallyman::rate_for {rates model session_date {prompt_len 0}} {
     if {![dict exists $rates $model]} { return "" }
     set era ""
@@ -420,7 +420,7 @@ proc tallyman::build_cost_dict {res rates threshold credit} {
     if {$session_date eq ""} {
         set session_date [clock format [clock seconds] -format %Y-%m-%d]
     }
-    set usd [compute_usd [dict getdef $res requests {}] $rates $session_date]
+    set usd [compute_usd [dict get $res requests] $rates $session_date]
     set in 0; set out 0; set cw 0; set cr 0
     dict for {_ c} $per_model {
         lassign $c i o w r

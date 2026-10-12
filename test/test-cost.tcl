@@ -261,7 +261,14 @@ file delete $fix
 # ---- accrue_window: cost windowed by each message's own timestamp ---------
 # Needs the rate table and the window-edge helpers, same as the CLI run path.
 source [file join $ROOT lib scan.tcl]
-::questlog::cost::load_rates $ROOT
+set loaded [::questlog::cost::load_rates $ROOT]
+# The loader drops a malformed line without a word, so the count it returns
+# is checked against the CSV's own data lines.
+set fh [open [file join $ROOT data anthropic-rates.csv] r]
+set data_lines [llength [lsearch -all -inline -regexp \
+    [lrange [split [read $fh] "\n"] 1 end] {^[^#\s]}]]
+close $fh
+check "every data line of the rate CSV loads" $loaded $data_lines
 proc near {got want} { return [expr {abs($got - $want) < 0.001}] }
 proc write_lines {lines} {
     set fd [file tempfile p]

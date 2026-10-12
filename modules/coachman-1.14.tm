@@ -52,8 +52,9 @@ package provide coachman 1.14
 # owns the child's pipe, stall clock, and group kill. deadman's home,
 # man page, and test suite are in the teatotal module shelf; vendor a
 # copy beside this file. `package require coachman` fails without it.
-# The default cost meter additionally wants `tallyman` (authored beside
-# this module) and anthropic-rates.tcl; both optional, see COST METER.
+# The default cost meter additionally wants `tallyman` 1.3 or later
+# (authored beside this module) and anthropic-rates.tcl; both optional,
+# see COST METER.
 #
 # SYNOPSIS. Subclass, point the injections at your own services, drive:
 #
