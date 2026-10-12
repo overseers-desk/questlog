@@ -1,7 +1,7 @@
 package require Tcl 9
 package require json
 package require logman
-package provide tallyman 1.6
+package provide tallyman 1.7
 
 # tallyman - prices a Claude Code session's token usage.
 #
@@ -24,9 +24,10 @@ package provide tallyman 1.6
 # transcript, one JSON record per line, passed in as a Tcl list. tallyman reads
 # a record's `type`, `timestamp`, and `isSidechain`, and for assistant records
 # `requestId`, `message.model`, and `message.usage` (`input_tokens`,
-# `output_tokens`, `cache_creation_input_tokens`, `cache_read_input_tokens`);
-# several stream records sharing one `requestId` are a single request, deduped
-# by taking the max usage across them.
+# `output_tokens`, `cache_creation_input_tokens`, `cache_read_input_tokens`,
+# and `cache_creation.ephemeral_1h_input_tokens`, the writes kept for an
+# hour); several stream records sharing one `requestId` are a single request,
+# deduped by taking the max usage across them.
 #
 #   set res   [tallyman::parse_lines $lines]     ;# lines: a list of JSONL lines
 #   set costd [tallyman::build_cost_dict $res $rates $threshold $credit]
@@ -103,8 +104,10 @@ proc tallyman::compute_usd {requests rates session_date} {
         if {$row eq ""} continue
         lassign $row _ ri ro rw rr _ rw1h
         if {$rw1h eq ""} { set rw1h $rw }
-        # A record can report more hour-kept writes than writes in all; the
-        # total is what was written, so the hour part is capped at it.
+        # A record can report more hour-kept writes than writes in all: a
+        # server-side fallback's record carries the refused attempt's split
+        # beside the served attempt's total, and the served attempt is the
+        # one billed, so the hour part is capped at the total.
         if {$cw1h > $cw} { set cw1h $cw }
         set cw5m [expr {$cw - $cw1h}]
         set total [expr {$total + ($in * $ri + $out * $ro \

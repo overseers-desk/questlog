@@ -185,6 +185,11 @@ set r [tallyman::parse_lines {
 }]
 check "parse_lines: a null cache_creation is no split, not a dropped request" \
     [lrange [lindex [dict get $r requests] 0] 3 end] {1000 0 0 2026-02-01}
+set r [tallyman::parse_lines {
+    {{"type":"assistant","requestId":"r2","timestamp":"2026-02-01T10:00:00.000Z","message":{"model":"m","usage":{"input_tokens":10,"output_tokens":1,"cache_creation_input_tokens":1000,"cache_creation":{"ephemeral_5m_input_tokens":1000,"ephemeral_1h_input_tokens":null}}}}}
+}]
+check "parse_lines: a null hour count is no split" \
+    [lindex [lindex [dict get $r requests] 0] 5] 0
 # The date is the record's own timestamp field, not a timestamp string a
 # tool input happens to carry earlier on the line; a record without one
 # dates its request by nothing, which compute_usd reads as the session's date.

@@ -76,7 +76,7 @@ There is one command line. Write a query with it and `questlog` opens the GUI on
 
 ## Modules authored here
 
-`modules/` holds two Tcl modules whose home is this repository, reusable outside it by copying the `.tm` file (plus its companions) onto a `::tcl::tm::path`:
+`modules/` holds the Tcl modules whose home is this repository, reusable outside it by copying the `.tm` file (plus its companions) onto a `::tcl::tm::path`:
 
 - **coachman** drives one harnessed `claude -p` CLI session for unattended, validated agent runs: stream-json invocation, usage-limit-window recovery, session resume for fix loops, stall and cost-cap watchdogs, and a per-stage cost ledger. It needs `deadman` (from the teatotal shelf) on the module path; `anthropic-rates.tcl` and `tallyman` alongside give its cost cap a live meter.
 - **tallyman** turns Claude Code JSONL transcript lines into per-model token tallies and prices them against a rates table. Filesystem-free: the caller does all I/O.

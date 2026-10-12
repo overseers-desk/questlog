@@ -91,6 +91,35 @@ set ::TRATES [dict create othermodel {{2026-01-01 10.0 20.0 5.0 1.0}}]
 check "an unpriced model reads 0, not a wrong price" \
     [$h session_cost_usd sid-c] 0.0
 
+# The meter refuses a tallyman older than the one whose pricing it
+# describes: on a module path holding only a tallyman 1.0, it names the
+# version it needs rather than pricing with the wrong one. A fresh tclsh,
+# since this one has the real tallyman loaded.
+set gate_dir [file join $dir gate]
+file mkdir $gate_dir
+set fd [open [file join $gate_dir tallyman-1.0.tm] w]
+puts $fd "package provide tallyman 1.0"
+close $fd
+file copy [lindex [lsort [glob [file join $ROOT modules coachman-*.tm]]] end] $gate_dir
+file copy [file join $ROOT vendor deadman-1.0.tm] $gate_dir
+set script [string map [list @GATE@ $gate_dir @DIR@ $dir @PDIR@ $pdir] {
+    ::tcl::tm::path add {@GATE@}
+    package require coachman
+    package require logger
+    oo::class create Gate {
+        superclass coachman::Harness
+        method log_service {} { return [logger::init gate] }
+        method transcripts_root {} { return {@DIR@} }
+        method cost_rates {} { return {m {{2026-01-01 1 2 3 4}}} }
+    }
+    set h [Gate new {@PDIR@} {@DIR@}]
+    catch {$h session_cost_usd sid} msg
+    puts $msg
+}]
+catch {exec tclsh9.0 << $script} out
+check "the meter names the tallyman it needs when an older one is on the path" \
+    [string match {*tallyman 1.6 or later*} $out] 1
+
 # No rates at all: pricing refuses rather than reading a false 0 that
 # would leave an armed cap untrippable.
 set ::TRATES {}
