@@ -147,6 +147,43 @@ set reversed [dict create m {
 check "rate_for: the card does not depend on row order" \
     [lindex [tallyman::rate_for $reversed m 2026-03-01 100000] 1] 0.10
 
+# A row's seventh element prices the part of a request's cache writes kept
+# for an hour; without it every write pays the five-minute rate. 600 writes
+# at 3 + 400 kept an hour at 6 = $0.0042; on a row with no hour price the
+# same request pays 1000 at 3 = $0.003.
+set hour [dict create m {{2026-01-01 1 2 3 4 0 6}}]
+set flat [dict create m {{2026-01-01 1 2 3 4}}]
+check "compute_usd: hour-kept cache writes pay the hour rate" \
+    [format %.4f [tallyman::compute_usd {{m 0 0 1000 0 400 2026-02-01}} $hour 2026-02-01]] 0.0042
+check "compute_usd: a row without an hour price bills every write at five minutes" \
+    [format %.4f [tallyman::compute_usd {{m 0 0 1000 0 400 2026-02-01}} $flat 2026-02-01]] 0.0030
+
+# Each request is priced in the era of its own date, and one without a date
+# in the session's: two eras for m, input at 1 then at 10 per Mtok.
+set eras [dict create m {{2026-01-01 1 2 3 4} {2026-02-01 10 20 30 40}}]
+check "compute_usd: a request is priced in its own era" \
+    [format %.1f [tallyman::compute_usd \
+        {{m 1000000 0 0 0 0 2026-01-15} {m 1000000 0 0 0 0 2026-02-15}} $eras 2026-01-15]] 11.0
+check "compute_usd: a request without a date takes the session's" \
+    [format %.1f [tallyman::compute_usd {{m 1000000 0 0 0}} $eras 2026-02-15]] 10.0
+
+# parse_lines carries each request's hour-kept writes and the UTC date of its
+# earliest record: a request split over midnight keeps the earlier date.
+set r [tallyman::parse_lines {
+    {{"type":"assistant","requestId":"r1","timestamp":"2026-01-31T23:59:59.000Z","message":{"model":"m","usage":{"input_tokens":10,"output_tokens":1,"cache_creation_input_tokens":1000,"cache_creation":{"ephemeral_5m_input_tokens":600,"ephemeral_1h_input_tokens":400}}}}}
+    {{"type":"assistant","requestId":"r1","timestamp":"2026-02-01T00:00:01.000Z","message":{"model":"m","usage":{"input_tokens":10,"output_tokens":5,"cache_creation_input_tokens":1000,"cache_creation":{"ephemeral_5m_input_tokens":600,"ephemeral_1h_input_tokens":400}}}}}
+}]
+check "parse_lines: a request carries its hour-kept writes and its earliest date" \
+    [lrange [lindex [dict get $r requests] 0] 3 end] {1000 0 400 2026-01-31}
+
+# accrue_lines prices each in-window request in the era of its own anchor:
+# the January request at 1 and the February one at 10, over an open window.
+set a [tallyman::accrue_lines {
+    {{"type":"assistant","requestId":"r1","timestamp":"2026-01-15T10:00:00.000Z","message":{"model":"m","usage":{"input_tokens":1000000,"output_tokens":0}}}}
+    {{"type":"assistant","requestId":"r2","timestamp":"2026-02-15T10:00:00.000Z","message":{"model":"m","usage":{"input_tokens":1000000,"output_tokens":0}}}}
+} 0 "" $eras 1800 300]
+check "accrue_lines: each request in its own era" [format %.1f [dict get $a cost_usd]] 11.0
+
 # The final request sent 2 + 99998 + 400000 = 500k of Opus 4.8's 1M window:
 # 50%. The later sidechain record (another context, however large) and the
 # trailing <synthetic> filler must not overwrite the reading.

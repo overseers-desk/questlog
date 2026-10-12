@@ -24,10 +24,12 @@ unset _p
 
 # Load the rate table. CSV columns:
 #   model,effective_from,input_per_mtok,output_per_mtok,
-#   cache_write_per_mtok,cache_read_per_mtok,prompt_min_tokens
+#   cache_write_per_mtok,cache_read_per_mtok,prompt_min_tokens,
+#   cache_write_1h_per_mtok
 # Rates dict (tallyman's shape): model -> sorted list of
-# {effective_from in out cw cr prompt_min}; a row without the last column
-# prices every prompt length.
+# {effective_from in out cw cr prompt_min ?cw_1h?}; a row without
+# prompt_min_tokens prices every prompt length, and one without the hour
+# column prices every cache write at the five-minute rate.
 proc ::questlog::cost::load_rates {root} {
     variable Rates
     variable Loaded
@@ -49,12 +51,14 @@ proc ::questlog::cost::load_rates {root} {
         if {$line eq ""} continue
         if {[string index $line 0] eq "#"} continue
         set fields [split $line ,]
-        if {[llength $fields] < 6 || [llength $fields] > 7} continue
-        lassign $fields model ef ri ro rw rr pm
+        if {[llength $fields] < 6 || [llength $fields] > 8} continue
+        lassign $fields model ef ri ro rw rr pm w1
         set model [string trim $model]
         if {$pm eq ""} { set pm 0 }
+        set row [list $ef $ri $ro $rw $rr $pm]
+        if {$w1 ne ""} { lappend row $w1 }
         set existing [expr {[dict exists $Rates $model] ? [dict get $Rates $model] : [list]}]
-        lappend existing [list $ef $ri $ro $rw $rr $pm]
+        lappend existing $row
         dict set Rates $model [lsort -index 0 $existing]
         incr n
     }
