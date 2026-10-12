@@ -1,3 +1,11 @@
+questlog (1.3.3) unstable; urgency=medium
+
+  * Rates: a cache write kept for an hour is priced at the hour rate, twice the input price, where the five-minute write is 1.25x. Every usage record splits its writes between the two, and questlog had priced them all at the five-minute rate, about $660 short across one machine's transcripts. The rate table's new last column carries the hour price for every model Anthropic's pricing page lists (tallyman 1.7).
+  * Rates: each request is priced in the era of its own date rather than the session's first. A session that started before a model's release and switched to it, or that crossed a price change, had priced those requests blank or at the old rates; on one machine, 2,047 requests in five long sessions had gone unpriced.
+  * Rates: a usage record that reports more hour-kept writes than writes in all (the leftover of a server-side fallback) is capped at its total, and a null cache_creation reads as no split. coachman 1.17's meter names today's date as the stand-in for a request without a timestamp.
+
+ -- Weiwu Zhang <a@colourful.land>  Mon, 12 Oct 2026 00:00:00 +0000
+
 questlog (1.3.2) unstable; urgency=medium
 
   * Rates: Claude Sonnet 5.5 (released 2026-09-28; $2/$10 per MTok, cache reads at $0.10, half Sonnet 5's) and Claude Haiku 5.5 (released 2026-10-07) are priced. A session on either had shown a blank cost, or a false low where other models shared it.

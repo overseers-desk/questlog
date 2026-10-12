@@ -1,5 +1,5 @@
 Name:           questlog
-Version:        1.3.2
+Version:        1.3.3
 Release:        1%{?dist}
 Summary:        GUI for finding, reading, and reopening past Claude Code sessions
 License:        MIT
@@ -60,6 +60,11 @@ install -D -m 0644 assets/questlog-512.png \
 %{_datadir}/icons/hicolor/512x512/apps/questlog.png
 
 %changelog
+* Mon Oct 12 2026 Weiwu Zhang <a@colourful.land> - 1.3.3-1
+- Rates: a cache write kept for an hour is priced at the hour rate, twice the input price; the rate table's new last column carries it (tallyman 1.7)
+- Rates: each request is priced in the era of its own date rather than the session's first, so a session that outlived a model's launch or a price change prices every request
+- Rates: hour-kept writes are capped at a record's writes in all, and a null cache_creation is no split; coachman 1.17's meter names today's date as the stand-in for an undated request
+
 * Mon Oct 12 2026 Weiwu Zhang <a@colourful.land> - 1.3.2-1
 - Rates: Claude Sonnet 5.5 and Claude Haiku 5.5 are priced; a session on either had shown a blank cost
 - Rates: Haiku 5.5 is billed on two cards by each request's prompt length, so each request is priced on its own row (tallyman 1.3); a rate row carries the smallest prompt length it prices
