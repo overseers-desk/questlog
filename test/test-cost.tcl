@@ -422,6 +422,15 @@ foreach m [lsort -unique [concat [dict keys $::questlog::cost::Rates] [dict keys
 }
 check "modules/anthropic-rates.tcl agrees with data/anthropic-rates.csv" $drift {}
 
+# From the shipped table, an Opus 5.5 request's cache writes split by how long
+# they are kept: 600 at the five-minute $5 and 400 kept an hour at $8, $0.0062.
+set fixD [write_lines {
+    {{"type":"assistant","requestId":"r8","timestamp":"2026-10-01T10:00:00.000Z","message":{"model":"claude-opus-5-5","usage":{"input_tokens":0,"output_tokens":0,"cache_creation_input_tokens":1000,"cache_creation":{"ephemeral_5m_input_tokens":600,"ephemeral_1h_input_tokens":400}}}}}
+}]
+check "an hour-kept cache write pays the shipped hour rate" \
+    [format %.4f [dict get [::questlog::cli::cost::compute_sync $fixD] cost_usd]] 0.0062
+file delete $fixD
+
 if {$failures == 0} {
     puts "\nAll tests passed."
 } else {
