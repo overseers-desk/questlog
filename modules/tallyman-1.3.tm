@@ -1,15 +1,15 @@
 package require Tcl 9
 package require json
 package require logman
-package provide tallyman 1.2
+package provide tallyman 1.3
 
 # tallyman - prices a Claude Code session's token usage.
 #
 # A session transcript is a stream of JSONL records; the assistant records
 # carry a `usage` block (input, output, cache-write, cache-read token counts)
 # and the model that produced them. tallyman reads those counts, dedupes the
-# several stream records that report one request, sums them per model, and
-# prices the total against a time-versioned rate table. It also splits the
+# several stream records that report one request, prices each request against
+# a time-versioned rate table, and sums per model. It also splits the
 # wall clock into machine and human time, reads the context occupancy off the
 # final request, and renders the short labels a caller shows for a model id
 # or a duration.
@@ -39,38 +39,60 @@ package provide tallyman 1.2
 #   accrue_lines $lines $lo $hi $rates $threshold $credit
 # where lo/hi are epoch-second window bounds (hi "" for no upper edge).
 #
-# Rates dict: model -> sorted list of {effective_from in out cw cr}, each rate
-# a price per million tokens, rows ordered by effective_from so the row whose
-# date is <= the session's own date is the one that billed. A model absent from
-# the dict (a local model, or one no rate covers) prices as nothing, so an
-# unpriced session reads as a blank figure rather than a false zero.
+# Rates dict: model -> sorted list of {effective_from in out cw cr ?prompt_min?},
+# each rate a price per million tokens. The rows sharing a model's latest
+# effective_from at or before the session's date are the era that billed; a
+# sixth element, the smallest prompt length (one request's input + cache-write
+# + cache-read tokens) a row prices, splits an era into cards for a model
+# billed by prompt length (Haiku 5.5 from 100,001 tokens), and reads as 0 when
+# absent. A model absent from the dict (a local model, or one no rate covers)
+# prices as nothing, so an unpriced session reads as a blank figure rather than
+# a false zero.
 
 namespace eval tallyman {}
 
 # ── rates ──────────────────────────────────────────────────────────────────
 
-# Pick the rate row whose effective_from <= session_date. Empty if no row
-# matches (unknown model, or date before the first listed era).
-proc tallyman::rate_for {rates model session_date} {
+# The row that billed a request: the model's latest era at or before
+# session_date, and within it the card whose prompt_min is the largest not
+# above prompt_len. Empty if no row matches (unknown model, or date before the
+# first listed era).
+proc tallyman::rate_for {rates model session_date {prompt_len 0}} {
     if {![dict exists $rates $model]} { return "" }
-    set best ""
+    set era ""
     foreach row [dict get $rates $model] {
         set ef [lindex $row 0]
-        if {[string compare $ef $session_date] <= 0} { set best $row }
+        if {[string compare $ef $session_date] <= 0 && [string compare $ef $era] > 0} {
+            set era $ef
+        }
+    }
+    if {$era eq ""} { return "" }
+    set best ""
+    set best_min -1
+    foreach row [dict get $rates $model] {
+        if {[lindex $row 0] ne $era} continue
+        set min [lindex $row 5]
+        if {$min eq ""} { set min 0 }
+        if {$min <= $prompt_len && $min > $best_min} {
+            set best $row
+            set best_min $min
+        }
     }
     return $best
 }
 
-# per_model dict {model -> {in out cw cr}} + session date -> USD.
-# -1 signals "no rate row found for any model" -> caller shows blank.
-proc tallyman::compute_usd {per_model rates session_date} {
+# requests, a list of {model in out cw cr} with one entry per request, + session
+# date -> USD. Each request is priced on its own row, so a model billed by
+# prompt length pays the card each request fell on. -1 signals "no rate row
+# found for any request" -> caller shows blank.
+proc tallyman::compute_usd {requests rates session_date} {
     set total 0.0
     set any 0
-    dict for {model counts} $per_model {
-        set row [rate_for $rates $model $session_date]
+    foreach req $requests {
+        lassign $req model in out cw cr
+        set row [rate_for $rates $model $session_date [expr {$in + $cw + $cr}]]
         if {$row eq ""} continue
         lassign $row _ ri ro rw rr
-        lassign $counts in out cw cr
         set total [expr {$total + \
             ($in * $ri + $out * $ro + $cw * $rw + $cr * $rr) / 1000000.0}]
         set any 1
@@ -130,11 +152,11 @@ proc tallyman::model_label {id} {
 
 # A model id's context window in tokens, the denominator context_pct is
 # computed against. Per Anthropic's model catalog: the Claude 5 family
-# (fable, and its Mythos sibling), and Opus/Sonnet from 4.6, carry a native
-# 1M window; on older models Claude Code marks the 1M long-context beta with
-# a "[1m]" suffix on the id. Everything else - Haiku, pre-4.6 Opus/Sonnet,
-# old-scheme ids, local models - reads as 200k, the widest window such a
-# transcript can truthfully claim.
+# (fable, and its Mythos sibling), Opus/Sonnet from 4.6 and Haiku from 5
+# carry a native 1M window; on older models Claude Code marks the 1M
+# long-context beta with a "[1m]" suffix on the id. Everything else - Haiku
+# before 5, pre-4.6 Opus/Sonnet, old-scheme ids, local models - reads as
+# 200k, the widest window such a transcript can truthfully claim.
 proc tallyman::model_context_window {id} {
     if {[string match {*\[1m\]*} $id]} { return 1000000 }
     regsub -- {-\d{6,}$} $id "" id
@@ -144,6 +166,9 @@ proc tallyman::model_context_window {id} {
             fable - mythos { return 1000000 }
             opus - sonnet {
                 if {$maj > 4 || ($maj == 4 && $min >= 6)} { return 1000000 }
+            }
+            haiku {
+                if {$maj >= 5} { return 1000000 }
             }
         }
     }
@@ -245,12 +270,14 @@ proc tallyman::_classify_stamp {line ask_ids} {
 # ── transcript compute ─────────────────────────────────────────────────────
 
 # Fold a transcript's raw JSONL lines into a result dict:
-#   {per_model {model -> {in out cw cr}}  first_ts  last_ts  turns
-#    stamps {{epoch class} ...}  last_model  ctx_tokens  ctx_model  ok}
+#   {per_model {model -> {in out cw cr}}  requests {{model in out cw cr} ...}
+#    first_ts  last_ts  turns  stamps {{epoch class} ...}  last_model
+#    ctx_tokens  ctx_model  ok}
 # `ok` is always 1 - the caller decides what an unreadable file means and builds
 # its own ok-0 result for that case. Dedupes the several stream records that
-# report one requestId by taking the max usage per request, then sums the
-# per-request maxima per model.
+# report one requestId by taking the max usage per request: requests carries
+# those per-request maxima, which compute_usd prices one by one, and per_model
+# their sums.
 #
 # ctx_tokens is the context occupancy at the transcript's end: the input +
 # cache-read + cache-write tokens of the last assistant record that carries a
@@ -368,7 +395,7 @@ proc tallyman::parse_lines {lines} {
         dict set per_model $m [list [expr {$pi+$i}] [expr {$po+$o}] [expr {$pw+$w}] [expr {$pr+$r}]]
     }
 
-    return [dict create per_model $per_model \
+    return [dict create per_model $per_model requests [dict values $req_usage] \
         first_ts $first_ts last_ts $last_ts turns $turns stamps $stamps \
         last_model $last_model ctx_tokens $ctx_tokens ctx_model $ctx_model \
         ok 1]
@@ -393,7 +420,7 @@ proc tallyman::build_cost_dict {res rates threshold credit} {
     if {$session_date eq ""} {
         set session_date [clock format [clock seconds] -format %Y-%m-%d]
     }
-    set usd [compute_usd $per_model $rates $session_date]
+    set usd [compute_usd [dict getdef $res requests {}] $rates $session_date]
     set in 0; set out 0; set cw 0; set cr 0
     dict for {_ c} $per_model {
         lassign $c i o w r
@@ -495,14 +522,17 @@ proc tallyman::accrue_lines {lines lo hi rates threshold credit} {
         }
     }
 
-    # Keep only requests whose anchor falls in the window; fold into per_model
-    # and record the earliest in-window anchor, whose date selects the rate era
-    # that actually billed (rather than the session's possibly-older start date).
+    # Keep only requests whose anchor falls in the window: they are the requests
+    # priced, folded into per_model for the breakdown; the earliest in-window
+    # anchor's date selects the rate era that actually billed (rather than the
+    # session's possibly-older start date).
+    set requests [list]
     set per_model [dict create]
     set anchor_min ""
     dict for {_ v} $req_usage {
         lassign $v at mdl i o w r
         if {$at eq "" || !($at > $lo && ($hi eq "" || $at <= $hi))} continue
+        lappend requests [list $mdl $i $o $w $r]
         lassign [dict getdef $per_model $mdl {0 0 0 0}] pi po pw pr
         dict set per_model $mdl [list [expr {$pi+$i}] [expr {$po+$o}] \
             [expr {$pw+$w}] [expr {$pr+$r}]]
@@ -511,7 +541,7 @@ proc tallyman::accrue_lines {lines lo hi rates threshold credit} {
     set first_ts [expr {$anchor_min eq "" ? "" \
         : [clock format $anchor_min -gmt 1 -format %Y-%m-%d]}]
 
-    return [build_cost_dict [dict create per_model $per_model first_ts $first_ts \
-        last_ts "" turns $turns stamps $stamps last_model $last_model ok 1] \
-        $rates $threshold $credit]
+    return [build_cost_dict [dict create per_model $per_model requests $requests \
+        first_ts $first_ts last_ts "" turns $turns stamps $stamps \
+        last_model $last_model ok 1] $rates $threshold $credit]
 }

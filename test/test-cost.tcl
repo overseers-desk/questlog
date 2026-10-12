@@ -94,19 +94,52 @@ check "model_family empty"       [::questlog::cost::model_family ""] ""
 
 # ---- context occupancy -----------------------------------------------------
 
-# The window a model id is measured against: 1M for the Claude 5 family and
-# for Opus/Sonnet from 4.6; 200k for Haiku, pre-4.6 models, and anything
-# unrecognised; "[1m]" marks the long-context beta on an older id.
+# The window a model id is measured against: 1M for the Claude 5 family, for
+# Opus/Sonnet from 4.6 and for Haiku from 5; 200k for earlier Haiku, pre-4.6
+# models, and anything unrecognised; "[1m]" marks the long-context beta on an
+# older id.
 check "window fable 5"     [tallyman::model_context_window claude-fable-5] 1000000
 check "window mythos 5"    [tallyman::model_context_window claude-mythos-5] 1000000
 check "window opus 4.8"    [tallyman::model_context_window claude-opus-4-8] 1000000
 check "window sonnet 5"    [tallyman::model_context_window claude-sonnet-5] 1000000
+check "window haiku 5.5"   [tallyman::model_context_window claude-haiku-5-5] 1000000
 check "window opus 4.5"    [tallyman::model_context_window claude-opus-4-5-20251101] 200000
 check "window haiku 4.5"   [tallyman::model_context_window claude-haiku-4-5-20251001] 200000
 check "window sonnet 4.5"  [tallyman::model_context_window claude-sonnet-4-5] 200000
 check "window 1m beta"     [tallyman::model_context_window {claude-sonnet-4-5[1m]}] 1000000
 check "window local model" [tallyman::model_context_window qwen3-coder] 200000
 check "window empty id"    [tallyman::model_context_window ""] 200000
+
+# ---- rate rows -------------------------------------------------------------
+
+# The era is the model's latest effective_from at or before the session date;
+# a sixth element splits an era into cards by the smallest prompt length each
+# prices, and a five-element row is the base card.
+set tiered [dict create m {
+    {2026-01-01 1 2 3 4}
+    {2026-02-01 0.10 0.50 0.125 0.01 0}
+    {2026-02-01 0.50 2.50 0.625 0.05 100001}
+}]
+check "rate_for: the latest era at or before the date" \
+    [lindex [tallyman::rate_for $tiered m 2026-01-15 500000] 1] 1
+check "rate_for: empty before the first era" [tallyman::rate_for $tiered m 2025-12-31] ""
+check "rate_for: a prompt at the threshold takes the small card" \
+    [lindex [tallyman::rate_for $tiered m 2026-03-01 100000] 1] 0.10
+check "rate_for: a prompt over the threshold takes the large card" \
+    [lindex [tallyman::rate_for $tiered m 2026-03-01 100001] 1] 0.50
+check "rate_for: no prompt length means the base card" \
+    [lindex [tallyman::rate_for $tiered m 2026-03-01] 1] 0.10
+
+# compute_usd prices each request on its own card, and cache tokens count
+# toward the prompt length: 50k in on the small card ($0.005), 200k in on the
+# large ($0.10), and 50k in with 50,001 cache reads on the large
+# ($0.025 + $0.00250005).
+check "compute_usd: each request on its own card" \
+    [format %.8f [tallyman::compute_usd \
+        {{m 50000 0 0 0} {m 200000 0 0 0} {m 50000 0 0 50001}} $tiered 2026-03-01]] \
+    0.13250005
+check "compute_usd: -1 when no request is priced" \
+    [tallyman::compute_usd {{other 1 1 0 0}} $tiered 2026-03-01] -1.0
 
 # The final request sent 2 + 99998 + 400000 = 500k of Opus 4.8's 1M window:
 # 50%. The later sidechain record (another context, however large) and the

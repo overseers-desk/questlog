@@ -24,8 +24,10 @@ unset _p
 
 # Load the rate table. CSV columns:
 #   model,effective_from,input_per_mtok,output_per_mtok,
-#   cache_write_per_mtok,cache_read_per_mtok
-# Rates dict (tallyman's shape): model -> sorted list of {effective_from in out cw cr}.
+#   cache_write_per_mtok,cache_read_per_mtok,prompt_min_tokens
+# Rates dict (tallyman's shape): model -> sorted list of
+# {effective_from in out cw cr prompt_min}; a row without the last column
+# prices every prompt length.
 proc ::questlog::cost::load_rates {root} {
     variable Rates
     variable Loaded
@@ -47,11 +49,12 @@ proc ::questlog::cost::load_rates {root} {
         if {$line eq ""} continue
         if {[string index $line 0] eq "#"} continue
         set fields [split $line ,]
-        if {[llength $fields] != 6} continue
-        lassign $fields model ef ri ro rw rr
+        if {[llength $fields] < 6 || [llength $fields] > 7} continue
+        lassign $fields model ef ri ro rw rr pm
         set model [string trim $model]
+        if {$pm eq ""} { set pm 0 }
         set existing [expr {[dict exists $Rates $model] ? [dict get $Rates $model] : [list]}]
-        lappend existing [list $ef $ri $ro $rw $rr]
+        lappend existing [list $ef $ri $ro $rw $rr $pm]
         dict set Rates $model [lsort -index 0 $existing]
         incr n
     }
@@ -65,7 +68,7 @@ proc ::questlog::cost::load_rates {root} {
 # host's to build); otherwise tallyman's whole-transcript result dict.
 proc ::questlog::cost::parse_file {path} {
     if {[catch {open $path r} fh]} {
-        return [dict create per_model {} first_ts "" last_ts "" turns 0 stamps {} last_model "" ok 0]
+        return [dict create per_model {} requests {} first_ts "" last_ts "" turns 0 stamps {} last_model "" ok 0]
     }
     chan configure $fh -encoding utf-8 -profile replace
     set lines [split [read $fh] "\n"]
@@ -99,7 +102,7 @@ proc ::questlog::cost::build_cost_dict {res} {
 proc ::questlog::cost::accrue_window {path lo hi} {
     variable Rates
     if {[catch {open $path r} fh]} {
-        return [build_cost_dict [dict create per_model {} first_ts "" \
+        return [build_cost_dict [dict create per_model {} requests {} first_ts "" \
             last_ts "" turns 0 stamps {} last_model "" ok 0]]
     }
     chan configure $fh -encoding utf-8 -profile replace

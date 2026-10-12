@@ -4,7 +4,7 @@ package require logger
 package require json
 package require json::write
 package require deadman
-package provide coachman 1.13
+package provide coachman 1.14
 
 # coachman - drives one harnessed `claude -p` CLI session.
 #
@@ -408,30 +408,27 @@ oo::class create coachman::Harness {
         }
         set files [coachman::_session_files $sid [my transcripts_root]]
         if {[llength $files] == 0} { return 0.0 }
-        # Sum token usage per model across the parent and every subagent
-        # file, then price once. Reading each file's lines is ours
-        # (tallyman does no I/O); the dedup of a request split across
-        # stream records is tallyman's.
-        set per_model [dict create]
+        # Gather every request across the parent and every subagent
+        # file, then price once: each request is priced on its own row,
+        # so a model billed by prompt length pays the card each request
+        # fell on. Reading each file's lines is ours (tallyman does no
+        # I/O); the dedup of a request split across stream records is
+        # tallyman's.
+        set requests [list]
         foreach f $files {
             if {[catch {open $f r} fd]} continue
             fconfigure $fd -encoding utf-8 -profile replace
             set lines [split [read $fd] "\n"]
             close $fd
             set res [tallyman::parse_lines $lines]
-            dict for {m c} [dict get $res per_model] {
-                lassign $c i o w r
-                lassign [dict getdef $per_model $m {0 0 0 0}] pi po pw pr
-                dict set per_model $m [list [expr {$pi+$i}] [expr {$po+$o}] \
-                    [expr {$pw+$w}] [expr {$pr+$r}]]
-            }
+            lappend requests {*}[dict get $res requests]
         }
         # The session is spending now, so today's date selects the rate
-        # era. compute_usd returns -1.0 when no model matched any rate
+        # era. compute_usd returns -1.0 when no request matched any rate
         # (an unpriced local model, or usage not yet landed); the meter
         # reads that as 0.
         set today [clock format [clock seconds] -format %Y-%m-%d]
-        set usd [tallyman::compute_usd $per_model $rates $today]
+        set usd [tallyman::compute_usd $requests $rates $today]
         return [expr {$usd < 0 ? 0.0 : $usd}]
     }
 
