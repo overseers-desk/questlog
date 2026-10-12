@@ -112,9 +112,9 @@ check "window empty id"    [tallyman::model_context_window ""] 200000
 
 # ---- rate rows -------------------------------------------------------------
 
-# The era is the model's latest effective_from at or before the session date;
-# a sixth element splits an era into cards by the smallest prompt length each
-# prices, and a five-element row is the base card.
+# The era is the model's latest effective_from at or before the request's
+# date; a sixth element splits an era into cards by the smallest prompt length
+# each prices, and a five-element row is the base card.
 set tiered [dict create m {
     {2026-01-01 1 2 3 4}
     {2026-02-01 0.10 0.50 0.125 0.01 0}
@@ -202,6 +202,16 @@ set a [tallyman::accrue_lines {
     {{"type":"assistant","requestId":"r2","timestamp":"2026-02-15T10:00:00.000Z","message":{"model":"m","usage":{"input_tokens":1000000,"output_tokens":0}}}}
 } 0 "" $eras 1800 300]
 check "accrue_lines: each request in its own era" [format %.1f [dict get $a cost_usd]] 11.0
+
+# accrue_lines takes an assistant record's time from its own timestamp field,
+# a tool input's earlier on the line notwithstanding, and prices hour-kept
+# writes: 600 at 3 + 400 at 6 on m's hour row, in a window that holds only
+# the record's own day.
+set a [tallyman::accrue_lines {
+    {{"type":"assistant","requestId":"r9","message":{"model":"m","content":[{"type":"tool_use","input":{"timestamp":"1999-01-01T00:00:00Z"}}],"usage":{"input_tokens":0,"output_tokens":0,"cache_creation_input_tokens":1000,"cache_creation":{"ephemeral_5m_input_tokens":600,"ephemeral_1h_input_tokens":400}}},"timestamp":"2026-01-15T10:00:00.000Z"}}
+} [clock scan "2026-01-15 00:00:00" -gmt 1] [clock scan "2026-01-16 00:00:00" -gmt 1] $hour 1800 300]
+check "accrue_lines: the record's own time anchors it, and hour-kept writes pay the hour rate" \
+    [format %.4f [dict get $a cost_usd]] 0.0042
 
 # The final request sent 2 + 99998 + 400000 = 500k of Opus 4.8's 1M window:
 # 50%. The later sidechain record (another context, however large) and the
@@ -430,6 +440,17 @@ foreach m [lsort -unique [concat [dict keys $::questlog::cost::Rates] [dict keys
     }
 }
 check "modules/anthropic-rates.tcl agrees with data/anthropic-rates.csv" $drift {}
+
+# Anthropic bills a cache write kept for an hour at twice the input price on
+# every model its pricing page lists, so a row that carries the hour price
+# says so.
+set off [list]
+dict for {m rows} $::questlog::cost::Rates {
+    foreach row $rows {
+        if {[llength $row] > 6 && [lindex $row 6] != 2 * [lindex $row 1]} { lappend off $m }
+    }
+}
+check "every hour price in the rate CSV is twice the input price" $off {}
 
 # From the shipped table, an Opus 5.5 request's cache writes split by how long
 # they are kept: 600 at the five-minute $5 and 400 kept an hour at $8, $0.0062.

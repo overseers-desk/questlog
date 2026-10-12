@@ -77,6 +77,15 @@ set ::TRATES [dict create tiered {{2026-01-01 1 2 3 4 0} {2026-01-01 10 20 30 40
 check "the meter prices a long subagent request on its own card" \
     [near [$h session_cost_usd sid-t] 1.05] 1
 
+# A cache write kept for an hour pays the row's hour rate: of 1M writes,
+# 600k at 3 per Mtok and 400k kept an hour at 6, $4.20.
+set fd [open [file join $proj sid-h.jsonl] w]
+puts $fd {{"type":"assistant","requestId":"r5","timestamp":"2026-06-01T10:00:05.000Z","message":{"model":"hourly","usage":{"input_tokens":0,"output_tokens":0,"cache_creation_input_tokens":1000000,"cache_creation":{"ephemeral_5m_input_tokens":600000,"ephemeral_1h_input_tokens":400000}}}}}
+close $fd
+set ::TRATES [dict create hourly {{2026-01-01 1 2 3 4 0 6}}]
+check "the meter prices an hour-kept cache write at the hour rate" \
+    [near [$h session_cost_usd sid-h] 4.2] 1
+
 # An unpriced model is a blank, not a false figure: the meter reads 0.
 set ::TRATES [dict create othermodel {{2026-01-01 10.0 20.0 5.0 1.0}}]
 check "an unpriced model reads 0, not a wrong price" \

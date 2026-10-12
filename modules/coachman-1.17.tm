@@ -4,7 +4,7 @@ package require logger
 package require json
 package require json::write
 package require deadman
-package provide coachman 1.16
+package provide coachman 1.17
 
 # coachman - drives one harnessed `claude -p` CLI session.
 #
@@ -52,7 +52,7 @@ package provide coachman 1.16
 # owns the child's pipe, stall clock, and group kill. deadman's home,
 # man page, and test suite are in the teatotal module shelf; vendor a
 # copy beside this file. `package require coachman` fails without it.
-# The default cost meter additionally wants `tallyman` 1.5 or later
+# The default cost meter additionally wants `tallyman` 1.6 or later
 # (authored beside this module) and anthropic-rates.tcl; both optional,
 # see COST METER.
 #
@@ -404,8 +404,8 @@ oo::class create coachman::Harness {
         if {[llength $rates] == 0} {
             error "coachman: session_cost_usd unmetered - no rates table (see cost_rates)"
         }
-        if {[catch {package require tallyman 1.5}]} {
-            error "coachman: session_cost_usd unmetered - tallyman 1.5 or later is not on the module path"
+        if {[catch {package require tallyman 1.6}]} {
+            error "coachman: session_cost_usd unmetered - tallyman 1.6 or later is not on the module path"
         }
         set files [coachman::_session_files $sid [my transcripts_root]]
         if {[llength $files] == 0} { return 0.0 }
@@ -449,8 +449,8 @@ oo::class create coachman::Harness {
         if {[llength [my cost_rates]] == 0} {
             error "coachman: cost cap \$$WorkerCostCapUsd armed but unmetered - no rates table beside the module; supply cost_rates, override session_cost_usd, or set the cap to 0"
         }
-        if {[catch {package require tallyman 1.5}]} {
-            error "coachman: cost cap \$$WorkerCostCapUsd armed but unmetered - tallyman 1.5 or later is not on the module path; vendor it beside the module, override session_cost_usd, or set the cap to 0"
+        if {[catch {package require tallyman 1.6}]} {
+            error "coachman: cost cap \$$WorkerCostCapUsd armed but unmetered - tallyman 1.6 or later is not on the module path; vendor it beside the module, override session_cost_usd, or set the cap to 0"
         }
     }
 

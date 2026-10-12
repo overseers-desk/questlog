@@ -1,7 +1,7 @@
 package require Tcl 9
 package require json
 package require logman
-package provide tallyman 1.5
+package provide tallyman 1.6
 
 # tallyman - prices a Claude Code session's token usage.
 #
@@ -56,16 +56,16 @@ namespace eval tallyman {}
 
 # ── rates ──────────────────────────────────────────────────────────────────
 
-# The row that billed a request: the model's latest era at or before
-# session_date, and within it the card whose prompt_min is the largest not
-# above prompt_len. Empty if no row matches (unknown model, date before the
-# first listed era, or an era whose every card starts above prompt_len).
-proc tallyman::rate_for {rates model session_date {prompt_len 0}} {
+# The row that billed a request: the model's latest era at or before date,
+# and within it the card whose prompt_min is the largest not above
+# prompt_len. Empty if no row matches (unknown model, date before the first
+# listed era, or an era whose every card starts above prompt_len).
+proc tallyman::rate_for {rates model date {prompt_len 0}} {
     if {![dict exists $rates $model]} { return "" }
     set era ""
     foreach row [dict get $rates $model] {
         set ef [lindex $row 0]
-        if {[string compare $ef $session_date] <= 0 && [string compare $ef $era] > 0} {
+        if {[string compare $ef $date] <= 0 && [string compare $ef $era] > 0} {
             set era $ef
         }
     }
@@ -330,7 +330,22 @@ proc tallyman::parse_lines {lines} {
         # A turn is a prompt the user actually wrote, and the drafts of a
         # message edited before the assistant answered are one prompt.
         if {[::logman::count_turn_line $line turnstate]} { incr turns }
-        if {[regexp {"timestamp":"([^"]+)"} $line -> m]} {
+        # An assistant record is parsed here, since its time is its own
+        # timestamp field: a tool input on the line can carry one too, which
+        # the first-string reading would take. Any other line's time is the
+        # first timestamp string on it.
+        set rec ""
+        if {[regexp {"type":"assistant"} $line] && ![catch {::json::json2dict $line} parsed] \
+                && [dict exists $parsed message]} {
+            set rec $parsed
+        }
+        set m ""
+        if {$rec ne ""} {
+            set m [dict getdef $rec timestamp ""]
+        } else {
+            regexp {"timestamp":"([^"]+)"} $line -> m
+        }
+        if {$m ne ""} {
             if {$first_ts eq ""} { set first_ts $m }
             set last_ts $m
             set e [_iso_to_epoch $m]
@@ -338,9 +353,7 @@ proc tallyman::parse_lines {lines} {
                 lappend stamps [list $e [_classify_stamp $line $ask_ids]]
             }
         }
-        if {![regexp {"type":"assistant"} $line]} continue
-        if {[catch {::json::json2dict $line} rec]} continue
-        if {![dict exists $rec message]} continue
+        if {$rec eq ""} continue
         set msg [dict get $rec message]
 
         # Remember AskUserQuestion tool_use ids so the classifier can recognise
@@ -395,9 +408,8 @@ proc tallyman::parse_lines {lines} {
             }
         }
 
-        # A request's date is its earliest record's own timestamp, UTC; the
-        # record's field, since a tool input on the line can carry one too.
-        set day [string range [dict getdef $rec timestamp ""] 0 9]
+        # A request's date is its earliest record's, UTC.
+        set day [string range $m 0 9]
         if {[dict exists $req_usage $req_id]} {
             lassign [dict get $req_usage $req_id] om oi oo ow or ow1 od
             if {$om eq "unknown"} { set om $model }
@@ -496,9 +508,20 @@ proc tallyman::accrue_lines {lines lo hi rates threshold credit} {
         if {[regexp {"type":"file-history-snapshot"} $line]} continue
 
         # The record's own epoch, fresh each line, and whether it lands in the
-        # window.
+        # window: an assistant record's from its parsed timestamp field (a
+        # tool input on the line can carry one too), any other line's from
+        # the first timestamp string on it.
+        set rec ""
+        if {[regexp {"type":"assistant"} $line] && ![catch {::json::json2dict $line} parsed] \
+                && [dict exists $parsed message]} {
+            set rec $parsed
+        }
         set e ""
-        if {[regexp {"timestamp":"([^"]+)"} $line -> m]} { set e [_iso_to_epoch $m] }
+        if {$rec ne ""} {
+            set e [_iso_to_epoch [dict getdef $rec timestamp ""]]
+        } elseif {[regexp {"timestamp":"([^"]+)"} $line -> m]} {
+            set e [_iso_to_epoch $m]
+        }
         set in_win [expr {$e ne "" && $e > $lo && ($hi eq "" || $e <= $hi)}]
 
         # The run state advances over every line, in the window or not, so a
@@ -508,9 +531,7 @@ proc tallyman::accrue_lines {lines lo hi rates threshold credit} {
         if {$in_win && $opens} { incr turns }
         if {$in_win} { lappend stamps [list $e [_classify_stamp $line $ask_ids]] }
 
-        if {![regexp {"type":"assistant"} $line]} continue
-        if {[catch {::json::json2dict $line} rec]} continue
-        if {![dict exists $rec message]} continue
+        if {$rec eq ""} continue
         set msg [dict get $rec message]
 
         if {[regexp {"name":"AskUserQuestion"} $line]} {
@@ -543,12 +564,7 @@ proc tallyman::accrue_lines {lines lo hi rates threshold credit} {
         set req_id [dict getdef $rec requestId [dict getdef $msg requestId ""]]
         if {$req_id eq ""} { set req_id "dummy-[incr dummy_req]" }
 
-        # Anchor by earliest assistant-record ts, the record's own field (a
-        # tool input on the line can carry one too); max usage across all
-        # records.
-        if {[dict getdef $rec timestamp ""] ne ""} {
-            set e [_iso_to_epoch [dict get $rec timestamp]]
-        }
+        # Anchor by earliest assistant-record ts; max usage across all records.
         if {[dict exists $req_usage $req_id]} {
             lassign [dict get $req_usage $req_id] at om oi oo ow or ow1
             if {$om eq "unknown"} { set om $model }
@@ -564,10 +580,9 @@ proc tallyman::accrue_lines {lines lo hi rates threshold credit} {
 
     # Keep only requests whose anchor falls in the window: they are the requests
     # priced, each in the era of its anchor's UTC date, folded into per_model
-    # for the breakdown; the earliest in-window anchor is the result's date.
+    # for the breakdown.
     set requests [list]
     set per_model [dict create]
-    set anchor_min ""
     dict for {_ v} $req_usage {
         lassign $v at mdl i o w r w1
         if {$at eq "" || !($at > $lo && ($hi eq "" || $at <= $hi))} continue
@@ -576,12 +591,9 @@ proc tallyman::accrue_lines {lines lo hi rates threshold credit} {
         lassign [dict getdef $per_model $mdl {0 0 0 0}] pi po pw pr
         dict set per_model $mdl [list [expr {$pi+$i}] [expr {$po+$o}] \
             [expr {$pw+$w}] [expr {$pr+$r}]]
-        if {$anchor_min eq "" || $at < $anchor_min} { set anchor_min $at }
     }
-    set first_ts [expr {$anchor_min eq "" ? "" \
-        : [clock format $anchor_min -gmt 1 -format %Y-%m-%d]}]
 
     return [build_cost_dict [dict create per_model $per_model requests $requests \
-        first_ts $first_ts last_ts "" turns $turns stamps $stamps \
+        first_ts "" last_ts "" turns $turns stamps $stamps \
         last_model $last_model ok 1] $rates $threshold $credit]
 }

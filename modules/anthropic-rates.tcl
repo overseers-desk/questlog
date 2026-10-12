@@ -14,10 +14,10 @@
 # length (one request's input + cache-write + cache-read tokens) a row prices,
 # splits an era into cards for a model billed by prompt length, 0 for a model
 # with one price; cache_write_1h is the price of a cache write kept for an
-# hour, absent where Anthropic's pricing page no longer lists the model, and
-# then every write bills at cache_write. A model on several cards needs
-# tallyman 1.3 or later, which picks each request's card, and the hour price
-# needs 1.4; an older tallyman prices every request on the era's last row at
+# hour, twice the input price on every model Anthropic's pricing page lists,
+# absent for a model that predates prompt caching, and then every write
+# bills at cache_write. This table needs tallyman 1.6 or later to price as
+# written; an older tallyman prices every request on the era's last row at
 # the five-minute rate. `source` this file to obtain the dict:
 #     set rates [source [file join $vendor anthropic-rates.tcl]]
 
@@ -25,11 +25,11 @@ dict create \
     claude-2.0                   {{2023-07-11 8 24 10.00 0.80 0}} \
     claude-2.1                   {{2023-11-21 8 24 10.00 0.80 0}} \
     claude-3-5-haiku-20241022    {{2024-11-04 0.80 4 1.00 0.08 0 1.60}} \
-    claude-3-5-sonnet-20240620   {{2024-06-20 3 15 3.75 0.30 0}} \
-    claude-3-5-sonnet-20241022   {{2024-10-22 3 15 3.75 0.30 0}} \
-    claude-3-7-sonnet-20250219   {{2025-02-19 3 15 3.75 0.30 0}} \
-    claude-3-haiku-20240307      {{2024-03-07 0.25 1.25 0.30 0.03 0}} \
-    claude-3-opus-20240229       {{2024-02-29 15 75 18.75 1.50 0}} \
+    claude-3-5-sonnet-20240620   {{2024-06-20 3 15 3.75 0.30 0 6}} \
+    claude-3-5-sonnet-20241022   {{2024-10-22 3 15 3.75 0.30 0 6}} \
+    claude-3-7-sonnet-20250219   {{2025-02-19 3 15 3.75 0.30 0 6}} \
+    claude-3-haiku-20240307      {{2024-03-07 0.25 1.25 0.30 0.03 0 0.50}} \
+    claude-3-opus-20240229       {{2024-02-29 15 75 18.75 1.50 0 30}} \
     claude-3-sonnet-20240229     {{2024-02-29 3 15 3.75 0.30 0}} \
     claude-fable-5               {{2026-06-09 10 50 12.50 1.00 0 20}} \
     claude-fable-5-1             {{2026-09-01 10 50 12.50 0.25 0 20}} \
