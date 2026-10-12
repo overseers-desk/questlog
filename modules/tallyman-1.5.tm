@@ -1,7 +1,7 @@
 package require Tcl 9
 package require json
 package require logman
-package provide tallyman 1.4
+package provide tallyman 1.5
 
 # tallyman - prices a Claude Code session's token usage.
 #
@@ -330,9 +330,7 @@ proc tallyman::parse_lines {lines} {
         # A turn is a prompt the user actually wrote, and the drafts of a
         # message edited before the assistant answered are one prompt.
         if {[::logman::count_turn_line $line turnstate]} { incr turns }
-        set ts ""
         if {[regexp {"timestamp":"([^"]+)"} $line -> m]} {
-            set ts $m
             if {$first_ts eq ""} { set first_ts $m }
             set last_ts $m
             set e [_iso_to_epoch $m]
@@ -377,8 +375,9 @@ proc tallyman::parse_lines {lines} {
         set cw_t  [dict getdef $u cache_creation_input_tokens 0]
         set cr_t  [dict getdef $u cache_read_input_tokens 0]
         # cache_creation splits the writes by how long they are kept; a null
-        # there is no split.
-        if {[catch {dict getdef [dict getdef $u cache_creation {}] ephemeral_1h_input_tokens 0} w1_t]} {
+        # there, or a count that is not a whole number, is no split.
+        if {[catch {dict getdef [dict getdef $u cache_creation {}] ephemeral_1h_input_tokens 0} w1_t]
+                || ![string is integer -strict $w1_t]} {
             set w1_t 0
         }
 
@@ -396,8 +395,9 @@ proc tallyman::parse_lines {lines} {
             }
         }
 
-        # A request's date is its earliest record's, UTC.
-        set day [string range $ts 0 9]
+        # A request's date is its earliest record's own timestamp, UTC; the
+        # record's field, since a tool input on the line can carry one too.
+        set day [string range [dict getdef $rec timestamp ""] 0 9]
         if {[dict exists $req_usage $req_id]} {
             lassign [dict get $req_usage $req_id] om oi oo ow or ow1 od
             if {$om eq "unknown"} { set om $model }
@@ -534,15 +534,21 @@ proc tallyman::accrue_lines {lines lo hi rates threshold credit} {
         set cw_t  [dict getdef $u cache_creation_input_tokens 0]
         set cr_t  [dict getdef $u cache_read_input_tokens 0]
         # cache_creation splits the writes by how long they are kept; a null
-        # there is no split.
-        if {[catch {dict getdef [dict getdef $u cache_creation {}] ephemeral_1h_input_tokens 0} w1_t]} {
+        # there, or a count that is not a whole number, is no split.
+        if {[catch {dict getdef [dict getdef $u cache_creation {}] ephemeral_1h_input_tokens 0} w1_t]
+                || ![string is integer -strict $w1_t]} {
             set w1_t 0
         }
 
         set req_id [dict getdef $rec requestId [dict getdef $msg requestId ""]]
         if {$req_id eq ""} { set req_id "dummy-[incr dummy_req]" }
 
-        # Anchor by earliest assistant-record ts; max usage across all records.
+        # Anchor by earliest assistant-record ts, the record's own field (a
+        # tool input on the line can carry one too); max usage across all
+        # records.
+        if {[dict getdef $rec timestamp ""] ne ""} {
+            set e [_iso_to_epoch [dict get $rec timestamp]]
+        }
         if {[dict exists $req_usage $req_id]} {
             lassign [dict get $req_usage $req_id] at om oi oo ow or ow1
             if {$om eq "unknown"} { set om $model }

@@ -185,6 +185,15 @@ set r [tallyman::parse_lines {
 }]
 check "parse_lines: a null cache_creation is no split, not a dropped request" \
     [lrange [lindex [dict get $r requests] 0] 3 end] {1000 0 0 2026-02-01}
+# The date is the record's own timestamp field, not a timestamp string a
+# tool input happens to carry earlier on the line; a record without one
+# dates its request by nothing, which compute_usd reads as the session's date.
+set r [tallyman::parse_lines {
+    {{"type":"assistant","requestId":"r3","message":{"model":"m","content":[{"type":"tool_use","input":{"timestamp":"1999-01-01T00:00:00Z"}}],"usage":{"input_tokens":10,"output_tokens":1}},"timestamp":"2026-02-01T10:00:00.000Z"}}
+    {{"type":"assistant","requestId":"r4","message":{"model":"m","usage":{"input_tokens":10,"output_tokens":1}}}}
+}]
+check "parse_lines: the request's date is the record's own field, or nothing" \
+    [lmap e [dict get $r requests] {lindex $e 6}] {2026-02-01 {}}
 
 # accrue_lines prices each in-window request in the era of its own anchor:
 # the January request at 1 and the February one at 10, over an open window.
