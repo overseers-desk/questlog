@@ -1,5 +1,5 @@
 Name:           questlog
-Version:        1.3.1
+Version:        1.3.2
 Release:        1%{?dist}
 Summary:        GUI for finding, reading, and reopening past Claude Code sessions
 License:        MIT
@@ -60,6 +60,12 @@ install -D -m 0644 assets/questlog-512.png \
 %{_datadir}/icons/hicolor/512x512/apps/questlog.png
 
 %changelog
+* Mon Oct 12 2026 Weiwu Zhang <a@colourful.land> - 1.3.2-1
+- Rates: Claude Sonnet 5.5 and Claude Haiku 5.5 are priced; a session on either had shown a blank cost
+- Rates: Haiku 5.5 is billed on two cards by each request's prompt length, so each request is priced on its own row (tallyman 1.3); a rate row carries the smallest prompt length it prices
+- Sessions list: Haiku 5.5 has a 1M context window
+- coachman 1.14: the cost meter prices each request on its own row and requires tallyman 1.3
+
 * Fri Oct 09 2026 Weiwu Zhang <a@colourful.land> - 1.3.1-1
 - Session viewer: tables, quotes, find and links come from tkdown 2.1 and streamdoc 1.3; code spans keep their backslashes and escaped punctuation such as \$ renders; angle brackets make a link only around a real URL; a %% in a table cell shows as typed; a drag past the pane edge autoscrolls, and a stray leave no longer runs the view away
 - Session viewer: a Tools-tab jump puts the call at the top of the pane; the match band relabels its rows when a new term finds the same places
