@@ -157,6 +157,11 @@ check "compute_usd: hour-kept cache writes pay the hour rate" \
     [format %.4f [tallyman::compute_usd {{m 0 0 1000 0 400 2026-02-01}} $hour 2026-02-01]] 0.0042
 check "compute_usd: a row without an hour price bills every write at five minutes" \
     [format %.4f [tallyman::compute_usd {{m 0 0 1000 0 400 2026-02-01}} $flat 2026-02-01]] 0.0030
+# A record can report more hour-kept writes than writes in all (seen in the
+# wild: total 0 with 353 kept an hour); the total is what was written, so the
+# hour part is capped at it: 1000 writes, 1400 "kept an hour", all at 6.
+check "compute_usd: hour-kept writes are capped at the writes in all" \
+    [format %.4f [tallyman::compute_usd {{m 0 0 1000 0 1400 2026-02-01}} $hour 2026-02-01]] 0.0060
 
 # Each request is priced in the era of its own date, and one without a date
 # in the session's: two eras for m, input at 1 then at 10 per Mtok.
@@ -175,6 +180,11 @@ set r [tallyman::parse_lines {
 }]
 check "parse_lines: a request carries its hour-kept writes and its earliest date" \
     [lrange [lindex [dict get $r requests] 0] 3 end] {1000 0 400 2026-01-31}
+set r [tallyman::parse_lines {
+    {{"type":"assistant","requestId":"r2","timestamp":"2026-02-01T10:00:00.000Z","message":{"model":"m","usage":{"input_tokens":10,"output_tokens":1,"cache_creation_input_tokens":1000,"cache_creation":null}}}}
+}]
+check "parse_lines: a null cache_creation is no split, not a dropped request" \
+    [lrange [lindex [dict get $r requests] 0] 3 end] {1000 0 0 2026-02-01}
 
 # accrue_lines prices each in-window request in the era of its own anchor:
 # the January request at 1 and the February one at 10, over an open window.

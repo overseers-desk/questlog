@@ -103,7 +103,10 @@ proc tallyman::compute_usd {requests rates session_date} {
         if {$row eq ""} continue
         lassign $row _ ri ro rw rr _ rw1h
         if {$rw1h eq ""} { set rw1h $rw }
-        set cw5m [expr {max($cw - $cw1h, 0)}]
+        # A record can report more hour-kept writes than writes in all; the
+        # total is what was written, so the hour part is capped at it.
+        if {$cw1h > $cw} { set cw1h $cw }
+        set cw5m [expr {$cw - $cw1h}]
         set total [expr {$total + ($in * $ri + $out * $ro \
             + $cw5m * $rw + $cw1h * $rw1h + $cr * $rr) / 1000000.0}]
         set any 1
@@ -373,7 +376,11 @@ proc tallyman::parse_lines {lines} {
         set out_t [dict getdef $u output_tokens 0]
         set cw_t  [dict getdef $u cache_creation_input_tokens 0]
         set cr_t  [dict getdef $u cache_read_input_tokens 0]
-        set w1_t  [dict getdef [dict getdef $u cache_creation {}] ephemeral_1h_input_tokens 0]
+        # cache_creation splits the writes by how long they are kept; a null
+        # there is no split.
+        if {[catch {dict getdef [dict getdef $u cache_creation {}] ephemeral_1h_input_tokens 0} w1_t]} {
+            set w1_t 0
+        }
 
         # The context this request sent. A <synthetic> filler and a zero-usage
         # record say nothing about occupancy, so they never overwrite the last
@@ -526,7 +533,11 @@ proc tallyman::accrue_lines {lines lo hi rates threshold credit} {
         set out_t [dict getdef $u output_tokens 0]
         set cw_t  [dict getdef $u cache_creation_input_tokens 0]
         set cr_t  [dict getdef $u cache_read_input_tokens 0]
-        set w1_t  [dict getdef [dict getdef $u cache_creation {}] ephemeral_1h_input_tokens 0]
+        # cache_creation splits the writes by how long they are kept; a null
+        # there is no split.
+        if {[catch {dict getdef [dict getdef $u cache_creation {}] ephemeral_1h_input_tokens 0} w1_t]} {
+            set w1_t 0
+        }
 
         set req_id [dict getdef $rec requestId [dict getdef $msg requestId ""]]
         if {$req_id eq ""} { set req_id "dummy-[incr dummy_req]" }

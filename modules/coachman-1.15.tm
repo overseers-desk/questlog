@@ -4,7 +4,7 @@ package require logger
 package require json
 package require json::write
 package require deadman
-package provide coachman 1.14
+package provide coachman 1.15
 
 # coachman - drives one harnessed `claude -p` CLI session.
 #
@@ -424,10 +424,11 @@ oo::class create coachman::Harness {
             set res [tallyman::parse_lines $lines]
             lappend requests {*}[dict get $res requests]
         }
-        # The session is spending now, so today's date selects the rate
-        # era. compute_usd returns -1.0 when no request matched any rate
-        # (an unpriced local model, or usage not yet landed); the meter
-        # reads that as 0.
+        # Each request is priced in the era of its own date; today's
+        # date stands in for one without a timestamp, since the session
+        # is spending now. compute_usd returns -1.0 when no request
+        # matched any rate (an unpriced local model, or usage not yet
+        # landed); the meter reads that as 0.
         set today [clock format [clock seconds] -format %Y-%m-%d]
         set usd [tallyman::compute_usd $requests $rates $today]
         return [expr {$usd < 0 ? 0.0 : $usd}]
