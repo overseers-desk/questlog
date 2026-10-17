@@ -27,22 +27,25 @@ proc check {name expected actual} {
 # M a /model command echo, K compact boundary (p is its logical parent),
 # S sidechain assistant, X a record with no uuid.
 set ::minute 0
-proc R {k u p {text x}} {
+proc R {k u p {text x}} { return [::logman::parse_line [RL $k $u $p $text]] }
+proc RL {k u p {text x}} {
     set ts [format "2026-10-17T13:%02d:00.000Z" [incr ::minute]]
     set par [expr {$p eq "" ? "null" : "\"$p\""}]
-    set head "\"uuid\":\"$u\",\"parentUuid\":$par,\"timestamp\":\"$ts\""
+    # Claude Code's own order: parentUuid first, the record's uuid and timestamp
+    # after its body (a system record's uuid can stand apart from its timestamp).
+    set head "\"parentUuid\":$par,\"isSidechain\":false"
+    set tail "\"uuid\":\"$u\",\"timestamp\":\"$ts\""
     switch -- $k {
-        P { set j "{\"type\":\"user\",$head,\"promptSource\":\"typed\",\"message\":{\"role\":\"user\",\"content\":\"$text\"}}" }
-        A { set j "{\"type\":\"assistant\",$head,\"message\":{\"role\":\"assistant\",\"content\":\[{\"type\":\"text\",\"text\":\"$text\"}\]}}" }
-        T { set j "{\"type\":\"user\",$head,\"message\":{\"role\":\"user\",\"content\":\[{\"type\":\"tool_result\",\"tool_use_id\":\"t\",\"content\":\"ok\"}\]}}" }
-        N { set j "{\"type\":\"system\",\"subtype\":\"turn_duration\",$head}" }
-        C { set j "{\"type\":\"user\",\"isMeta\":true,$head,\"message\":{\"role\":\"user\",\"content\":\"<local-command-caveat>Caveat</local-command-caveat>\"}}" }
-        M { set j "{\"type\":\"user\",$head,\"message\":{\"role\":\"user\",\"content\":\"<command-name>/model</command-name>\"}}" }
-        K { set j "{\"type\":\"system\",\"subtype\":\"compact_boundary\",\"uuid\":\"$u\",\"parentUuid\":null,\"logicalParentUuid\":\"$p\",\"timestamp\":\"$ts\",\"content\":\"Conversation compacted\"}" }
-        S { set j "{\"type\":\"assistant\",\"isSidechain\":true,$head,\"message\":{\"role\":\"assistant\",\"content\":\[{\"type\":\"text\",\"text\":\"$text\"}\]}}" }
-        X { set j "{\"type\":\"last-prompt\",\"lastPrompt\":\"$text\"}" }
+        P { return "{$head,\"promptSource\":\"typed\",\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":\"$text\"},$tail}" }
+        A { return "{$head,\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":\[{\"type\":\"text\",\"text\":\"$text\"}\]},$tail}" }
+        T { return "{$head,\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":\[{\"type\":\"tool_result\",\"tool_use_id\":\"t\",\"content\":\"ok\"}\]},$tail}" }
+        N { return "{$head,\"type\":\"system\",\"subtype\":\"turn_duration\",\"uuid\":\"$u\",\"isMeta\":false,\"timestamp\":\"$ts\"}" }
+        C { return "{$head,\"type\":\"user\",\"isMeta\":true,\"message\":{\"role\":\"user\",\"content\":\"<local-command-caveat>Caveat</local-command-caveat>\"},$tail}" }
+        M { return "{$head,\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":\"<command-name>/model</command-name>\"},$tail}" }
+        K { return "{\"parentUuid\":null,\"logicalParentUuid\":\"$p\",\"isSidechain\":false,\"type\":\"system\",\"subtype\":\"compact_boundary\",\"content\":\"Conversation compacted\",$tail}" }
+        S { return "{\"parentUuid\":$par,\"isSidechain\":true,\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":\[{\"type\":\"text\",\"text\":\"$text\"}\]},$tail}" }
+        X { return "{\"type\":\"last-prompt\",\"lastPrompt\":\"$text\"}" }
     }
-    return [::logman::parse_line $j]
 }
 
 # One word per record: its branch depth, then "o" where a branch opens and
@@ -198,6 +201,60 @@ check phrase_midnight {1 turn · 17 Oct 23:58–18 Oct 00:02} \
     [phrase t0 2026-10-17T23:58:00.000Z t1 2026-10-18T00:02:00.000Z]
 check phrase_cut "1 turn · \"[string repeat a 47]…\"" \
     [phrase prompt [string repeat a 60]]
+
+# ---- the line-level face: the same branches, counted from raw lines ---------
+# note_line reads the uuid tree off the serialization, so the cost pass counts
+# what the viewer shows: kept_turns is count_turn_line's running count (the
+# first number) with the abandoned turns left out (the second).
+proc counts {lines} {
+    unset -nocomplain st facts
+    set n 0
+    foreach l $lines {
+        incr n [::logman::count_turn_line $l st]
+        ::logman::note_line $l facts
+    }
+    return [list $n [llength [::logman::kept_turns facts]]]
+}
+set ::minute 0
+check line_simple {3 2} [counts [list [RL P p1 "" first] [RL A a1 p1] \
+    [RL P p2 a1 rolled] [RL A a2 p2] [RL P p3 a1 replacement] [RL A a3 p3]]]
+set ::minute 0
+check line_model_after_rewind {3 2} [counts [list [RL P p1 "" first] [RL A a1 p1] \
+    [RL P p2 a1 rolled] [RL A a2 p2] [RL C c1 a1] [RL M m1 c1] [RL P p3 m1 next] [RL A a3 p3]]]
+set ::minute 0
+check line_nested {6 2} [counts [list [RL P p1 "" first] [RL A a1 p1] \
+    [RL P p2 a1 outer] [RL A a2 p2] [RL P p3 a2 more] [RL A a3 p3] \
+    [RL P p4 a3 inner] [RL A a4 p4] [RL P p5 a3 instead] [RL A a5 p5] \
+    [RL P p6 a1 replacement] [RL A a6 p6]]]
+set ::minute 0
+check line_through_compaction {4 3} [counts [list [RL P p1 "" first] [RL A a1 p1] \
+    [RL P p2 a1 rolled] [RL A a2 p2] [RL P p3 a1 replacement] [RL A a3 p3] \
+    [RL K k1 a3] [RL P p4 k1 later] [RL A a4 p4]]]
+# A branch ending unanswered: its prompt leaves with it, and the replacement,
+# which the running count took for a draft, counts.
+set ::minute 0
+check line_ends_on_prompt {3 2} [counts [list [RL P p1 "" first] [RL A a1 p1] \
+    [RL P p2 a1 rolled] [RL A a2 p2] [RL P p2b a2 unanswered] \
+    [RL P p3 a1 replacement] [RL A a3 p3]]]
+set ::minute 0
+check line_draft_unchanged {2 2} [counts [list [RL P p1 "" first] [RL A a1 p1] \
+    [RL P p2 a1 draf] [RL P p3 a1 draft] [RL A a3 p3]]]
+# Lines of another shape count as they always did, outside the tree.
+check line_other_shape {2 2} [counts [list \
+    {{"type":"user","promptSource":"typed","message":{"role":"user","content":"one"}}} \
+    {{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"r"}]}}} \
+    {{"type":"user","promptSource":"typed","message":{"role":"user","content":"two"}}}]]
+# A tag rides with each kept turn, so a caller can count a window of them.
+unset -nocomplain facts
+set ::minute 0
+foreach {l w} [list [RL P p1 "" first] 0 [RL A a1 p1] 0 [RL P p2 a1 rolled] 1 \
+        [RL A a2 p2] 1 [RL P p3 a1 replacement] 1 [RL A a3 p3] 1] {
+    ::logman::note_line $l facts $w
+}
+check line_tags {0 1} [::logman::kept_turns facts]
+# A record's own uuid is the one before its timestamp, not one nested in it.
+check line_tree_nested_uuid {own par 0} [::logman::line_tree \
+    {{"parentUuid":"par","isSidechain":false,"type":"assistant","message":{"content":[{"type":"tool_use","input":{"uuid":"aaaaaaaa-0000-0000-0000-000000000000"}}]},"uuid":"own","timestamp":"t"}}]
 
 # ---- a list without uuids passes through -----------------------------------
 set plain [list [::logman::parse_line {{"type":"user","promptSource":"typed","message":{"role":"user","content":"hi"}}}]]

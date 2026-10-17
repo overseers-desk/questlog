@@ -11,7 +11,8 @@ namespace eval ::logman {
     namespace export extract_text extract_blocks record_tool_uses \
         is_compact_boundary record_timestamp parse_iso fmt_gap first_cwd \
         is_user_turn is_hidden_record format_tool_use_full order_tool_keys \
-        is_turn_start opens_turn mark_turn_runs count_turn_line \
+        is_turn_start opens_turn mark_turn_runs count_turn_line note_line \
+        kept_turns is_assistant_line \
         record_parent mark_branches mark_turns branch_phrase \
         record_role_label record_model \
         context_window transcript_step is_dialogue_prompt command_text dialogue_body
@@ -148,6 +149,17 @@ proc ::logman::is_turn_start {rec} {
     return [expr {$bt eq "text" || $bt eq "image"}]
 }
 
+# 1 iff this raw line is an assistant record. Run on every line of every
+# session file, so it is written cheapest-first: one string scan rejects the
+# lines that say nothing about an assistant, a second settles the compact
+# serialisation every current writer emits, and the regexp is reached only by
+# the spaced form, which two files in the corpus use.
+proc ::logman::is_assistant_line {line} {
+    if {[string first {assistant} $line] < 0} { return 0 }
+    return [expr {[string first {"type":"assistant"} $line] >= 0
+        || [regexp {"type":\s*"assistant"} $line]}]
+}
+
 # 1 iff this raw line counts as a turn, holding the run rule mark_turn_runs
 # holds: a prompt counts only where an assistant record has been written since
 # the last counted prompt, so the drafts of a message edited before the
@@ -155,30 +167,105 @@ proc ::logman::is_turn_start {rec} {
 # caller carries across one file's lines; this proc seeds and maintains it, and
 # a fresh (unset) one starts a file.
 #
-# The counting twin of mark_turn_runs, and the reason the rule is not simply
-# inlined at each counting site: the scanner and the cost pass both count, and a
-# rule authored twice is a rule that will disagree with itself. It counts the
-# first draft of a run where the grouping shows the last, which no total can
-# tell apart, and that way it needs no lookahead - this runs a line at a time
-# over every line of every session file.
+# The counting twin of mark_turn_runs. The startup scan counts with it as it
+# reads, for the min-turns floor, and kept_turns applies the same rule to the
+# lines note_line noted, for the Turns column; the two are kept in step by
+# test-branches. It counts the first draft of a run where the grouping shows
+# the last, which no total can tell apart, and that way it needs no lookahead -
+# this runs a line at a time over every line of every session file. It cannot
+# tell a turn a rewind abandoned, which only the whole file shows, so the
+# scan's count can run above the Turns column on a rewound session until the
+# cost pass lands.
 proc ::logman::count_turn_line {line statevar} {
     upvar 1 $statevar settled
     if {![info exists settled]} { set settled 1 }
-    # Runs on every line of every session file, so it is written cheapest-first:
-    # one string scan rejects the lines that say nothing about an assistant, a
-    # second settles the compact serialisation every current writer emits, and
-    # the regexp is reached only by the spaced form, which two files in the
-    # corpus use.
-    if {[string first {assistant} $line] >= 0} {
-        if {[string first {"type":"assistant"} $line] >= 0
-            || [regexp {"type":\s*"assistant"} $line]} {
-            set settled 1
-            return 0
-        }
+    if {[is_assistant_line $line]} {
+        set settled 1
+        return 0
     }
     if {!$settled || ![is_user_turn $line]} { return 0 }
     set settled 0
     return 1
+}
+
+# Note one raw line of a file, in order, into statevar (a variable the caller
+# carries across the file; a fresh one starts it): the line's place in the uuid
+# tree and the two facts count_turn_line reads, an assistant record and a turn.
+# Which turns a rewind abandoned only the whole file can tell, so the count waits
+# for kept_turns at its end. tag rides with the line's turn into that count (a
+# time window's in or out). The cost pass counts this way; the startup scan,
+# whose count only feeds the min-turns floor, keeps count_turn_line's running
+# count and is spared the tree.
+proc ::logman::note_line {line statevar {tag 1}} {
+    upvar 1 $statevar facts
+    if {![info exists facts]} { set facts [list] }
+    set a [is_assistant_line $line]
+    set t [expr {!$a && [is_user_turn $line]}]
+    lassign [line_tree $line] u p side
+    if {$u ne "" || $a || $t} { lappend facts [list $u $p $a $t $side $tag] }
+}
+
+# A raw line's {uuid parent sidechain}, read off the serialization Claude Code
+# writes instead of a parse: a record opens with its parentUuid (a compaction
+# boundary's null one continued by logicalParentUuid), and its own uuid is the
+# one followed by its timestamp, else (a system record) the first on the line.
+# Every one of 162,870 records checked read so. A line of any other shape gives
+# {"" "" 0} and stands outside the tree.
+proc ::logman::line_tree {line} {
+    if {[string range $line 0 13] ne "\{\"parentUuid\":"} { return {"" "" 0} }
+    set p ""
+    if {[string index $line 14] eq "\""} {
+        set p [string range $line 15 [expr {[string first "\"" $line 15] - 1}]]
+    } else {
+        regexp {"logicalParentUuid":"([^"]+)"} $line -> p
+    }
+    set u ""
+    set i 0
+    while {[set j [string first {","timestamp":"} $line $i]] >= 0} {
+        set k [string last {"uuid":"} $line $j]
+        if {$k >= 0 && [string first "\"" $line [expr {$k + 8}]] == $j} {
+            set u [string range $line [expr {$k + 8}] [expr {$j - 1}]]
+            break
+        }
+        set i [expr {$j + 1}]
+    }
+    if {$u eq ""} {
+        set k [string first {"uuid":"} $line]
+        if {$k >= 0} {
+            set u [string range $line [expr {$k + 8}] \
+                [expr {[string first "\"" $line [expr {$k + 8}]] - 1}]]
+        }
+    }
+    set side [expr {[string first {"isSidechain":true} [string range $line 0 200]] >= 0}]
+    return [list $u $p $side]
+}
+
+# The tags of the turns the conversation kept, in file order: count_turn_line's
+# rule applied to the lines note_line noted over a whole file (statevar), the
+# turns of every branch a rewind abandoned left out.
+proc ::logman::kept_turns {statevar} {
+    upvar 1 $statevar facts
+    if {![info exists facts]} { return {} }
+    set skip [dict create]
+    foreach run [rolled_back $facts] {
+        lassign $run lo hi
+        for {set k $lo} {$k <= $hi} {incr k} { dict set skip $k 1 }
+    }
+    set settled 1
+    set tags {}
+    set i -1
+    foreach f $facts {
+        incr i
+        if {[dict exists $skip $i]} continue
+        lassign $f - - a t - tag
+        if {$a} {
+            set settled 1
+        } elseif {$t && $settled} {
+            lappend tags $tag
+            set settled 0
+        }
+    }
+    return $tags
 }
 
 # 1 iff this record is the one a turn's header line is drawn for: a turn start
@@ -275,27 +362,13 @@ proc ::logman::record_parent {rec} {
 # every record of the run, the innermost run's depth. Sidechain records and
 # records without a uuid stay out of the tree.
 proc ::logman::mark_branches {recs} {
-    set pos [dict create]
-    set kids [dict create]
-    set par [dict create]
-    set leaf ""
-    set i -1
+    set facts [list]
     foreach rec $recs {
-        incr i
-        set u [dict getdef $rec uuid ""]
-        if {$u eq "" || [dict getdef $rec isSidechain 0]} continue
-        set p [record_parent $rec]
-        dict set pos $u $i
-        dict set par $u $p
-        dict lappend kids $p $u
-        set leaf $u
+        lappend facts [list [dict getdef $rec uuid ""] [record_parent $rec] \
+            [expr {[dict getdef $rec type ""] eq "assistant"}] [opens_turn $rec] \
+            [dict getdef $rec isSidechain 0]]
     }
-    if {$leaf eq ""} { return $recs }
-    # Outer runs before the runs inside them, so an inner run's depth stamp
-    # lands last on the records the two share.
-    set runs [lsort -integer -index 0 \
-        [branch_runs $recs $pos $kids $par $leaf "" 1]]
-    foreach run $runs {
+    foreach run [rolled_back $facts] {
         lassign $run lo hi depth
         lset recs $lo [dict replace [lindex $recs $lo] \
             _branch_open [dict create depth $depth]]
@@ -309,9 +382,32 @@ proc ::logman::mark_branches {recs} {
     return $recs
 }
 
-# The rolled-back runs, as {lo hi depth} list positions, hanging off the path
-# from leaf back to stop (a branch head, or "" for the root).
-proc ::logman::branch_runs {recs pos kids par leaf stop depth} {
+# The rolled-back runs of a file described as facts, one per record in file
+# order, {uuid parent assistant turn sidechain ...}: {lo hi depth} positions,
+# outer runs before the runs inside them. The one home of the branch rule,
+# which mark_branches feeds from parsed records and note_line from raw lines.
+proc ::logman::rolled_back {facts} {
+    set pos [dict create]
+    set kids [dict create]
+    set par [dict create]
+    set leaf ""
+    set i -1
+    foreach f $facts {
+        incr i
+        lassign $f u p - - side
+        if {$u eq "" || $side} continue
+        dict set pos $u $i
+        dict set par $u $p
+        dict lappend kids $p $u
+        set leaf $u
+    }
+    if {$leaf eq ""} { return {} }
+    return [lsort -integer -index 0 [branch_runs $facts $pos $kids $par $leaf "" 1]]
+}
+
+# The rolled-back runs, as {lo hi depth} positions in facts, hanging off the
+# path from leaf back to stop (a branch head, or "" for the root).
+proc ::logman::branch_runs {facts pos kids par leaf stop depth} {
     set path [dict create]
     set u $leaf
     while {$u ne "" && ![dict exists $path $u]} {
@@ -323,16 +419,15 @@ proc ::logman::branch_runs {recs pos kids par leaf stop depth} {
     foreach u [dict keys $path] {
         foreach c [dict getdef $kids $u {}] {
             if {[dict exists $path $c]} continue
-            set sub [subtree $kids $c]
             set at [dict create]
             set reply 0
             set turn 0
-            foreach s $sub {
+            foreach s [subtree $kids $c] {
                 set k [dict get $pos $s]
                 dict set at $k 1
-                set rec [lindex $recs $k]
-                if {[dict getdef $rec type ""] eq "assistant"} { set reply 1 }
-                if {[opens_turn $rec]} { set turn 1 }
+                lassign [lindex $facts $k] - - a t
+                if {$a} { set reply 1 }
+                if {$t} { set turn 1 }
             }
             if {!$reply || !$turn} continue
             set ks [lsort -integer [dict keys $at]]
@@ -341,17 +436,16 @@ proc ::logman::branch_runs {recs pos kids par leaf stop depth} {
             set foreign 0
             for {set k $lo} {$k <= $hi} {incr k} {
                 if {[dict exists $at $k]} continue
-                set rec [lindex $recs $k]
-                if {![dict getdef $rec isSidechain 0] && [opens_turn $rec]} {
+                lassign [lindex $facts $k] fu - - t side
+                if {$t && !$side && $fu ne ""} {
                     set foreign 1
                     break
                 }
             }
             if {$foreign} continue
             lappend runs [list $lo $hi $depth]
-            set last [dict getdef [lindex $recs $hi] uuid ""]
-            lappend runs {*}[branch_runs $recs $pos $kids $par $last $c \
-                [expr {$depth + 1}]]
+            lappend runs {*}[branch_runs $facts $pos $kids $par \
+                [lindex [lindex $facts $hi] 0] $c [expr {$depth + 1}]]
         }
     }
     return $runs
