@@ -41,6 +41,10 @@ proc ::logman::is_user_turn {line} {
     # fast reject: this literal is the head of the regexp below, so a line
     # lacking it cannot match - a necessary condition, string-cheaper than regexp.
     if {[string first {"role":"user","content":} $line] < 0} { return 0 }
+    # The request log Claude Code writes since 2.1.300 (api-request-blob and
+    # its kin) embeds whole API messages, prompts among them, and is no
+    # transcript record; the parsed twin never reads it as one.
+    if {[string match "\{\"type\":\"api-request*" $line]} { return 0 }
     # Harness records wearing a typed prompt's shape, rejected on the keys the
     # parsed twin reads so the two predicates agree on what the harness wrote.
     # isMeta covers the injections (hook feedback, skill bodies, /context

@@ -212,6 +212,11 @@ check turn_interrupt_key 0 [::logman::is_user_turn \
 check turn_interrupt_no_key 0 [::logman::is_user_turn \
     {{"type":"user","message":{"role":"user","content":[{"type":"text","text":"[Request interrupted by user for tool use]"}]}}}]
 
+# The request log Claude Code writes since 2.1.300 embeds the API messages it
+# sent, prompts among them; it is no turn.
+check turn_request_log_blob 0 [::logman::is_user_turn \
+    {{"type":"api-request-blob","sessionId":"s","hash":"h","message":{"role":"user","content":"a prompt the request carried"}}}]
+
 # ---- count_turn_line: the same run rule, counted a line at a time ----------
 # Drafts of a message edited before the assistant answered count once. The
 # state variable carries one file's worth of run state; a fresh one starts a
