@@ -2764,6 +2764,18 @@ oo::class create ::questlog::ui::SessionList {
         if {$old_cost eq "" || $old_cost < 0} { set old_cost 0.0 }
         my write_cost_fields $path $cost_dict
         my recompute_parent_totals $path
+        # The cost pass counts the turns the conversation kept; the scan's
+        # running count also holds the turns a rewind abandoned, which only the
+        # whole file shows. The min-turns floor takes the lower count from here,
+        # and a row it no longer admits leaves through the debounced rebuild.
+        set kept [dict getdef $cost_dict turns ""]
+        if {$kept ne "" && $kept < [my sget $path nturns]} {
+            my sset $path nturns $kept
+            if {![my sflag $path hidden] && ![my attr_admits [my sid $path]]} {
+                my sflagset $path hidden 1
+                my schedule_view_rebuild
+            }
+        }
 
         set new_cost [my sget $path cost]
         if {$new_cost eq "" || $new_cost < 0} { set new_cost 0.0 }

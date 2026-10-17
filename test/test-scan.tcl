@@ -416,6 +416,34 @@ check floor_3_keeps 1 [::questlog::scan::row_in_bounds [dict create since all mi
 check floor_4_drops 0 [::questlog::scan::row_in_bounds [dict create since all min_turns 4] $row3]
 check floor_agrees_with_column 1 [expr {$cost_turns >= 3}]
 
+# A rewind and the request log. The user asked "rolled", the assistant ran a
+# tool, and Claude Code logged the follow-up request (an api-request-blob line
+# embedding the prompts it carried); then the user rewound to before "rolled"
+# and asked "replacement". The scan's running count reads every prompt it meets
+# and cannot tell the abandoned one, which only the whole file shows: 3 (the
+# request log is no turn, or it would read 4). The cost pass counts the turns
+# kept, 2, and the session list's floor takes that count when it lands
+# (test-turns-view).
+set rw_fix [file join [file dirname $turns_fix] rewound-1.jsonl]
+set fh [open $rw_fix w]
+chan configure $fh -encoding utf-8 -translation lf
+puts $fh {{"parentUuid":null,"isSidechain":false,"promptSource":"typed","type":"user","message":{"role":"user","content":"first prompt"},"uuid":"p1","timestamp":"2026-05-10T10:00:00.000Z"}}
+puts $fh {{"parentUuid":"p1","isSidechain":false,"type":"assistant","message":{"role":"assistant","model":"claude-opus-4-8","content":"first answer"},"uuid":"a1","timestamp":"2026-05-10T10:00:05.000Z"}}
+puts $fh {{"parentUuid":"a1","isSidechain":false,"promptSource":"typed","type":"user","message":{"role":"user","content":"rolled"},"uuid":"p2","timestamp":"2026-05-10T10:01:00.000Z"}}
+puts $fh {{"parentUuid":"p2","isSidechain":false,"type":"assistant","message":{"role":"assistant","model":"claude-opus-4-8","content":[{"type":"tool_use","id":"t1","name":"Read","input":{}}]},"uuid":"a2","timestamp":"2026-05-10T10:01:05.000Z"}}
+puts $fh {{"parentUuid":"a2","isSidechain":false,"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"ok"}]},"uuid":"r2","timestamp":"2026-05-10T10:01:06.000Z"}}
+puts $fh {{"type":"api-request-blob","sessionId":"s","hash":"h","message":{"role":"user","content":"rolled"}}}
+puts $fh {{"parentUuid":"r2","isSidechain":false,"type":"assistant","message":{"role":"assistant","model":"claude-opus-4-8","content":"abandoned answer"},"uuid":"a3","timestamp":"2026-05-10T10:01:10.000Z"}}
+puts $fh {{"parentUuid":"a1","isSidechain":false,"promptSource":"typed","type":"user","message":{"role":"user","content":"replacement"},"uuid":"p3","timestamp":"2026-05-10T10:02:00.000Z"}}
+puts $fh {{"parentUuid":"p3","isSidechain":false,"type":"assistant","message":{"role":"assistant","model":"claude-opus-4-8","content":"kept answer"},"uuid":"a4","timestamp":"2026-05-10T10:02:05.000Z"}}
+close $fh
+set rw_row [$s4 scan_one $rw_fix]
+lassign [::questlog::match::scan_file $rw_fix $empty_clauses] rw_sf _
+check turns_rewound_scan_one_running 3 [dict get $rw_row nturns]
+check turns_rewound_scan_file_running 3 [dict get $rw_sf nturns]
+check turns_rewound_cost_kept 2 [dict get [::questlog::cost::parse_file $rw_fix] turns]
+::questlog::path::_real_file delete $rw_fix
+
 $s4 destroy
 
 # ---- an edited message counts once, on both sides ---------------------------

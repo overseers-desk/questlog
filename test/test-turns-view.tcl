@@ -48,6 +48,19 @@ set ONE   [file join $PROJDIR aaaa.jsonl]
 set THREE [file join $PROJDIR bbbb.jsonl]
 write_session $ONE   {only-turn}                   "2026-06-10T17:00"
 write_session $THREE {b-first b-second b-third}    "2026-06-09T10:00"
+# In a folder of its own, one turn kept and one a rewind abandoned: the user
+# asked "rolled", got an answer, rewound to the session's start and asked
+# "kept". The scan's running count is 2; the cost pass counts the 1 turn kept.
+set REWDIR [file join $SAND .claude projects -tmp-rewound]
+::questlog::path::_real_file mkdir $REWDIR
+set REW [file join $REWDIR cccc.jsonl]
+set fh [open $REW w]
+puts $fh {{"parentUuid":null,"isSidechain":false,"type":"system","subtype":"local_command","content":"session start","uuid":"s0","timestamp":"2026-06-08T09:59:59Z"}}
+puts $fh {{"parentUuid":"s0","isSidechain":false,"promptSource":"typed","cwd":"/tmp/rewound","type":"user","message":{"role":"user","content":"rolled"},"uuid":"p1","timestamp":"2026-06-08T10:00:00Z"}}
+puts $fh {{"parentUuid":"p1","isSidechain":false,"type":"assistant","message":{"model":"claude-sonnet-4-6","usage":{"input_tokens":100,"output_tokens":50}},"uuid":"a1","timestamp":"2026-06-08T10:00:05Z"}}
+puts $fh {{"parentUuid":"s0","isSidechain":false,"promptSource":"typed","cwd":"/tmp/rewound","type":"user","message":{"role":"user","content":"kept"},"uuid":"p2","timestamp":"2026-06-08T10:01:00Z"}}
+puts $fh {{"parentUuid":"p2","isSidechain":false,"type":"assistant","message":{"model":"claude-sonnet-4-6","usage":{"input_tokens":100,"output_tokens":50}},"uuid":"a2","timestamp":"2026-06-08T10:01:05Z"}}
+close $fh
 
 set SL ""
 set ::scanpath_calls 0
@@ -83,11 +96,15 @@ $::Scan extend [dict create since all]
 after 200 [list set ::scan_done 1]
 vwait ::scan_done
 $SL toggle_folder $FOLDER
-foreach path [list $ONE $THREE] {
+check "a rewound session's running count passes the floor at scan" \
+    [list [$SL sget $REW nturns] [$SL sflag $REW hidden]] {2 0}
+foreach path [list $ONE $THREE $REW] {
     $SL refresh_cost $path [::questlog::cost::build_cost_dict \
                                 [::questlog::cost::parse_file $path]]
 }
 update
+check "its cost counts the one turn kept, and the floor hides it" \
+    [list [$SL sget $REW nturns] [$SL sflag $REW hidden]] {1 1}
 
 check "both sessions are in the store" \
     [list [$SL has_session $ONE] [$SL has_session $THREE]] {1 1}
@@ -100,7 +117,8 @@ check "the store's folder sum is whole, hidden included" \
     [dict get [$SL node_aggregate [$SL fid $FOLDER]] cost] $whole
 check "the heading's sum is what it shows" \
     [dict get [$SL node_aggregate [$SL fid $FOLDER] 1] cost] [$SL sget $THREE cost]
-check "the grand total is the whole sum" [$SL total_cost] $whole
+check "the grand total is the whole sum, the rewound folder's hidden row included" \
+    [$SL total_cost] [expr {$whole + [$SL sget $REW cost]}]
 
 # Dropping the floor reveals the row from the store: no rescan, no file read.
 set before $::scanpath_calls
