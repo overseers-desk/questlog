@@ -121,6 +121,12 @@ check nested_branches {- - 1o 1 1 1 2o 2c1 1 1c1 - -} [branches $nested]
 check nested_facts {{1 3 outer 13:03 13:10 1} {2 1 inner 13:07 13:08 0}} \
     [facts $nested]
 
+# A prompt opening on a blank line quotes its first line with words.
+set ::minute 0
+check facts_prompt_skips_blank {{1 1 {pasted text} 13:03 13:04 0}} [facts [list \
+    [R P p1 "" first] [R A a1 p1] [R P p2 a1 "\\n  pasted text\\nmore"] [R A a2 p2] \
+    [R P p3 a1 replacement] [R A a3 p3]]]
+
 # ---- a branch ending on a note ---------------------------------------------
 set ::minute 0
 check ends_on_note {- - 1o 1 1c1 - -} [branches [list \

@@ -372,7 +372,7 @@ proc ::logman::subtree {kids u} {
 # drafts (mark_turn_runs), then each branch's facts for its header, filled into
 # its _branch_open dict beside depth:
 #   turns   its own turns as they render, a branch inside it counting apart
-#   prompt  the first line of the first of those turns
+#   prompt  the first non-blank line of the first of those turns
 #   t0 t1   its first and last timestamps
 #   inner   the branches directly inside it
 proc ::logman::mark_turns {recs} {
@@ -407,7 +407,12 @@ proc ::logman::mark_turns {recs} {
                     && [dict get $rec _branch_depth] == [dict get $top depth]} {
                 dict incr top turns
                 if {[dict get $top prompt] eq ""} {
-                    dict set top prompt [lindex [split [extract_text $rec] \n] 0]
+                    foreach l [split [extract_text $rec] \n] {
+                        if {[string trim $l] ne ""} {
+                            dict set top prompt [string trim $l]
+                            break
+                        }
+                    }
                 }
                 lset open end $top
             }
