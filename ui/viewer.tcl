@@ -1107,6 +1107,12 @@ oo::class create ::questlog::ui::Viewer {
         # with a held-back turn start standing is the exception: it carries no
         # new records but has the hold to release, so it goes through.
         if {![llength $recs] && ![llength [my pending]]} { return 0 }
+        # A rewind in the batch turns turns already drawn into a rolled-back
+        # branch, which only a wholesale render can fold.
+        if {[my rewound [concat [my pending] $recs]]} {
+            my reload
+            return 0
+        }
         # The summary pop inside the door deletes a mid-document line, so
         # every text line number at or under it shifts - including the
         # hover-copy cache, whose stale window otherwise makes the ⧉ copy the
@@ -1370,15 +1376,17 @@ oo::class create ::questlog::ui::Viewer {
             [list [self] watch_tick]]
     }
 
-    # Re-read the open session's file after an external replace or truncate.
-    # The document-path work of `show` without its session-switch resets, so
-    # PromptVar, the prompt bar state, Uuid and Cwd survive a file swapped under
-    # the reader. render begins by resetting the base class, so re-entry is safe;
-    # the quote lists, RenderTs/RenderInSection and LineMap it also wipes need
-    # no separate reset here. The scroll position is preserved across the swap.
+    # Re-read the open session's file after an external replace or truncate, or
+    # a rewind the tail met. The document-path work of `show` without its
+    # session-switch resets, so PromptVar, the prompt bar state, Uuid and Cwd
+    # survive a file swapped under the reader. render begins by resetting the
+    # base class, so re-entry is safe; the quote lists, RenderTs/RenderInSection
+    # and LineMap it also wipes need no separate reset here. The scroll position
+    # is preserved across the swap, and a reader held at the tail stays there.
     method reload {} {
         my copy_hide
         set yv [lindex [$Text yview] 0]
+        set tail [my latched]
         my find_hide 0
         set Records [list]
         set LineMap [dict create]
@@ -1390,7 +1398,7 @@ oo::class create ::questlog::ui::Viewer {
         my refresh_quote_control
         my index_turns
         my add_endhint
-        $Text yview moveto $yv
+        if {$tail} { my follow } else { $Text yview moveto $yv }
     }
 
     # Stop rendering a running stream into this view without killing claude: the

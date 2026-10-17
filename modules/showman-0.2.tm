@@ -67,6 +67,8 @@ oo::class create ::showman::Showman {
     variable StreamRole       ;# the streamed message's role (labels its first render)
     variable StreamSetId      ;# the id of the message live_set is repainting ("" between)
     variable Branches         ;# open rolled-back branches: {group render_ts in_section} each
+    variable Parents          ;# dict: rendered record uuid -> its parent's
+    variable LastTurn         ;# uuid of the last turn start rendered, "" before one
 
     constructor {parent args} {
         my configure -autofollow 1
@@ -229,6 +231,8 @@ oo::class create ::showman::Showman {
         set RenderTs 0
         set RenderInSection 0
         set Branches [list]
+        set Parents [dict create]
+        set LastTurn ""
         my live_flush
     }
 
@@ -257,6 +261,7 @@ oo::class create ::showman::Showman {
         foreach rec [::logman::mark_turns $recs] {
             set rec [my number_record $rec]
             lappend Records $rec
+            my note_tree $rec
             if {[dict exists $rec _branch_open]} {
                 my branch_open [dict get $rec _branch_open]
             }
@@ -272,7 +277,8 @@ oo::class create ::showman::Showman {
     #
     # A branch is known only once the whole list is read (the path that
     # replaced it comes after it), so branches are drawn by render_records
-    # alone.
+    # alone. A streaming caller asks `rewound` of each batch and re-renders
+    # wholesale when it says so.
 
     # Open a branch at its first record: seal the turn before the fork, open
     # a group and write its ROLLED BACK line, and fold it. The render clock is
@@ -322,6 +328,43 @@ oo::class create ::showman::Showman {
         return 0
     }
 
+    # Keep the uuid tree of what is rendered, and the last turn start in it,
+    # for `rewound`.
+    method note_tree {rec} {
+        set u [dict getdef $rec uuid ""]
+        if {$u eq "" || [dict getdef $rec isSidechain 0]} return
+        dict set Parents $u [::logman::record_parent $rec]
+        if {[::logman::opens_turn $rec] && ![dict exists $rec _superseded]} {
+            set LastTurn $u
+        }
+    }
+
+    # 1 iff a batch of records, in order, opens a turn that does not descend
+    # from the last turn start before it: the user rewound, or sent an edit
+    # before the reply came. The turns it left are drawn and sealed above, so
+    # only a wholesale render can fold them.
+    method rewound {recs} {
+        set par $Parents
+        set last $LastTurn
+        foreach rec $recs {
+            set u [dict getdef $rec uuid ""]
+            if {$u eq "" || [dict getdef $rec isSidechain 0]} continue
+            dict set par $u [::logman::record_parent $rec]
+            if {![::logman::opens_turn $rec]} continue
+            if {$last ne ""} {
+                set a [dict get $par $u]
+                set seen [dict create]
+                while {$a ne $last && $a ne "" && ![dict exists $seen $a]} {
+                    dict set seen $a 1
+                    set a [dict getdef $par $a ""]
+                }
+                if {$a ne $last} { return 1 }
+            }
+            set last $u
+        }
+        return 0
+    }
+
     # Append finished records at the tail: into the open turn while one
     # stands (a tool_result record is detail in its entirety), and a
     # turn-start record closes it and opens its own. One base-class batch:
@@ -357,6 +400,7 @@ oo::class create ::showman::Showman {
             foreach rec [::logman::mark_turn_runs $recs] {
                 set rec [my number_record $rec]
                 lappend Records $rec
+                my note_tree $rec
                 lassign [my render_record_turned $rec $RenderTs $RenderInSection] \
                     RenderTs RenderInSection
             }

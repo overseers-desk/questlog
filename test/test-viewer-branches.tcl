@@ -3,8 +3,8 @@
 # under one ROLLED BACK line at their fork, folded at first and nested as the
 # rewinds nest; the line toggles on a click and opens to a find step; the
 # conversation after a branch measures its idle gap from the path that stood;
-# rows pointing into a branch read muted; and the copy affordances skip what
-# the reader cannot see.
+# rows pointing into a branch read muted; the copy affordances skip what the
+# reader cannot see; and a rewind met by the live tail re-renders the session.
 #
 # Runs under wish (it builds a Viewer, so it needs Tk); run-audit routes it to
 # wish9.0 on the private Xvfb. Standalone: DISPLAY=:95 wish9.0 test-viewer-branches.tcl
@@ -209,6 +209,41 @@ set oidx [$Text search -- "Opening answer" 1.0 end]
 set oline [$V line_at $oidx]
 check "the message before the fork copies up to the ROLLED BACK line" \
     [$Text compare [$V next_body_index [dict get [set ${NS}::LineMap] $oline]] == $hdr] 1
+
+# ---- 6. a rewind met by the live tail ----------------------------------------
+# The file holds two answered turns; then the user rewinds past the second,
+# runs a command, and asks again. The tail sees the new prompt descend from the
+# first answer, not the second turn, and re-renders: the second turn folds.
+set JL [file join $TMP live.jsonl]
+write_lines $JL [list \
+    [L P q1 ""  0900 "first live question"] \
+    [L A b1 q1  0901 "first live answer"] \
+    [L P q2 b1  0902 "second live question"] \
+    [L A b2 q2  0903 "second live answer"]]
+$V show $JL 0 {}
+update idletasks
+$V follow
+update idletasks
+check "before the rewind nothing is folded" [headers] {}
+write_lines $JL [list \
+    [L C k1 b1  0905 ""] \
+    [L P q3 k1  0906 "third live question"] \
+    [L A b3 q3  0907 "third live answer"]] a
+$V append_new
+update idletasks
+update
+check "the rewind folds the abandoned turn" [headers] \
+    [list "▸ ROLLED BACK  1 turn · 09:02–09:03 · \"second live question\""]
+check "the abandoned answer is folded" [vischars "second live answer"] 0
+check "the new turn reads" [vischars "third live answer"] 17
+check "a reader held at the tail stays there" \
+    [expr {[lindex [$Text yview] 1] >= 0.999}] 1
+
+# A growing turn with no rewind appends as before.
+write_lines $JL [list [L A b4 b3 0908 "fourth live words"]] a
+$V append_new
+update idletasks
+check "plain growth still appends" [vischars "fourth live words"] 17
 
 check "no background errors" $::bgerr {}
 ::questlog::path::_real_file delete -force $TMP
