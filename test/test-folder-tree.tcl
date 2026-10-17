@@ -13,8 +13,9 @@
 #                                     orchard by its recorded path, marked
 #   ~/proj/anvil                      sessions; an unrelated root
 #
-# Then a folder's last session leaves and the folders it held step up to its
-# parent; the folder's return takes them back.
+# Then orchard's own session leaves and it stays, a project folder grouping
+# the folders beneath it; when all but one of those leave, the last steps up
+# to the root; orchard's return takes it back.
 
 package require Tcl 9
 package require Tk
@@ -195,16 +196,26 @@ check "the audit is clean after the rebuild" [$SL audit] {}
 # ---- a folder left holding only folders ----------------------------------------
 $SL forget_session $S_ORCHARD
 update
-check "a folder with no session of its own is not a row" [$SL has_folder $F_ORCHARD] 0
-check "the folders it held step up" [lsort [rootkeys]] \
-    [lsort [list $F_ANVIL $F_HARVEST $F_ESPALIER $F_GONE]]
-check "and carry its label in theirs" [label_of $F_ESPALIER] ~/proj/orchard/trellis/espalier
+check "a project folder over several folders stays a row" [$SL has_folder $F_ORCHARD] 1
+check "and keeps them" \
+    [list [parent_of $F_HARVEST] [parent_of $F_ESPALIER] [parent_of $F_GONE]] \
+    [list $F_ORCHARD $F_ORCHARD $F_ORCHARD]
+check "the audit is clean with orchard a group" [$SL audit] {}
+$SL add_scan_row [$::Scan scan_path $S_ORCHARD]
+update
+check "a session of the group's own lands in it" \
+    [$SL folder_session_paths $F_ORCHARD] [list $S_ORCHARD]
+$SL forget_session $S_ORCHARD
+$SL forget_session $S_HARVEST
+$SL forget_session $S_GONE
+update
+check "a group left over one folder is not a row" [$SL has_folder $F_ORCHARD] 0
+check "the folder it held steps up" [lsort [rootkeys]] [lsort [list $F_ANVIL $F_ESPALIER]]
+check "and carries its label in its own" [label_of $F_ESPALIER] ~/proj/orchard/trellis/espalier
 check "the audit is clean after the step up" [$SL audit] {}
 $SL add_scan_row [$::Scan scan_path $S_ORCHARD]
 update
-check "the folder's return takes them back" \
-    [list [parent_of $F_HARVEST] [parent_of $F_ESPALIER] [parent_of $F_GONE]] \
-    [list $F_ORCHARD $F_ORCHARD $F_ORCHARD]
+check "the folder's return takes it back" [parent_of $F_ESPALIER] $F_ORCHARD
 check "relative again" [label_of $F_ESPALIER] trellis/espalier
 check "the audit is clean at the end" [$SL audit] {}
 

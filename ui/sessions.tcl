@@ -295,7 +295,7 @@ oo::class create ::questlog::ui::SessionList {
     # counterpart to the base class's structural check_invariant (which guards the
     # marks). It returns a list of human-readable violation strings, empty when
     # clean, so a test asserts `check audit [$SL audit] {}` and the soak calls
-    # it after every operation. Two invariants:
+    # it after every operation. The invariants:
     #   (a) PathNode and the session/subagent nodes' key fields are a bijection,
     #       and FolderNode likewise over folder keys: every registered key
     #       resolves to a node carrying it, and every keyed node is registered
@@ -312,6 +312,8 @@ oo::class create ::questlog::ui::SessionList {
     #       hold node ids that exist as nodes, never a path or basename a move
     #       mutates: a regression to path-keying lodges a string that is no node id
     #       and trips here.
+    #   (e) every folder holds a session of its own or two or more folders
+    #       (folder_kept), so a group whose last but one folder left shows here.
     method audit {} {
         set probs [list]
         # (a) reverse indices are a bijection with the keyed nodes.
@@ -368,6 +370,13 @@ oo::class create ::questlog::ui::SessionList {
             if {$want ne $have && ($want eq "" || $have eq "" \
                     || [my node_pget $want dir] ne [my node_pget $have dir])} {
                 lappend probs "folder [my node_field $id key] sits under '$have', its directory says '$want'"
+            }
+        }
+        # (e) every folder earns its row.
+        foreach id [my all_node_ids] {
+            if {[my node_field $id kind] eq "folder" \
+                    && ![my folder_kept $id [my node_field $id key]]} {
+                lappend probs "folder [my node_field $id key] holds no session and under two folders"
             }
         }
         # (d) the mutable view-state sets are node-keyed: every id they hold is a
@@ -2257,6 +2266,8 @@ oo::class create ::questlog::ui::SessionList {
     # The one creator of folder nodes. A folder hangs under the folder whose
     # directory most closely contains its own, or at the root when none does;
     # a folder the resolver cannot place (dir "") is a root and never a parent.
+    # A folder exists while it holds a session, or while it is a project
+    # folder over two or more folders (group_over).
     # This is the rule ::questlog::path::container_tree states over a whole
     # corpus at once, applied here one folder at a time as they arrive.
     # Folders arrive in their newest session's order, not top-down, so a new
@@ -2289,6 +2300,30 @@ oo::class create ::questlog::ui::SessionList {
         # Inside a flush's bracket the moves' rebuild waits for its end.
         if {[llength $held]} {
             my batch { foreach id $held { my move $id $fid } }
+        }
+        my group_over $fid $dir
+    }
+
+    # Raise the project folder of the nearest directory that holds both this
+    # arrival and a sibling folder, if no row stands there yet: the tree takes
+    # its shape from the projects on disk, and the filter decides only which
+    # of their sessions are in view. Its arrival runs this again a level up.
+    method group_over {fid dir} {
+        if {$dir eq ""} return
+        set parent [my node_field $fid parent]
+        set top [expr {$parent eq "" ? "" : [my node_pget $parent dir]}]
+        set sibs [expr {$parent eq "" ? [my roots] : [my node_field $parent children]}]
+        for {set a [file dirname $dir]} {$a ne $top && $a ne [file dirname $a]} \
+                {set a [file dirname $a]} {
+            set g [::questlog::path::encode_cwd $a]
+            if {![file isdirectory [file join [::questlog::path::projects_root] $g]]} continue
+            foreach s $sibs {
+                if {$s ne $fid && [my node_field $s kind] eq "folder" \
+                        && [my dir_within [my node_pget $s dir] $a]} {
+                    my ensure_folder $g $a
+                    return
+                }
+            }
         }
     }
 
@@ -3544,7 +3579,7 @@ oo::class create ::questlog::ui::SessionList {
     # promoted folders back above their new siblings' sessions; with none
     # promoted, only the sums above the dropped folder moved.
     method folder_after_leave {fid folder} {
-        if {[llength [my folder_session_paths $folder]] > 0} {
+        if {[my folder_kept $fid $folder]} {
             my mark_heading_dirty $folder
             return
         }
@@ -3552,9 +3587,24 @@ oo::class create ::questlog::ui::SessionList {
         set held [my node_field $fid children]
         my batch { foreach c $held { my move $c $parent } }
         my forget_folder $folder
-        if {![llength $held] && $parent ne ""} {
-            my mark_heading_dirty [my node_field $parent key]
+        if {$parent eq ""} return
+        set pkey [my node_field $parent key]
+        if {![my folder_kept $parent $pkey]} {
+            my folder_after_leave $parent $pkey
+        } elseif {![llength $held]} {
+            my mark_heading_dirty $pkey
         }
+    }
+
+    # 1 iff a folder still earns its row: a session of its own, or two or more
+    # folders beneath it to group.
+    method folder_kept {fid folder} {
+        if {[llength [my folder_session_paths $folder]]} { return 1 }
+        set n 0
+        foreach c [my node_field $fid children] {
+            if {[my node_field $c kind] eq "folder"} { incr n }
+        }
+        return [expr {$n >= 2}]
     }
 
     method forget_session {path} {

@@ -5,8 +5,9 @@
 # the same parent for every folder, and the same label. The corpus mixes
 # the cases the rule decides: a root with sessions of its own, a child
 # folder, a chain of directories holding no folder, a branch point holding
-# none (whose children step up), a directory that is gone, and an unrelated
-# root. Every name fictional.
+# none (whose children step up), a project whose sessions all fall outside
+# the window over two folders (a group row), a directory that is gone, and an
+# unrelated root. Every name fictional.
 
 package require Tcl 9
 package require Tk
@@ -58,14 +59,19 @@ set CORPUS {
     {proj/kiln/wheel                   6 1}
     {proj/kiln/wheel/spokes            7 1}
     {proj/anvil                        8 1}
+    {proj/forge                       60 1}
+    {proj/forge/bellows                9 1}
+    {proj/forge/tongs/pliers          10 1}
+    {proj/forge/quench                11 1}
 }
 set entries [list]
+set groups [list]
 set i 0
 foreach row $CORPUS {
     lassign $row rel ago exists
     set cwd [file join $SAND $rel]
     set folder [write_session $cwd s[incr i] $ago $exists]
-    lappend entries [list $folder $cwd]
+    if {$ago > 30} { lappend groups [list $folder $cwd] } else { lappend entries [list $folder $cwd] }
     dict set rel_of $folder $rel
 }
 
@@ -81,7 +87,7 @@ proc rule_of {nodes {parent ""} {dict {}}} {
     }
     return $dict
 }
-set rule [rule_of [::questlog::path::container_tree $entries]]
+set rule [rule_of [::questlog::path::container_tree $entries $groups]]
 
 set SL ""
 set ::Scan [::questlog::Scan new [list apply {{r} { $::SL on_scan_row $r }}] noop {} {} {} 0]
