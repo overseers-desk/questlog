@@ -245,16 +245,18 @@ proc ::questlog::path::_walk {dir parts} {
 
 # Group resolved folder directories into the tree the session list draws.
 # `entries` is a list of {key dir} pairs, one per folder under the projects
-# root, dir its absolute directory. Returns the root nodes; each node is a
-# dict {label dir keys children}, where keys names the folders whose sessions
-# live at that directory and children holds nodes of the same shape.
+# root, dir its absolute directory. `groups` holds pairs of the same shape for
+# project folders with no sessions in view. Returns the root nodes; each node
+# is a dict {label dir keys children}, where keys names the folders at that
+# directory and children holds nodes of the same shape.
 #
-# The container rule decides which directories become rows: one that holds no
-# folder of its own is not a row, and its label is pushed down into each of
-# its children. A lone child reads as a merge, "infrastructure/energy"; several
-# read as promotion, each carrying the prefix. A root's label is absolute
-# because everything above it was pushed down; a nested label is one segment.
-proc ::questlog::path::container_tree {entries} {
+# The container rule decides which directories become rows: one that holds a
+# folder from entries, or a group folder over two or more rows. Any other is
+# not a row, and its label is pushed down into each of its children. A lone
+# child reads as a merge, "infrastructure/energy"; several read as promotion,
+# each carrying the prefix. A root's label is absolute because everything
+# above it was pushed down; a nested label is one segment.
+proc ::questlog::path::container_tree {entries {groups {}}} {
     set trie [dict create keys {} kids {}]
     foreach pair $entries {
         lassign $pair key dir
@@ -269,20 +271,26 @@ proc ::questlog::path::container_tree {entries} {
         lappend held $key
         dict set trie {*}$at keys $held
     }
-    return [_emit_nodes $trie "/" "/"]
+    set gkey [dict create]
+    foreach pair $groups { dict set gkey [lindex $pair 1] [lindex $pair 0] }
+    return [_emit_nodes $trie "/" "/" $gkey]
 }
 
 # One trie node's contribution to its parent's child list: itself when it holds
-# folders, otherwise its children with its label pushed into theirs.
-proc ::questlog::path::_emit_nodes {trie label dir} {
+# folders, or is a group over two or more rows; otherwise its children with its
+# label pushed into theirs.
+proc ::questlog::path::_emit_nodes {trie label dir gkey} {
     set out [list]
     foreach seg [lsort -dictionary [dict keys [dict get $trie kids]]] {
         foreach node [_emit_nodes [dict get $trie kids $seg] $seg \
-                          [file join $dir $seg]] {
+                          [file join $dir $seg] $gkey] {
             lappend out $node
         }
     }
     set keys [dict get $trie keys]
+    if {[llength $keys] == 0 && [dict exists $gkey $dir] && [llength $out] >= 2} {
+        set keys [list [dict get $gkey $dir]]
+    }
     if {[llength $keys] == 0} {
         return [lmap node $out {
             dict set node label [file join $label [dict get $node label]]

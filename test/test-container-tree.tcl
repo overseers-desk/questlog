@@ -28,7 +28,9 @@ proc render {nodes {depth 0}} {
     }
     return $out
 }
-proc tree {entries} { return [join [render [::questlog::path::container_tree $entries]] \n] }
+proc tree {entries {groups {}}} {
+    return [join [render [::questlog::path::container_tree $entries $groups]] \n]
+}
 
 # ---- a flat corpus is the degenerate case, not a special one ---------
 
@@ -87,6 +89,20 @@ check "depth: nesting continues past the old two levels" \
     [tree {{o /var/local/src/orchard}
            {t /var/local/src/orchard/trellis}
            {e /var/local/src/orchard/trellis/espalier}}]
+
+# ---- a group folder over two or more rows is a row --------------------
+
+check "group: a project folder with no sessions holds the rows below it" \
+    "/var/local/src/mill {m}
+.bookish/design {d}
+.enquiries {e}" \
+    [tree {{e /var/local/src/mill/enquiries}
+           {d /var/local/src/mill/bookish/design}} \
+          {{m /var/local/src/mill} {b /var/local/src/mill/bookish}}]
+
+check "group: over a single row it merges into that row's label" \
+    "/var/local/src/mill/bookish/design {d}" \
+    [tree {{d /var/local/src/mill/bookish/design}} {{m /var/local/src/mill}}]
 
 if {$fails > 0} {
     puts "$fails failures"
