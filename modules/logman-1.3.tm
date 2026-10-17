@@ -12,7 +12,7 @@ namespace eval ::logman {
         is_compact_boundary record_timestamp parse_iso fmt_gap first_cwd \
         is_user_turn is_hidden_record format_tool_use_full order_tool_keys \
         is_turn_start opens_turn mark_turn_runs count_turn_line \
-        record_parent mark_branches mark_turns \
+        record_parent mark_branches mark_turns branch_phrase \
         record_role_label record_model \
         context_window transcript_step is_dialogue_prompt command_text dialogue_body
 }
@@ -843,6 +843,32 @@ proc ::logman::fmt_gap {minutes} {
     }
     set d [expr {$minutes / (60*24)}]
     return "${d} day(s)"
+}
+
+# A rolled-back branch's header phrase from its _branch_open facts (mark_turns):
+# 3 turns · 13:08–13:20 · 1 rollback inside · "do it…". The session viewer's
+# ROLLED BACK line and the markdown export's summary both draw it, so they read
+# alike. Times are local; a span that crosses midnight dates both ends.
+proc ::logman::branch_phrase {b} {
+    set n [dict get $b turns]
+    set parts [list "$n turn[expr {$n == 1 ? "" : "s"}]"]
+    set e0 [parse_iso [dict get $b t0]]
+    set e1 [parse_iso [dict get $b t1]]
+    if {$e0 > 0 && $e1 > 0} {
+        set f [expr {[clock format $e0 -format %Y-%m-%d] eq [clock format $e1 -format %Y-%m-%d]
+            ? "%H:%M" : "%d %b %H:%M"}]
+        set s0 [clock format $e0 -format $f]
+        set s1 [clock format $e1 -format $f]
+        lappend parts [expr {$s0 eq $s1 ? $s0 : "$s0–$s1"}]
+    }
+    set k [dict get $b inner]
+    if {$k} { lappend parts "$k rollback[expr {$k == 1 ? "" : "s"}] inside" }
+    set p [string trim [dict get $b prompt]]
+    if {$p ne ""} {
+        if {[string length $p] > 48} { set p "[string range $p 0 46]…" }
+        lappend parts "\"$p\""
+    }
+    return [join $parts " · "]
 }
 
 # The one home for the per-record transcript cues. The session viewer

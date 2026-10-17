@@ -174,6 +174,25 @@ check foreign_prompt {- - - - - -} [branches [list \
     [R P p1 "" first] [R A a1 p1] [R P p2 a1 rolled] [R P pL a1 live] \
     [R A a2 p2] [R A aL pL]]]
 
+# ---- the header phrase ------------------------------------------------------
+# Local times; the test pins the zone so they read the same anywhere.
+set ::env(TZ) UTC
+proc phrase {args} {
+    return [::logman::branch_phrase [dict merge \
+        {turns 1 prompt "" t0 "" t1 "" inner 0} $args]]
+}
+check phrase_simple {1 turn · 13:03–13:04 · "rolled"} \
+    [phrase prompt rolled t0 2026-10-17T13:03:00.000Z t1 2026-10-17T13:04:30.000Z]
+check phrase_nested {3 turns · 13:03–13:10 · 1 rollback inside · "outer"} \
+    [phrase turns 3 prompt outer inner 1 \
+        t0 2026-10-17T13:03:00.000Z t1 2026-10-17T13:10:00.000Z]
+check phrase_one_minute {2 turns · 13:03 · 2 rollbacks inside} \
+    [phrase turns 2 inner 2 t0 2026-10-17T13:03:00.000Z t1 2026-10-17T13:03:40.000Z]
+check phrase_midnight {1 turn · 17 Oct 23:58–18 Oct 00:02} \
+    [phrase t0 2026-10-17T23:58:00.000Z t1 2026-10-18T00:02:00.000Z]
+check phrase_cut "1 turn · \"[string repeat a 47]…\"" \
+    [phrase prompt [string repeat a 60]]
+
 # ---- a list without uuids passes through -----------------------------------
 set plain [list [::logman::parse_line {{"type":"user","promptSource":"typed","message":{"role":"user","content":"hi"}}}]]
 check no_uuids $plain [::logman::mark_branches $plain]

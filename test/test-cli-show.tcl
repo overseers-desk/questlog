@@ -124,6 +124,36 @@ check "dialogue: thinking, tool call and tool result dropped" \
 check "dialogue: the wrapper tags are gone" \
     [string match {*command-name*} $dlg] 0
 
+# ---- rolled-back branches fold into <details> ----------------------------
+
+# The user rewound past "first?" (answered) and asked "second?" from the same
+# point. The abandoned exchange keeps its anchors inside a <details> block whose
+# summary is the viewer's header phrase; the surviving turn follows it.
+set ::env(TZ) UTC
+set rbfix [file join /tmp questlog-show-rb-[pid].jsonl]
+write_file $rbfix [join {
+    {{"type":"user","uuid":"p1","parentUuid":null,"timestamp":"2026-10-17T13:00:00.000Z","promptSource":"typed","message":{"role":"user","content":"start"}}}
+    {{"type":"assistant","uuid":"a1","parentUuid":"p1","timestamp":"2026-10-17T13:01:00.000Z","message":{"content":[{"type":"text","text":"ready"}]}}}
+    {{"type":"user","uuid":"p2","parentUuid":"a1","timestamp":"2026-10-17T13:02:00.000Z","promptSource":"typed","message":{"role":"user","content":"first? <b>"}}}
+    {{"type":"assistant","uuid":"a2","parentUuid":"p2","timestamp":"2026-10-17T13:03:00.000Z","message":{"content":[{"type":"text","text":"abandoned answer"}]}}}
+    {{"type":"user","uuid":"p3","parentUuid":"a1","timestamp":"2026-10-17T13:04:00.000Z","promptSource":"typed","message":{"role":"user","content":"second?"}}}
+    {{"type":"assistant","uuid":"a3","parentUuid":"p3","timestamp":"2026-10-17T13:05:00.000Z","message":{"content":[{"type":"text","text":"kept answer"}]}}}
+} "\n"]
+check "export_session: a rolled-back branch is a <details> block" \
+    [::questlog::markdown::export_session $rbfix 1] [join {
+        "**\[#1] USER**\n\nstart"
+        "**\[#2] ASSISTANT**\n\nready"
+        "<details><summary>ROLLED BACK · 1 turn · 13:02–13:03 · \"first? &lt;b&gt;\"</summary>"
+        "**\[#3] USER**\n\nfirst? <b>"
+        "**\[#4] ASSISTANT**\n\nabandoned answer"
+        "</details>"
+        "**\[#5] USER**\n\nsecond?"
+        "**\[#6] ASSISTANT**\n\nkept answer"
+    } "\n\n"]
+check "export_session: the dialogue view wraps it too" \
+    [string match "*<details>*abandoned answer*</details>*kept answer" \
+        [::questlog::markdown::export_session $rbfix 0 1]] 1
+
 # ---- show's identifier resolution -----------------------------------------
 
 check "resolve_session: an existing file path is taken as-is" \
@@ -143,7 +173,7 @@ write_file $sesspath $fixture
 check "resolve_session: a bare uuid resolves to its session file" \
     [::questlog::cli::main::resolve_session $uuid] $sesspath
 
-::questlog::path::_real_file delete -force $f $toolfix $dlgfix $proot
+::questlog::path::_real_file delete -force $f $toolfix $dlgfix $rbfix $proot
 
 if {$failures == 0} {
     puts "\nAll tests passed."
