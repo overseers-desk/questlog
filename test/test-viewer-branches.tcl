@@ -153,6 +153,10 @@ check "the gap after the branch is the live path's, drawn and visible" \
 # ---- 2. turns and rows -------------------------------------------------------
 set TurnList [dict get [set ${NS}::BandDesc] turns list]
 check "every turn keeps its row" [$TurnList size] 6
+set nums {}
+for {set i 0} {$i < 6} {incr i} { lappend nums [lindex [$TurnList get $i] 0] }
+check "only the turns kept are numbered" $nums {1 ↩ ↩ ↩ ↩ 2}
+check "the head strip counts the turns kept" [set ${NS}::Kept] 2
 set inks {}
 for {set i 0} {$i < 6} {incr i} { lappend inks [$TurnList itemcget $i -foreground] }
 set user [::questlog::ui::theme::c user]

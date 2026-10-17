@@ -75,6 +75,7 @@ oo::class create ::questlog::ui::Viewer {
     variable MenuTarget       ;# dict capturing the clicked target
     variable Bodies           ;# dict: jsonl line -> raw body (for Copy message)
     variable TurnList         ;# listbox of per-turn rows (alias of BandDesc turns list)
+    variable Kept             ;# turns the conversation kept: the head strip's Turns count
     variable MatchList        ;# listbox of per-match rows (alias of BandDesc matches list)
     variable MatchLabels      ;# per-match one-line excerpt, parallel to FindMatches
     variable BandMatchSet     ;# the FindMatches the match listbox was last filled
@@ -200,6 +201,7 @@ oo::class create ::questlog::ui::Viewer {
         set CwdFull ""
         set Query ""
         set LoadedLines 0
+        set Kept 0
         set RenderModel ""
         set PromptVar ""
         set PermVar readonly
@@ -2211,8 +2213,10 @@ oo::class create ::questlog::ui::Viewer {
 
     # Fill the Turns listbox from the base class's region store, one row per turn
     # "N · time · first prompt line" coloured like a user label (a turn opens
-    # on a user prompt). N is the turn's 1-based number, so a reader can jump
-    # to "turn 12" by the number they'd say aloud. The label was captured at
+    # on a user prompt). N is the turn's 1-based number among the turns the
+    # conversation kept, so a reader can jump to "turn 12" by the number they'd
+    # say aloud; a turn a rewind abandoned reads ↩ in its place, muted, and
+    # counts in neither the numbering nor the head strip. The label was captured at
     # region_open (the prompt's first line, in the payload); collapse its
     # whitespace and clip it the way the
     # match and quote rows clip, so a long or ragged opening still reads as one
@@ -2223,16 +2227,18 @@ oo::class create ::questlog::ui::Viewer {
     # wholesale.
     method index_turns {} {
         $TurnList delete 0 end
+        set Kept 0
         for {set n 0} {$n < [my region_count]} {incr n} {
             set p [my payload $n]
             set label [regsub -all {\s+} [string trim [dict get $p label]] " "]
             if {[string length $label] > 60} {
                 set label "[string range $label 0 59]…"
             }
+            set depth [dict getdef $p depth 0]
+            set num [expr {$depth > 0 ? "↩" : [incr Kept]}]
             $TurnList insert end \
-                "[expr {$n + 1}] · [my tool_time [dict get $p ts]] · $label"
-            $TurnList itemconfigure end -foreground \
-                [my row_color user [dict getdef $p depth 0]]
+                "$num · [my tool_time [dict get $p ts]] · $label"
+            $TurnList itemconfigure end -foreground [my row_color user $depth]
         }
         my refresh_turn_control
     }
@@ -2244,14 +2250,14 @@ oo::class create ::questlog::ui::Viewer {
         return [::questlog::ui::theme::c $role]
     }
 
-    # Expose the head-strip Turns count from the region store (index_turns
-    # has filled the rows). Opt-in like the tool and quote audits (descriptor
+    # Expose the head-strip Turns count, the turns kept (index_turns has filled
+    # the rows and counted them). Opt-in like the tool and quote audits (descriptor
     # auto is 0): it makes the Turns tab and count available but never opens
     # the band on its own - the Turns index is reached for, not surfaced by a
     # session click. With no turns the count is hidden and a band already on
     # Turns collapses; refresh_band_control does the work.
     method refresh_turn_control {} {
-        my refresh_band_control turns [my region_count]
+        my refresh_band_control turns $Kept
     }
 
     # Jump the reading view to a clicked turn's header. A header line is never
