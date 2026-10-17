@@ -1,6 +1,6 @@
 package require Tcl 9
 package require Tk
-package provide streamdoc 1.3
+package provide streamdoc 1.4
 
 namespace eval ::streamdoc {}
 
@@ -38,6 +38,20 @@ namespace eval ::streamdoc {}
 #        laid over a region may set an explicit -elide of its own, or it
 #        would override the fold; tags that leave -elide unset never do.
 #
+# GROUPS gather a run of regions, with the chrome between them, under one
+# header line, and nest. A group is a structure beside the regions, not a
+# kind of region: region_at and region numbering never see one, and its
+# header line is chrome. Its marks follow the region pattern: g#Gs left
+# gravity at the header's first char, g#Ge right gravity while the group is
+# open, sealed at group_close. Its one elide layer, G#g, is configured
+# hidden at open; folding lays it over the body [header +1line linestart,
+# end), unfolding takes it off, so whatever the group holds keeps its own
+# state underneath. A tag created later outranks an earlier one, and an
+# unfolded region's f#N sets an explicit -elide 0 that would show through,
+# so a folded group's tag is raised whenever a region may have been created
+# inside it since: at the fold, at group_close, and while it is open, at
+# every append_close and summary_sync.
+#
 # Content enters through the door, inside `batch`: append_open / emit /
 # emit_window / append_close. While a region is open the door feeds it,
 # popping any standing summary line first and re-appending it at close
@@ -45,10 +59,11 @@ namespace eval ::streamdoc {}
 # appends chrome at the tail. `savepoint` and `rewind` let a caller re-emit
 # a provisional tail; the summary pop is a rewind to the summary's mark.
 #
-# Glyphs: the first char of a header line and of a summary line is a state
-# glyph from the -glyphs pair. fold/unfold and detail_show/hide swap it with
-# a same-length replace, so every index downstream stays true. A first char
-# that is not one of the pair is left alone; glyphless headers work.
+# Glyphs: the first char of a header line, a region's or a group's, and of a
+# summary line is a state glyph from the -glyphs pair. The fold primitives
+# and detail_show/hide swap it with a same-length replace, so every index
+# downstream stays true. A first char that is not one of the pair is left
+# alone; glyphless headers work.
 #
 # View anchoring: `batch` brackets a streamed mutation with anchor_save /
 # anchor_restore, so content landing below a parked reader never moves the
@@ -80,6 +95,9 @@ oo::class create ::streamdoc::StreamDoc {
     variable Regions      ;# per-region dicts, in document order:
                           ;# {start end summary open folded shown payload}
     variable Cur          ;# index of the open region, or -1
+    variable Groups       ;# per-group dicts, in opening order:
+                          ;# {start end open folded payload}
+    variable OpenGroups   ;# the open groups' indices, outermost first
     variable Opts         ;# widget options decoupling the base class from any host
     variable NextSave     ;# savepoint mark counter
     variable Latched      ;# 1 while the view is held on the tail
@@ -102,7 +120,10 @@ oo::class create ::streamdoc::StreamDoc {
     # The mark contract every mutation must preserve: each region's [start,end)
     # is well-formed, starts on a line start, and the regions are ordered and
     # disjoint down the buffer; a standing summary mark sits inside its region;
-    # the open region's end rides the buffer tail. A violation means a mark
+    # the open region's end rides the buffer tail. Each group's [start,end)
+    # is well-formed and starts on a line start, any two groups nest or are
+    # disjoint, no region straddles a group's boundary, and every open
+    # group's end rides the tail. A violation means a mark
     # desynced. Gated on the STREAMDOC_AUDIT env var so production pays
     # nothing; when on, it logs the first violation with the call chain and
     # latches off, naming the primitive that broke the contract. Every
@@ -144,6 +165,39 @@ oo::class create ::streamdoc::StreamDoc {
             if {![catch {$Text index $e}] \
                     && [$Text compare $e != "end - 1 chars"]} {
                 lappend probs "open region $Cur end([$Text index $e]) adrift of the tail([$Text index "end - 1 chars"])"
+            }
+        }
+        # Half-open ranges: a group ending where the next starts is disjoint
+        # from it, and a region ending at a group's start does not straddle it.
+        set spans [list]
+        set g -1
+        foreach G $Groups {
+            incr g
+            set s [dict get $G start]
+            set e [dict get $G end]
+            if {[catch {$Text index $s} si]} { lappend probs "group $g: unresolvable start"; continue }
+            if {[catch {$Text index $e} ei]} { lappend probs "group $g: unresolvable end"; continue }
+            if {[$Text compare $e < $s]} {
+                lappend probs "group $g: end($ei) before start($si)"
+            }
+            if {[$Text compare $s != "$s linestart"]} {
+                lappend probs "group $g: start($si) off its line start"
+            }
+            foreach {h hs he} $spans {
+                if {[$Text compare $ei <= $hs] || [$Text compare $he <= $si]} continue
+                if {[$Text compare $hs <= $si] && [$Text compare $ei <= $he]} continue
+                if {[$Text compare $si <= $hs] && [$Text compare $he <= $ei]} continue
+                lappend probs "group $g \[$si,$ei) straddles group $h \[$hs,$he)"
+            }
+            lappend spans $g $si $ei
+            foreach b [list $si $ei] {
+                if {![catch {my region_at $b} n] && $n >= 0
+                        && [$Text compare [dict get [lindex $Regions $n] start] < $b]} {
+                    lappend probs "group $g: boundary($b) inside region $n"
+                }
+            }
+            if {[dict get $G open] && [$Text compare $e != "end - 1 chars"]} {
+                lappend probs "open group $g end($ei) adrift of the tail([$Text index "end - 1 chars"])"
             }
         }
         if {[llength $probs]} {
@@ -196,6 +250,8 @@ oo::class create ::streamdoc::StreamDoc {
         set Top $parent
         set Regions [list]
         set Cur -1
+        set Groups [list]
+        set OpenGroups [list]
         set NextSave 0
         text $parent.text -wrap word -state disabled \
             -yscrollcommand [list [self] on_yscroll] \
@@ -475,14 +531,17 @@ oo::class create ::streamdoc::StreamDoc {
         my check_invariant region_close
     }
 
-    # reset: empty the document - drop every region's marks and elide tags,
-    # wipe the buffer and clear the store. The base of a fresh feed. The
-    # first call also seeds the base class's state; a host with bespoke widget
-    # assembly (its own text widget in Text) starts here instead of setup.
+    # reset: empty the document - drop every region's and group's marks and
+    # elide tags, wipe the buffer and clear the stores. The base of a fresh
+    # feed. The first call also seeds the base class's state; a host with
+    # bespoke widget assembly (its own text widget in Text) starts here
+    # instead of setup.
     method reset {} {
         if {![info exists Regions]} {
             set Regions [list]
             set Cur -1
+            set Groups [list]
+            set OpenGroups [list]
             set NextSave 0
         }
         # The buffer goes, and every hit index with it.
@@ -500,9 +559,17 @@ oo::class create ::streamdoc::StreamDoc {
             catch {$Text mark unset r#${n}s r#${n}e r#${n}m}
             $Text tag delete f#$n d#$n
         }
+        set g -1
+        foreach G $Groups {
+            incr g
+            catch {$Text mark unset g#${g}s g#${g}e}
+            $Text tag delete G#$g
+        }
         $Text delete 1.0 end
         set Regions [list]
         set Cur -1
+        set Groups [list]
+        set OpenGroups [list]
         $Text configure -state $st
         my check_invariant reset
     }
@@ -557,6 +624,7 @@ oo::class create ::streamdoc::StreamDoc {
             }
             my summary_sync
         }
+        my cover_open_groups
         my check_invariant append_close
     }
 
@@ -638,6 +706,7 @@ oo::class create ::streamdoc::StreamDoc {
             lset Regions $n $R
         }
         $Text configure -state $st
+        my cover_open_groups
         my check_invariant summary_sync
     }
 
@@ -722,6 +791,7 @@ oo::class create ::streamdoc::StreamDoc {
     }
 
     # Fold every region: the table-of-contents reading, one header per region.
+    # Regions only, both ways: every group keeps its state.
     method fold_all {} {
         set Latched 0
         for {set n 0} {$n < [llength $Regions]} {incr n} { my fold $n }
@@ -746,6 +816,137 @@ oo::class create ::streamdoc::StreamDoc {
         $Text replace $idx "$idx +1c" $glyph $tags
         $Text configure -state $st
     }
+
+    # ---- groups -------------------------------------------------------------
+
+    # Open a group at the tail: elide tag, boundary marks, registry entry. The
+    # host then emits the header line through the door as chrome, then the
+    # group's regions and chrome. Returns the group's index, the handle the
+    # other group primitives take.
+    method group_open {payload} {
+        if {$Cur >= 0} { error "a group opens only with no region open" }
+        set g [llength $Groups]
+        $Text tag configure G#$g -elide 1
+        $Text mark set g#${g}s "end - 1 chars"
+        $Text mark gravity g#${g}s left
+        $Text mark set g#${g}e "end - 1 chars"
+        $Text mark gravity g#${g}e right
+        lappend Groups [dict create start g#${g}s end g#${g}e \
+            open 1 folded 0 payload $payload]
+        lappend OpenGroups $g
+        my check_invariant group_open
+        return $g
+    }
+
+    # Seal the innermost open group. Any open region was opened inside it,
+    # since a group opens only between regions.
+    method group_close {} {
+        if {![llength $OpenGroups]} return
+        if {$Cur >= 0} { error "region $Cur is still open inside the group" }
+        set g [lindex $OpenGroups end]
+        set OpenGroups [lrange $OpenGroups 0 end-1]
+        set G [lindex $Groups $g]
+        if {[dict get $G folded]} { my cover_group $g }
+        $Text mark gravity [dict get $G end] left
+        dict set G open 0
+        lset Groups $g $G
+        my check_invariant group_close
+    }
+
+    # Lay G#g over group g's body, [header +1line linestart, end), and raise
+    # it over the region tags created since the last raise.
+    method cover_group {g} {
+        set G [lindex $Groups $g]
+        set body [$Text index "[dict get $G start] +1line linestart"]
+        set e [dict get $G end]
+        if {[$Text compare $body < $e]} { $Text tag add G#$g $body $e }
+        $Text tag raise G#$g
+    }
+
+    # A folded open group ends at the tail: fresh lines land past its tag, and
+    # a region opened inside it since the last raise outranks it.
+    method cover_open_groups {} {
+        foreach g $OpenGroups {
+            if {[dict get [lindex $Groups $g] folded]} { my cover_group $g }
+        }
+    }
+
+    # Each is a reader's action and lets go of the tail latch. Unfolding takes
+    # the tag off whole, so what the group holds shows as it was left: an
+    # inner group folded, a region's detail hidden.
+    method group_fold {g} {
+        set Latched 0
+        set G [lindex $Groups $g]
+        if {[dict get $G folded]} return
+        my cover_group $g
+        dict set G folded 1
+        lset Groups $g $G
+        lassign [my opt glyphs] closed open
+        my swap_glyph [dict get $G start] $closed
+        my check_invariant group_fold
+    }
+
+    method group_unfold {g} {
+        set Latched 0
+        set G [lindex $Groups $g]
+        if {![dict get $G folded]} return
+        $Text tag remove G#$g 1.0 end
+        dict set G folded 0
+        lset Groups $g $G
+        lassign [my opt glyphs] closed open
+        my swap_glyph [dict get $G start] $open
+        my check_invariant group_unfold
+    }
+
+    method group_toggle {g} {
+        if {[dict get [lindex $Groups $g] folded]} {
+            my group_unfold $g
+        } else {
+            my group_fold $g
+        }
+    }
+
+    # The innermost group whose range holds an index, its header line
+    # included, so a click on a header resolves to the group it heads; -1
+    # outside every group. Of the groups holding it, the last opened is the
+    # innermost.
+    method group_at {idx} {
+        set i [$Text index $idx]
+        for {set g [expr {[llength $Groups] - 1}]} {$g >= 0} {incr g -1} {
+            set G [lindex $Groups $g]
+            if {[$Text compare $i >= [dict get $G start]]
+                    && [$Text compare $i < [dict get $G end]]} { return $g }
+        }
+        return -1
+    }
+
+    # Every group whose body holds an index, outermost first: the groups that
+    # hide it while any is folded. A header is not in its own group's body.
+    method groups_at {idx} {
+        set i [$Text index $idx]
+        set held [list]
+        set g -1
+        foreach G $Groups {
+            incr g
+            if {[$Text compare $i >= "[dict get $G start] +1line linestart"]
+                    && [$Text compare $i < [dict get $G end]]} { lappend held $g }
+        }
+        return $held
+    }
+
+    # A group's state for a host-side read, the boundaries resolved from the
+    # marks: {start end open folded payload}.
+    method group_info {g} {
+        set G [lindex $Groups $g]
+        return [dict create \
+            start [$Text index [dict get $G start]] \
+            end [$Text index [dict get $G end]] \
+            open [dict get $G open] \
+            folded [dict get $G folded] \
+            payload [dict get $G payload]]
+    }
+
+    method group_count {} { return [llength $Groups] }
 
     # ---- queries ----------------------------------------------------------
 
@@ -793,12 +994,14 @@ oo::class create ::streamdoc::StreamDoc {
 
     # ---- reveal -------------------------------------------------------------
 
-    # The one jump gate: `see` cannot land on an elided char, so unfold the
-    # target's region first, and show its detail only when the index itself
-    # sits in the detail layer - jumping to a visible line must not spill the
-    # region's hidden blocks. The scroll must wait for the reshaped line
-    # metrics. An un-elide moves thousands of display lines and the relayout
-    # registers through an idle handler; a bare `see` in the same callback
+    # The one jump gate: `see` cannot land on an elided char, so unfold every
+    # group whose body holds the target, outermost first, then the target's
+    # region, and show its detail only when the index itself sits in the
+    # detail layer - jumping to a visible line must not spill the region's
+    # hidden blocks, and jumping to a group's header leaves that group
+    # folded. The scroll must wait for the reshaped line metrics. An un-elide
+    # moves thousands of display lines and the relayout registers through an
+    # idle handler; a bare `see` in the same callback
     # scrolls to where the target used to be. A targeted `count -update`
     # fires too early, and so does a bare `sync`, both ahead of the idle
     # relayout that invalidates the metrics. Hence: drain idletasks, then
@@ -821,6 +1024,9 @@ oo::class create ::streamdoc::StreamDoc {
         my on_reveal $idx
         set held [expr {[my latched]
             && [$Text compare "$idx linestart" >= "end - 2 chars linestart"]}]
+        foreach g [my groups_at $idx] {
+            if {[dict get [lindex $Groups $g] folded]} { my group_unfold $g }
+        }
         set n [my region_at $idx]
         if {$n >= 0} {
             if {[dict get [lindex $Regions $n] folded]} { my unfold $n }

@@ -34,6 +34,8 @@ Each region has exactly two elide layers, both owned by the base class (no host 
 
 The first character of a header line and of a summary line is a state glyph from the `-glyphs` pair, but the two track different state: the header glyph mirrors the region's fold state, the summary glyph mirrors its detail-shown state. The host writes the header line's glyph as it emits the header; the base class writes the summary line whole, its glyph, then `summary_text`'s phrase, then the newline. The base class swaps each glyph in place with a same-length replace, so downstream indices stay true. A header or summary line that does not start with a glyph is left alone.
 
+Groups gather a run of regions, with the chrome between them, under one header line that folds the whole run, and they nest; see GROUPS.
+
 ## PRIMITIVES
 
 | Primitive | Role |
@@ -49,16 +51,22 @@ The first character of a header line and of a summary line is a state glyph from
 | `discard mark` | release a savepoint mark |
 | `fold n` / `unfold n` / `toggle n` | collapse a region to its header / restore it |
 | `detail_show n` / `detail_hide n` / `detail_toggle n` | reveal / re-hide a region's detail layer |
-| `fold_all` / `expand_all` | the table-of-contents reading, and back |
+| `fold_all` / `expand_all` | the table-of-contents reading, and back; regions only, every group keeps its state |
+| `group_open payload` | open a group at the tail, with no region open; returns its index `g`; its header line follows through the door, as chrome |
+| `group_close` | seal the innermost open group; an error while a region opened inside it is still open |
+| `group_fold g` / `group_unfold g` / `group_toggle g` | collapse a group to its header line / restore its body as it was left |
+| `group_at idx` | the innermost group whose range holds an index, its header line included; `-1` outside every group |
+| `groups_at idx` | every group whose body holds an index, outermost first |
+| `group_count` / `group_info g` | the number of groups; a group's resolved state: `{start end open folded payload}` |
 | `summary_sync` | re-derive the open region's summary line from its payload |
-| `reveal idx ?align?` | run `on_reveal`, unfold and un-hide whatever covers an index, then scroll it into view: `see` (default) as Tk's `see`, scrolling a near target just into view and centring a far one; `top` puts the head of its line on the top edge, or as near as the last screenful allows |
+| `reveal idx ?align?` | run `on_reveal`, unfold every folded group whose body holds an index, then unfold and un-hide the region and detail covering it, then scroll it into view: `see` (default) as Tk's `see`, scrolling a near target just into view and centring a far one; `top` puts the head of its line on the top edge, or as near as the last screenful allows |
 | `region_at idx` | the region containing an index, `-1` for chrome |
 | `detail_tag n` | the tag the host lays on region `n`'s detail lines as it emits |
 | `payload n` / `payload_set n payload` | the region's opaque host dict |
 | `region_count` / `folded n` / `shown n` | document and per-region state |
 | `live` | the open region's index, `-1` while none is open |
 | `region_info n` | a region's resolved state: `{start end summary open folded shown payload}` |
-| `reset` | empty the document: buffer, marks, elide tags, store |
+| `reset` | empty the document: buffer, marks, elide tags, the region and group stores |
 | `batch script` | run mutations with the widget editable and the view anchored once |
 | `follow` | jump to the tail and latch there |
 | `scroll_to args` | `yview args` on the text, as the reader: lets go of the tail latch; the scrollbar's command |
@@ -72,6 +80,16 @@ Every mutating primitive ends in `check_invariant`. The host inserts only inside
 All content, chrome and region alike, goes through the door inside a `batch`, in whole newline-terminated lines. While a region is open the door feeds it: `append_open` pops any standing summary line so new content lands inside the region, not under its summary, and `append_close` re-appends the summary from the current payload - the one legal rewrite window a mid-document line gets. Between regions the door appends chrome.
 
 `rewind` is the door's undo: take a `savepoint` before emitting a provisional tail, then rewind to it and re-emit. The mark survives the cut (left gravity holds it at the boundary), so a feed can rewind to the same point repeatedly - the shape a streaming renderer needs when it redraws its unfinished last block on every chunk, and the mechanism the base class's own summary pop is built on.
+
+## GROUPS
+
+A group gathers a run of regions, with the chrome between them, under one header line, and folding it collapses the whole run to that line. Groups nest: a group may open inside an open group. A group is a structure beside the regions, not a kind of region: `region_at` and region numbering never see one, and its header line is chrome. Its boundaries are marks like a region's, a left-gravity start at the header's first character and an end that rides the tail while the group is open and is sealed on close.
+
+The calls come in this order. With no region open, `group_open payload` opens a group at the tail and returns its index `g`. The host emits the header line next, through the door as chrome, its first character a state glyph as a region header's is, and may then fold the group with `group_fold g`. The group's regions, chrome and inner groups follow, and `group_close` seals the innermost open group. A group cannot close while a region opened inside it is still open: the host closes its last region first.
+
+Folding hides the group's body, every line after its header down to its end, region headers, summary lines and inner groups included, and swaps the header glyph. A folded group hides everything inside it whatever the states within, and keeps hiding what streams into it while it is still open. Unfolding restores the body as it was left: an inner group or region that was folded is still folded, and hidden detail is still hidden. Each group fold or unfold is the reader's action and lets go of the tail latch. A group has one elide layer, `G#g`, owned by the base class like a region's two.
+
+`group_at idx` is the innermost group whose range holds an index, its header line included, so a click on a header resolves to the group it heads. `groups_at idx` lists every group whose body holds the index, outermost first; a header is not in its own group's body. `reveal` unfolds each folded group in `groups_at idx`, outermost first, before it turns to the region: revealing a line inside nested groups opens them all, and revealing a group's header opens the groups around it and leaves that group folded. `fold_all` and `expand_all` act on regions only; every group keeps its state.
 
 ## THE STREAMING CONTRACT
 
@@ -124,11 +142,11 @@ Set through `configure` before `setup`:
 
 ## THE AUDIT GATE
 
-Set the `STREAMDOC_AUDIT` environment variable and every primitive checks the mark contract after it runs: each region's `[start,end)` is well-formed and starts on a line start, regions are ordered and disjoint down the buffer, a standing summary mark sits inside its region, and the open region's end rides the buffer tail. The first violation latches `::STREAMDOC_AUDIT_TRIPPED` and writes an `INVARIANT @ <primitive>` line to stderr naming the operation that broke the contract. Production leaves the variable unset and pays nothing.
+Set the `STREAMDOC_AUDIT` environment variable and every primitive checks the mark contract after it runs: each region's `[start,end)` is well-formed and starts on a line start, regions are ordered and disjoint down the buffer, a standing summary mark sits inside its region, and the open region's end rides the buffer tail; each group's `[start,end)` is well-formed and starts on a line start, any two groups nest or are disjoint (half-open, so a group ending where the next starts is disjoint from it), no region straddles a group's boundary, and every open group's end rides the tail. The first violation latches `::STREAMDOC_AUDIT_TRIPPED` and writes an `INVARIANT @ <primitive>` line to stderr naming the operation that broke the contract. Production leaves the variable unset and pays nothing.
 
 ## LIMITS
 
-One region may be open at a time, and the document is append-only: closed regions are immutable except for their 1-char state glyphs, and `rewind` reaches only the open region's tail. A region's header is exactly one line. Emitted content must arrive in whole newline-terminated lines, or the next region's header lands mid-line (the audit names it). To a screen reader the widget presents as one text area; region structure and fold state are not exposed.
+One region may be open at a time; a group opens only between regions, and groups close innermost first. The document is append-only: closed regions and groups are immutable except for their 1-char state glyphs, and `rewind` reaches only the open region's tail. A region's or a group's header is exactly one line. Emitted content must arrive in whole newline-terminated lines, or the next region's header lands mid-line (the audit names it). To a screen reader the widget presents as one text area; region and group structure and fold state are not exposed.
 
 ## REQUIREMENTS
 
@@ -136,4 +154,4 @@ Tcl 9 and Tk. The sibling of [streamtree](streamtree.md): a document of regions 
 
 ## KEYWORDS
 
-text widget, streaming, fold, elide, transcript, log viewer, tail -f, find
+text widget, streaming, fold, group, elide, transcript, log viewer, tail -f, find
