@@ -2,7 +2,8 @@
 # the one home for what a line of the stream means. Two faces on purpose:
 # line-level regexes (is_user_turn, first_cwd) for consumers that never parse,
 # parsed-dict twins (is_turn_start, ...) for consumers that hold a record.
-# Record-at-a-time with no whole-file state: streamable.
+# Record-at-a-time and streamable, except the turn reading (mark_turns and its
+# parts), which needs the whole list.
 package require Tcl 9
 package require json
 
@@ -11,6 +12,7 @@ namespace eval ::logman {
         is_compact_boundary record_timestamp parse_iso fmt_gap first_cwd \
         is_user_turn is_hidden_record format_tool_use_full order_tool_keys \
         is_turn_start opens_turn mark_turn_runs count_turn_line \
+        record_parent mark_branches mark_turns \
         record_role_label record_model \
         context_window transcript_step is_dialogue_prompt command_text dialogue_body
 }
@@ -192,6 +194,9 @@ proc ::logman::opens_turn {rec} {
 # assistant record between them collapses, and the run's last member is the
 # turn. Every earlier member gets _superseded 1 and renders nothing; the
 # survivor gets _edits N, the count of drafts it replaced, absent at N = 0.
+# A rolled-back branch's boundary (mark_branches' stamps) ends a run too: a
+# prompt left unanswered at the end of a branch is not a draft of the prompt
+# that replaced the branch.
 #
 # The turn test is opens_turn, the same gate the renderer draws a header on, so
 # the grouping cannot disagree with what opens a region.
@@ -207,12 +212,16 @@ proc ::logman::mark_turn_runs {recs} {
     set i -1
     foreach rec $recs {
         incr i
-        if {[dict getdef $rec type ""] eq "assistant"} {
+        if {[dict getdef $rec type ""] eq "assistant"
+                || [dict exists $rec _branch_open]} {
             if {[llength $cur] > 1} { lappend runs $cur }
             set cur {}
-            continue
         }
         if {[opens_turn $rec]} { lappend cur $i }
+        if {[dict exists $rec _branch_close]} {
+            if {[llength $cur] > 1} { lappend runs $cur }
+            set cur {}
+        }
     }
     if {[llength $cur] > 1} { lappend runs $cur }
     foreach run $runs {
@@ -222,6 +231,194 @@ proc ::logman::mark_turn_runs {recs} {
         set last [lindex $run end]
         lset recs $last [dict replace [lindex $recs $last] \
             _edits [expr {[llength $run] - 1}]]
+    }
+    return $recs
+}
+
+# The record a record hangs from in the transcript's uuid tree, "" at a root.
+# A compaction boundary has a null parentUuid and names the record it continues
+# in logicalParentUuid; reading through it keeps the history before a /compact
+# on one path with the history after.
+proc ::logman::record_parent {rec} {
+    set p [dict getdef $rec parentUuid ""]
+    if {$p in {"" null}} { set p [dict getdef $rec logicalParentUuid ""] }
+    if {$p eq "null"} { return "" }
+    return $p
+}
+
+# Stamp the branches a rewind left behind.
+#
+# A rewind (Esc Esc in Claude Code) abandons the turns after the chosen point,
+# and the model never sees them again. The file keeps them: the next record
+# continues from the record before them, so they stand as a side branch of the
+# uuid tree, written before the path that replaced them. The surviving path is
+# the chain from the file's last record back to the root. A child of a record
+# on it is a rolled-back branch when it is off the path and its subtree holds
+# an assistant reply and a turn: without a reply it is an edit draft, which
+# mark_turn_runs collapses, and without a turn a parallel tool result or a
+# harness note. A branch may hold a rewind of its own, found by the same rule
+# against the branch's own last record.
+#
+# A branch is one run of the list, from its head to the last record of its
+# subtree; records inside the run that are not in the subtree (notes without a
+# uuid, attachments the harness re-parented) travel with it. A run that holds
+# a turn from outside its subtree is left unmarked, so a live prompt is never
+# folded away; no session has shown one.
+#
+# Stamps: _branch_open, a dict holding the branch's depth (1 off the surviving
+# path, 2 inside such a branch, and so on), on the run's first record;
+# _branch_close N on its last record, N branches ending there; _branch_depth on
+# every record of the run, the innermost run's depth. Sidechain records and
+# records without a uuid stay out of the tree.
+proc ::logman::mark_branches {recs} {
+    set pos [dict create]
+    set kids [dict create]
+    set par [dict create]
+    set leaf ""
+    set i -1
+    foreach rec $recs {
+        incr i
+        set u [dict getdef $rec uuid ""]
+        if {$u eq "" || [dict getdef $rec isSidechain 0]} continue
+        set p [record_parent $rec]
+        dict set pos $u $i
+        dict set par $u $p
+        dict lappend kids $p $u
+        set leaf $u
+    }
+    if {$leaf eq ""} { return $recs }
+    # Outer runs before the runs inside them, so an inner run's depth stamp
+    # lands last on the records the two share.
+    set runs [lsort -integer -index 0 \
+        [branch_runs $recs $pos $kids $par $leaf "" 1]]
+    foreach run $runs {
+        lassign $run lo hi depth
+        lset recs $lo [dict replace [lindex $recs $lo] \
+            _branch_open [dict create depth $depth]]
+        set r [lindex $recs $hi]
+        dict incr r _branch_close
+        lset recs $hi $r
+        for {set k $lo} {$k <= $hi} {incr k} {
+            lset recs $k [dict replace [lindex $recs $k] _branch_depth $depth]
+        }
+    }
+    return $recs
+}
+
+# The rolled-back runs, as {lo hi depth} list positions, hanging off the path
+# from leaf back to stop (a branch head, or "" for the root).
+proc ::logman::branch_runs {recs pos kids par leaf stop depth} {
+    set path [dict create]
+    set u $leaf
+    while {$u ne "" && ![dict exists $path $u]} {
+        dict set path $u 1
+        if {$u eq $stop || ![dict exists $par $u]} break
+        set u [dict get $par $u]
+    }
+    set runs {}
+    foreach u [dict keys $path] {
+        foreach c [dict getdef $kids $u {}] {
+            if {[dict exists $path $c]} continue
+            set sub [subtree $kids $c]
+            set at [dict create]
+            set reply 0
+            set turn 0
+            foreach s $sub {
+                set k [dict get $pos $s]
+                dict set at $k 1
+                set rec [lindex $recs $k]
+                if {[dict getdef $rec type ""] eq "assistant"} { set reply 1 }
+                if {[opens_turn $rec]} { set turn 1 }
+            }
+            if {!$reply || !$turn} continue
+            set ks [lsort -integer [dict keys $at]]
+            set lo [lindex $ks 0]
+            set hi [lindex $ks end]
+            set foreign 0
+            for {set k $lo} {$k <= $hi} {incr k} {
+                if {[dict exists $at $k]} continue
+                set rec [lindex $recs $k]
+                if {![dict getdef $rec isSidechain 0] && [opens_turn $rec]} {
+                    set foreign 1
+                    break
+                }
+            }
+            if {$foreign} continue
+            lappend runs [list $lo $hi $depth]
+            set last [dict getdef [lindex $recs $hi] uuid ""]
+            lappend runs {*}[branch_runs $recs $pos $kids $par $last $c \
+                [expr {$depth + 1}]]
+        }
+    }
+    return $runs
+}
+
+# Every uuid under u in the tree, u first.
+proc ::logman::subtree {kids u} {
+    set out [list $u]
+    set seen [dict create $u 1]
+    for {set k 0} {$k < [llength $out]} {incr k} {
+        foreach c [dict getdef $kids [lindex $out $k] {}] {
+            if {[dict exists $seen $c]} continue
+            dict set seen $c 1
+            lappend out $c
+        }
+    }
+    return $out
+}
+
+# The turn reading of a whole record list, as the session viewer and the
+# markdown export draw it: the rolled-back branches (mark_branches), then the
+# drafts (mark_turn_runs), then each branch's facts for its header, filled into
+# its _branch_open dict beside depth:
+#   turns   its own turns as they render, a branch inside it counting apart
+#   prompt  the first line of the first of those turns
+#   t0 t1   its first and last timestamps
+#   inner   the branches directly inside it
+proc ::logman::mark_turns {recs} {
+    set recs [mark_turn_runs [mark_branches $recs]]
+    set open {}
+    set i -1
+    foreach rec $recs {
+        incr i
+        if {[dict exists $rec _branch_open]} {
+            if {[llength $open]} {
+                set top [lindex $open end]
+                dict incr top inner
+                lset open end $top
+            }
+            set b [dict get $rec _branch_open]
+            dict set b at $i
+            lappend open [dict merge \
+                [dict create turns 0 prompt "" t0 "" t1 "" inner 0] $b]
+        }
+        if {[llength $open]} {
+            set ts [record_timestamp $rec]
+            if {$ts ne ""} {
+                for {set k 0} {$k < [llength $open]} {incr k} {
+                    set b [lindex $open $k]
+                    if {[dict get $b t0] eq ""} { dict set b t0 $ts }
+                    dict set b t1 $ts
+                    lset open $k $b
+                }
+            }
+            set top [lindex $open end]
+            if {[opens_turn $rec] && ![dict exists $rec _superseded]
+                    && [dict get $rec _branch_depth] == [dict get $top depth]} {
+                dict incr top turns
+                if {[dict get $top prompt] eq ""} {
+                    dict set top prompt [lindex [split [extract_text $rec] \n] 0]
+                }
+                lset open end $top
+            }
+        }
+        for {set n [dict getdef $rec _branch_close 0]} {$n > 0} {incr n -1} {
+            set b [lindex $open end]
+            set open [lrange $open 0 end-1]
+            set at [dict get $b at]
+            lset recs $at [dict replace [lindex $recs $at] \
+                _branch_open [dict remove $b at]]
+        }
     }
     return $recs
 }
