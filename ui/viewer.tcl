@@ -613,6 +613,21 @@ oo::class create ::questlog::ui::Viewer {
             -lmargin1 10 -lmargin2 10 -spacing1 6
         $Text tag configure stub -font QLMono \
             -foreground [::questlog::ui::theme::c faint] -lmargin1 10 -lmargin2 10
+        # A rolled-back branch's ROLLED BACK line and the rail down its body
+        # once opened, as showman's build_tags sets them, in this theme's
+        # colours: the guide blue the session list's depth guides use, deeper
+        # for a branch inside a branch. A rail sets only a margin colour, so it
+        # lies over any line without moving its margins.
+        $Text tag configure lbl-rolledback -font QLMonoBold \
+            -foreground [::questlog::ui::theme::c system] \
+            -lmargin1 10 -lmargin2 10 -spacing1 6
+        $Text tag configure branchnote -font QLMono \
+            -foreground [::questlog::ui::theme::c muted] -lmargin1 10 -lmargin2 10
+        set depth 0
+        foreach c {snippet_guide rail_nested rail_deep} {
+            $Text tag configure rail[incr depth] \
+                -lmargincolor [::questlog::ui::theme::c $c]
+        }
         # editchip is the drafts note riding a user header line ("· 2 edits"),
         # sited like the assistant header's model chip: after the role label,
         # before the message. It sets no spacing or margin - it never holds a
@@ -660,12 +675,13 @@ oo::class create ::questlog::ui::Viewer {
         # these two global tags serve every turn - no per-turn bindings.
         # ButtonRelease, guarded in the handlers against a live selection, so a
         # drag-select that merely ends on a header cannot toggle it.
-        foreach zone {turnhdr stub} {
+        foreach zone {turnhdr stub grouphdr} {
             $Text tag bind $zone <Enter> [list $Text configure -cursor hand2]
             $Text tag bind $zone <Leave> [list $Text configure -cursor $qcursor]
         }
-        $Text tag bind turnhdr <ButtonRelease-1> [list [self] turnhdr_click %x %y]
-        $Text tag bind stub    <ButtonRelease-1> [list [self] stub_click %x %y]
+        $Text tag bind turnhdr  <ButtonRelease-1> [list [self] turnhdr_click %x %y]
+        $Text tag bind stub     <ButtonRelease-1> [list [self] stub_click %x %y]
+        $Text tag bind grouphdr <ButtonRelease-1> [list [self] grouphdr_click %x %y]
         # Ctrl-C copies what the reader can see: -displaychars drops elided
         # detail from the selection, so a copy over a turn cannot smuggle its
         # hidden tool output along. The break stops the Text class binding from
@@ -1463,7 +1479,7 @@ oo::class create ::questlog::ui::Viewer {
         lappend QuoteIdx $at
         lappend QuoteBodies $text
         $QuoteList insert end "[my tool_time $CurTs] · [my quote_preview $text]"
-        $QuoteList itemconfigure end -foreground [::questlog::ui::theme::c assistant]
+        $QuoteList itemconfigure end -foreground [my row_color assistant [my branch_depth]]
         $Text insert $at "⧉ " {qcopy quote}
     }
 
@@ -1500,7 +1516,7 @@ oo::class create ::questlog::ui::Viewer {
     # for the viewer (issue #4); per-quote copy is the ⧉ glyph heading each
     # quote block.
     method on_right {x y X Y} {
-        set line [my line_at [$Text index @$x,$y]]
+        set line [my copy_line_at [$Text index @$x,$y]]
         if {$line eq ""} return
         set MenuTarget [dict create line $line]
         tk_popup $Menu $X $Y
@@ -1533,6 +1549,16 @@ oo::class create ::questlog::ui::Viewer {
         return $best
     }
 
+    # line_at for the copy affordances, which act on the message the reader
+    # sees: "" on a ROLLED BACK line, and "" where the nearest message above
+    # lies inside a folded branch (the pointer is on the chrome after it).
+    method copy_line_at {idx} {
+        if {"grouphdr" in [$Text tag names $idx]} { return "" }
+        set ln [my line_at $idx]
+        if {$ln ne "" && [my branch_hidden [dict get $LineMap $ln]]} { return "" }
+        return $ln
+    }
+
     # ---- hover copy button -------------------------------------------------
     #
     # The shared ⧉ button (built once in build) rides the top-right of whatever
@@ -1557,7 +1583,7 @@ oo::class create ::questlog::ui::Viewer {
         if {$CopyLine ne "" && $line >= $CopyFirst && $line < $CopyLast} return
         set ce [my content_end]
         if {$ce ne "end" && [$Text compare $idx >= $ce]} { my copy_hide; return }
-        set ml [my line_at $idx]
+        set ml [my copy_line_at $idx]
         if {$ml eq ""} { my copy_hide; return }
         if {[dict getdef $Roles $ml ""] ni {USER ASSISTANT}} { my copy_hide; return }
         # The message spans from its own anchor to the next bodied record's
@@ -1573,14 +1599,19 @@ oo::class create ::questlog::ui::Viewer {
     }
 
     # The text index of the message following the one anchored at $start: the
-    # nearest LineMap anchor strictly after it, else the content boundary (before
-    # the endhint, or the transcript end when no hint stands).
+    # nearest LineMap anchor strictly after it, or a ROLLED BACK line before
+    # that, else the content boundary (before the endhint, or the transcript end
+    # when no hint stands).
     method next_body_index {start} {
         set best ""
         dict for {lineno pos} $LineMap {
             if {[$Text compare $pos > $start]} {
                 if {$best eq "" || [$Text compare $pos < $best]} { set best $pos }
             }
+        }
+        set g [$Text tag nextrange grouphdr "$start +1c"]
+        if {$g ne "" && ($best eq "" || [$Text compare [lindex $g 0] < $best])} {
+            set best [lindex $g 0]
         }
         if {$best ne ""} { return $best }
         set ce [my content_end]
@@ -1719,7 +1750,7 @@ oo::class create ::questlog::ui::Viewer {
     # The base skips stub and fold-glyph hits; the chip's words ("Opus",
     # "Sonnet", version digits) are equally chrome, not transcript - a search
     # for a family word or version number must never light every chip.
-    method find_chrome_tags {} { return [list stub foldglyph modelchip editchip] }
+    method find_chrome_tags {} { return [list stub foldglyph modelchip editchip grouphdr] }
 
     # Re-fill the Matches band and the head-strip count from the current
     # FindMatches (a Ctrl-F recollect, not a search): rebuild the parallel
@@ -1870,7 +1901,9 @@ oo::class create ::questlog::ui::Viewer {
                     "row $i at $m resolved line=[list [my line_at $m]] role=[list $ty]"
             }
             $MatchList insert end $row
-            $MatchList itemconfigure $i -foreground [my role_color $ty]
+            $MatchList itemconfigure $i -foreground \
+                [expr {[llength [my groups_at $m]] ? [::questlog::ui::theme::c muted] \
+                    : [my role_color $ty]}]
             incr i
         }
         my refresh_band_control matches [llength $FindMatches]
@@ -2094,7 +2127,8 @@ oo::class create ::questlog::ui::Viewer {
                 set row "$when · $name"
                 if {$path ne ""} { append row " · $path" }
                 $ToolList insert end $row
-                $ToolList itemconfigure end -foreground [::questlog::ui::theme::c tool]
+                $ToolList itemconfigure end -foreground \
+                    [my row_color tool [dict getdef $rec _branch_depth 0]]
                 lappend ToolLines [list $lineno $k]
                 incr k
             }
@@ -2189,9 +2223,17 @@ oo::class create ::questlog::ui::Viewer {
             }
             $TurnList insert end \
                 "[expr {$n + 1}] · [my tool_time [dict get $p ts]] · $label"
-            $TurnList itemconfigure end -foreground [::questlog::ui::theme::c user]
+            $TurnList itemconfigure end -foreground \
+                [my row_color user [dict getdef $p depth 0]]
         }
         my refresh_turn_control
+    }
+
+    # A band row's ink: its role colour, or muted for a row that points into
+    # a rolled-back branch (depth above 0), whose turns the model never saw.
+    method row_color {role depth} {
+        if {$depth > 0} { return [::questlog::ui::theme::c muted] }
+        return [::questlog::ui::theme::c $role]
     }
 
     # Expose the head-strip Turns count from the region store (index_turns

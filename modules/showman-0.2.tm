@@ -1,9 +1,9 @@
 package require Tcl 9
 package require Tk
-package require logman
-package require streamdoc 1.3
+package require logman 1.3
+package require streamdoc 1.4
 package require tkdown 2.1
-package provide showman 0.1
+package provide showman 0.2
 
 # showman - a Claude Code session transcript as a foldable, searchable
 # conversation view: the display base class questlog's own viewer and a live
@@ -17,6 +17,9 @@ package provide showman 0.1
 #     content blocks, dividers), tkdown supplying markdown-to-Tk. Each turn
 #     folds to its header line; tool_use / thinking / tool_result blocks are
 #     detail, hidden behind a trailing stub ("· N tool calls · M thinking").
+#     The turns a rewind abandoned (logman's mark_turns) fold, folded at
+#     first, under one ROLLED BACK line at their fork: a streamdoc group,
+#     nested as the rewinds nest, its body marked by a margin rail.
 #   - find (Ctrl-F): streamdoc's bar, bounded by find_bound so trailing
 #     chrome under `endhint` is never a match.
 #   - a LIVE turn (the reason this base exists): live_open starts a growing
@@ -36,7 +39,8 @@ package provide showman 0.1
 # Widget options (through the streamdoc option door; `configure` before or at
 # construction):
 #   -palette dict   colour roles: section muted faint body user assistant
-#                   system tool_result find. Defaults are a plain light look.
+#                   system tool_result find, and rail, the margin rail's
+#                   colours by branch depth. Defaults are a plain light look.
 #   -fonts dict     tkdown font names {body bold italic bolditalic mono};
 #                   "" (the default) takes ::tkdown::ensure_fonts' set.
 #   -idle_gap min   minutes of silence that draw an idle-gap divider.
@@ -62,6 +66,7 @@ oo::class create ::showman::Showman {
     variable StreamBuf        ;# the streamed message's accumulated source text
     variable StreamRole       ;# the streamed message's role (labels its first render)
     variable StreamSetId      ;# the id of the message live_set is repainting ("" between)
+    variable Branches         ;# open rolled-back branches: {group render_ts in_section} each
 
     constructor {parent args} {
         my configure -autofollow 1
@@ -111,7 +116,8 @@ oo::class create ::showman::Showman {
             assistant   #116329 \
             system      #9a6700 \
             tool_result #6639ba \
-            find        #fff8c5]
+            find        #fff8c5 \
+            rail        {#c6dbff #9dbdf2 #7aa3e6}]
         return $d
     }
 
@@ -162,6 +168,19 @@ oo::class create ::showman::Showman {
             -foreground [my color muted] -lmargin1 10 -lmargin2 10 -spacing1 6
         $Text tag configure stub -font $mono \
             -foreground [my color faint] -lmargin1 10 -lmargin2 10
+        # A rolled-back branch's ROLLED BACK line: the label in the system
+        # grey, its facts muted. grouphdr is the line's click zone and sets no
+        # appearance. The rails carry only a margin colour, so they stack on
+        # any line without touching its margins; created in depth order, the
+        # deeper rail wins where branches nest.
+        $Text tag configure lbl-rolledback -foreground [my color system] \
+            -font $monobold -lmargin1 10 -lmargin2 10 -spacing1 6
+        $Text tag configure branchnote -font $mono -foreground [my color muted] \
+            -lmargin1 10 -lmargin2 10
+        set depth 0
+        foreach c [my color rail] {
+            $Text tag configure rail[incr depth] -lmargincolor $c
+        }
         ::tkdown::tags $Text [my tkdown_fonts] -margin 10 -quotetags quote
         $Text tag configure quote -foreground [my color body]
         $Text tag configure td-link -foreground [my color user] -underline 1
@@ -174,12 +193,13 @@ oo::class create ::showman::Showman {
         # fire on disabled text; the handlers resolve which turn from the
         # click index, so two global tags serve every turn.
         set rcursor [$Text cget -cursor]
-        foreach zone {turnhdr stub} {
+        foreach zone {turnhdr stub grouphdr} {
             $Text tag bind $zone <Enter> [list $Text configure -cursor hand2]
             $Text tag bind $zone <Leave> [list $Text configure -cursor $rcursor]
         }
-        $Text tag bind turnhdr <ButtonRelease-1> [list [self] turnhdr_click %x %y]
-        $Text tag bind stub    <ButtonRelease-1> [list [self] stub_click %x %y]
+        $Text tag bind turnhdr  <ButtonRelease-1> [list [self] turnhdr_click %x %y]
+        $Text tag bind stub     <ButtonRelease-1> [list [self] stub_click %x %y]
+        $Text tag bind grouphdr <ButtonRelease-1> [list [self] grouphdr_click %x %y]
     }
 
     # The tkdown fonts dict: the -fonts option verbatim, or tkdown's defaults.
@@ -208,6 +228,7 @@ oo::class create ::showman::Showman {
         set NextLine 0
         set RenderTs 0
         set RenderInSection 0
+        set Branches [list]
         my live_flush
     }
 
@@ -233,14 +254,72 @@ oo::class create ::showman::Showman {
         my reset
         $Text configure -state normal
         set m [my append_open]
-        foreach rec [::logman::mark_turn_runs $recs] {
+        foreach rec [::logman::mark_turns $recs] {
             set rec [my number_record $rec]
             lappend Records $rec
+            if {[dict exists $rec _branch_open]} {
+                my branch_open [dict get $rec _branch_open]
+            }
             lassign [my render_record_turned $rec $RenderTs $RenderInSection] \
                 RenderTs RenderInSection
+            my branch_close [dict getdef $rec _branch_close 0]
         }
         my append_close $m
         $Text configure -state disabled
+    }
+
+    # ---- rolled-back branches ----------------------------------------------
+    #
+    # A branch is known only once the whole list is read (the path that
+    # replaced it comes after it), so branches are drawn by render_records
+    # alone.
+
+    # Open a branch at its first record: seal the turn before the fork, open
+    # a group and write its ROLLED BACK line, and fold it. The render clock is
+    # stacked so the conversation after the branch measures its idle gaps
+    # from the path the branch left, not from the branch.
+    method branch_open {facts} {
+        my region_close
+        set g [my group_open $facts]
+        lappend Branches [list $g $RenderTs $RenderInSection]
+        $Text insert [my door] "▾ " {foldglyph grouphdr}
+        $Text insert [my door] "ROLLED BACK  " {lbl-rolledback grouphdr}
+        $Text insert [my door] "[::logman::branch_phrase $facts]\n" \
+            {branchnote grouphdr}
+        my group_fold $g
+    }
+
+    # Close the n branches that end at the record just rendered, innermost
+    # first: seal the branch's last turn, then the group, rail its body and
+    # restore the clock it stacked.
+    method branch_close {n} {
+        for {} {$n > 0} {incr n -1} {
+            my region_close
+            lassign [lindex $Branches end] g RenderTs RenderInSection
+            set Branches [lrange $Branches 0 end-1]
+            my group_close
+            set info [my group_info $g]
+            # The deepest rail the host configured serves every branch deeper.
+            set depth [expr {[llength $Branches] + 1}]
+            while {$depth > 1 && "rail$depth" ni [$Text tag names]} {
+                incr depth -1
+            }
+            $Text tag add rail$depth \
+                [$Text index "[dict get $info start] +1line linestart"] \
+                [dict get $info end]
+        }
+    }
+
+    # The number of branches open at the record being rendered: 0 on the
+    # path that stood.
+    method branch_depth {} { return [llength $Branches] }
+
+    # 1 iff idx lies inside a folded branch, so the reader cannot see it.
+    method branch_hidden {idx} {
+        foreach g [my groups_at $idx] {
+            if {[dict get [my group_info $g] folded]} { return 1 }
+        }
+        return 0
     }
 
     # Append finished records at the tail: into the open turn while one
@@ -340,6 +419,7 @@ oo::class create ::showman::Showman {
             my region_open [dict create line $lineno \
                 label [lindex [split $body \n] 0] ts $ts_iso \
                 edits [dict getdef $rec _edits 0] \
+                depth [my branch_depth] \
                 counts [dict create] working 0]
             $Text insert [my door] "▾ " {foldglyph turnhdr}
         }
@@ -521,7 +601,7 @@ oo::class create ::showman::Showman {
 
     # Tags whose text is chrome, not transcript: a hit there is skipped by
     # collect_matches. A subclass extends the list for chrome of its own.
-    method find_chrome_tags {} { return [list stub foldglyph] }
+    method find_chrome_tags {} { return [list stub foldglyph grouphdr] }
 
     # ---- fold and jump -----------------------------------------------------
 
@@ -538,6 +618,12 @@ oo::class create ::showman::Showman {
         if {[$Text tag ranges sel] ne ""} return
         set n [my region_at [$Text index @$x,$y]]
         if {$n >= 0} { my detail_toggle $n }
+    }
+
+    method grouphdr_click {x y} {
+        if {[$Text tag ranges sel] ne ""} return
+        set g [my group_at [$Text index @$x,$y]]
+        if {$g >= 0} { my group_toggle $g }
     }
 
     # The text index of the k-th (0-based) tool_use block of the record at
@@ -592,7 +678,7 @@ oo::class create ::showman::Showman {
             # anyway, so a payload reader needs no special case for this path.
             set n [my region_open [dict create line "" \
                 label [lindex [split $label \n] 0] ts $ts \
-                edits 0 counts [dict create] working 0]]
+                edits 0 depth 0 counts [dict create] working 0]]
             $Text insert [my door] "▾ " {foldglyph turnhdr}
             $Text insert [my door] "USER  " lbl-user
             my insert_body user $label

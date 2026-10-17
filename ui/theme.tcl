@@ -38,6 +38,8 @@ namespace eval ::questlog::ui::theme {
         system_bg       #e8e8e8
         name_bg         #d5eef2
         snippet_guide   #c6dbff
+        rail_nested     #9dbdf2
+        rail_deep       #7aa3e6
         ink             #1d1d1d
         body            #262626
         snippet         #262626
