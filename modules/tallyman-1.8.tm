@@ -1,7 +1,7 @@
 package require Tcl 9
 package require json
 package require logman
-package provide tallyman 1.7
+package provide tallyman 1.8
 
 # tallyman - prices a Claude Code session's token usage.
 #
@@ -314,8 +314,6 @@ proc tallyman::parse_lines {lines} {
     set dummy_req 0
     set first_ts ""
     set last_ts ""
-    set turns 0
-    set turnstate 1          ;# count_turn_line's run state, one file's worth
     set stamps [list]
     set ask_ids [dict create]
     set last_model ""
@@ -330,9 +328,10 @@ proc tallyman::parse_lines {lines} {
         # turn the away gap before a resume into work. They are no part of the
         # conversation timeline, so skip outright.
         if {[regexp {"type":"file-history-snapshot"} $line]} continue
-        # A turn is a prompt the user actually wrote, and the drafts of a
-        # message edited before the assistant answered are one prompt.
-        if {[::logman::count_turn_line $line turnstate]} { incr turns }
+        # A turn is a prompt the user actually wrote: the drafts of a message
+        # edited before the assistant answered are one prompt, and a turn a
+        # rewind abandoned is none (kept_turns, once the whole file is read).
+        ::logman::note_line $line turnstate
         # An assistant record is parsed here, since its time is its own
         # timestamp field: a tool input on the line can carry one too, which
         # the first-string reading would take. Any other line's time is the
@@ -438,7 +437,8 @@ proc tallyman::parse_lines {lines} {
     }
 
     return [dict create per_model $per_model requests [dict values $req_usage] \
-        first_ts $first_ts last_ts $last_ts turns $turns stamps $stamps \
+        first_ts $first_ts last_ts $last_ts \
+        turns [llength [::logman::kept_turns turnstate]] stamps $stamps \
         last_model $last_model ctx_tokens $ctx_tokens ctx_model $ctx_model \
         ok 1]
 }
@@ -501,8 +501,6 @@ proc tallyman::build_cost_dict {res rates threshold credit} {
 proc tallyman::accrue_lines {lines lo hi rates threshold credit} {
     set req_usage [dict create]
     set dummy_req 0
-    set turns 0
-    set turnstate 1          ;# count_turn_line's run state, one file's worth
     set stamps [list]
     set ask_ids [dict create]
     set last_model ""
@@ -529,9 +527,8 @@ proc tallyman::accrue_lines {lines lo hi rates threshold credit} {
 
         # The run state advances over every line, in the window or not, so a
         # window opening mid-run still knows whether a prompt starts a turn;
-        # only the counting is windowed.
-        set opens [::logman::count_turn_line $line turnstate]
-        if {$in_win && $opens} { incr turns }
+        # only the counting is windowed, each turn tagged with its window.
+        ::logman::note_line $line turnstate $in_win
         if {$in_win} { lappend stamps [list $e [_classify_stamp $line $ask_ids]] }
 
         if {$rec eq ""} continue
@@ -597,6 +594,8 @@ proc tallyman::accrue_lines {lines lo hi rates threshold credit} {
     }
 
     return [build_cost_dict [dict create per_model $per_model requests $requests \
-        first_ts "" last_ts "" turns $turns stamps $stamps \
+        first_ts "" last_ts "" \
+        turns [llength [lsearch -all -exact [::logman::kept_turns turnstate] 1]] \
+        stamps $stamps \
         last_model $last_model ok 1] $rates $threshold $credit]
 }

@@ -329,6 +329,22 @@ check "human time: capped dialog answer + enqueue + final prompt" \
     [::questlog::cost::fmt_dur [dict get $cost_dict human_secs]] "07:40"
 file delete $fix
 
+# ---- compute_cost: a rewind's abandoned turn is no turn --------------------
+# "rolled" was answered, then the user rewound to before it and asked
+# "replacement" from the first answer. The file keeps the abandoned exchange as
+# a side branch of the uuid tree; the Turns column counts the two turns kept.
+set fd [file tempfile fix]
+puts $fd {{"parentUuid":null,"isSidechain":false,"promptSource":"typed","type":"user","message":{"role":"user","content":"first"},"uuid":"p1","timestamp":"2026-06-01T10:00:00.000Z"}}
+puts $fd {{"parentUuid":"p1","isSidechain":false,"type":"assistant","message":{"model":"claude-opus-4-8","usage":{"input_tokens":10,"output_tokens":5}},"uuid":"a1","timestamp":"2026-06-01T10:00:05.000Z"}}
+puts $fd {{"parentUuid":"a1","isSidechain":false,"promptSource":"typed","type":"user","message":{"role":"user","content":"rolled"},"uuid":"p2","timestamp":"2026-06-02T10:00:00.000Z"}}
+puts $fd {{"parentUuid":"p2","isSidechain":false,"type":"assistant","message":{"model":"claude-opus-4-8","usage":{"input_tokens":10,"output_tokens":5}},"uuid":"a2","timestamp":"2026-06-02T10:00:05.000Z"}}
+puts $fd {{"parentUuid":"a1","isSidechain":false,"promptSource":"typed","type":"user","message":{"role":"user","content":"replacement"},"uuid":"p3","timestamp":"2026-06-02T10:01:00.000Z"}}
+puts $fd {{"parentUuid":"p3","isSidechain":false,"type":"assistant","message":{"model":"claude-opus-4-8","usage":{"input_tokens":10,"output_tokens":5}},"uuid":"a3","timestamp":"2026-06-02T10:01:05.000Z"}}
+close $fd
+check "turns leave out the turn a rewind abandoned" \
+    [dict get [::questlog::cost::parse_file $fix] turns] 2
+set rewound_fix $fix
+
 # ---- accrue_window: cost windowed by each message's own timestamp ---------
 # Needs the rate table and the window-edge helpers, same as the CLI run path.
 source [file join $ROOT lib scan.tcl]
@@ -385,6 +401,13 @@ set a [::questlog::cost::accrue_window $fixA $lo $hi]
 check "accrue: empty window has no model breakdown" [dict size [dict get $a model_breakdown]] 0
 check "accrue: empty window turns 0" [dict get $a turns] 0
 file delete $fixA
+
+# On the day of the rewind the window holds the abandoned turn and its
+# replacement; only the replacement is a turn.
+lassign [win 2026-06-02 2026-06-02] lo hi
+check "accrue: a window leaves out the turn a rewind abandoned" \
+    [dict get [::questlog::cost::accrue_window $rewound_fix $lo $hi] turns] 1
+file delete $rewound_fix
 
 # Straddle + missing-timestamp. r4's two records sit either side of the upper
 # edge with the larger usage on the later one; anchored by its earliest record,
