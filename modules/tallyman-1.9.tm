@@ -1,7 +1,7 @@
 package require Tcl 9
 package require json
 package require logman
-package provide tallyman 1.8
+package provide tallyman 1.9
 
 # tallyman - prices a Claude Code session's token usage.
 #
@@ -260,9 +260,11 @@ proc tallyman::_iso_to_epoch {ts} {
 # far, so a dialog answer's tool_result counts as the user returning.
 proc tallyman::_classify_stamp {line ask_ids} {
     # Written during the user's absence or at the moment of return (away recaps,
-    # synthetic fillers, background-task exits): the gap before them is nobody's.
+    # synthetic fillers, background-task exits, resume hooks): the gap before
+    # them is nobody's.
     if {[regexp {"subtype":"away_summary"} $line] \
             || [regexp {"model":"<synthetic>"} $line] \
+            || [regexp {"hookName":"SessionStart:resume"} $line] \
             || [regexp {"content":"<task-notification>} $line]} {
         return neutral
     }
@@ -282,6 +284,19 @@ proc tallyman::_classify_stamp {line ask_ids} {
         return machine
     }
     return machine
+}
+
+# 1 iff a line is no part of the conversation's timeline, so its time must not
+# end a gap. A file-history-snapshot carries no top-level timestamp, and the
+# nested snapshot.timestamp would turn the away gap before a resume into work.
+# The request log is stamped a few ms after the record it was sent for, and
+# would end the gap before a prompt as machine time. A frame-link, the record
+# of an artifact's link, is at times written hours or weeks after the
+# conversation, and would end that silence as machine time.
+proc tallyman::_off_timeline {line} {
+    return [expr {[regexp {"type":"file-history-snapshot"} $line]
+                  || [::logman::is_request_log $line]
+                  || [regexp {"type":"frame-link"} $line]}]
 }
 
 # ── transcript compute ─────────────────────────────────────────────────────
@@ -323,15 +338,7 @@ proc tallyman::parse_lines {lines} {
     set side_ctx_model ""
     foreach line $lines {
         if {$line eq ""} continue
-        # file-history-snapshot records carry no top-level timestamp; the regex
-        # below would read the nested snapshot.timestamp as the record's time and
-        # turn the away gap before a resume into work. They are no part of the
-        # conversation timeline, so skip outright.
-        if {[regexp {"type":"file-history-snapshot"} $line]} continue
-        # The request log is no part of it either, and stamped a few ms after
-        # the record it was sent for, it would end the gap before a prompt as
-        # machine time.
-        if {[::logman::is_request_log $line]} continue
+        if {[_off_timeline $line]} continue
         # A turn is a prompt the user actually wrote: the drafts of a message
         # edited before the assistant answered are one prompt, and a turn a
         # rewind abandoned is none (kept_turns, once the whole file is read).
@@ -510,8 +517,7 @@ proc tallyman::accrue_lines {lines lo hi rates threshold credit} {
     set last_model ""
     foreach line $lines {
         if {$line eq ""} continue
-        if {[regexp {"type":"file-history-snapshot"} $line]} continue
-        if {[::logman::is_request_log $line]} continue
+        if {[_off_timeline $line]} continue
 
         # The record's own epoch, fresh each line, and whether it lands in the
         # window: an assistant record's from its parsed timestamp field (a

@@ -329,6 +329,22 @@ check "human time: capped dialog answer + enqueue + final prompt" \
     [::questlog::cost::fmt_dur [dict get $cost_dict human_secs]] "07:40"
 file delete $fix
 
+# A frame-link written five hours after the reply is no part of the timeline,
+# and the hook record written on the next day's resume is neutral: the night
+# away is nobody's. Machine: the 30 s reply. Human: the prompt 20 s after the
+# hook. Counted, the frame-link and hook would add 23 h of machine time.
+set fd [file tempfile fix]
+puts $fd {{"type":"user","timestamp":"2026-05-01T10:00:00.000Z","message":{"role":"user","content":"go"}}}
+puts $fd {{"type":"assistant","timestamp":"2026-05-01T10:00:30.000Z","message":{"model":"claude-opus-4-8","content":[{"type":"text","text":"done"}],"usage":{"input_tokens":10,"output_tokens":5}}}}
+puts $fd {{"type":"frame-link","sessionId":"s","frameUrl":"https://claude.ai/code/artifact/x","artifactCount":1,"timestamp":"2026-05-01T15:00:00.000Z"}}
+puts $fd {{"parentUuid":"a","isSidechain":false,"attachment":{"type":"hook_success","hookName":"SessionStart:resume","hookEvent":"SessionStart","content":""},"type":"attachment","timestamp":"2026-05-02T09:00:00.000Z"}}
+puts $fd {{"type":"user","timestamp":"2026-05-02T09:00:20.000Z","message":{"role":"user","content":"carry on"}}}
+close $fd
+set cost_dict [::questlog::cli::cost::compute_sync $fix]
+check "a late frame-link and a resume hook leave the night away out of both times" \
+    [list [dict get $cost_dict duration_secs] [dict get $cost_dict human_secs]] {30 20}
+file delete $fix
+
 # ---- compute_cost: a rewind's abandoned turn is no turn --------------------
 # "rolled" was answered, then the user rewound to before it and asked
 # "replacement" from the first answer. The file keeps the abandoned exchange as
