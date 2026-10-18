@@ -157,8 +157,25 @@ proc ::questlog::markdown::record_items {rec last_ts idle_gap dialogue roles} {
                     "## --- [::logman::fmt_gap [lindex $ev 1]] later ---"]
             }
             body {
+                set text [lindex $ev 1]
+                # A notice is its one line, its raw text folded under it in a
+                # fence longer than any backtick run the text holds; one with
+                # no line is the folded text alone, as the viewer hides it whole.
+                set note [::logman::notice $rec]
+                if {[llength $note]} {
+                    set f ```
+                    foreach run [regexp -all -inline {`{3,}} $text] {
+                        if {[string length $run] >= [string length $f]} { set f "$run`" }
+                    }
+                    set text "<details><summary>notice</summary>\n\n$f\n$text\n$f\n\n</details>"
+                    if {[lindex $note 0] eq ""} {
+                        lappend out [list divider $text]
+                        continue
+                    }
+                    set text "[lindex $note 0]\n\n$text"
+                }
                 lappend out [list turn \
-                    [::logman::record_role_label $rec] [lindex $ev 1] $lineno]
+                    [::logman::record_role_label $rec] $text $lineno]
             }
         }
     }

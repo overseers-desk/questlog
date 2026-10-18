@@ -14,7 +14,7 @@ namespace eval ::logman {
         is_turn_start opens_turn mark_turn_runs count_turn_line note_line \
         kept_turns is_assistant_line is_request_log \
         record_parent mark_branches mark_turns branch_phrase \
-        record_role_label record_model \
+        record_role_label record_model notice mark_commands \
         context_window transcript_step is_dialogue_prompt command_text dialogue_body
 }
 
@@ -83,16 +83,92 @@ proc ::logman::is_user_turn {line} {
 # (the Anthropic API rides tool_result blocks in a user-role message), so it
 # reads TOOL RESULT. The one home for the label, so the viewer and the export
 # never disagree; the parsed-record twin of is_user_turn's tool_result
-# carve-out.
-# ponytail: the other harness echoes is_user_turn also excludes (<command-name>,
-# <local-command-stdout>, caveats, <task-notification>) still read USER; add one
-# string-prefix branch here if that is ever wanted - one fix serves both surfaces.
+# carve-out. A notice Claude Code wrote (notice) reads SYSTEM.
 proc ::logman::record_role_label {rec} {
+    if {[llength [notice $rec]]} { return SYSTEM }
     switch -- [dict getdef $rec type ""] {
         user      { return [expr {[is_tool_result_record $rec] ? "TOOL RESULT" : "USER"}] }
         assistant { return [expr {[dict getdef $rec isApiErrorMessage 0] ? "SYSTEM" : "ASSISTANT"}] }
         default   { return "SYSTEM" }
     }
+}
+
+# A notice Claude Code wrote into the transcript, in its one-line form: {} when
+# rec is none, else {line}, where an empty line leaves the whole record to its
+# turn's detail. A record that opens a turn is the user's, never a notice. A
+# command's output reads as the command with its output's first line, through
+# the stamps mark_commands leaves on the pair.
+proc ::logman::notice {rec} {
+    if {[dict getdef $rec type ""] ni {user system} || [opens_turn $rec]} { return {} }
+    if {[dict exists $rec _echo]} { return [list ""] }
+    if {[dict exists $rec _command]} {
+        regexp {<local-command-stdout>(.*?)(</local-command-stdout>|$)} \
+            [extract_text $rec] -> out
+        return [list "[dict get $rec _command] · [excerpt $out]"]
+    }
+    if {[dict exists $rec refusedMessageId]} { return [list "stopped by safeguards"] }
+    set text [extract_text $rec]
+    set n "[string length $text] chars"
+    if {[dict getdef $rec isCompactSummary 0]} { return [list "compact summary · $n"] }
+    if {[dict exists $rec scheduledTaskId]} { return [list "scheduled task · [excerpt $text]"] }
+    if {[string match <task-notification>* $text]} {
+        set line "task notification"
+        regexp {<summary>(.*?)</summary>} $text -> line
+        return [list "[expr {[string match *<status>completed</status>* $text] ? "✓" : "✗"}] [excerpt $line]"]
+    }
+    if {[regexp {<cross-session-message[^>]*from-name="([^"]*)"[^>]*>(.*)} $text -> who body]} {
+        return [list "message from $who · [excerpt $body]"]
+    }
+    if {![dict getdef $rec isMeta 0]} { return {} }
+    if {[string match <local-command-caveat>* $text]} { return [list ""] }
+    if {[regexp {^([A-Za-z]+) hook feedback:} $text -> event]
+            || ([string match <system-reminder>* $text]
+                && [regexp {([A-Za-z]+) hook additional context} $text -> event])} {
+        return [list "hook $event · $n"]
+    }
+    if {[string match <system-reminder>* $text]} { return [list "reminder · $n"] }
+    if {[regexp {^Base directory for this skill: (\S+)} $text -> dir]} {
+        return [list "skill [file tail $dir] · $n"]
+    }
+    return {}
+}
+
+# The first non-blank line of text, terminal colour codes stripped, cut to max
+# characters.
+proc ::logman::excerpt {text {max 100}} {
+    regsub -all {\x1b\[[0-9;]*m} $text "" text
+    foreach line [split $text \n] {
+        set line [string trim $line]
+        if {$line eq ""} continue
+        if {[string length $line] > $max} {
+            set line "[string range $line 0 [expr {$max - 2}]]…"
+        }
+        return $line
+    }
+    return ""
+}
+
+# Stamp each local command's echo _echo and the output record hanging from it
+# _command, the command and its arguments, for notice to read as one line. A
+# command echo with no output after it (a skill or prompt the user ran) keeps
+# no stamp.
+proc ::logman::mark_commands {recs} {
+    set echoes [dict create]
+    set i -1
+    foreach rec $recs {
+        incr i
+        if {[dict getdef $rec type ""] ni {user system}} continue
+        set text [extract_text $rec]
+        if {[string match <command-* $text] && [set cmd [command_text $text]] ne ""} {
+            dict set echoes [dict getdef $rec uuid ""] [list $i $cmd]
+        } elseif {[string match <local-command-stdout>* $text]
+                  && [dict exists $echoes [record_parent $rec]]} {
+            lassign [dict get $echoes [record_parent $rec]] e cmd
+            lset recs $e [dict replace [lindex $recs $e] _echo 1]
+            lset recs $i [dict replace $rec _command $cmd]
+        }
+    }
+    return $recs
 }
 
 # 1 iff a parsed record is a tool_result carrier: type:user with block-array
@@ -480,15 +556,16 @@ proc ::logman::subtree {kids u} {
 }
 
 # The turn reading of a whole record list, as the session viewer and the
-# markdown export draw it: the rolled-back branches (mark_branches), then the
-# drafts (mark_turn_runs), then each branch's facts for its header, filled into
+# markdown export draw it: each local command paired with its output
+# (mark_commands), the rolled-back branches (mark_branches), then the drafts
+# (mark_turn_runs), then each branch's facts for its header, filled into
 # its _branch_open dict beside depth:
 #   turns   its own turns as they render, a branch inside it counting apart
 #   prompt  the first non-blank line of the first of those turns
 #   t0 t1   its first and last timestamps
 #   inner   the branches directly inside it
 proc ::logman::mark_turns {recs} {
-    set recs [mark_turn_runs [mark_branches $recs]]
+    set recs [mark_turn_runs [mark_branches [mark_commands $recs]]]
     set open {}
     set i -1
     foreach rec $recs {
@@ -519,12 +596,7 @@ proc ::logman::mark_turns {recs} {
                     && [dict get $rec _branch_depth] == [dict get $top depth]} {
                 dict incr top turns
                 if {[dict get $top prompt] eq ""} {
-                    foreach l [split [extract_text $rec] \n] {
-                        if {[string trim $l] ne ""} {
-                            dict set top prompt [string trim $l]
-                            break
-                        }
-                    }
+                    dict set top prompt [excerpt [extract_text $rec]]
                 }
                 lset open end $top
             }
@@ -969,11 +1041,8 @@ proc ::logman::branch_phrase {b} {
     }
     set k [dict get $b inner]
     if {$k} { lappend parts "$k rollback[expr {$k == 1 ? "" : "s"}] inside" }
-    set p [string trim [dict get $b prompt]]
-    if {$p ne ""} {
-        if {[string length $p] > 48} { set p "[string range $p 0 46]…" }
-        lappend parts "\"$p\""
-    }
+    set p [excerpt [dict get $b prompt] 48]
+    if {$p ne ""} { lappend parts "\"$p\"" }
     return [join $parts " · "]
 }
 

@@ -105,6 +105,31 @@ check queued_reads_as_prompt {user queued q1 USER 0 {also fix the test} {also fi
 check queued_array_prompt {user see image {[image]}} [::logman::extract_blocks [::logman::parse_line \
     {{"type":"attachment","attachment":{"type":"queued_command","prompt":[{"type":"text","text":"see"},{"type":"image","source":{"type":"base64","media_type":"image/png","data":"AAAA"}}]}}}]]
 
+# notice: a record Claude Code wrote, in its one-line form; {} for anything else.
+proc note {line} { ::logman::notice [::logman::parse_line $line] }
+check notice_task {{✓ Agent "Survey" finished}} [note {{"type":"user","promptSource":"system","message":{"role":"user","content":"<task-notification>\n<status>completed</status>\n<summary>Agent \"Survey\" finished</summary>\n</task-notification>"}}}]
+check notice_task_failed {{✗ task notification}} [note {{"type":"user","promptSource":"system","message":{"role":"user","content":"<task-notification><status>failed</status></task-notification>"}}}]
+check notice_skill {{skill cold-reader · 46 chars}} [note {{"type":"user","isMeta":true,"message":{"role":"user","content":"Base directory for this skill: /x/cold-reader\n"}}}]
+check notice_hook_feedback {{hook Stop · 23 chars}} [note {{"type":"user","isMeta":true,"message":{"role":"user","content":"Stop hook feedback:\nnow"}}}]
+check notice_hook_context {{hook UserPromptSubmit · 80 chars}} [note {{"type":"user","isMeta":true,"message":{"role":"user","content":"<system-reminder>\nUserPromptSubmit hook additional context: x\n</system-reminder>"}}}]
+check notice_reminder {{reminder · 42 chars}} [note {{"type":"user","isMeta":true,"message":{"role":"user","content":"<system-reminder>\nnamed\n</system-reminder>"}}}]
+check notice_message {{message from peer · hello}} [note {{"type":"user","promptSource":"system","isMeta":true,"message":{"role":"user","content":"<cross-session-message from=\"u\" from-name=\"peer\">\nhello\nmore</cross-session-message>"}}}]
+check notice_scheduled {{scheduled task · check the deploy}} [note {{"type":"user","isMeta":true,"scheduledTaskId":"s1","message":{"role":"user","content":"check the deploy\nthen report"}}}]
+check notice_safeguards {{stopped by safeguards}} [note {{"type":"user","isMeta":true,"refusedMessageId":"m1","message":{"role":"user","content":"stopped"}}}]
+check notice_compact {{compact summary · 7 chars}} [note {{"type":"user","isCompactSummary":true,"message":{"role":"user","content":"summary"}}}]
+check notice_caveat {{}} [note {{"type":"user","isMeta":true,"message":{"role":"user","content":"<local-command-caveat>Caveat</local-command-caveat>"}}}]
+check notice_typed_prompt_never {} [note {{"type":"user","promptSource":"typed","message":{"role":"user","content":"<task-notification>pasted</task-notification>"}}}]
+check notice_plain_meta_none {} [note {{"type":"user","isMeta":true,"message":{"role":"user","content":"Continue from where you left off."}}}]
+# A local command's echo and output read as one line; a command with no output
+# after it is one the user ran as a prompt, and stays as it is.
+set cmds [::logman::mark_commands [lmap l {
+    {{"type":"user","uuid":"c1","message":{"role":"user","content":"<command-name>/model</command-name>\n<command-args></command-args>"}}}
+    {{"type":"system","subtype":"local_command","uuid":"o1","parentUuid":"c1","content":"<local-command-stdout>Set model to \u001b[1mOpus\u001b[22m\nsaved</local-command-stdout>"}}
+    {{"type":"user","uuid":"c2","parentUuid":"o1","message":{"role":"user","content":"<command-name>/holotapes:shift</command-name>\n<command-args>go</command-args>"}}}
+} {::logman::parse_line $l}]]
+check notice_command_pair {{{}} {{/model · Set model to Opus}} {}} [lmap r $cmds {::logman::notice $r}]
+check notice_label {SYSTEM SYSTEM USER} [lmap r $cmds {::logman::record_role_label $r}]
+
 # record_tool_uses: structural tool/path extraction for read/write/edit
 # criteria. Assert name:path pairs; the rendered string is exercised by
 # the extract_blocks tests above. NotebookEdit carries notebook_path.

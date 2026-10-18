@@ -1,9 +1,9 @@
 package require Tcl 9
 package require Tk
-package require logman 1.4
+package require logman 1.5
 package require streamdoc 1.4
 package require tkdown 2.1
-package provide showman 0.3
+package provide showman 0.4
 
 # showman - a Claude Code session transcript as a foldable, searchable
 # conversation view: the display base class questlog's own viewer and a live
@@ -156,7 +156,7 @@ oo::class create ::showman::Showman {
         # Detail-block faces, one per block kind insert_blocks renders; muted
         # so detail reads apart from prose. They share body/code's margins but
         # carry no -spacing1/2/3 (spacing would seam at the elide boundary).
-        foreach dk {dk-tool_use dk-tool_result dk-image dk-chrome} {
+        foreach dk {dk-tool_use dk-tool_result dk-image dk-chrome dk-notice} {
             $Text tag configure $dk -font [my mono_font] \
                 -foreground [my color muted] -lmargin1 10 -lmargin2 10
         }
@@ -397,7 +397,7 @@ oo::class create ::showman::Showman {
         my live_flush
         my batch {
             set m [my append_open]
-            foreach rec [::logman::mark_turn_runs $recs] {
+            foreach rec [::logman::mark_turn_runs [::logman::mark_commands $recs]] {
                 set rec [my number_record $rec]
                 lappend Records $rec
                 my note_tree $rec
@@ -470,7 +470,10 @@ oo::class create ::showman::Showman {
         # time so each tool_use/thinking/tool_result/image block is its own
         # dk-* tagged run the turn's detail elide can hide; prompts and
         # system records keep the flat body.
-        if {$t eq "assistant" || [::logman::is_tool_result_record $rec]} {
+        set note [::logman::notice $rec]
+        if {[llength $note]} {
+            my insert_notice $rec [lindex $note 0] $body
+        } elseif {$t eq "assistant" || [::logman::is_tool_result_record $rec]} {
             my insert_blocks $rec
         } else {
             my insert_body $t $body
@@ -583,6 +586,23 @@ oo::class create ::showman::Showman {
         }
     }
 
+    # A notice Claude Code wrote: its one line, then its raw text as the turn's
+    # detail. A notice with no line is detail in its entirety, label row and
+    # all, as a tool-only record is.
+    method insert_notice {rec line raw} {
+        set dtag [expr {[my live] >= 0 ? [my detail_tag [my live]] : ""}]
+        if {$line ne ""} {
+            if {$dtag ne ""} { my count_detail notice }
+            $Text insert [my door] "$line\n" body
+        }
+        $Text insert [my door] "$raw\n" [concat dk-notice $dtag]
+        $Text insert [my door] "\n" [expr {$line eq "" ? [list body $dtag] : "body"}]
+        if {$line eq "" && $dtag ne ""} {
+            $Text tag add $dtag [dict get $LineMap [dict get $rec _line]] \
+                [$Text index "[my door] linestart"]
+        }
+    }
+
     # Bump the open turn's tally of one detail kind; the summary line renders
     # these numbers when the turn closes (or on summary_sync mid-stream).
     method count_detail {kind} {
@@ -607,12 +627,14 @@ oo::class create ::showman::Showman {
         set th [dict getdef $counts thinking 0]
         set im [dict getdef $counts image 0]
         set tr [dict getdef $counts tool_result 0]
+        set no [dict getdef $counts notice 0]
         if {$tu} { lappend parts "$tu tool call[expr {$tu == 1 ? "" : "s"}]" }
         if {$th} { lappend parts "$th thinking" }
         if {$im} { lappend parts "$im image[expr {$im == 1 ? "" : "s"}]" }
         if {$tr && !$tu} {
             lappend parts "$tr tool result[expr {$tr == 1 ? "" : "s"}]"
         }
+        if {$no} { lappend parts "$no notice[expr {$no == 1 ? "" : "s"}]" }
         if {[dict getdef $payload working 0]} { lappend parts "working…" }
         if {![llength $parts]} { return "" }
         return "· [join $parts " · "]"

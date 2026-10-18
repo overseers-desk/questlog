@@ -116,6 +116,24 @@ check "export_session: a queued prompt is one USER block at its attachment" \
     [::questlog::markdown::export_session $queuefix 1] \
     [join {"**\[#1] USER**\n\ngo" "**\[#3] ASSISTANT**\n\nworking" "**\[#5] USER**\n\nalso this"} "\n\n"]
 
+# Claude Code's notices inside a turn: each exports as a SYSTEM line with its
+# raw text folded under it; the caveat and the command echo are the folded
+# text alone.
+set notefix [file join /tmp questlog-show-notice-[pid].jsonl]
+write_file $notefix [join {
+    {{"type":"user","uuid":"p1","promptSource":"typed","message":{"role":"user","content":"go"}}}
+    {{"type":"user","uuid":"t1","parentUuid":"p1","promptSource":"system","message":{"role":"user","content":"<task-notification><status>completed</status><summary>Agent \"a\" finished</summary></task-notification>"}}}
+    {{"type":"user","uuid":"k1","parentUuid":"t1","isMeta":true,"message":{"role":"user","content":"<local-command-caveat>Caveat</local-command-caveat>"}}}
+    {{"type":"user","uuid":"c1","parentUuid":"k1","message":{"role":"user","content":"<command-name>/model</command-name>"}}}
+    {{"type":"user","uuid":"o1","parentUuid":"c1","message":{"role":"user","content":"<local-command-stdout>Set model to Opus</local-command-stdout>"}}}
+} "\n"]
+set notes [::questlog::markdown::export_session $notefix 0]
+check "export_session: notices are SYSTEM lines, raw text under <details>" \
+    [list [regexp -all {\*\*SYSTEM\*\*} $notes] [regexp -all {<details><summary>notice</summary>} $notes] \
+        [string match "*\*\*SYSTEM\*\*\n\n✓ Agent \"a\" finished\n\n<details>*" $notes] \
+        [string match "*\*\*SYSTEM\*\*\n\n/model · Set model to Opus\n\n<details>*" $notes] \
+        [string match {*<command-name>/model*} $notes]] {2 4 1 1 1}
+
 # ---- dialogue view: the conversation only ---------------------------------
 
 # A slash command, an assistant turn mixing thinking + prose + a tool call, the
@@ -189,7 +207,7 @@ write_file $sesspath $fixture
 check "resolve_session: a bare uuid resolves to its session file" \
     [::questlog::cli::main::resolve_session $uuid] $sesspath
 
-::questlog::path::_real_file delete -force $f $toolfix $dlgfix $queuefix $rbfix $proot
+::questlog::path::_real_file delete -force $f $toolfix $dlgfix $queuefix $notefix $rbfix $proot
 
 if {$failures == 0} {
     puts "\nAll tests passed."

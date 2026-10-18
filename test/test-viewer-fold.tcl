@@ -673,6 +673,36 @@ update idletasks
 check "a reopen restores the dragged sash (within 2px)" \
     [expr {abs([$Body sashpos 0] - $want) <= 2}] 1
 
+# ---- notices: one SYSTEM line each, raw text in the turn's detail ----------------
+# A task notification, a caveat, and a /model echo with its output, inside a
+# turn: two lines show, the caveat and the echo are detail only, and every raw
+# text waits for the stub.
+set JN [file join $TMP notices.jsonl]
+set fh [open $JN w]
+fconfigure $fh -encoding utf-8
+puts $fh {{"type":"user","uuid":"p1","promptSource":"typed","timestamp":"2026-07-12T09:00:00Z","message":{"role":"user","content":"Notice question"}}}
+puts $fh {{"type":"user","uuid":"t1","parentUuid":"p1","promptSource":"system","timestamp":"2026-07-12T09:00:01Z","message":{"role":"user","content":"<task-notification><status>completed</status><summary>Agent \"survey\" finished</summary><result>raw-notice-body</result></task-notification>"}}}
+puts $fh {{"type":"user","uuid":"k1","parentUuid":"t1","isMeta":true,"timestamp":"2026-07-12T09:00:02Z","message":{"role":"user","content":"<local-command-caveat>caveat-body</local-command-caveat>"}}}
+puts $fh {{"type":"user","uuid":"c1","parentUuid":"k1","timestamp":"2026-07-12T09:00:03Z","message":{"role":"user","content":"<command-name>/model</command-name>"}}}
+puts $fh {{"type":"user","uuid":"o1","parentUuid":"c1","timestamp":"2026-07-12T09:00:03Z","message":{"role":"user","content":"<local-command-stdout>Set model to Opus</local-command-stdout>"}}}
+puts $fh {{"type":"assistant","uuid":"a1","parentUuid":"o1","timestamp":"2026-07-12T09:00:05Z","message":{"role":"assistant","content":[{"type":"text","text":"Notice answer."}]}}}
+close $fh
+$V show $JN 0 {}
+update idletasks
+set lines [lmap {s e} [$Text tag ranges lbl-system] {
+    expr {[$Text count -displaychars $s $e] ? [string trim [$Text get $s "$s lineend"]] : [continue]}
+}]
+check "notices read as SYSTEM lines, the caveat and echo hidden" $lines \
+    [list "SYSTEM  ✓ Agent \"survey\" finished" "SYSTEM  /model · Set model to Opus"]
+check "the stub counts the notices" \
+    [string match "*· 2 notices*" [$Text get {*}[$Text tag ranges stub]]] 1
+check "raw notice text waits in the detail" \
+    [list [vischars raw-notice-body] [vischars caveat-body]] {0 0}
+$V detail_toggle 0
+update idletasks
+check "the stub reveals the raw notice text" \
+    [list [expr {[vischars raw-notice-body] > 0}] [expr {[vischars caveat-body] > 0}]] {1 1}
+
 # ---- clean up -------------------------------------------------------------------
 ::questlog::path::_real_file delete -force $TMP
 puts [expr {$fails ? "FAILED ($fails)" : "PASS"}]
