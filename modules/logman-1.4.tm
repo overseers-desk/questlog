@@ -83,7 +83,7 @@ proc ::logman::is_user_turn {line} {
 proc ::logman::record_role_label {rec} {
     switch -- [dict getdef $rec type ""] {
         user      { return [expr {[is_tool_result_record $rec] ? "TOOL RESULT" : "USER"}] }
-        assistant { return "ASSISTANT" }
+        assistant { return [expr {[dict getdef $rec isApiErrorMessage 0] ? "SYSTEM" : "ASSISTANT"}] }
         default   { return "SYSTEM" }
     }
 }

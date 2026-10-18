@@ -258,6 +258,8 @@ check label_tool_result "TOOL RESULT" [::logman::record_role_label \
 check label_assistant "ASSISTANT" [::logman::record_role_label \
     [::logman::parse_line \
     {{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"hi"}]}}}]]
+check label_api_error "SYSTEM" [::logman::record_role_label [::logman::parse_line \
+    {{"type":"assistant","isApiErrorMessage":true,"message":{"model":"<synthetic>","role":"assistant","content":[{"type":"text","text":"refused"}]}}}]]
 check label_system "SYSTEM" [::logman::record_role_label \
     [::logman::parse_line \
     {{"type":"system","content":"Conversation compacted"}}]]
