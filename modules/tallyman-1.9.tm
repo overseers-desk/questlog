@@ -287,12 +287,12 @@ proc tallyman::_classify_stamp {line ask_ids} {
 }
 
 # 1 iff a line is no part of the conversation's timeline, so its time must not
-# end a gap. A file-history-snapshot carries no top-level timestamp, and the
-# nested snapshot.timestamp would turn the away gap before a resume into work.
-# The request log is stamped a few ms after the record it was sent for, and
-# would end the gap before a prompt as machine time. A frame-link, the record
-# of an artifact's link, is at times written hours or weeks after the
-# conversation, and would end that silence as machine time.
+# end a gap. A file-history-snapshot has no top-level timestamp, and the nested
+# snapshot.timestamp would turn the away gap before a resume into work. The
+# request log is stamped a few ms after the record it was sent for, and would
+# end the gap before a prompt as machine time. A frame-link (an artifact's link
+# record) can be written hours or weeks after the conversation, and would end
+# the gap as machine time.
 proc tallyman::_off_timeline {line} {
     return [expr {[regexp {"type":"file-history-snapshot"} $line]
                   || [::logman::is_request_log $line]
