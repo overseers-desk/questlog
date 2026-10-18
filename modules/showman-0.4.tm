@@ -469,7 +469,7 @@ oo::class create ::showman::Showman {
         # Assistant and tool_result records render one content block at a
         # time so each tool_use/thinking/tool_result/image block is its own
         # dk-* tagged run the turn's detail elide can hide; prompts and
-        # system records keep the flat body.
+        # other system records keep the flat body.
         set note [::logman::notice $rec]
         if {[llength $note]} {
             my insert_notice $rec [lindex $note 0] $body
