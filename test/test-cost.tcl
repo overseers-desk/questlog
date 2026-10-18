@@ -348,7 +348,7 @@ set rewound_fix $fix
 # ---- compute_cost: the request log is no part of the timeline -------------
 # Claude Code writes each request's log line just before the record it was
 # sent for, stamped a few ms later. Read as activity it would close the
-# twenty-minute wait before the second prompt as machine time; the session's
+# wait before the second prompt as machine time; the session's
 # durations are those of the same session without the line.
 proc rl_session {with_log} {
     set fd [file tempfile f]

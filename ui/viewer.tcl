@@ -2216,10 +2216,9 @@ oo::class create ::questlog::ui::Viewer {
     # on a user prompt). N is the turn's 1-based number among the turns the
     # conversation kept, so a reader can jump to "turn 12" by the number they'd
     # say aloud; a turn a rewind abandoned reads ↩ in its place, muted, and
-    # counts in neither the numbering nor the head strip. The label was captured at
-    # region_open (the prompt's first line, in the payload); collapse its
-    # whitespace and clip it the way the
-    # match and quote rows clip, so a long or ragged opening still reads as one
+    # counts in neither the numbering nor the head strip. The label was captured
+    # at region_open (the prompt's first line, in the payload); collapse its
+    # whitespace and clip it the way the match and quote rows clip, so a long or ragged opening still reads as one
     # tidy row. Called from show and, after a streamed turn lands, from
     # resume_finish - the store is the one source of truth, so a refill always
     # tracks region_count. Unlike the quote rows (appended live during render)

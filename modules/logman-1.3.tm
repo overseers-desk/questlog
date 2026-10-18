@@ -201,9 +201,8 @@ proc ::logman::count_turn_line {line statevar} {
 # tree and the two facts count_turn_line reads, an assistant record and a turn.
 # Which turns a rewind abandoned only the whole file can tell, so the count waits
 # for kept_turns at its end. tag rides with the line's turn into that count (a
-# time window's in or out). The cost pass counts this way; the startup scan,
-# whose count only feeds the min-turns floor, keeps count_turn_line's running
-# count and is spared the tree.
+# time window's in or out). The cost pass counts this way; the startup scan is
+# spared the tree and keeps count_turn_line's running count.
 proc ::logman::note_line {line statevar {tag 1}} {
     upvar 1 $statevar facts
     if {![info exists facts]} { set facts [list] }
@@ -217,7 +216,7 @@ proc ::logman::note_line {line statevar {tag 1}} {
 # writes instead of a parse: a record opens with its parentUuid (a compaction
 # boundary's null one continued by logicalParentUuid), and its own uuid is the
 # one followed by its timestamp, else (a system record) the first on the line.
-# Every one of 162,870 records checked read so. A line of any other shape gives
+# Every record of a corpus-wide check read so. A line of any other shape gives
 # {"" "" 0} and stands outside the tree.
 proc ::logman::line_tree {line} {
     if {[string range $line 0 13] ne "\{\"parentUuid\":"} { return {"" "" 0} }

@@ -6,7 +6,7 @@
 # the cases the rule decides: a root with sessions of its own, a child
 # folder, a chain of directories holding no folder, a branch point holding
 # none (whose children step up), a project whose sessions all fall outside
-# the window over two folders (a group row), a directory that is gone, and an
+# the window over several folders (a group row), a directory that is gone, and an
 # unrelated root. Every name fictional.
 
 package require Tcl 9

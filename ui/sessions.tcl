@@ -313,7 +313,7 @@ oo::class create ::questlog::ui::SessionList {
     #       mutates: a regression to path-keying lodges a string that is no node id
     #       and trips here.
     #   (e) every folder holds a session of its own or two or more folders
-    #       (folder_kept), so a group whose last but one folder left shows here.
+    #       (folder_kept), so a group left with a single folder shows here.
     method audit {} {
         set probs [list]
         # (a) reverse indices are a bijection with the keyed nodes.
@@ -2266,8 +2266,8 @@ oo::class create ::questlog::ui::SessionList {
     # The one creator of folder nodes. A folder hangs under the folder whose
     # directory most closely contains its own, or at the root when none does;
     # a folder the resolver cannot place (dir "") is a root and never a parent.
-    # A folder exists while it holds a session, or while it is a project
-    # folder over two or more folders (group_over).
+    # A folder exists while it holds a session, or while it groups two or more
+    # folders beneath it though none of its own sessions is in view (group_over).
     # This is the rule ::questlog::path::container_tree states over a whole
     # corpus at once, applied here one folder at a time as they arrive.
     # Folders arrive in their newest session's order, not top-down, so a new

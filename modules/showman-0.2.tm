@@ -17,9 +17,9 @@ package provide showman 0.2
 #     content blocks, dividers), tkdown supplying markdown-to-Tk. Each turn
 #     folds to its header line; tool_use / thinking / tool_result blocks are
 #     detail, hidden behind a trailing stub ("· N tool calls · M thinking").
-#     The turns a rewind abandoned (logman's mark_turns) fold, folded at
-#     first, under one ROLLED BACK line at their fork: a streamdoc group,
-#     nested as the rewinds nest, its body marked by a margin rail.
+#     The turns a rewind abandoned (logman's mark_turns) sit under one ROLLED
+#     BACK line at their fork, folded at first: a streamdoc group, nested as
+#     the rewinds nest, its body marked by a margin rail.
 #   - find (Ctrl-F): streamdoc's bar, bounded by find_bound so trailing
 #     chrome under `endhint` is never a match.
 #   - a LIVE turn (the reason this base exists): live_open starts a growing
