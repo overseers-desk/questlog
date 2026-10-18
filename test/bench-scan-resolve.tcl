@@ -1,16 +1,11 @@
 #!/usr/bin/env tclsh9.0
-# Issue #45's requested measurement: what an unresolvable project folder
-# actually costs a scan, before any cure is weighed.
+# Issue #45's measurement: what an unresolvable project folder costs a scan.
 #
-# resolve_folder memoises only a folder that resolves; an unresolvable one
-# (directory gone, or every session moved in from elsewhere) is re-resolved
-# once per row, and each resolution peeks the folder - opening its transcripts
-# until one's cwd re-encodes to the folder name, which in this case none ever
-# does. Structurally that is N openings of N files per scan. The issue asks
-# for the number on a real pass, not the structure: an unresolvable folder is
-# uncommon, and a cure that caches costs the resolver its healing property
-# (a Move depends on it), so nothing should be traded before the size of the
-# cost is known. This prints transcript-open counts and wall time for a
+# resolve_folder peeks a folder, opening its transcripts until one's cwd
+# re-encodes to the folder name. A folder that resolves costs one open. One
+# that never does (directory gone, or every session moved in from elsewhere)
+# is held in the per-pass negative memo, so each of its N transcripts is
+# opened once per scan. This prints transcript-open counts and wall time for a
 # resolvable control folder and an unresolvable one at several sizes.
 #
 # bench- prefix: outside run-audit's test-*.tcl glob, run by hand:
