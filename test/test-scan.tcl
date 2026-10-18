@@ -444,6 +444,17 @@ check turns_rewound_scan_file_running 3 [dict get $rw_sf nturns]
 check turns_rewound_cost_kept 2 [dict get [::questlog::cost::parse_file $rw_fix] turns]
 ::questlog::path::_real_file delete $rw_fix
 
+# A file-history snapshot heading the file carries only its snapshot's nested
+# timestamp, which can predate the session; first_ts is the first record's.
+set snap_fix [file join [file dirname $turns_fix] snapshot-1.jsonl]
+set fh [open $snap_fix w]
+chan configure $fh -encoding utf-8 -translation lf
+puts $fh {{"type":"file-history-snapshot","messageId":"m1","snapshot":{"timestamp":"2026-05-01T09:00:00.000Z","files":{}}}}
+puts $fh {{"parentUuid":null,"isSidechain":false,"promptSource":"typed","type":"user","message":{"role":"user","content":"hello"},"uuid":"p1","timestamp":"2026-05-10T10:00:00.000Z"}}
+close $fh
+check first_ts_skips_snapshot 2026-05-10T10:00:00.000Z [dict get [$s4 scan_one $snap_fix] first_ts]
+::questlog::path::_real_file delete $snap_fix
+
 $s4 destroy
 
 # ---- an edited message counts once, on both sides ---------------------------

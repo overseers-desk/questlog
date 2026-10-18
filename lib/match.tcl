@@ -615,7 +615,10 @@ proc ::questlog::match::scan_file {path clauses {tick ""} {yield_lines 0}} {
             if {$do_row && $kind eq ""} { set kind [::questlog::match::opener_kind $line] }
             if {$do_row && $cwd_hint eq ""
                     && [regexp {"cwd":"([^"]+)"} $line -> m]} { set cwd_hint $m }
+            # A file-history-snapshot's only timestamp is its snapshot's,
+            # nested, which can predate the session (tallyman skips it too).
             if {$do_row && $first_ts eq ""
+                    && [string first {"type":"file-history-snapshot"} $line] < 0
                     && [regexp {"timestamp":"([^"]+)"} $line -> m]} { set first_ts $m }
             if {$do_row && $gate_on && $gremain > 0} {
                 set lhay ""
