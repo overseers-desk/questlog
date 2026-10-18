@@ -148,7 +148,7 @@ check run_answered_between {- - - -} \
 # A run open at end of list still collapses - nothing after it can reopen it.
 check run_open_at_end {- s e1} \
     [stamps [::logman::mark_turn_runs [mk $A [P "draf"] [P "draft"]]]]
-# The interruption notice is not a draft: it opens no turn, so it neither
+# The interruption marker is not a draft: it opens no turn, so it neither
 # collapses nor adds to the count. Here the two real prompts still pair.
 check run_interrupt_not_a_draft {- s - e1 -} \
     [stamps [::logman::mark_turn_runs [mk $A [P "draf"] \
