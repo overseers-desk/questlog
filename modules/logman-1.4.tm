@@ -545,8 +545,8 @@ proc ::logman::mark_turns {recs} {
 #                   else for each array element: .text if .type=="text",
 #                   .content if .type=="tool_result" and .content is string.
 #   system:         .content (catches "Conversation compacted")
-#   anything else:  "" (the queue's bookkeeping and the last-prompt snapshot
-#                   among them: the prompt they echo has its own record)
+#   anything else:  "" (queue-operation and last-prompt records among them: the
+#                   prompt they echo has its own record)
 proc ::logman::extract_text {rec} {
     set t [dict getdef $rec type ""]
     switch -- $t {

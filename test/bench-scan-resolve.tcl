@@ -4,9 +4,10 @@
 # resolve_folder peeks a folder, opening its transcripts until one's cwd
 # re-encodes to the folder name. A folder that resolves costs one open. One
 # that never does (directory gone, or every session moved in from elsewhere)
-# is held in the per-pass negative memo, so each of its N transcripts is
-# opened once per scan. This prints transcript-open counts and wall time for a
-# resolvable control folder and an unresolvable one at several sizes.
+# is held in the per-pass negative memo (NegFolders), so each of its N
+# transcripts is opened once per scan. This prints transcript-open counts and
+# wall time for a resolvable control folder and an unresolvable one at several
+# sizes.
 #
 # bench- prefix: outside run-audit's test-*.tcl glob, run by hand:
 #   tclsh9.0 test/bench-scan-resolve.tcl
