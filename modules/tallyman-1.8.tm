@@ -328,6 +328,10 @@ proc tallyman::parse_lines {lines} {
         # turn the away gap before a resume into work. They are no part of the
         # conversation timeline, so skip outright.
         if {[regexp {"type":"file-history-snapshot"} $line]} continue
+        # The request log is no part of it either, and stamped a few ms after
+        # the record it was sent for, it would end the gap before a prompt as
+        # machine time.
+        if {[::logman::is_request_log $line]} continue
         # A turn is a prompt the user actually wrote: the drafts of a message
         # edited before the assistant answered are one prompt, and a turn a
         # rewind abandoned is none (kept_turns, once the whole file is read).
@@ -507,6 +511,7 @@ proc tallyman::accrue_lines {lines lo hi rates threshold credit} {
     foreach line $lines {
         if {$line eq ""} continue
         if {[regexp {"type":"file-history-snapshot"} $line]} continue
+        if {[::logman::is_request_log $line]} continue
 
         # The record's own epoch, fresh each line, and whether it lands in the
         # window: an assistant record's from its parsed timestamp field (a

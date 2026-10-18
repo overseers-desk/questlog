@@ -345,6 +345,28 @@ check "turns leave out the turn a rewind abandoned" \
     [dict get [::questlog::cost::parse_file $fix] turns] 2
 set rewound_fix $fix
 
+# ---- compute_cost: the request log is no part of the timeline -------------
+# Claude Code writes each request's log line just before the record it was
+# sent for, stamped a few ms later. Read as activity it would close the
+# twenty-minute wait before the second prompt as machine time; the session's
+# durations are those of the same session without the line.
+proc rl_session {with_log} {
+    set fd [file tempfile f]
+    puts $fd {{"type":"user","timestamp":"2026-06-05T10:00:00.000Z","message":{"role":"user","content":"first"}}}
+    puts $fd {{"type":"assistant","timestamp":"2026-06-05T10:00:30.000Z","message":{"model":"claude-opus-4-8","usage":{"input_tokens":10,"output_tokens":5}}}}
+    if {$with_log} {
+        puts $fd {{"type":"api-request","sessionId":"s","timestamp":"2026-06-05T10:20:00.004Z","base":"b","keep":1,"tail":["h"]}}
+    }
+    puts $fd {{"type":"user","timestamp":"2026-06-05T10:20:00.000Z","message":{"role":"user","content":"second"}}}
+    puts $fd {{"type":"assistant","timestamp":"2026-06-05T10:20:40.000Z","message":{"model":"claude-opus-4-8","usage":{"input_tokens":10,"output_tokens":5}}}}
+    close $fd
+    set c [::questlog::cli::cost::compute_sync $f]
+    file delete $f
+    return [list [dict get $c duration_secs] [dict get $c human_secs] [dict get $c turns]]
+}
+check "the request log leaves duration, human time and turns as they were" \
+    [rl_session 1] [rl_session 0]
+
 # ---- accrue_window: cost windowed by each message's own timestamp ---------
 # Needs the rate table and the window-edge helpers, same as the CLI run path.
 source [file join $ROOT lib scan.tcl]

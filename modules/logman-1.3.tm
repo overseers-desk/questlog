@@ -12,7 +12,7 @@ namespace eval ::logman {
         is_compact_boundary record_timestamp parse_iso fmt_gap first_cwd \
         is_user_turn is_hidden_record format_tool_use_full order_tool_keys \
         is_turn_start opens_turn mark_turn_runs count_turn_line note_line \
-        kept_turns is_assistant_line \
+        kept_turns is_assistant_line is_request_log \
         record_parent mark_branches mark_turns branch_phrase \
         record_role_label record_model \
         context_window transcript_step is_dialogue_prompt command_text dialogue_body
@@ -22,6 +22,15 @@ namespace eval ::logman {
 proc ::logman::parse_line {line} {
     if {[catch {::json::json2dict $line} d]} { return "" }
     return $d
+}
+
+# 1 iff this raw line is the request log Claude Code writes beside the
+# transcript since 2.1.300 (api-request, api-request-blob, api-request-shape):
+# each model request and the messages it sent, stamped a few milliseconds after
+# the record it was sent for. It is no part of the conversation, and the raw
+# reads that would find a prompt or a timestamp in it skip it.
+proc ::logman::is_request_log {line} {
+    return [string match "\{\"type\":\"api-request*" $line]
 }
 
 # 1 iff this raw line is a real user turn: a user record carrying a typed
@@ -42,10 +51,9 @@ proc ::logman::is_user_turn {line} {
     # fast reject: this literal is the head of the regexp below, so a line
     # lacking it cannot match - a necessary condition, string-cheaper than regexp.
     if {[string first {"role":"user","content":} $line] < 0} { return 0 }
-    # The request log Claude Code writes since 2.1.300 (api-request-blob and
-    # its kin) embeds whole API messages, prompts among them, and is no
-    # transcript record; the parsed twin never reads it as one.
-    if {[string match "\{\"type\":\"api-request*" $line]} { return 0 }
+    # The request log embeds whole API messages, prompts among them; the
+    # parsed twin never reads it as a record.
+    if {[is_request_log $line]} { return 0 }
     # Harness records wearing a typed prompt's shape, rejected on the keys the
     # parsed twin reads so the two predicates agree on what the harness wrote.
     # isMeta covers the injections (hook feedback, skill bodies, /context
