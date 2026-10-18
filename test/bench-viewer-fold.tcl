@@ -73,7 +73,7 @@ proc spread_ms {vals} {
     return "[ms [lindex $s 1]] ms ([ms [lindex $s 0]]-[ms [lindex $s 2]])"
 }
 # Force the async line-metric pass to finish inside the caller's timed region.
-# Resolved indices: Tk 9.0.1 crashes on literal ones when a table's -create
+# Resolved indices: Tk 9.0.3 crashes on literal ones when a table's -create
 # script runs during the update and frees the cached index.
 proc force_metrics {T} { $T count -update -ypixels [$T index 1.0] [$T index end] }
 
