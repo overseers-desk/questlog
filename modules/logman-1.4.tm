@@ -18,9 +18,16 @@ namespace eval ::logman {
         context_window transcript_step is_dialogue_prompt command_text dialogue_body
 }
 
-# Parse one JSONL line into a Tcl dict. Returns "" on parse failure.
+# Parse one JSONL line into a Tcl dict. Returns "" on parse failure. A
+# queued_command attachment, a prompt the model received mid-turn, parses as
+# the queued user record it stands for, so every reader draws it as one.
 proc ::logman::parse_line {line} {
     if {[catch {::json::json2dict $line} d]} { return "" }
+    if {[dict getdef $d type ""] eq "attachment"
+            && [dict getdef $d attachment type ""] eq "queued_command"} {
+        set d [dict replace $d type user promptSource queued message \
+            [dict create role user content [dict getdef $d attachment prompt ""]]]
+    }
     return $d
 }
 
@@ -537,10 +544,9 @@ proc ::logman::mark_turns {recs} {
 #   user/assistant: .message.content if string,
 #                   else for each array element: .text if .type=="text",
 #                   .content if .type=="tool_result" and .content is string.
-#   queue-operation: .content
-#   last-prompt:    .lastPrompt
 #   system:         .content (catches "Conversation compacted")
-#   anything else:  ""
+#   anything else:  "" (the queue's bookkeeping and the last-prompt snapshot
+#                   among them: the prompt they echo has its own record)
 proc ::logman::extract_text {rec} {
     set t [dict getdef $rec type ""]
     switch -- $t {
@@ -554,12 +560,7 @@ proc ::logman::extract_text {rec} {
             if {[is_string_content $c]} { return $c }
             return [extract_array_text $c]
         }
-        queue-operation - system {
-            return [dict getdef $rec content ""]
-        }
-        last-prompt {
-            return [dict getdef $rec lastPrompt ""]
-        }
+        system  { return [dict getdef $rec content ""] }
         default { return "" }
     }
 }
@@ -622,8 +623,7 @@ proc ::logman::extract_array_text {blocks} {
 #   user (array of text blocks):          {user <text>}*
 #   assistant (array of text blocks):     {assistant <text>}*
 #   assistant (array of tool_use blocks): {tool_use <NAME(args)>}*
-#   system / queue-operation (.content):  {system $content}
-#   last-prompt:                          {user $lastPrompt}
+#   system (.content):                    {system $content}
 #   anything else (attachment, file-history-snapshot, etc.): empty list.
 #
 # tool_use blocks pass through format_tool_use_full, the uncapped renderer;
@@ -682,13 +682,9 @@ proc ::logman::extract_blocks {rec} {
                 }
             }
         }
-        system - queue-operation {
+        system {
             set c [dict getdef $rec content ""]
             if {$c ne ""} { lappend out system $c }
-        }
-        last-prompt {
-            set c [dict getdef $rec lastPrompt ""]
-            if {$c ne ""} { lappend out user $c }
         }
     }
     return $out
@@ -781,7 +777,7 @@ proc ::logman::command_text {content} {
 #   an assistant   -> its spoken text blocks joined; thinking, tool_use and any
 #                     sidechain (subagent) reply are dropped
 #   anything else  -> "" (tool results, system notes, last-prompt snapshots,
-#                     attachments, meta and summary records)
+#                     other attachments, meta and summary records)
 # The label a consumer pairs with this body is record_role_label's, the same
 # USER / ASSISTANT the full reading view uses.
 #
@@ -1012,9 +1008,8 @@ proc ::logman::branch_phrase {b} {
 # "─── /compact ───" / "─── N later ───" and its section headers, the export's
 # "## --- /compact ---" / "## --- N later ---" - and each formats a gap through
 # fmt_gap itself from the raw minute count this step hands back. Consumer-only
-# concerns stay upstream too: the viewer drops last-prompt records (the
-# markdown export instead renders them as SYSTEM turns) and tracks an
-# in_section flag before ever reaching here; this step is agnostic to both.
+# concerns stay upstream too: the viewer tracks an in_section flag before ever
+# reaching here, and this step is agnostic to it.
 proc ::logman::transcript_step {rec last_ts idle_gap} {
     set events [list]
     set ts_epoch [parse_iso [record_timestamp $rec]]

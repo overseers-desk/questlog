@@ -36,8 +36,8 @@ set sys_other [::logman::parse_line {{"type":"system","content":"misc"}}]
 
 check extract_user_string         "hello world" [::logman::extract_text $user_str]
 check extract_assistant_array     "first\nBash()\nsecond" [::logman::extract_text $user_arr]
-check extract_queue_op            "x"    [::logman::extract_text $qop]
-check extract_last_prompt         "resume?" [::logman::extract_text $lp]
+check extract_queue_op            ""     [::logman::extract_text $qop]
+check extract_last_prompt         ""     [::logman::extract_text $lp]
 check extract_system              "Conversation compacted" [::logman::extract_text $comp]
 
 # New extractor behaviours: tool_use, thinking, image, tool_result.is_error.
@@ -79,8 +79,8 @@ check blocks_assistant_mixed {assistant first tool_use Read(file_path=/etc/hosts
     [::logman::extract_blocks $assist_mixed]
 check blocks_system_with_content {system misc}                 [::logman::extract_blocks $sys_other]
 check blocks_system_metadata_empty {}                           [::logman::extract_blocks $sys_metadata]
-check blocks_last_prompt {user resume?}                         [::logman::extract_blocks $lp]
-check blocks_queue_op {system x}                                [::logman::extract_blocks $qop]
+check blocks_last_prompt {}                                     [::logman::extract_blocks $lp]
+check blocks_queue_op {}                                        [::logman::extract_blocks $qop]
 check blocks_attachment_empty {}                                [::logman::extract_blocks $attachment]
 check blocks_tool_result_array {tool_result {WebSearch WebFetch}} \
     [::logman::extract_blocks $tool_result_arr]
@@ -94,6 +94,16 @@ check blocks_assistant_image {image {[image]}} \
     [::logman::extract_blocks [::logman::parse_line {{"type":"assistant","message":{"content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"AAAA"}}]}}}]]
 check blocks_user_image {image {[image]}} \
     [::logman::extract_blocks $user_image]
+
+# A queued_command attachment is the prompt the model received mid-turn: it
+# reads as a queued user record, drawn inside the running turn, opening none.
+set queued [::logman::parse_line {{"type":"attachment","uuid":"q1","attachment":{"type":"queued_command","prompt":"also fix the test","commandMode":"prompt"}}}]
+check queued_reads_as_prompt {user queued q1 USER 0 {also fix the test} {also fix the test}} \
+    [list [dict get $queued type] [dict get $queued promptSource] [dict get $queued uuid] \
+        [::logman::record_role_label $queued] [::logman::is_turn_start $queued] \
+        [::logman::extract_text $queued] [::logman::dialogue_body $queued]]
+check queued_array_prompt {user see image {[image]}} [::logman::extract_blocks [::logman::parse_line \
+    {{"type":"attachment","attachment":{"type":"queued_command","prompt":[{"type":"text","text":"see"},{"type":"image","source":{"type":"base64","media_type":"image/png","data":"AAAA"}}]}}}]]
 
 # record_tool_uses: structural tool/path extraction for read/write/edit
 # criteria. Assert name:path pairs; the rendered string is exercised by

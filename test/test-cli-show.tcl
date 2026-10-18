@@ -100,6 +100,22 @@ check "export_session: the dialogue view drops it too" \
     [::questlog::markdown::export_session $draftfix 0 1] \
     [join {"**USER**\n\nhow do I frobnicate?" "**ASSISTANT**\n\ngently"} "\n\n"]
 
+# A prompt typed while Claude works: the queue's enqueue and remove are
+# bookkeeping, the attachment is what the model received, and the last-prompt
+# snapshot echoes it. One USER block, at the attachment's record.
+set queuefix [file join /tmp questlog-show-queue-[pid].jsonl]
+write_file $queuefix [join {
+    {{"type":"user","promptSource":"typed","message":{"role":"user","content":"go"}}}
+    {{"type":"queue-operation","operation":"enqueue","content":"also this"}}
+    {{"type":"assistant","message":{"content":[{"type":"text","text":"working"}]}}}
+    {{"type":"queue-operation","operation":"remove","reason":"absorbed_mid_turn"}}
+    {{"type":"attachment","attachment":{"type":"queued_command","prompt":"also this","commandMode":"prompt"}}}
+    {{"type":"last-prompt","lastPrompt":"also this"}}
+} "\n"]
+check "export_session: a queued prompt is one USER block at its attachment" \
+    [::questlog::markdown::export_session $queuefix 1] \
+    [join {"**\[#1] USER**\n\ngo" "**\[#3] ASSISTANT**\n\nworking" "**\[#5] USER**\n\nalso this"} "\n\n"]
+
 # ---- dialogue view: the conversation only ---------------------------------
 
 # A slash command, an assistant turn mixing thinking + prose + a tool call, the
@@ -173,7 +189,7 @@ write_file $sesspath $fixture
 check "resolve_session: a bare uuid resolves to its session file" \
     [::questlog::cli::main::resolve_session $uuid] $sesspath
 
-::questlog::path::_real_file delete -force $f $toolfix $dlgfix $rbfix $proot
+::questlog::path::_real_file delete -force $f $toolfix $dlgfix $queuefix $rbfix $proot
 
 if {$failures == 0} {
     puts "\nAll tests passed."

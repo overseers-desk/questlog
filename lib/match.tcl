@@ -705,7 +705,7 @@ proc ::questlog::match::scan_file {path clauses {tick ""} {yield_lines 0}} {
                         }
                     }
                 }
-                if {$candidate && ![catch {::json::json2dict $line} rec]} {
+                if {$candidate && [set rec [::logman::parse_line $line]] ne ""} {
                     # Each leaf is session-satisfied once any record matches it in
                     # its regions; buffer the snippets only of positively-used
                     # leaves, so a negated leaf's incidental matches never pollute

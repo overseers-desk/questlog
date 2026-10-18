@@ -249,6 +249,21 @@ $V append_new
 update idletasks
 check "plain growth still appends" [vischars "fourth live words"] 17
 
+# A prompt typed while that turn runs: the queue's bookkeeping draws nothing,
+# and the prompt the model received reads once, USER, inside the running turn.
+proc nranges {tag} { llength [$::Text tag ranges $tag] }
+set before [list [nranges lbl-system] [nranges turnhdr] [expr {[nranges lbl-user] + 2}]]
+write_lines $JL [list \
+    {{"type":"queue-operation","operation":"enqueue","content":"queued words"}} \
+    {{"type":"queue-operation","operation":"remove","reason":"absorbed_mid_turn"}} \
+    {{"type":"attachment","uuid":"qa","parentUuid":"b4","timestamp":"2026-10-17T09:09:00.000Z","attachment":{"type":"queued_command","prompt":"queued words"}}}] a
+$V append_new
+update idletasks
+check "a queued prompt reads as USER within the running turn" \
+    [list [nranges lbl-system] [nranges turnhdr] [nranges lbl-user] \
+        [llength [$Text search -all -elide -- "queued words" 1.0 end]] [vischars "queued words"]] \
+    [concat $before 1 12]
+
 check "no background errors" $::bgerr {}
 ::questlog::path::_real_file delete -force $TMP
 if {$fails} { puts "FAILED: $fails" } else { puts "PASS" }

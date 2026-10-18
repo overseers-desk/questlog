@@ -1,9 +1,9 @@
 package require Tcl 9
 package require Tk
-package require logman 1.3
+package require logman 1.4
 package require streamdoc 1.4
 package require tkdown 2.1
-package provide showman 0.2
+package provide showman 0.3
 
 # showman - a Claude Code session transcript as a foldable, searchable
 # conversation view: the display base class questlog's own viewer and a live
@@ -418,9 +418,6 @@ oo::class create ::showman::Showman {
     # live here. The caller holds $Text in -state normal.
     method render_record {rec last_ts in_section} {
         set t [dict getdef $rec type ""]
-        # last-prompt records are repeated harness snapshots of the most
-        # recent user prompt, echoing the real turn already shown.
-        if {$t eq "last-prompt"} { return [list $last_ts $in_section] }
         set lineno [dict get $rec _line]
 
         lassign [::logman::transcript_step $rec $last_ts [my opt idle_gap]] \
