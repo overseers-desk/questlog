@@ -66,6 +66,24 @@ check alive_path \
     $LIVEHOME/.claude/projects/-home-test-code-foo/alive-uuid.jsonl \
     [dict get $running alive-uuid]
 
+# ---- a session under another ~/.claude* profile --------------------
+# It counts as running, and its path is under the current profile's projects
+# root, not the launching profile's.
+set sdir $LIVEHOME/.claude-other/sessions
+::questlog::path::_real_file mkdir $sdir
+write_rec other.json $me other-uuid /srv/code/qux $mystart
+set running [::questlog::ui::live::running_uuids]
+check other_profile_present 1 [dict exists $running other-uuid]
+check other_profile_path \
+    $LIVEHOME/.claude/projects/-srv-code-qux/other-uuid.jsonl \
+    [dict get $running other-uuid]
+check home_profile_still_present 1 [dict exists $running alive-uuid]
+
+# A profile whose registry is a symlink to another's yields each uuid once.
+::questlog::path::_real_file mkdir $LIVEHOME/.claude-shared
+::questlog::path::_real_file link $LIVEHOME/.claude-shared/sessions $LIVEHOME/.claude/sessions
+check shared_registry_once 2 [dict size [::questlog::ui::live::running_uuids]]
+
 ::questlog::path::_real_file delete -force $LIVEHOME
 
 if {$fails > 0} {

@@ -1,7 +1,7 @@
 #!/usr/bin/env wish9.0
 # The arrival poll: a session .jsonl appearing in the projects tree mid-run,
-# with no live-registry entry (launched under a different CLAUDE_CONFIG_DIR, or
-# synced in by syncthing), enters the session list from a cheap tree poll rather
+# with no live-registry entry (launched under a config dir outside ~/.claude*,
+# or synced in by syncthing), enters the session list from a cheap tree poll rather
 # than only at restart. This drives a real ::questlog::Scan wired to a real
 # SessionList (its stored_mtime answers the differential skip) and asserts that
 # poll_arrivals models an in-window arrival, honours the same snapshot bounds the

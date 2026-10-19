@@ -838,7 +838,7 @@ oo::class create ::questlog::Scan {
     }
 
     # Poll the projects tree for jsonl files that appeared without a live-
-    # registry entry - a session started under a different CLAUDE_CONFIG_DIR,
+    # registry entry - a session started under a config dir outside ~/.claude*,
     # or a file synced in by syncthing - which the running reconciler never
     # sees. Detection comes from the tree itself, cheaply, and each in-window
     # arrival is published through scan_path -> on_scan_row like any browse row.

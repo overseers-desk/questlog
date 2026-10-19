@@ -2,7 +2,7 @@ package require Tcl 9
 
 # ::questlog::ui::live - which sessions are running right now.
 #
-# Claude Code records every live session at ~/.claude/sessions/<pid>.json
+# Claude Code records every live session at <config dir>/sessions/<pid>.json
 # holding {pid, sessionId(=uuid), cwd, procStart, status, ...}. The file
 # is not removed atomically on every kind of exit, and a pid can be
 # recycled, so a record is trusted only when its pid is still alive AND
@@ -30,26 +30,49 @@ namespace eval ::questlog::ui::live {
 # This is the Running filter's whole membership, and it owes nothing to the
 # search: a session running right now is here whether or not the search's
 # window would have loaded its file.
+#
+# A session runs under whichever profile (config dir) launched it, and each
+# profile keeps its own registry, so every registry_dirs entry is read; a
+# registry two profiles share by symlink yields each uuid once. The path is
+# still under questlog's own projects_root, never the launching profile's:
+# where profiles share one projects/ (by symlink) that names the file the list
+# holds, and a different spelling of it would not match the row's path.
 proc ::questlog::ui::live::running_sessions {} {
-    set dir [file join [::questlog::config::claude_dir] sessions]
-    if {![file isdirectory $dir]} { return [dict create] }
     set out [dict create]
-    foreach f [glob -nocomplain -directory $dir -- *.json] {
-        if {[catch {open $f r} fh]} continue
-        set txt [read $fh]
-        close $fh
-        if {![regexp {"pid":\s*(\d+)} $txt -> pid]} continue
-        if {![regexp {"sessionId":"([^"]+)"} $txt -> uuid]} continue
-        if {![regexp {"procStart":"([^"]+)"} $txt -> procstart]
-            && ![regexp {"procStart":\s*(\d+)} $txt -> procstart]} continue
-        set cwd ""
-        regexp {"cwd":"([^"]+)"} $txt -> cwd
-        if {![proc_alive_matching $pid $procstart]} continue
-        set path [file join [::questlog::path::projects_root] \
-                      [::questlog::path::encode_cwd $cwd] $uuid.jsonl]
-        dict set out $uuid [dict create path $path cwd $cwd]
+    foreach dir [registry_dirs] {
+        foreach f [glob -nocomplain -directory $dir -- *.json] {
+            if {[catch {open $f r} fh]} continue
+            set txt [read $fh]
+            close $fh
+            if {![regexp {"pid":\s*(\d+)} $txt -> pid]} continue
+            if {![regexp {"sessionId":"([^"]+)"} $txt -> uuid]} continue
+            if {![regexp {"procStart":"([^"]+)"} $txt -> procstart]
+                && ![regexp {"procStart":\s*(\d+)} $txt -> procstart]} continue
+            set cwd ""
+            regexp {"cwd":"([^"]+)"} $txt -> cwd
+            if {![proc_alive_matching $pid $procstart]} continue
+            set path [file join [::questlog::path::projects_root] \
+                          [::questlog::path::encode_cwd $cwd] $uuid.jsonl]
+            dict set out $uuid [dict create path $path cwd $cwd]
+        }
     }
     return $out
+}
+
+# Every live-session registry to read: the current config dir's, and each
+# ~/.claude* profile's. A profile whose CLAUDE_CONFIG_DIR lies outside the
+# ~/.claude* pattern is not found.
+proc ::questlog::ui::live::registry_dirs {} {
+    set profiles [list [::questlog::config::claude_dir]]
+    if {![catch {file home} home] && $home ne ""} {
+        lappend profiles {*}[glob -nocomplain -type d -directory $home -- .claude*]
+    }
+    set dirs [list]
+    foreach p [lsort -unique $profiles] {
+        set d [file join $p sessions]
+        if {$p ne "" && [file isdirectory $d]} { lappend dirs $d }
+    }
+    return $dirs
 }
 
 # The same live set as uuid -> path, for the callers that only ever match a
