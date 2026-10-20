@@ -38,7 +38,7 @@ puts $fd $::argv
 close $fd
 switch -- $::env(FAKE_SCENARIO) {
     ok {
-        puts {{"type":"assistant","message":{"content":[{"type":"text","text":"```json\n{\"waiting_on\":\"ruling\",\"question\":\"A or B?\",\"next_step\":\"Apply A.\",\"blocker\":\"\"}\n```"}]}}}
+        puts {{"type":"assistant","message":{"content":[{"type":"text","text":"```json\n{\"state\":\"needs_answer\",\"question\":\"A or B?\",\"next_step\":\"Apply A.\",\"blocker\":\"\",\"successor\":\"\"}\n```"}]}}}
         puts {{"type":"assistant","message":{"content":[{"type":"text","text":"…"}]}}}
         puts {{"type":"result","is_error":false,"result":"…"}}
     }
@@ -80,14 +80,15 @@ check "argv model" [lrange $argv 4 5] {--model sonnet}
 check "prompt carries the first user prompt" \
     [string match "*fix the parser*" [lindex $argv 6]] 1
 check "status" [dict get $rec status] ok
-check "waiting_on" [dict get $rec waiting_on] ruling
+check "state" [dict get $rec state] needs_answer
 check "question" [dict get $rec question] "A or B?"
 check "next_step" [dict get $rec next_step] "Apply A."
 check "blocker" [dict get $rec blocker] ""
+check "successor" [dict get $rec successor] ""
 check "title" [dict get $rec title] "parser fix"
 check "ctx_pct" [dict get $rec ctx_pct] 10
 check "src_size" [dict get $rec src_size] [file size $jsonl]
-check "written to the store" [dict get [::questlog::labels::read u1] waiting_on] ruling
+check "written to the store" [dict get [::questlog::labels::read u1] state] needs_answer
 check "fresh after labelling" [::questlog::labels::stale [::questlog::labels::read u1] $jsonl] 0
 
 foreach scen {exit1 garbage} {

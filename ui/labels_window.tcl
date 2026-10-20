@@ -26,12 +26,12 @@ oo::class create ::questlog::ui::LabelsWindow {
         ttk::frame $Top.f.lf
         pack $Top.f.lf -side top -fill both -expand 1
         set Tv $Top.f.lf.tv
-        ttk::treeview $Tv -columns {glyph title project ctx waiting next} \
+        ttk::treeview $Tv -columns {state title project ctx idle needs} \
             -show headings -selectmode browse \
             -yscrollcommand [list $Top.f.lf.sb set]
         foreach {col head w stretch} {
-            glyph "" 3 0  title Session 22 0  project Project 16 0
-            ctx ctx% 5 0  waiting "Waiting on" 9 0  next "Next step" 40 1
+            state State 15 0  title Session 22 0  project Project 16 0
+            ctx ctx% 5 0  idle Idle 5 0  needs Needs 40 1
         } {
             $Tv heading $col -text $head -anchor w
             $Tv column $col -anchor w -stretch $stretch \
@@ -44,6 +44,10 @@ oo::class create ::questlog::ui::LabelsWindow {
         set Menu $Top.menu
         menu $Menu -tearoff 0
         bind $Tv <Button-3> [list [self] popup %x %y %X %Y]
+
+        ttk::label $Top.f.legend -text [join [lmap {k g} [my glyphs] {
+            string cat $g " " $k}] "   "]
+        pack $Top.f.legend -side top -anchor w -pady {4 0}
 
         set Detail $Top.f.detail
         text $Detail -height 6 -width 80 -wrap word -relief flat
@@ -65,7 +69,8 @@ oo::class create ::questlog::ui::LabelsWindow {
         dict for {uuid m} $members {
             set path [dict get $m path]
             set rec [::questlog::labels::read $uuid]
-            dict set Rows $uuid [dict create path $path cwd [dict get $m cwd] rec $rec]
+            dict set Rows $uuid [dict create path $path cwd [dict get $m cwd] rec $rec \
+                mtime [expr {[file isfile $path] ? [file mtime $path] : ""}]]
             $Tv insert {} end -id $uuid
             if {[::questlog::labels::stale $rec $path]} {
                 my label $uuid
@@ -73,6 +78,7 @@ oo::class create ::questlog::ui::LabelsWindow {
                 my redraw $uuid
             }
         }
+        my sort
         wm deiconify $Top
         raise $Top
     }
@@ -92,13 +98,42 @@ oo::class create ::questlog::ui::LabelsWindow {
         if {[$Tv selection] eq $uuid} { my show_detail }
     }
 
-    method glyph {uuid} {
+    # state -> glyph, in sort order; the last two are the row's own states.
+    method glyphs {} {
+        return {ready ▶ needs_answer ❓ blocked ⛔ handed_on ↪ done ✓
+                labelling ⏳ failed ⚠}
+    }
+
+    method state {uuid} {
         set row [dict get $Rows $uuid]
-        if {[dict getdef $row busy 0]} { return ⏳ }
+        if {[dict getdef $row busy 0]} { return labelling }
         set rec [dict get $row rec]
-        if {[dict getdef $rec status ""] eq "failed"} { return ⚠ }
-        return [dict getdef {yes 🟢 ruling 🟡 peer 🔵 nothing ⚪} \
-            [dict getdef $rec waiting_on ""] ""]
+        if {[dict getdef $rec status ""] eq "failed"} { return failed }
+        return [dict getdef $rec state ""]
+    }
+
+    # Rows by state, then ctx% ascending. Called on open and Re-label only, so
+    # rows do not jump under the pointer as labels arrive.
+    method sort {} {
+        set order [dict keys [my glyphs]]
+        set keyed [lmap uuid [$Tv children {}] {
+            set i [lsearch -exact $order [my state $uuid]]
+            set ctx [dict getdef [dict get $Rows $uuid rec] ctx_pct ""]
+            list [expr {$i < 0 ? 99 : $i}] [expr {$ctx eq "" ? 999 : $ctx}] $uuid
+        }]
+        set i 0
+        foreach k [lsort -integer -index 0 [lsort -integer -index 1 $keyed]] {
+            $Tv move [lindex $k 2] {} $i
+            incr i
+        }
+    }
+
+    method idle {mtime} {
+        if {$mtime eq ""} { return "" }
+        set s [expr {max(0, [clock seconds] - $mtime)}]
+        if {$s < 3600} { return "[expr {$s / 60}]m" }
+        if {$s < 86400} { return "[expr {$s / 3600}]h" }
+        return "[expr {$s / 86400}]d"
     }
 
     method redraw {uuid} {
@@ -107,9 +142,13 @@ oo::class create ::questlog::ui::LabelsWindow {
         set title [dict getdef $rec title ""]
         if {$title eq ""} { set title [string range $uuid 0 7] }
         set ctx [dict getdef $rec ctx_pct ""]
-        $Tv item $uuid -values [list [my glyph $uuid] $title \
+        set state [my state $uuid]
+        set needs [dict getdef $rec [dict getdef {needs_answer question
+            blocked blocker handed_on successor} $state next_step] ""]
+        $Tv item $uuid -values [list \
+            [string trim "[dict getdef [my glyphs] $state ""] $state"] $title \
             [file tail [dict get $row cwd]] [expr {$ctx eq "" ? "" : "$ctx%"}] \
-            [dict getdef $rec waiting_on ""] [dict getdef $rec next_step ""]]
+            [my idle [dict get $row mtime]] $needs]
     }
 
     method show_detail {} {
@@ -118,7 +157,7 @@ oo::class create ::questlog::ui::LabelsWindow {
         if {$uuid ne ""} {
             set rec [dict get $Rows $uuid rec]
             foreach {k head} {question Question next_step "Next step"
-                              blocker Blocker error Error} {
+                              blocker Blocker successor Successor error Error} {
                 set v [dict getdef $rec $k ""]
                 if {$v ne ""} { append text "$head: $v\n" }
             }
@@ -152,6 +191,7 @@ oo::class create ::questlog::ui::LabelsWindow {
     method relabel {} {
         set uuid [$Tv selection]
         if {$uuid ne ""} { my label $uuid }
+        my sort
     }
 
     # The shell command Resume runs for the selected row, "" when none.

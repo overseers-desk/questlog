@@ -4,8 +4,8 @@ package require json::write
 package require logman
 package require tallyman
 
-# ::questlog::labels - what each session waits on (the user's go-ahead, the
-# user's decision, another session, or nothing), asked of claude from the
+# ::questlog::labels - what each session waits on, as one state ordered by the
+# user's effort to move it (ready, needs_answer, blocked, handed_on, done), asked of claude from the
 # session's first prompt, its last prompts and its last reply, and kept as one
 # JSON file per session uuid under the XDG state directory. Derived data: losing a file costs a re-run. The scanner never
 # reads the store, so session data keeps its one home in the list's node store.
@@ -59,9 +59,11 @@ proc ::questlog::labels::write {uuid rec} {
     close $fh
 }
 
-# True when the transcript changed since rec was labelled, or rec is empty.
+# True when the transcript changed since rec was labelled, or rec is empty or
+# predates the state field.
 proc ::questlog::labels::stale {rec path} {
     if {$rec eq "" || ![file isfile $path]} { return 1 }
+    if {[dict getdef $rec status ""] eq "ok" && ![dict exists $rec state]} { return 1 }
     return [expr {[dict getdef $rec src_mtime ""] != [file mtime $path]
         || [dict getdef $rec src_size ""] != [file size $path]}]
 }
@@ -117,10 +119,16 @@ proc ::questlog::labels::prompt {tail} {
     return "Below is the start and end of a paused Claude Code session. Say what it waits on.
 
 Reply with one JSON object and nothing else, with exactly these keys:
-- \"waiting_on\": one of \"yes\" (a fix is designed and awaits the user's go-ahead), \"ruling\" (the user must make a decision), \"peer\" (the work was handed to another session), \"nothing\" (finished or idle).
-- \"question\": when waiting_on is \"ruling\", the decision in one line; else \"\".
+- \"state\": one of
+  \"ready\" (a fix or step is prepared and awaits only the user's go-ahead; resuming continues it),
+  \"needs_answer\" (the user must decide something),
+  \"blocked\" (something outside the user's word stops it: credit, a login, a missing file),
+  \"handed_on\" (the work went to another session),
+  \"done\" (finished or idle; resuming would start new work).
+- \"question\": when state is \"needs_answer\", the decision in one line; else \"\".
 - \"next_step\": one sentence, what a resumed session would do first.
-- \"blocker\": what stops it running unattended, or \"\".
+- \"blocker\": when state is \"blocked\", what stops it; else \"\".
+- \"successor\": when state is \"handed_on\", the session it went to, by name or uuid as the transcript gives it; else \"\".
 
 First user prompt:
 [dict get $tail first]
@@ -214,9 +222,9 @@ proc ::questlog::labels::_parse {out} {
         set a [string first "\{" $text]
         set b [string last "\}" $text]
         if {$a < 0 || [catch {::json::json2dict [string range $text $a $b]} obj]
-                || ![dict exists $obj waiting_on]} continue
+                || ![dict exists $obj state]} continue
         set fields {}
-        foreach k {waiting_on question next_step blocker} {
+        foreach k {state question next_step blocker successor} {
             dict set fields $k [dict getdef $obj $k ""]
         }
         return $fields
