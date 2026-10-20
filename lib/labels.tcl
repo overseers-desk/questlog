@@ -4,9 +4,10 @@ package require json::write
 package require logman
 package require tallyman
 
-# ::questlog::labels - what each session waits on, asked of claude from the
-# transcript's tail and kept as one JSON file per session uuid under the XDG
-# state directory. Derived data: losing a file costs a re-run. The scanner never
+# ::questlog::labels - what each session waits on (the user's go-ahead, the
+# user's decision, another session, or nothing), asked of claude from the
+# session's first prompt, its last prompts and its last reply, and kept as one
+# JSON file per session uuid under the XDG state directory. Derived data: losing a file costs a re-run. The scanner never
 # reads the store, so session data keeps its one home in the list's node store.
 
 namespace eval ::questlog::labels {
@@ -113,7 +114,7 @@ proc ::questlog::labels::extract {path} {
 proc ::questlog::labels::prompt {tail} {
     set recent ""
     foreach p [dict get $tail recent] { append recent "---\n$p\n" }
-    return "Below is the tail of a paused Claude Code session. Say what it waits on.
+    return "Below is the start and end of a paused Claude Code session. Say what it waits on.
 
 Reply with one JSON object and nothing else, with exactly these keys:
 - \"waiting_on\": one of \"yes\" (a fix is designed and awaits the user's go-ahead), \"ruling\" (the user must make a decision), \"peer\" (the work was handed to another session), \"nothing\" (finished or idle).
@@ -193,8 +194,8 @@ proc ::questlog::labels::_finish {path uuid done_cb out err} {
     _pump
 }
 
-# The three model fields (and question) from claude's stream-json output: the
-# first assistant text block holding the object, possibly in a code fence. The
+# The model's fields (those of prompt's reply) from claude's stream-json
+# output: the first assistant text block holding the object, possibly in a code fence. The
 # result envelope's own `result` is only the final turn, and a hook that
 # reopens the turn (a stop hook on the user's machine) makes the model's
 # reply to it the final turn, with the label a block earlier.
