@@ -157,8 +157,8 @@ proc ::questlog::labels::_start {path uuid done_cb} {
     variable claude_bin
     variable MODEL
     set text [prompt [extract $path]]
-    set fh [open |[list $claude_bin -p --output-format json --model $MODEL \
-        $text << ""] r]
+    set fh [open |[list $claude_bin -p --output-format stream-json --verbose \
+        --model $MODEL $text << ""] r]
     chan configure $fh -blocking 0 -encoding utf-8
     set buf [namespace current]::_buf($fh)
     set $buf ""
@@ -193,22 +193,32 @@ proc ::questlog::labels::_finish {path uuid done_cb out err} {
     _pump
 }
 
-# The three model fields (and question) from claude's JSON envelope, whose
-# result string holds the model's object, possibly wrapped in a code fence.
+# The three model fields (and question) from claude's stream-json output: the
+# first assistant text block holding the object, possibly in a code fence. The
+# result envelope's own `result` is only the final turn, and a hook that
+# reopens the turn (a stop hook on the user's machine) makes the model's
+# reply to it the final turn, with the label a block earlier.
 proc ::questlog::labels::_parse {out} {
-    if {[catch {::json::json2dict $out} env] || ![dict exists $env result]} {
+    set texts {}
+    foreach line [split $out \n] {
+        if {[catch {::json::json2dict $line} rec] || [dict getdef $rec type ""] ne "assistant"} continue
+        foreach block [dict getdef [dict getdef $rec message {}] content {}] {
+            if {[dict getdef $block type ""] eq "text"} { lappend texts [dict get $block text] }
+        }
+    }
+    if {![llength $texts]} {
         error "unparsable claude output: [string range $out 0 199]"
     }
-    set result [dict get $env result]
-    set a [string first "\{" $result]
-    set b [string last "\}" $result]
-    if {$a < 0 || [catch {::json::json2dict [string range $result $a $b]} obj]
-            || ![dict exists $obj waiting_on]} {
-        error "unparsable model reply: [string range $result 0 199]"
+    foreach text $texts {
+        set a [string first "\{" $text]
+        set b [string last "\}" $text]
+        if {$a < 0 || [catch {::json::json2dict [string range $text $a $b]} obj]
+                || ![dict exists $obj waiting_on]} continue
+        set fields {}
+        foreach k {waiting_on question next_step blocker} {
+            dict set fields $k [dict getdef $obj $k ""]
+        }
+        return $fields
     }
-    set fields {}
-    foreach k {waiting_on question next_step blocker} {
-        dict set fields $k [dict getdef $obj $k ""]
-    }
-    return $fields
+    error "unparsable model reply: [string range [lindex $texts end] 0 199]"
 }

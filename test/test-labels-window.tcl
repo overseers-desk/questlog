@@ -40,7 +40,7 @@ set ::env(XDG_STATE_HOME) [file join $tmp state]
 set fake [file join $tmp claude]
 write_file $fake [string map [list @GO@ [file join $tmp go]] {#!/usr/bin/env tclsh9.0
 while {![file exists {@GO@}]} { after 50 }
-puts {{"type":"result","result":"{\"waiting_on\":\"yes\",\"question\":\"\",\"next_step\":\"Commit it.\",\"blocker\":\"\"}"}}
+puts {{"type":"assistant","message":{"content":[{"type":"text","text":"{\"waiting_on\":\"yes\",\"question\":\"\",\"next_step\":\"Commit it.\",\"blocker\":\"\"}"}]}}}
 }]
 ::questlog::path::_real_file attributes $fake -permissions 0755
 set ::questlog::labels::claude_bin $fake

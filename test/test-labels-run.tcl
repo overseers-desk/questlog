@@ -38,7 +38,9 @@ puts $fd $::argv
 close $fd
 switch -- $::env(FAKE_SCENARIO) {
     ok {
-        puts {{"type":"result","is_error":false,"result":"```json\n{\"waiting_on\":\"ruling\",\"question\":\"A or B?\",\"next_step\":\"Apply A.\",\"blocker\":\"\"}\n```"}}
+        puts {{"type":"assistant","message":{"content":[{"type":"text","text":"```json\n{\"waiting_on\":\"ruling\",\"question\":\"A or B?\",\"next_step\":\"Apply A.\",\"blocker\":\"\"}\n```"}]}}}
+        puts {{"type":"assistant","message":{"content":[{"type":"text","text":"…"}]}}}
+        puts {{"type":"result","is_error":false,"result":"…"}}
     }
     exit1 { puts stderr "boom"; exit 1 }
     garbage { puts "not json at all" }
@@ -73,10 +75,10 @@ lassign [run_one ok u1] uuid rec
 set argv [string trim [read [set fd [open $::env(FAKE_ARGV_LOG)]]]][close $fd]
 check "callback uuid" $uuid u1
 check "argv -p" [lindex $argv 0] -p
-check "argv output format" [lrange $argv 1 2] {--output-format json}
-check "argv model" [lrange $argv 3 4] {--model sonnet}
+check "argv output format" [lrange $argv 1 3] {--output-format stream-json --verbose}
+check "argv model" [lrange $argv 4 5] {--model sonnet}
 check "prompt carries the first user prompt" \
-    [string match "*fix the parser*" [lindex $argv 5]] 1
+    [string match "*fix the parser*" [lindex $argv 6]] 1
 check "status" [dict get $rec status] ok
 check "waiting_on" [dict get $rec waiting_on] ruling
 check "question" [dict get $rec question] "A or B?"
