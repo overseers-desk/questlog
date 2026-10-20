@@ -277,6 +277,7 @@ source [file join $ROOT lib cost.tcl]
 source [file join $ROOT lib search.tcl]
 source [file join $ROOT lib jobpool.tcl]
 source [file join $ROOT lib rename.tcl]
+source [file join $ROOT lib labels.tcl]
 # Headless transcript emitter (the reading view's text mirror). It is Tk-free,
 # so it loads for both answers and the GUI's copy/export-markdown actions and
 # the `show` subcommand share the one renderer.
