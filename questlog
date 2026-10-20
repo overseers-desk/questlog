@@ -341,6 +341,7 @@ source [file join $ROOT ui  session_actions.tcl]
 source [file join $ROOT ui  sessions.tcl]
 source [file join $ROOT ui  viewer.tcl]
 source [file join $ROOT ui  move_dialog.tcl]
+source [file join $ROOT ui  labels_window.tcl]
 source [file join $ROOT ui  app.tcl]
 
 # Turn the query into the toolbar's own vocabulary: keywords are the search

@@ -162,6 +162,8 @@ oo::class create ::questlog::ui::Toolbar {
             -menu $Top.search.more.m -direction below
         menu $Top.search.more.m -tearoff 0
         pack $Top.search.more -side right -padx {4 0}
+        ttk::button $Top.search.labels -text 🔖 -style Toolbutton
+        pack $Top.search.labels -side right -padx {4 0}
         set live [expr {[::questlog::config::get search_trigger] eq "live"}]
         set ph [expr {$live \
             ? "type one or more words; all must appear somewhere in the session" \
@@ -638,6 +640,9 @@ oo::class create ::questlog::ui::Toolbar {
 
     # The search row's ⋯ menu, for the app to fill (see build).
     method more_menu {} { return $Top.search.more.m }
+
+    # The search row's 🔖 button, for the app to give a -command (see build).
+    method labels_button {} { return $Top.search.labels }
 
 
     # ---- the criteria, as querybuilder sees them ---------------------------

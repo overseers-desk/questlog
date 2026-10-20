@@ -168,6 +168,7 @@ proc ::questlog::ui::app::start {root {seed {}}} {
     set Toolbar [::questlog::ui::Toolbar new $list_frame.tb [::questlog::path::launch_cwd]]
     pack $list_frame.tb -side top -fill x
     human_gap_menu [$Toolbar more_menu]
+    [$Toolbar labels_button] configure -command [namespace code on_labels]
     set SessionList [::questlog::ui::SessionList new $list_frame.s \
         [namespace code folder_cwd] \
         [namespace code on_open] \
@@ -475,6 +476,25 @@ proc ::questlog::ui::app::bookmarked_members {} {
         }
     }
     return $out
+}
+
+# The 🔖 button: open (or raise) the labels window on every bookmarked session.
+# cwd resolves through the folder, as the list's Resume does.
+proc ::questlog::ui::app::on_labels {} {
+    variable LabelsWin
+    if {![info exists LabelsWin]} {
+        set LabelsWin [::questlog::ui::LabelsWindow new .top [dict create \
+            on_move [namespace code on_move_request] \
+            on_bookmark [namespace code on_bookmark_toggle] \
+            on_rename [namespace code on_rename_request]]]
+    }
+    set members [dict create]
+    dict for {uuid m} [bookmarked_members] {
+        set path [dict get $m path]
+        dict set members $uuid [dict create path $path \
+            cwd [folder_cwd [file tail [file dirname $path]]]]
+    }
+    $LabelsWin show $members
 }
 
 # The cut banner's widen escape: relax the criterion that left the named session
