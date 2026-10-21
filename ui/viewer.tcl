@@ -1596,14 +1596,14 @@ oo::class create ::questlog::ui::Viewer {
         set ml [my copy_line_at $idx]
         if {$ml eq ""} { my copy_hide; return }
         if {[dict getdef $Roles $ml ""] ni {USER ASSISTANT}} { my copy_hide; return }
-        # The message spans from its own anchor to the next bodied record's
-        # anchor - its own detail blocks render in between, under the same
-        # record - or the content boundary for the last message. The span is
-        # cached in text-line numbers for the Motion gate above.
+        # The message spans from the line above its anchor - the separator the
+        # button stands on, so the pointer crossing it to the button keeps it -
+        # to the next bodied record's anchor (its own detail blocks render in
+        # between) or the content boundary, cached in text lines for the gate.
         set start [dict get $LineMap $ml]
         set end [my next_body_index $start]
         set CopyLine $ml
-        set CopyFirst [lindex [split [$Text index $start] .] 0]
+        set CopyFirst [lindex [split [$Text index "$start -1 display lines"] .] 0]
         set CopyLast  [lindex [split [$Text index $end] .] 0]
         my copy_place $start
     }
@@ -1628,15 +1628,15 @@ oo::class create ::questlog::ui::Viewer {
         return [expr {$ce eq "end" ? [$Text index end] : $ce}]
     }
 
-    # Place the button with its north-east corner 8px in from the right edge,
-    # aligned to the top of the message's first line when that line is on screen.
-    # When the reader has scrolled past the head of a long message that line's
-    # bbox is empty, so ride the viewport's top edge instead - the button stays
-    # visible at the top of the message it copies.
+    # Place the button 8px in from the right edge, standing on the label line in
+    # the separator above it, so it heads the message instead of reading as part
+    # of whatever the first line's text holds there. When the label line is
+    # scrolled off (no bbox) or too near the top to fit the button above it,
+    # ride the viewport's top edge instead.
     method copy_place {start} {
         set bb [$Text bbox $start]
-        set y [expr {$bb ne "" ? [lindex $bb 1] : 2}]
-        place $CopyBtn -in $Text -relx 1.0 -x -8 -y $y -anchor ne
+        set y [expr {max($bb eq "" ? 0 : [lindex $bb 1], [winfo reqheight $CopyBtn])}]
+        place $CopyBtn -in $Text -relx 1.0 -x -8 -y $y -anchor se -bordermode outside
     }
 
     method copy_hide {} {
