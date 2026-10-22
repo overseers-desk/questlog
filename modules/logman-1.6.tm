@@ -15,7 +15,14 @@ namespace eval ::logman {
         kept_turns is_assistant_line is_request_log \
         record_parent mark_branches mark_turns mark_replies branch_phrase \
         record_role_label record_model notice mark_commands \
-        context_window transcript_step is_dialogue_prompt command_text dialogue_body
+        context_window transcript_step is_dialogue_prompt command_text dialogue_body \
+        is_subagent_path
+}
+
+# 1 iff path is a subagent's own transcript, which Claude Code writes under
+# its parent session's subagents/ directory.
+proc ::logman::is_subagent_path {path} {
+    return [expr {[file tail [file dirname $path]] eq "subagents"}]
 }
 
 # Parse one JSONL line into a Tcl dict. Returns "" on parse failure. A
@@ -24,13 +31,12 @@ namespace eval ::logman {
 #
 # isSidechain marks a subagent's records where a parent file holds them
 # among its own, and the turn-start, dialogue and branch gates skip marked
-# records. Claude Code writes a subagent's own file under the parent's
-# subagents/ directory with every record marked, the whole file being that
-# subagent's conversation; a reader passing such a path gets its records
-# unmarked, so they read as the file's own turns.
+# records. A subagent's own file (is_subagent_path) has every record marked,
+# the whole file being that subagent's conversation; a reader passing such a
+# path gets its records unmarked, so they read as the file's own turns.
 proc ::logman::parse_line {line {path ""}} {
     if {[catch {::json::json2dict $line} d]} { return "" }
-    if {$path ne "" && [file tail [file dirname $path]] eq "subagents"} {
+    if {$path ne "" && [is_subagent_path $path]} {
         dict unset d isSidechain
     }
     if {[dict getdef $d type ""] eq "attachment"

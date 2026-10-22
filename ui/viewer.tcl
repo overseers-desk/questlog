@@ -315,11 +315,12 @@ oo::class create ::questlog::ui::Viewer {
         # unit is the {singular plural} count word; auto=1 (matches only) auto-opens
         # the band on refresh, and the Turns tab is deliberately auto 0 so a session
         # click never surfaces it - it is a reach-for index; onselect is the
-        # <<ListboxSelect>> handler.
+        # <<ListboxSelect>> handler; empty, where set, is the head-strip text
+        # shown in place of a count of none.
         set BandDesc [dict create \
             turns   [dict create tabtext "Turns" stem turn \
                          unit {turn turns} auto 0 onselect turn_list_select \
-                         count ""] \
+                         count "" empty "no turns"] \
             matches [dict create tabtext "Matches" stem match \
                          unit {match matches} auto 1 onselect match_list_select \
                          count ""] \
@@ -2032,6 +2033,7 @@ oo::class create ::questlog::ui::Viewer {
     # open collapses the band; clicking the other count swaps the front tab and
     # leaves it open; otherwise open on that tab.
     method band_toggle {tab} {
+        if {[dict get $BandDesc $tab count] eq ""} return
         if {$BandOpen && $BandTab eq $tab} {
             my band_hide
         } elseif {$BandOpen} {
@@ -2079,37 +2081,44 @@ oo::class create ::questlog::ui::Viewer {
 
     # The shared tail of every refresh_*_control: given a tab key and its row
     # count n (its listbox already filled by the caller), size and expose the tab
-    # or hide it. Empty (n == 0): forget the head count, clear the descriptor
-    # count, collapse the band if this very tab was the open front tab, and re-run
-    # update_band_tabs so the header drops the tab. Non-empty: size the listbox to
-    # min(n, 8) rows, set the count string from the unit words, and reserve the
-    # count's width on the right of the strip before the path re-packs to fill the
-    # rest (so a long file path clips rather than squeezing the count out; the
-    # re-pack fixes the order regardless of which packed first). The one behaviour
-    # that varies by tab is auto: the matches tab (auto 1) pre-selects its first
-    # row and auto-opens the band on itself, which is what lands a session click on
-    # the index after a search; the opt-in tabs (auto 0) only refresh the header
-    # and glyphs, leaving the band as it was.
-    method refresh_band_control {key n} {
+    # or hide it. Empty (n == 0): clear the descriptor count, collapse the band
+    # if this very tab was the open front tab, re-run update_band_tabs so the
+    # header drops the tab, and forget the head count unless the descriptor
+    # names an empty text, which the count then shows muted. Non-empty: size the
+    # listbox to min(n, 8) rows, set the count string from the unit words after
+    # the lead, and reserve the count's width on the right of the strip before
+    # the path re-packs to fill the rest (so a long file path clips rather than
+    # squeezing the count out; the re-pack fixes the order regardless of which
+    # packed first). The one behaviour that varies by tab is auto: the matches
+    # tab (auto 1) pre-selects its first row and auto-opens the band on itself,
+    # which is what lands a session click on the index after a search; the
+    # opt-in tabs (auto 0) only refresh the header and glyphs, leaving the band
+    # as it was.
+    method refresh_band_control {key n {lead ""}} {
         set d    [dict get $BandDesc $key]
         set btn  [dict get $d btn]
         set lb   [dict get $d list]
         set auto [dict get $d auto]
         if {$n == 0} {
-            pack forget $btn
             dict set BandDesc $key count ""
             if {$BandOpen && $BandTab eq $key} { my band_hide }
             my update_band_tabs
-            return
+            if {![dict exists $d empty]} { pack forget $btn; return }
+            $btn configure -text "$lead[dict get $d empty]" \
+                -foreground [::questlog::ui::theme::c muted]
+        } else {
+            $lb configure -height [expr {min($n, 8)}]
+            $lb selection clear 0 end
+            if {$auto} { $lb selection set 0 }
+            set unit [dict get $d unit]
+            dict set BandDesc $key count \
+                "$lead$n [lindex $unit [expr {$n == 1 ? 0 : 1}]]"
+            $btn configure -foreground [::questlog::ui::theme::c sessionhead]
         }
-        $lb configure -height [expr {min($n, 8)}]
-        $lb selection clear 0 end
-        if {$auto} { $lb selection set 0 }
-        set unit [dict get $d unit]
-        dict set BandDesc $key count "$n [lindex $unit [expr {$n == 1 ? 0 : 1}]]"
         pack forget $PathLabel
         pack $btn -side right -padx 6
         pack $PathLabel -side left -padx 6 -pady 1 -fill x -expand 1
+        if {$n == 0} return
         if {$auto} {
             my band_show $key
         } else {
@@ -2275,10 +2284,12 @@ oo::class create ::questlog::ui::Viewer {
     # the rows and counted them). Opt-in like the tool and quote audits (descriptor
     # auto is 0): it makes the Turns tab and count available but never opens
     # the band on its own - the Turns index is reached for, not surfaced by a
-    # session click. With no turns the count is hidden and a band already on
-    # Turns collapses; refresh_band_control does the work.
+    # session click. A subagent's transcript says so before its count, its
+    # turns being its parent's briefs, not the user's prompts; with none the
+    # strip reads "no turns". refresh_band_control does the work.
     method refresh_turn_control {} {
-        my refresh_band_control turns $Kept
+        set lead [expr {[::logman::is_subagent_path $Path] ? "subagent · " : ""}]
+        my refresh_band_control turns $Kept $lead
     }
 
     # Jump the reading view to a clicked turn's header. A header line is never

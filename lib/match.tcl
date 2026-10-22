@@ -566,7 +566,7 @@ proc ::questlog::match::scan_file {path clauses {tick ""} {yield_lines 0}} {
     set is_child 0
     set parent_path ""
     set parent_uuid ""
-    if {$folder eq "subagents"} {
+    if {[::logman::is_subagent_path $path]} {
         set is_child 1
         set sessdir [file dirname [file dirname $path]]
         set parent_uuid [file tail $sessdir]
