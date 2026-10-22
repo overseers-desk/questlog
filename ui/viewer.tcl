@@ -585,8 +585,8 @@ oo::class create ::questlog::ui::Viewer {
         $Text tag configure code          -font QLMono -foreground [::questlog::ui::theme::c body] -spacing2 3 -spacing3 6
         # The turn's reply (showman's insert_reply) reads as a column: the
         # QLReply serif on the cream ground, the ground running into both
-        # margins and the text inset twice body's 10, which is also where a
-        # list's markers sit. Kept just above body and below code, so fenced
+        # margins and the text inset 20 against the 10 the label and detail
+        # tags use. Kept just above body and below code, so fenced
         # code, inline code, lists, quotes and the rails all win where they
         # stack; the reply-* faces go above tkdown's (below).
         set rbg [::questlog::ui::theme::c reply]
@@ -595,8 +595,7 @@ oo::class create ::questlog::ui::Viewer {
             -lmargin1 20 -lmargin2 20 -rmargin 20
         $Text tag lower reply code
         # The column's head: a line's spacing comes from its first character,
-        # and the ground fills it, so the cream opens a little above the text
-        # as the closing blank line ends it below.
+        # and the ground fills it, so the cream opens a little above the text.
         $Text tag configure reply-top -spacing1 10
         # Detail-block faces, one per block kind insert_blocks renders: tool
         # calls, tool results and the [image] placeholder in mono, thinking in
@@ -674,8 +673,8 @@ oo::class create ::questlog::ui::Viewer {
         $Text tag configure td-spot -background [::questlog::ui::theme::c find]
         $Text tag configure td-rule -background [::questlog::ui::theme::c faint]
         # The reply column's faces, created after tkdown's (and the quote) so
-        # each outranks the face it twins, in tkdown's own order, so emphasis
-        # inside a heading or a quote still restyles. td-code goes back on
+        # each outranks the face it twins, and in the order tkdown creates its
+        # own, so emphasis inside a heading or a quote still restyles. td-code goes back on
         # top: an inline code span in a bold run stays mono.
         $Text tag configure reply-roman      -font QLReply
         $Text tag configure reply-bold       -font QLReplyBold

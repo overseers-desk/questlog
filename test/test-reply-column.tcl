@@ -8,7 +8,7 @@
 #      tool_use) not;
 #   2. a turn written before stop_reason was recorded (null throughout)
 #      marks the run of text records after its last tool result;
-#   3. a stand-in prompt (isMeta) mid-turn does not split the turn, and the
+#   3. an injected isMeta record mid-turn does not split the turn, and the
 #      refusal before it marks nothing;
 #   4. a turn a stop hook reopened marks both of its end_turn replies.
 # It also checks the faces inside the column (bold and headings keep their
@@ -86,7 +86,7 @@ lappend L [asst 2026-10-01T11:00:02Z m4 "" [call]]
 lappend L [result 2026-10-01T11:00:03Z]
 lappend L [asst 2026-10-01T11:00:04Z m5 "" [tblock "OLDREPLYA first half"]]
 lappend L [asst 2026-10-01T11:00:05Z m5 "" [tblock "OLDREPLYB second half"]]
-# Turn 3: a refusal, the classifier's stand-in prompt (isMeta), the reply.
+# Turn 3: a refusal, the safeguard notice (isMeta), the reply.
 lappend L [prompt 2026-10-01T12:00:00Z "third question"]
 lappend L [asst 2026-10-01T12:00:01Z m6 tool_use [tblock "METAWORK looking first"]]
 lappend L [asst 2026-10-01T12:00:02Z m6 tool_use [call]]
@@ -133,7 +133,7 @@ proc face {token} {
     return $f
 }
 
-# The isMeta stand-in sits inside turn 3: four turns, not five.
+# The isMeta notice sits inside turn 3: four turns, not five.
 check "four turns: the stand-in prompt splits none" [llength [set ${NS}::Turns]] 4
 
 # 1. end_turn after tool_use records.
@@ -163,7 +163,7 @@ check "old-file work before the call is not marked" [tagged OLDWORK reply] 0
 check "old-file trailing run, first record"         [tagged OLDREPLYA reply] 1
 check "old-file trailing run, second record"        [tagged OLDREPLYB reply] 1
 
-# 3. the stand-in turn.
+# 3. the turn with an injected notice.
 check "work before the refusal is not marked"   [tagged METAWORK reply] 0
 check "the refused text is not marked"          [tagged REFUSEDWORK reply] 0
 check "the reply after the stand-in is marked"  [tagged METAREPLY reply] 1

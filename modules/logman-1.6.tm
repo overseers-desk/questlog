@@ -625,8 +625,8 @@ proc ::logman::mark_turns {recs} {
 # Stamp _reply 1 on each assistant record whose text is its turn's reply:
 # what the user is meant to read, as against the work before it (tool calls,
 # thinking, the progress lines between them). A turn runs from one
-# is_turn_start record to the next, so a stand-in prompt (isMeta) stays
-# inside it. Whole list in, whole list out, like mark_turns.
+# is_turn_start record to the next, so an injected isMeta record
+# stays inside it. Whole list in, whole list out, like mark_turns.
 proc ::logman::mark_replies {recs} {
     set stamp {}
     set turn {}
@@ -644,14 +644,16 @@ proc ::logman::mark_replies {recs} {
     return $recs
 }
 
-# The indices, among one turn's (turn, into recs), of the records holding its
-# reply. Claude Code writes the API's stop_reason on every record of a
+# The indices (into recs) among a turn's record indices (turn) of the records
+# holding its reply. Claude Code writes the API's stop_reason on every record of a
 # message: end_turn or stop_sequence ends a reply, tool_use is work, refusal
 # holds no reply. Every end_turn message counts, so a turn a stop hook
-# reopened has two replies: over-marking is the failure to prefer. A file
-# older than the field leaves it null on every record, and such a turn falls
-# back to shape: the run of text records ending it, after its last tool
-# result and with no tool call among them.
+# reopened has two replies: a missed reply hides an answer, a spare column
+# costs a glance. A file written before Claude Code recorded the field
+# leaves it null on every record, and such a turn falls back to shape: the
+# run of text records ending it, after its last tool result and with no tool
+# call among them. The judgment is over the records given, so a batch
+# appended to a growing file is judged on its own records.
 proc ::logman::turn_replies {recs turn} {
     set out {}
     set stopped 0
