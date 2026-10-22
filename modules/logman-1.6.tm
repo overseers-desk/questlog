@@ -22,11 +22,12 @@ namespace eval ::logman {
 # queued_command attachment, a prompt the model received mid-turn, parses as
 # the queued user record it stands for, so every reader draws it as one.
 #
-# isSidechain marks a subagent's records, which old parent files interleave
-# with the parent's own and the turn and tree gates skip. A subagent's own
-# file (<sid>/subagents/agent-<id>.jsonl) marks every record so, the
-# subagent being that file's own context; a reader passing such a path gets
-# its records unmarked, so they read as the file's own turns.
+# isSidechain marks a subagent's records where a parent file holds them
+# among its own, and the turn-start, dialogue and branch gates skip marked
+# records. Claude Code writes a subagent's own file under the parent's
+# subagents/ directory with every record marked, the whole file being that
+# subagent's conversation; a reader passing such a path gets its records
+# unmarked, so they read as the file's own turns.
 proc ::logman::parse_line {line {path ""}} {
     if {[catch {::json::json2dict $line} d]} { return "" }
     if {$path ne "" && [file tail [file dirname $path]] eq "subagents"} {
@@ -1165,8 +1166,7 @@ proc ::logman::first_cwd {path} {
 # extract_text draws no text from (a file-history snapshot, an empty-content
 # record), which the reading-view export skips too, so it is not a context
 # "message". match is 0 for a neighbour; the hit's own record is built inline in
-# context_window with match 1. path is the file the line came from, for
-# parse_line.
+# context_window with match 1.
 proc ::logman::turn_at {line lineno match {dialogue 0} {roles {}} {path ""}} {
     set rec [parse_line $line $path]
     if {$rec eq ""} { return "" }
