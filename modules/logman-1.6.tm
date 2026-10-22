@@ -21,8 +21,17 @@ namespace eval ::logman {
 # Parse one JSONL line into a Tcl dict. Returns "" on parse failure. A
 # queued_command attachment, a prompt the model received mid-turn, parses as
 # the queued user record it stands for, so every reader draws it as one.
-proc ::logman::parse_line {line} {
+#
+# isSidechain marks a subagent's records, which old parent files interleave
+# with the parent's own and the turn and tree gates skip. A subagent's own
+# file (<sid>/subagents/agent-<id>.jsonl) marks every record so, the
+# subagent being that file's own context; a reader passing such a path gets
+# its records unmarked, so they read as the file's own turns.
+proc ::logman::parse_line {line {path ""}} {
     if {[catch {::json::json2dict $line} d]} { return "" }
+    if {$path ne "" && [file tail [file dirname $path]] eq "subagents"} {
+        dict unset d isSidechain
+    }
     if {[dict getdef $d type ""] eq "attachment"
             && [dict getdef $d attachment type ""] eq "queued_command"} {
         set d [dict replace $d type user promptSource queued message \

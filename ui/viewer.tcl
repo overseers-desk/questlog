@@ -1008,7 +1008,7 @@ oo::class create ::questlog::ui::Viewer {
         while {[chan gets $fh line] >= 0} {
             incr lineno
             if {$line eq ""} continue
-            set rec [::logman::parse_line $line]
+            set rec [::logman::parse_line $line $Path]
             if {$rec eq ""} {
                 # A newline-less final line that does not parse is the tail
                 # claude is mid-write on: uncount it so append_new re-reads
@@ -1096,7 +1096,7 @@ oo::class create ::questlog::ui::Viewer {
             incr lineno
             if {$lineno <= $LoadedLines} continue
             if {$line eq ""} continue
-            set rec [::logman::parse_line $line]
+            set rec [::logman::parse_line $line $Path]
             if {$rec eq ""} continue
             dict set rec _line $lineno
             lappend recs $rec

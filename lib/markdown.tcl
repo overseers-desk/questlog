@@ -61,7 +61,7 @@ proc ::questlog::markdown::export_session {path {anchors 0} {dialogue 0} {roles 
     while {[chan gets $fh line] >= 0} {
         incr lineno
         if {$line eq ""} continue
-        set rec [::logman::parse_line $line]
+        set rec [::logman::parse_line $line $path]
         if {$rec eq ""} continue
         dict set rec _line $lineno
         lappend recs $rec
