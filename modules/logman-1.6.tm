@@ -1131,7 +1131,7 @@ proc ::logman::last_assistant_text {path} {
     chan configure $fh -encoding utf-8 -profile replace
     while {[chan gets $fh line] >= 0} {
         if {$line eq ""} continue
-        set rec [parse_line $line]
+        set rec [parse_line $line $path]
         if {$rec eq ""} continue
         if {[dict getdef $rec type ""] ne "assistant"} continue
         set body [extract_text $rec]
@@ -1165,9 +1165,10 @@ proc ::logman::first_cwd {path} {
 # extract_text draws no text from (a file-history snapshot, an empty-content
 # record), which the reading-view export skips too, so it is not a context
 # "message". match is 0 for a neighbour; the hit's own record is built inline in
-# context_window with match 1.
-proc ::logman::turn_at {line lineno match {dialogue 0} {roles {}}} {
-    set rec [parse_line $line]
+# context_window with match 1. path is the file the line came from, for
+# parse_line.
+proc ::logman::turn_at {line lineno match {dialogue 0} {roles {}} {path ""}} {
+    set rec [parse_line $line $path]
     if {$rec eq ""} { return "" }
     set body [expr {$dialogue ? [dialogue_body $rec $roles] : [extract_text $rec]}]
     if {$body eq ""} { return "" }
@@ -1203,7 +1204,7 @@ proc ::logman::context_window {path hitline before after {dialogue 0} {roles {}}
         incr lineno
         if {$lineno < $hitline} {
             if {$before <= 0} continue
-            set turn [turn_at $line $lineno 0 $dialogue $roles]
+            set turn [turn_at $line $lineno 0 $dialogue $roles $path]
             if {$turn eq ""} continue
             lappend pre $turn
             if {[llength $pre] > $before} { set pre [lrange $pre 1 end] }
@@ -1211,7 +1212,7 @@ proc ::logman::context_window {path hitline before after {dialogue 0} {roles {}}
             # The hit's own record is always emitted, in full, even if its body
             # is unusual - it is the centre of the window. (In practice it has a
             # body: it carried the matched block.)
-            set rec [parse_line $line]
+            set rec [parse_line $line $path]
             if {$rec ne ""} {
                 set body [expr {$dialogue ? [dialogue_body $rec] : [extract_text $rec]}]
                 set anchor [dict create line $lineno \
@@ -1219,7 +1220,7 @@ proc ::logman::context_window {path hitline before after {dialogue 0} {roles {}}
             }
             if {$after <= 0} break
         } else {
-            set turn [turn_at $line $lineno 0 $dialogue $roles]
+            set turn [turn_at $line $lineno 0 $dialogue $roles $path]
             if {$turn eq ""} continue
             lappend post $turn
             if {[llength $post] >= $after} break

@@ -109,6 +109,10 @@ check "the brief read from its own file is a dialogue prompt" \
 check "the same brief read without its path keeps the mark" \
     [::logman::is_turn_start [::logman::parse_line \
         [string trim [lindex $SUB_LINES 0]]]] 0
+check "the dialogue context window over a subagent file keeps its reply" \
+    [lmap t [::logman::context_window $SUB 1 0 3 1] {
+        list [dict get $t role] [dict get $t text]
+    }] [list [list USER "Repository: /tmp/x. Find the bug."] {ASSISTANT {Found it.}}]
 check "a parent file opens only its own two turns" [turns_of $PARENT] 2
 
 file delete -force $TMP
