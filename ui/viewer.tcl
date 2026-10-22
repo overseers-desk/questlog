@@ -130,8 +130,9 @@ oo::class create ::questlog::ui::Viewer {
     # carries the tab's header label (tab), head-strip count label (btn), listbox
     # (list) and its scrollbar (sb), the current count string (count, "" while the
     # tab is empty), its singular/plural unit words (unit, a {singular plural}
-    # pair), auto (1 only for matches, whose refresh auto-opens the band), and
-    # onselect (the <<ListboxSelect>> handler method). Every per-tab loop -- widget
+    # pair), auto (1 only for matches, whose refresh auto-opens the band),
+    # onselect (the <<ListboxSelect>> handler method), and for turns the text
+    # the strip shows with no rows (empty). Every per-tab loop -- widget
     # creation in build, set_tab, update_band_tabs, update_band_glyphs, and
     # refresh_band_control -- walks this one dict, so a new tab is one more entry
     # here, not a fourth parallel set of vars. (tabtext/stem are build-time helpers
@@ -315,8 +316,8 @@ oo::class create ::questlog::ui::Viewer {
         # unit is the {singular plural} count word; auto=1 (matches only) auto-opens
         # the band on refresh, and the Turns tab is deliberately auto 0 so a session
         # click never surfaces it - it is a reach-for index; onselect is the
-        # <<ListboxSelect>> handler; empty, where set, is the head-strip text
-        # shown in place of a count of none.
+        # <<ListboxSelect>> handler; empty, optional, is the text the head strip
+        # shows, with no band to open, when the tab has no rows.
         set BandDesc [dict create \
             turns   [dict create tabtext "Turns" stem turn \
                          unit {turn turns} auto 0 onselect turn_list_select \
@@ -373,7 +374,8 @@ oo::class create ::questlog::ui::Viewer {
         # band is collapsed; glyph ▾ closed, ▴ open. Packed on demand by
         # refresh_band_control (through the per-tab wrappers) and absent when the
         # tab has nothing to show: no search (matches), no tool calls (tools), or
-        # no quoted passages (quotes). Widget path $Top.head.<key>.
+        # no quoted passages (quotes); turns stays, saying so in muted ink.
+        # Widget path $Top.head.<key>.
         foreach key [dict keys $BandDesc] {
             set btn $Top.head.$key
             label $btn -text "" -background $strip \
@@ -2068,8 +2070,8 @@ oo::class create ::questlog::ui::Viewer {
     }
 
     # Keep the ▾/▴ glyph on each head-strip count: ▴ on the count whose tab is the
-    # open front tab, ▾ otherwise. Each count may be unpacked (its list is empty),
-    # so skip a tab whose descriptor count is "" rather than touch a stub label.
+    # open front tab, ▾ otherwise. A tab whose descriptor count is "" (its list is
+    # empty) is skipped, leaving an unpacked stub or an empty text as it is.
     method update_band_glyphs {} {
         dict for {key d} $BandDesc {
             set count [dict get $d count]
@@ -2083,10 +2085,10 @@ oo::class create ::questlog::ui::Viewer {
     # count n (its listbox already filled by the caller), size and expose the tab
     # or hide it. Empty (n == 0): clear the descriptor count, collapse the band
     # if this very tab was the open front tab, re-run update_band_tabs so the
-    # header drops the tab, and forget the head count unless the descriptor
-    # names an empty text, which the count then shows muted. Non-empty: size the
-    # listbox to min(n, 8) rows, set the count string from the unit words after
-    # the lead, and reserve the count's width on the right of the strip before
+    # header drops the tab, and unpack the head-strip count unless the descriptor
+    # has an empty text, which the count then shows in muted ink. Non-empty: size
+    # the listbox to min(n, 8) rows, set the count string from lead (text the
+    # caller wants before the number) and the unit words, and reserve the count's width on the right of the strip before
     # the path re-packs to fill the rest (so a long file path clips rather than
     # squeezing the count out; the re-pack fixes the order regardless of which
     # packed first). The one behaviour that varies by tab is auto: the matches
@@ -2285,7 +2287,7 @@ oo::class create ::questlog::ui::Viewer {
     # auto is 0): it makes the Turns tab and count available but never opens
     # the band on its own - the Turns index is reached for, not surfaced by a
     # session click. A subagent's transcript says so before its count, its
-    # turns being its parent's briefs, not the user's prompts; with none the
+    # turns being the prompts its parent sent, not the user's; with none the
     # strip reads "no turns". refresh_band_control does the work.
     method refresh_turn_control {} {
         set lead [expr {[::logman::is_subagent_path $Path] ? "subagent · " : ""}]
