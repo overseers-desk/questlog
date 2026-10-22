@@ -13,7 +13,7 @@ namespace eval ::logman {
         is_user_turn is_hidden_record format_tool_use_full order_tool_keys \
         is_turn_start opens_turn mark_turn_runs count_turn_line note_line \
         kept_turns is_assistant_line is_request_log \
-        record_parent mark_branches mark_turns branch_phrase \
+        record_parent mark_branches mark_turns mark_replies branch_phrase \
         record_role_label record_model notice mark_commands \
         context_window transcript_step is_dialogue_prompt command_text dialogue_body
 }
@@ -620,6 +620,74 @@ proc ::logman::mark_turns {recs} {
         }
     }
     return $recs
+}
+
+# Stamp _reply 1 on each assistant record whose text is its turn's reply:
+# what the user is meant to read, as against the work before it (tool calls,
+# thinking, the progress lines between them). A turn runs from one
+# is_turn_start record to the next, so a stand-in prompt (isMeta) stays
+# inside it. Whole list in, whole list out, like mark_turns.
+proc ::logman::mark_replies {recs} {
+    set stamp {}
+    set turn {}
+    set i -1
+    foreach rec $recs {
+        incr i
+        if {[is_turn_start $rec]} {
+            lappend stamp {*}[turn_replies $recs $turn]
+            set turn {}
+        }
+        lappend turn $i
+    }
+    lappend stamp {*}[turn_replies $recs $turn]
+    foreach k $stamp { lset recs $k [dict replace [lindex $recs $k] _reply 1] }
+    return $recs
+}
+
+# The indices, among one turn's (turn, into recs), of the records holding its
+# reply. Claude Code writes the API's stop_reason on every record of a
+# message: end_turn or stop_sequence ends a reply, tool_use is work, refusal
+# holds no reply. Every end_turn message counts, so a turn a stop hook
+# reopened has two replies: over-marking is the failure to prefer. A file
+# older than the field leaves it null on every record, and such a turn falls
+# back to shape: the run of text records ending it, after its last tool
+# result and with no tool call among them.
+proc ::logman::turn_replies {recs turn} {
+    set out {}
+    set stopped 0
+    set mine [lmap k $turn {
+        set r [lindex $recs $k]
+        if {[dict getdef $r type ""] ne "assistant"
+                || [dict getdef $r isSidechain 0]} continue
+        set k
+    }]
+    foreach k $mine {
+        set sr [dict getdef [lindex $recs $k] message stop_reason ""]
+        if {$sr ni {"" null}} { set stopped 1 }
+        if {$sr in {end_turn stop_sequence}
+                && "text" in [record_btypes [lindex $recs $k]]} {
+            lappend out $k
+        }
+    }
+    if {$stopped} { return $out }
+    foreach k [lreverse $turn] {
+        set r [lindex $recs $k]
+        if {[is_tool_result_record $r]} break
+        if {$k ni $mine} continue
+        set bt [record_btypes $r]
+        if {"tool_use" in $bt} break
+        if {"text" in $bt} { lappend out $k }
+    }
+    return $out
+}
+
+# The content block types of a record's message, in order; string content
+# reads as one text block.
+proc ::logman::record_btypes {rec} {
+    set c [dict getdef $rec message content ""]
+    if {$c eq ""} { return {} }
+    if {[is_string_content $c]} { return {text} }
+    return [lmap blk $c { dict getdef $blk type "" }]
 }
 
 # Extract the canonical text body of a record.

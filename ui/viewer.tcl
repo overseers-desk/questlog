@@ -39,8 +39,8 @@ proc ::questlog::ui::rarity_round_robin {term_positions} {
 # sequence of turns broken into sections by:
 #   primary:   compact_boundary records.
 #   secondary: idle gaps over the -idle_gap threshold (minutes).
-# Recap markers (long assistant turn after an idle gap) are tertiary cues
-# and not dividers.
+# Within a turn, the reply (the answer after the work) is set as a column:
+# a serif on a cream ground, so the eye lands there.
 #
 # Search-within: Ctrl-F focuses an entry; Return advances to the next match.
 
@@ -583,6 +583,21 @@ oo::class create ::questlog::ui::Viewer {
         # render both in its TkFixedFont default.
         $Text tag configure body          -font QLBody -foreground [::questlog::ui::theme::c body] -spacing2 3 -spacing3 6
         $Text tag configure code          -font QLMono -foreground [::questlog::ui::theme::c body] -spacing2 3 -spacing3 6
+        # The turn's reply (showman's insert_reply) reads as a column: the
+        # QLReply serif on the cream ground, the ground running into both
+        # margins and the text inset twice body's 10, which is also where a
+        # list's markers sit. Kept just above body and below code, so fenced
+        # code, inline code, lists, quotes and the rails all win where they
+        # stack; the reply-* faces go above tkdown's (below).
+        set rbg [::questlog::ui::theme::c reply]
+        $Text tag configure reply -font QLReply -background $rbg \
+            -lmargincolor $rbg -rmargincolor $rbg \
+            -lmargin1 20 -lmargin2 20 -rmargin 20
+        $Text tag lower reply code
+        # The column's head: a line's spacing comes from its first character,
+        # and the ground fills it, so the cream opens a little above the text
+        # as the closing blank line ends it below.
+        $Text tag configure reply-top -spacing1 10
         # Detail-block faces, one per block kind insert_blocks renders: tool
         # calls, tool results and the [image] placeholder in mono, thinking in
         # the italic reading face, all muted so detail reads apart from prose;
@@ -658,6 +673,15 @@ oo::class create ::questlog::ui::Viewer {
         $Text tag configure td-grid -background [::questlog::ui::theme::c faint]
         $Text tag configure td-spot -background [::questlog::ui::theme::c find]
         $Text tag configure td-rule -background [::questlog::ui::theme::c faint]
+        # The reply column's faces, created after tkdown's (and the quote) so
+        # each outranks the face it twins, in tkdown's own order, so emphasis
+        # inside a heading or a quote still restyles. td-code goes back on
+        # top: an inline code span in a bold run stays mono.
+        $Text tag configure reply-roman      -font QLReply
+        $Text tag configure reply-bold       -font QLReplyBold
+        $Text tag configure reply-italic     -font QLReplyItalic
+        $Text tag configure reply-bolditalic -font QLReplyBoldItalic
+        $Text tag raise td-code reply-bolditalic
         # The quote block's muted chrome: td-quotebar tints the per-line ▏ rule,
         # `qcopy` the ⧉ copy glyph heading the block. Configured after `quote` so
         # their muted ink outranks its body ink where they stack. qcopy also
@@ -690,7 +714,6 @@ oo::class create ::questlog::ui::Viewer {
         # then re-copying the raw characters. X11 PRIMARY (middle-click paste)
         # stays unfiltered - accepted; the explicit copy is the contract.
         bind $Text <<Copy>> "[list [self] copy_selection]; break"
-        $Text tag configure recap     -background [::questlog::ui::theme::c recap]
         $Text tag configure find      -background [::questlog::ui::theme::c find]
         # End-of-session hint: a centred, deeply inset cue that the reader can
         # send one more prompt. The wide left/right margin (derived from the mono

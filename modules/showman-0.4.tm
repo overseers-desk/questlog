@@ -19,7 +19,10 @@ package provide showman 0.4
 #     detail, hidden behind a trailing stub ("· N tool calls · M thinking").
 #     The turns a rewind abandoned (logman's mark_turns) sit under one ROLLED
 #     BACK line at their fork, folded at first: a streamdoc group, nested as
-#     the rewinds nest, its body marked by a margin rail.
+#     the rewinds nest, its body marked by a margin rail. Each turn's reply
+#     (logman's mark_replies) lies under `reply` and its faces under the
+#     reply-* twins (insert_reply), which carry no look until the host sets
+#     one.
 #   - find (Ctrl-F): streamdoc's bar, bounded by find_bound so trailing
 #     chrome under `endhint` is never a match.
 #   - a LIVE turn (the reason this base exists): live_open starts a growing
@@ -258,7 +261,7 @@ oo::class create ::showman::Showman {
         my reset
         $Text configure -state normal
         set m [my append_open]
-        foreach rec [::logman::mark_turns $recs] {
+        foreach rec [::logman::mark_replies [::logman::mark_turns $recs]] {
             set rec [my number_record $rec]
             lappend Records $rec
             my note_tree $rec
@@ -397,7 +400,8 @@ oo::class create ::showman::Showman {
         my live_flush
         my batch {
             set m [my append_open]
-            foreach rec [::logman::mark_turn_runs [::logman::mark_commands $recs]] {
+            foreach rec [::logman::mark_replies \
+                    [::logman::mark_turn_runs [::logman::mark_commands $recs]]] {
                 set rec [my number_record $rec]
                 lappend Records $rec
                 my note_tree $rec
@@ -524,6 +528,40 @@ oo::class create ::showman::Showman {
         ::tkdown::body $Text [my door] $body body code $em
     }
 
+    # Insert a text block of the turn's reply (logman's mark_replies): the
+    # assistant body under the `reply` tag, which the host styles as a column.
+    # It starts on a line of its own below the role label, so the column's
+    # margins and ground hold from its first line, whose first character
+    # also takes `reply-top`, for a host to pad the column's head. A tkdown
+    # face, or the quote, carries one font of its own, which would win over
+    # the column's, so each run under one also takes the reply-* twin of its
+    # weight and slant for the host to set in the column's family. Code keeps
+    # td-code and `code`.
+    method insert_reply {content} {
+        set door [my door]
+        if {[$Text compare $door != "$door linestart"]} {
+            $Text insert $door "\n" body
+        }
+        set from [$Text index $door]
+        my insert_body assistant $content
+        set to [$Text index $door]
+        $Text tag add reply $from $to
+        $Text tag add reply-top $from
+        foreach {td face} {
+            td-link reply-roman  quote reply-roman
+            td-h1 reply-bold  td-h2 reply-bold  td-h3 reply-bold  td-bold reply-bold
+            td-italic reply-italic  td-bolditalic reply-bolditalic
+        } {
+            set at $from
+            while {[set r [$Text tag nextrange $td $at $to]] ne ""} {
+                lassign $r s e
+                if {[$Text compare $e > $to]} { set e $to }
+                $Text tag add $face $s $e
+                set at $e
+            }
+        }
+    }
+
     # Render an assistant or tool_result record body one content block at a
     # time, per ::logman::extract_blocks. Text blocks keep the whole markdown
     # path; tool_use, thinking, tool_result and image blocks each become one
@@ -542,7 +580,11 @@ oo::class create ::showman::Showman {
         foreach {btype content} [::logman::extract_blocks $rec] {
             switch -- $btype {
                 assistant - user {
-                    my insert_body $btype $content
+                    if {[dict exists $rec _reply]} {
+                        my insert_reply $content
+                    } else {
+                        my insert_body $btype $content
+                    }
                     set sawtext 1
                 }
                 thinking {

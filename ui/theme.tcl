@@ -54,7 +54,8 @@ namespace eval ::questlog::ui::theme {
         compact         #767676
         sel             #d6e3fb
         drop            #dbe6fc
-        recap           #f6ead4
+        notice          #f6ead4
+        reply           #f6ead4
         find            #ffec70
         strip           #ececec
         chip_bg         #ffffff
@@ -131,9 +132,10 @@ proc ::questlog::ui::theme::hues {} {
 # as the font chooser hands back on a confirmed pick. QLBody and its bold and
 # italic variants are reconfigured in place from the picked family and size, so
 # every body-tagged run (plain or emphasised) reflows live while the chrome and
-# fenced-code runs keep QLMono. The base is forced to normal/roman and each
-# variant to its own weight/slant, so a bold or italic source spec cannot leak
-# the wrong face into a variant. A spec Tk cannot resolve is reported on stderr
+# fenced-code runs keep QLMono, and the reply column's serif takes the size
+# alone. The base is forced to normal/roman and each variant to its own
+# weight/slant, so a bold or italic source spec cannot leak the wrong face
+# into a variant. A spec Tk cannot resolve is reported on stderr
 # rather than letting the callback's error reach bgerror.
 proc ::questlog::ui::theme::set_body_font {spec} {
     if {[catch {
@@ -144,6 +146,9 @@ proc ::questlog::ui::theme::set_body_font {spec} {
         font configure QLBodyBold       -family $fam -size $sz -weight bold   -slant roman
         font configure QLBodyItalic     -family $fam -size $sz -weight normal -slant italic
         font configure QLBodyBoldItalic -family $fam -size $sz -weight bold   -slant italic
+        foreach f {QLReply QLReplyBold QLReplyItalic QLReplyBoldItalic} {
+            font configure $f -size $sz
+        }
     } err]} {
         puts stderr "questlog: cannot apply font '$spec': $err"
     }
@@ -192,6 +197,16 @@ proc ::questlog::ui::theme::init {} {
         font create QLBodyBold       {*}[font actual TkTextFont] -weight bold
         font create QLBodyItalic     {*}[font actual TkTextFont] -slant italic
         font create QLBodyBoldItalic {*}[font actual TkTextFont] -weight bold -slant italic
+        # The viewer's reply column: the platform's serif, at the reading
+        # body's size. set_body_font carries a size change over to it and
+        # leaves its family alone, so the column stays a serif whatever face
+        # the reader picks for the rest of the body.
+        set serif [list -family [font actual serif -family] \
+            -size [font actual QLBody -size]]
+        font create QLReply           {*}$serif
+        font create QLReplyBold       {*}$serif -weight bold
+        font create QLReplyItalic     {*}$serif -slant italic
+        font create QLReplyBoldItalic {*}$serif -weight bold -slant italic
     }
     set bg [. cget -background]
     ttk::style theme use clam
@@ -353,9 +368,9 @@ proc ::questlog::ui::theme::build_chrome {} {
         -foreground [list active [c ink] pressed [c ink]]
     # ---- notice banner ------------------------------------------------------
     # The top-of-window notice strip (e.g. running without the Thread package):
-    # the warm recap cream with the amber ink already used for mid-range cost,
+    # the warm cream with the amber ink already used for mid-range cost,
     # so it reads as advisory, not error.
-    ttk::style configure Notice.TLabel -background [c recap] \
+    ttk::style configure Notice.TLabel -background [c notice] \
         -foreground [c cost_mid] -padding {10 4}
     # ---- the list's cut banner ---------------------------------------------
     # The strip above the list that names what the active filters contain and the
@@ -364,12 +379,12 @@ proc ::questlog::ui::theme::build_chrome {} {
     # thing: the view is not the whole truth, and here is the remedy. The two
     # escapes are flat text buttons on that surface, brightening to full ink
     # under the pointer.
-    ttk::style configure Cut.TFrame -background [c recap]
-    ttk::style configure Cut.TLabel -background [c recap] -foreground [c cost_mid]
-    ttk::style configure CutAct.TButton -background [c recap] \
+    ttk::style configure Cut.TFrame -background [c notice]
+    ttk::style configure Cut.TLabel -background [c notice] -foreground [c cost_mid]
+    ttk::style configure CutAct.TButton -background [c notice] \
         -foreground [c cost_mid] -borderwidth 0 -padding {6 0} -shiftrelief 0
     ttk::style map CutAct.TButton \
-        -background [list active [c recap] pressed [c recap]] \
+        -background [list active [c notice] pressed [c notice]] \
         -foreground [list active [c ink] pressed [c ink]]
     # ---- rounded snippet-badge pills (shape only; Tk draws the label) ------
     set bh [font metrics QLBold -linespace]
