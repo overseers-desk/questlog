@@ -101,7 +101,7 @@ set fd [open [file join $gate_dir tallyman-1.0.tm] w]
 puts $fd "package provide tallyman 1.0"
 close $fd
 file copy [lindex [lsort [glob [file join $ROOT modules coachman-*.tm]]] end] $gate_dir
-file copy [file join $ROOT vendor deadman-1.0.tm] $gate_dir
+file copy [file join $ROOT vendor deadman-1.0.1.tm] $gate_dir
 set script [string map [list @GATE@ $gate_dir @DIR@ $dir @PDIR@ $pdir] {
     ::tcl::tm::path add {@GATE@}
     package require coachman

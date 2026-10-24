@@ -1,5 +1,5 @@
 package require Tcl 9
-package provide deadman 1.0
+package provide deadman 1.0.1
 
 # deadman - a subprocess watchdog: run a command in its own process group,
 # stream its stdout, and kill the whole tree on stall, wall-clock, or the
@@ -63,11 +63,12 @@ package provide deadman 1.0
 #           open cannot wedge the run. The bare -- escorting the negative
 #           pid is not decoration: kill(1) reads an unescorted -<pid> as
 #           the -1 broadcast and signals every process the caller owns.
-#   stdin   fed as UTF-8 bytes on a binary channel (a text-mode write
-#           raises at the first char above U+00FF and truncates), written
-#           blocking so the whole input drains past the pipe buffer, write
-#           half closed so the child sees EOF, and only then does the read
-#           half go non-blocking.
+#   stdin   fed as UTF-8 in chunks from a writable fileevent, beside the
+#           stdout drain and under the same detectors: a blocking write
+#           ahead of the drain deadlocks against a child that writes
+#           before it has read everything, and no detector could fire.
+#           The write half is closed once the input is spent, so the child
+#           sees EOF; a child that exits early forfeits the rest.
 #   reap    the exit status is mined from the [close] error's -errorcode:
 #           CHILDSTATUS carries the exit code, CHILDKILLED the signal name.
 #   ghosts  every timer and fileevent callback re-checks that its run
@@ -175,30 +176,20 @@ proc ::deadman::run {argv args} {
     }
     set lead [lindex [pid $chan] 0]
 
-    # The stdin dance, in this exact order (see the header's stdin note):
-    # binary channel, UTF-8 bytes, blocking write, half-close, and only
-    # then non-blocking. The write is caught: a child that exits before
-    # reading breaks the pipe, and the reap below tells that story better
-    # than an error here would. The blocking write runs before any timer
-    # is armed: a child that backpressures its stdout past the pipe
-    # buffer while stdin is still undrained holds the launch, and no
-    # detector can fire. An event-driven drain is the upgrade if that
-    # ever bites a real caller.
-    if {$has_stdin} {
-        fconfigure $chan -buffering none -translation binary
-        catch {
-            puts -nonewline $chan \
-                [encoding convertto utf-8 [dict get $opt -stdin]]
-            flush $chan
-        }
-        catch {close $chan write}
-    }
     # The tcl8 profile matters: under Tcl 9's default strict profile one
     # undecodable byte on stdout makes [gets] throw persistently with no
     # EOF, and the drain would spin on the fileevent forever. Permissive
     # decoding suits a watchdog; the child's bytes are its own business.
-    fconfigure $chan -blocking 0 -buffering line \
-        -encoding utf-8 -translation auto -profile tcl8
+    # The encoding is one setting for both directions, so stdin goes out
+    # as UTF-8 too; the output translation is lf, leaving its bytes as
+    # given (see the header's stdin note).
+    if {$has_stdin} {
+        fconfigure $chan -blocking 0 -buffering none \
+            -encoding utf-8 -translation {auto lf} -profile tcl8
+    } else {
+        fconfigure $chan -blocking 0 -buffering line \
+            -encoding utf-8 -translation auto -profile tcl8
+    }
 
     set h "dm[incr seq]"
     set runs($h) [dict create \
@@ -216,12 +207,15 @@ proc ::deadman::run {argv args} {
         grace [dict get $opt -grace] \
         done [dict get $opt -done] \
         cause "" \
+        feed [dict get $opt -stdin] \
+        fed 0 \
         last [clock milliseconds] \
         tick_after "" wall_after "" grace_after "" force_after ""]
     # The progress clock (last) is seeded at spawn, just above, so the
     # first tick measures idleness from now, not from epoch 0.
 
     fileevent $chan readable [list ::deadman::Drain $h]
+    if {$has_stdin} { fileevent $chan writable [list ::deadman::Feed $h] }
     if {[dict get $opt -wall] > 0} {
         dict set runs($h) wall_after \
             [after [dict get $opt -wall] [list ::deadman::kill $h wall]]
@@ -268,6 +262,7 @@ proc ::deadman::cancel {h} {
     }
     set chan [dict get $r chan]
     catch {fileevent $chan readable {}}
+    catch {fileevent $chan writable {}}
     Signal $r TERM
     Signal $r KILL
     catch {close $chan}
@@ -365,6 +360,30 @@ proc ::deadman::ForceClose {h} {
     Reap $h
 }
 
+# Feed the next chunk of stdin once Tcl's own buffer has gone out, so the
+# input is never queued whole. A failed write means the child is gone or
+# stopped reading for good; the reap tells that story better than an error
+# here would. Spent or failed, the write half closes and the child sees EOF.
+proc ::deadman::Feed {h} {
+    variable runs
+    if {![info exists runs($h)]} { return }
+    set chan [dict get $runs($h) chan]
+    if {[chan pending output $chan] > 0} { return }
+    set feed [dict get $runs($h) feed]
+    set fed [dict get $runs($h) fed]
+    if {$fed < [string length $feed]} {
+        if {![catch {
+            puts -nonewline $chan [string range $feed $fed [expr {$fed + 4095}]]
+        }]} {
+            dict set runs($h) fed [expr {$fed + 4096}]
+            return
+        }
+    }
+    fileevent $chan writable {}
+    catch {close $chan write}
+    dict set runs($h) feed ""
+}
+
 # Tee available stdout lines to the sink (or the capture buffer), feed the
 # per-line callback, and advance the progress clock. On EOF, reap. Every
 # kill path ends here too: the group signal closes the child's stdout, so
@@ -410,6 +429,7 @@ proc ::deadman::Reap {h} {
     variable runs
     set chan [dict get $runs($h) chan]
     fileevent $chan readable {}
+    catch {fileevent $chan writable {}}
     catch {fconfigure $chan -blocking 1}
     set ecode 0
     set sig ""
