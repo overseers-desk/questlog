@@ -726,9 +726,8 @@ oo::class create ::questlog::ui::Viewer {
             -foreground [::questlog::ui::theme::c muted] \
             -lmargin1 $hintpad -lmargin2 $hintpad -rmargin $hintpad \
             -spacing1 [font metrics QLMono -linespace] -spacing3 6
-        # Tk made sel first, so every tag above sets its options over the
-        # selection; the ones with a background (reply, find, tkdown's cells)
-        # would hide it. Last of all, sel goes on top.
+        # sel starts at the lowest priority, so a tag with a background (reply,
+        # find, tkdown's cells) would paint over the highlight; raise it last.
         $Text tag raise sel
 
         # Right-click copy (issue #4).

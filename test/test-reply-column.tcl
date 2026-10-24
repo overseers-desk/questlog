@@ -13,7 +13,8 @@
 #   4. a turn a stop hook reopened marks both of its end_turn replies.
 # It also checks the faces inside the column (bold and headings keep their
 # weight in the serif, inline and fenced code stay mono) and that the
-# reading-font picker moves the serif's size but not its family.
+# reading-font picker moves the serif's size but not its family, and that a
+# selection outranks every background tag, so it shows on the cream.
 #
 # Runs under wish (it builds a Viewer, so it needs Tk); run-audit routes it to
 # wish9.0 on the private Xvfb. Standalone: DISPLAY=:99 wish9.0 test-reply-column.tcl
@@ -191,12 +192,12 @@ check "and to its bold" [font configure QLReplyBold -size] 17
 # A selection inside the column shows: sel outranks every tag that sets a
 # background, so its highlight paints over the cream.
 set names [$Text tag names]
-set under [lmap t $names {
+set over [lmap t $names {
     if {$t eq "sel" || [$Text tag cget $t -background] eq "" ||
         [lsearch $names $t] < [lsearch $names sel]} continue
     set t
 }]
-check "no background tag outranks sel" $under {}
+check "no background tag outranks sel" $over {}
 
 ::questlog::path::_real_file delete -force $TMP
 puts [expr {$fails ? "FAILED ($fails)" : "PASS"}]
