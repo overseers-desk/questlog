@@ -188,6 +188,16 @@ check "picker leaves the serif family"  [font actual QLReply -family] $serif
 check "picker carries the size to the serif" [font configure QLReply -size] 17
 check "and to its bold" [font configure QLReplyBold -size] 17
 
+# A selection inside the column shows: sel outranks every tag that sets a
+# background, so its highlight paints over the cream.
+set names [$Text tag names]
+set under [lmap t $names {
+    if {$t eq "sel" || [$Text tag cget $t -background] eq "" ||
+        [lsearch $names $t] < [lsearch $names sel]} continue
+    set t
+}]
+check "no background tag outranks sel" $under {}
+
 ::questlog::path::_real_file delete -force $TMP
 puts [expr {$fails ? "FAILED ($fails)" : "PASS"}]
 exit $fails
