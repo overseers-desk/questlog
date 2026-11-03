@@ -59,9 +59,12 @@ proc ::questlog::path::pretty_home {path} {
     return $path
 }
 
-# Root of the on-disk Claude session store.
+# Root of the on-disk Claude session store; the shared cache stands in when the user's own is absent.
 proc ::questlog::path::projects_root {} {
-    return [file join [::questlog::config::claude_dir] projects]
+    set root [file join [::questlog::config::claude_dir] projects]
+    set cache /var/local/cache/claude/projects
+    if {![file isdirectory $root] && [file isdirectory $cache]} { return $cache }
+    return $root
 }
 
 # The directory questlog was launched from. Prefer the shell's logical
