@@ -1,5 +1,5 @@
 Name:           questlog
-Version:        1.3.3
+Version:        1.3.4
 Release:        1%{?dist}
 Summary:        GUI for finding, reading, and reopening past Claude Code sessions
 License:        MIT
@@ -60,6 +60,19 @@ install -D -m 0644 assets/questlog-512.png \
 %{_datadir}/icons/hicolor/512x512/apps/questlog.png
 
 %changelog
+* Tue Nov 03 2026 Weiwu Zhang <a@colourful.land> - 1.3.4-1
+- Sessions list: the min-turns floor starts at 1, so a one-turn session shows at startup; the old floor of 2 had hidden sessions that were worth a look
+- Sessions list: a project folder groups the folders beneath it, and its rule draws over two or more rows
+- Sessions list: a bookmarked session can be labelled with what it waits on (ready, needs answer, blocked, handed on, done); the 🔖 button lists them, and the window sorts by that state
+- Sessions list: a session running under any ~/.claude* profile reads as running
+- Turns: the Turns column, the min-turns floor and the session viewer's numbering count the turns a session kept; the request log is no turn, and a rewind's abandoned turns are left out
+- Session viewer: a rolled-back branch folds under one ROLLED BACK line at its fork (logman 1.3 to 1.6), and the markdown export folds it into a details block
+- Session viewer: a turn's reply reads as a serif column on cream, and a selection shows over it, over table cells and over search hits
+- Session viewer: Claude Code's notices read as one SYSTEM line each, a prompt queued mid-turn reads as the prompt the model received, and an API error record is SYSTEM
+- Session viewer: a subagent's own transcript opens its turns, and its head strip reads "subagent - N turns"
+- Session viewer: the hover copy button heads the message it copies
+- Timeline: tallyman 1.9 leaves frame-link records off the timeline and counts the time before a resume hook as nobody's; the wait before a prompt is no longer machine time, and a file-history snapshot no longer sets a session's first timestamp
+
 * Mon Oct 12 2026 Weiwu Zhang <a@colourful.land> - 1.3.3-1
 - Rates: a cache write kept for an hour is priced at the hour rate, twice the input price; the rate table's new last column carries it (tallyman 1.7)
 - Rates: each request is priced in the era of its own date rather than the session's first, so a session that outlived a model's launch or a price change prices every request
