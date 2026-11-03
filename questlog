@@ -151,10 +151,10 @@ namespace eval ::questlog::config {
     # The "min turns" bounds filter. The scanner counts a session's user turns
     # up to turn_count_cap (so a row's recorded nturns saturates there, and the
     # spinbox max is this cap); the spinbox spans 1..turn_count_cap.
-    # min_turns_default is the GUI's startup value - 2 excludes one-turn
-    # sessions - while 1 means no filter (include all).
+    # min_turns_default is the GUI's startup value; 1 means no filter (include
+    # all), so a one-turn session shows at startup.
     dict set Config turn_count_cap   9
-    dict set Config min_turns_default 2
+    dict set Config min_turns_default 1
 
     # ---- display caps ------------------------------------------------------
     # Tail bytes read for the most-recent agentName/aiTitle rename records.

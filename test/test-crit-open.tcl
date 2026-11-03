@@ -43,6 +43,8 @@ proc check {name expected actual} {
     }
 }
 
+# The shipped floor excludes nothing, so the test seeds one to have a standing turn floor to show.
+dict set ::questlog::config::Config min_turns_default 2
 set TB  [::questlog::ui::Toolbar new .tb /tmp]
 pack .tb -fill x
 update

@@ -16,7 +16,7 @@
 #      the spinbox, and reads the model back only when the model itself moved.
 #
 # Rule 1 without rule 2 is the regression this test exists to catch: type 5, touch
-# anything else in the bar, and the spinbox is back to 2 with no word said.
+# anything else in the bar, and the spinbox is back to 1 with no word said.
 
 package require Tcl 9
 package require Tk
@@ -60,7 +60,7 @@ update
 # editor area: <bar>.body.rows.ed_<id>.
 set SB .tb.crit.bar.body.rows.ed_min_turns.sb
 check editor_is_there 1 [winfo exists $SB]
-check opens_on_the_default 2 [$SB get]
+check opens_on_the_default 1 [$SB get]
 
 # Typing is an edit of the widget, not a commit: no Return, no focus change, no
 # arrow. This is what a hand mid-number looks like.
@@ -84,7 +84,7 @@ proc commit {} {
 
 set ::Published [$TB snapshot]
 type 5
-check typed_floor_is_not_published 2 [dict get [$TB snapshot] turns_view]
+check typed_floor_is_not_published 1 [dict get [$TB snapshot] turns_view]
 check and_the_spinbox_shows_what_was_typed 5 [$SB get]
 
 # ---- rule 2: a redraw elsewhere in the bar leaves it standing ---------------
@@ -94,7 +94,7 @@ check and_the_spinbox_shows_what_was_typed 5 [$SB get]
 $TB begin_edit pattern
 update
 check typed_floor_survives_a_tail_reveal 5 [$SB get]
-check and_it_is_still_unpublished 2 [dict get [$TB snapshot] turns_view]
+check and_it_is_still_unpublished 1 [dict get [$TB snapshot] turns_view]
 
 # A whole-model write from outside (here the cut banner's widen escape, dropping
 # the since bound) redraws the bar top to bottom. min turns did not move, so the
