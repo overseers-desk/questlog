@@ -60,11 +60,12 @@ install -D -m 0644 assets/questlog-512.png \
 %{_datadir}/icons/hicolor/512x512/apps/questlog.png
 
 %changelog
-* Tue Nov 03 2026 Weiwu Zhang <a@colourful.land> - 1.3.4-1
+* Tue Nov 24 2026 Weiwu Zhang <a@colourful.land> - 1.3.4-1
 - Sessions list: the min-turns floor starts at 1, so a one-turn session shows at startup; the old floor of 2 had hidden sessions that were worth a look
 - Sessions list: a project folder groups the folders beneath it, and its rule draws over two or more rows
 - Sessions list: a bookmarked session can be labelled with what it waits on (ready, needs answer, blocked, handed on, done); the 🔖 button lists them, and the window sorts by that state
 - Sessions list: a session running under any ~/.claude* profile reads as running
+- Sessions list: with no projects folder under ~/.claude (or $CLAUDE_CONFIG_DIR), sessions are read from the shared cache at /var/local/cache/claude/projects
 - Turns: the Turns column, the min-turns floor and the session viewer's numbering count the turns a session kept; the request log is no turn, and a rewind's abandoned turns are left out
 - Session viewer: a rolled-back branch folds under one ROLLED BACK line at its fork (logman 1.3 to 1.6), and the markdown export folds it into a details block
 - Session viewer: a turn's reply reads as a serif column on cream, and a selection shows over it, over table cells and over search hits
@@ -72,6 +73,7 @@ install -D -m 0644 assets/questlog-512.png \
 - Session viewer: a subagent's own transcript opens its turns, and its head strip reads "subagent - N turns"
 - Session viewer: the hover copy button heads the message it copies
 - Timeline: tallyman 1.9 leaves frame-link records off the timeline and counts the time before a resume hook as nobody's; the wait before a prompt is no longer machine time, and a file-history snapshot no longer sets a session's first timestamp
+- Rates: Claude Fable 5.2 and Claude Mythos 5.2 are priced (released 2026-11-09; $8/$40 per MTok, cache writes at $10 for five minutes and $16 for an hour, cache reads at $0.20); a session on either had shown a blank cost, or a false low where other models shared it
 
 * Mon Oct 12 2026 Weiwu Zhang <a@colourful.land> - 1.3.3-1
 - Rates: a cache write kept for an hour is priced at the hour rate, twice the input price; the rate table's new last column carries it (tallyman 1.7)
