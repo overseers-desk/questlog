@@ -12,6 +12,10 @@ package require Tcl 9
 
 set QUESTLOG_VERSION 1.3.4
 set ROOT [file dirname [file normalize [info script]]]
+# This file where it ran. A package rewrites the ROOT line to the tree it
+# installs, which holds no copy of this file, so the CLI's pool workers source
+# their config from here rather than from ROOT.
+set QUESTLOG_LAUNCHER [file normalize [info script]]
 ::tcl::tm::path add [file join $ROOT modules]
 ::tcl::tm::path add [file join $ROOT vendor]
 
