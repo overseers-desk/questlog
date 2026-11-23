@@ -74,6 +74,7 @@ install -D -m 0644 assets/questlog-512.png \
 - Session viewer: the hover copy button heads the message it copies
 - Timeline: tallyman 1.9 leaves frame-link records off the timeline and counts the time before a resume hook as nobody's; the wait before a prompt is no longer machine time, and a file-history snapshot no longer sets a session's first timestamp
 - Rates: Claude Fable 5.2 and Claude Mythos 5.2 are priced (released 2026-11-09; $8/$40 per MTok, cache writes at $10 for five minutes and $16 for an hour, cache reads at $0.20); a session on either had shown a blank cost, or a false low where other models shared it
+- CLI: from a .deb, .rpm or Homebrew install, a --json, --markdown or --shortstat query over more than a few sessions runs; its worker threads had looked for the launcher in the shared tree, where the packages do not put it, and the query failed
 
 * Mon Oct 12 2026 Weiwu Zhang <a@colourful.land> - 1.3.3-1
 - Rates: a cache write kept for an hour is priced at the hour rate, twice the input price; the rate table's new last column carries it (tallyman 1.7)
