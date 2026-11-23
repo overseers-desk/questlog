@@ -1,6 +1,8 @@
 model,effective_from,input_per_mtok,output_per_mtok,cache_write_per_mtok,cache_read_per_mtok,prompt_min_tokens,cache_write_1h_per_mtok
+claude-fable-5-2,2026-11-09,8,40,10.00,0.20,0,16
 claude-fable-5-1,2026-09-01,10,50,12.50,0.25,0,20
 claude-fable-5,2026-06-09,10,50,12.50,1.00,0,20
+claude-mythos-5-2,2026-11-09,8,40,10.00,0.20,0,16
 claude-mythos-5-1,2026-09-01,10,50,12.50,0.25,0,20
 claude-mythos-5,2026-06-09,10,50,12.50,1.00,0,20
 claude-opus-5-5,2026-09-22,4,20,5.00,0.20,0,8
